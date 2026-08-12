@@ -2,7 +2,7 @@
 
 **Source (primary):** *CATAN — The Game* rulebook, CN3081, v6.250401 (6th Edition), © 2025 CATAN GmbH / CATAN Studio. 12 pages.
 **Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§9](#9-sources).
-**Status:** Draft 2 — rules extracted, edge cases resolved against official rulings, implementation model added.
+**Status:** Draft 3 — rules extracted, edge cases resolved against official rulings, implementation model added, six project decisions recorded.
 **Target:** **Digital implementation** of the base game. This document is the reference for the state schema, action model, and rules validation.
 
 **Scope boundary**
@@ -13,7 +13,7 @@
 **Conventions used here**
 
 - Rules are numbered `R-x.y` so they can be referenced from tickets, tests, and code.
-- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§7](#7-resolved-rulings-edge-cases)).
+- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§7](#7-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
 - Facts read from **diagrams/artwork** rather than rules text are marked *(image-derived)*.
 
 ---
@@ -70,6 +70,7 @@
 | R-3.9 | The Distance Rule applies to all setup settlement placements: stay at least two edges away from all other settlements. | p.12 |
 | R-3.10 | **Starting resources.** Each player takes 1 matching resource card from the supply for each hex adjacent to their **second** settlement. Kept **hidden in hand**. | p.12 |
 | R-3.11 | Setup placement is the **only** time a settlement may be placed without connecting to one of your own roads. | FAQ |
+| R-3.12 | **Red-number adjacency** (6 and 8) on a randomly generated board is controlled by a game option, **enabled by default**: when on, generated boards where two red numbers are adjacent are rejected or repaired. The 5th Edition requires this; the 6th Edition rulebook does not state it. | `HOUSE` D-6 |
 
 ### 2.4 Turn structure (R-4)
 
@@ -98,6 +99,7 @@
 |---|---|---|
 | R-6.1 | On a roll of 7, **no hex produces** any resources. | p.6 |
 | R-6.2 | **Discard.** Each player (all players, not just the active one) holding **more than 7** resource cards must choose half of them, rounded down, and return them to the supply. *(Example: 9 cards in hand → discard 4.)* | p.6 |
+| R-6.2a | Discards resolve **simultaneously** — all affected players choose at once, and play continues when the last confirms. | `HOUSE` D-2 |
 | R-6.3 | **Activate the robber.** The active player **must** move the robber to a **different** hex — leaving it in place is not a legal option. Any other land hex is a legal destination, including the desert. | p.6, FAQ, ALM |
 | R-6.4 | The active player then steals 1 **random** resource card from an **opponent** who has a building on the robber's new hex. If several opponents have buildings there, the active player chooses which one to rob. The victim holds their cards facedown; the card is taken at random, unseen. | p.6, ALM |
 | R-6.5 | Development cards are never stolen by the robber, and do not count toward the discard threshold in R-6.2. | p.9 |
@@ -123,6 +125,9 @@
 | R-7.14 | No player is ever obliged to trade or to accept an offer, and the active player is not bound by an announced offer until the exchange is made. | *inferred* |
 | R-7.15 | Trading is confined to the Action phase. No trade may occur before the dice roll, nor during discard/robber resolution (R-6.6). | p.7, *inferred* |
 | R-7.16 | Maritime trades (4:1, 3:1, 2:1) may be performed as often as the player can pay for them, and are always available regardless of ports — only the improved ratios require a port. | p.7, ALM |
+| R-7.17 | **Empty supply stack.** A maritime trade is illegal unless the target stack can supply the full amount taken. An Invention card takes as many of the requested cards as remain (possibly 1 or 0). | `HOUSE` D-3 |
+| R-7.18 | **No type overlap.** No resource type may appear on both the give and take side of a single trade — a generalization of R-7.5 covering multi-type offers. | `HOUSE` D-4 |
+| R-7.19 | **Open-market offers.** Multiple trade offers may be live simultaneously, and any player may accept any live offer during the active player's turn. Every offer must still have the active player as one party (R-7.3). Acceptances resolve atomically, first-come, re-validating both parties' holdings at execution; offers invalidated by an intervening state change are rejected with a reason, never executed against stale state. | `HOUSE` D-5 |
 
 ### 2.8 Action phase — Build (R-8)
 
@@ -170,6 +175,7 @@ Building costs (player aid, *image-derived* iconography):
 | R-9.8 | **Invention** (2×) | Take any 2 resource cards from the supply into hand — 2 of the same or 2 different resources. (Called *Year of Plenty* in earlier editions.) | p.9 |
 | R-9.9 | **Monopoly** (2×) | Announce **one** resource type; every other player must give you all their resource cards of that type. Only one type may be named, regardless of how many cards are received. Players are not required to reveal their hands — the rules assume honesty. | p.9, FAQ |
 | R-9.10 | **Road Building** (2×) | Build 2 roads at no cost (no resources spent). Normal road placement rules apply. | p.9 |
+| R-9.10a | — | If fewer than 2 legal road placements exist (blocked board or road pool short), place as many as are legal (1 or 0); the card is still discarded and the turn's development-card allowance is still consumed. | `HOUSE` D-1 |
 | R-9.11 | **Victory Point** (5×) | Worth 1 VP. Must be kept **hidden** in the player area unless revealing them reaches the VP total needed to win; then reveal all VP cards at once, including those built this turn. | p.9, p.2, FAQ |
 | R-9.12 | **VP card exception.** Any number of VP cards may be played, even on the turn they were bought, in order to win — this bypasses R-9.3 and R-9.4. | p.2, p.9 |
 
@@ -363,7 +369,7 @@ Playing a Knight in `PRE_ROLL` and then rolling a 7 activates the robber **twice
 | `BUY_DEV_CARD` | deck non-empty, cost payable | Unlimited per turn (R-8.9) |
 | `PLAY_DEV_CARD(card, params)` | not bought this turn, none played this turn, own turn | VP cards exempt (R-9.12) |
 | `TRADE_SUPPLY(give, take)` | ratio 4:1, or 3:1/2:1 with port access; `give` uniform; `take != give` type | R-7.6–R-7.9 |
-| `PROPOSE_TRADE(give, want)` / `ACCEPT` / `REJECT` / `COUNTER` | active player is one party; both sides non-empty; no overlapping resource type on both sides *(unsourced — see §7.1 #7)*; both parties hold what they offer at the moment of resolution | R-7.3–R-7.5, R-7.13 |
+| `PROPOSE_TRADE(give, want)` / `ACCEPT` / `REJECT` / `COUNTER` / `WITHDRAW` | active player is one party; both sides non-empty; no resource type on both sides (R-7.18); both parties hold what they offer **at the moment of resolution**, not at proposal time. Multiple offers may be live at once (R-7.19) | R-7.3–R-7.5, R-7.13, R-7.18, R-7.19 |
 | `END_TURN` | phase = `ACTION`, no pending sub-state | R-4.3 |
 
 ### 5.5 Validation invariants
@@ -440,19 +446,29 @@ The CN3081 rulebook leaves the following open. Each is now resolved against the 
 
 ### 7.1 Residual unknowns
 
-Not settled by either official source; these need a project decision:
+Questions not settled by any official source. All six have now been **decided for this project** — these are house rulings, not CATAN rules, and are marked `HOUSE` where they appear in the rule tables.
 
-1. **Road Building with fewer than 2 legal placements.** No official ruling located. **Recommended:** place as many roads as are legally possible (1 or 0) and the card is spent. Same treatment when the road pool is short.
-2. **Discard resolution order on a 7.** Not specified. **Recommended:** simultaneous — no discarder's choice depends on another's, so ordering is unobservable.
-3. **Building costs** are read from player-aid iconography (§2.8), not from rules prose — verify against the physical aid.
-4. **Port count and distribution** (4× 3:1, 5× 2:1) are read from component artwork; the 5th Edition's 9 harbour pieces corroborate the total but not the 6th Edition's fixed distribution across the 6 frame pieces.
-5. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
+| # | Question | Decision | Rule |
+|---|---|---|---|
+| D-1 | Road Building with fewer than 2 legal placements (blocked board or short road pool) | **Place as many as are legal** (1 or 0). The card is discarded and the turn's development-card allowance is consumed. | R-9.10a |
+| D-2 | Discard resolution order on a 7 | **Simultaneous.** All affected players discard at once; play resumes when the last confirms. | R-6.2a |
+| D-3 | Taking a resource whose supply stack is empty (4:1/port trade, or Invention) | **Must pay in full.** The trade is illegal unless the stack can supply the whole amount; Invention takes as many as remain (possibly 1 or 0). | R-7.17 |
+| D-4 | Same resource type on both sides of a multi-type player trade | **Forbid any overlap.** No resource type may appear on both sides of a trade. | R-7.18 |
+| D-5 | Trade offer lifecycle | **Open market** — see D-5 notes below. | R-7.19 |
+| D-6 | Red numbers (6/8) adjacent on a randomly generated board | **Game option**, defaulting to the constraint enabled. | R-3.12 |
 
-**Trade-specific gaps** — see [§7.3](#73-trade-rules-completeness-audit) for the full audit:
+**D-5 notes — open market.** Multiple offers stay live at once and any player may accept any live offer at any point during the active player's turn. This is the most table-like option and the most state to manage; three consequences follow:
 
-6. **Taking from an exhausted supply stack.** The rulebook defines a shortage rule for *production* only (R-5.6); it says nothing about a 4:1/port trade or an Invention card that would draw a resource whose stack is empty. **Recommended:** the trade is illegal if the stack cannot pay in full; Invention takes as many as remain.
-7. **Same resource type on both sides of a multi-type player trade** (e.g., 2 ore + 1 wood for 1 wheat + 1 ore). R-7.5 forbids only the pure case (3 ore for 1 ore). **Recommended:** forbid any type appearing on both sides — this is what §5.4's validator assumes, and it closes the disguised-gift loophole.
-8. **Trade offer protocol.** Binding-ness of an accepted offer, whether offers persist across other actions, how counteroffers are structured, and timeouts are all undefined — they don't exist as problems at a physical table but are mandatory for a digital build. **Recommended:** offers are non-binding until both sides confirm; the exchange resolves atomically; any board-state change cancels open offers.
+- Every live offer must still have the **active player as one party** (R-7.3). Offers between two non-active players are never valid, even in an open market.
+- **Acceptance races are real.** Two players may accept offers the proposer can only cover once. Resolve atomically on a first-come basis, re-validating both parties' holdings at the moment of execution, and reject the loser with a clear reason rather than silently dropping it.
+- Offers must be **re-validated, not merely displayed**, when the board or a hand changes. An offer that was legal when made can become illegal (cards spent on a build, a Monopoly played); it should be invalidated rather than executed against stale state.
+
+**Still open — verification tasks** (not decisions; they need the physical components or a second look at the source):
+
+1. **Building costs** are read from player-aid iconography (§2.8), not from rules prose — verify against the physical aid.
+2. **Port count and distribution** (4× 3:1, 5× 2:1) are read from component artwork; the 5th Edition's 9 harbour pieces corroborate the total but not the 6th Edition's fixed distribution across the 6 frame pieces.
+3. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
+4. **The four inferred trade rules** — R-7.13, R-7.14, R-7.15, R-7.10 — rest on reading rather than source text. R-7.15 (no trading before the dice roll) is the least certain, since a development card *may* legally be played pre-roll.
 
 ### 7.2 Edition drift when consulting official sources
 
@@ -500,21 +516,26 @@ Trade is the least completely specified area of the rulebook. Status of every tr
 | Obligation to accept; when an offer binds | **Inferred** | R-7.14 |
 | Trading before the dice roll | **Inferred** — placement in the Action phase implies no, but never stated, and a *development card* may be played pre-roll, so the phase boundary is not simply "nothing before the roll" | R-7.15 |
 | Bonus tiles tradeable | **Inferred** (no) — never mentioned in any source | R-7.10 |
-| Trading from an exhausted supply stack | **Undefined** | §7.1 #6 |
-| Same type on both sides of a multi-type trade | **Undefined** | §7.1 #7 |
-| Offer lifecycle / binding / timeouts | **Undefined** (physical game has no need for it) | §7.1 #8 |
+| Trading from an exhausted supply stack | **House ruling** (D-3) | R-7.17 |
+| Same type on both sides of a multi-type trade | **House ruling** (D-4) | R-7.18 |
+| Offer lifecycle / binding / concurrency | **House ruling** (D-5) | R-7.19 |
 
-Twelve trade questions are settled by the rulebook or FAQ, four rest on inference that should be confirmed, and three are genuinely undefined and need a project decision before the trade UI and validator can be built.
+Twelve trade questions are settled by the rulebook or FAQ, four rest on inference that should still be confirmed (R-7.10, R-7.13, R-7.14, R-7.15), and three had no answer in any source — those are now house rulings, marked as such so they are never mistaken for CATAN rules.
+
+The open-market decision (D-5) makes trade the most concurrency-sensitive part of the system: it is the only place where a non-active player initiates a state change, and the only place where two valid requests can race. Treat `ACCEPT` as a transaction against current state, never against the state the offer was authored in.
 
 ---
 
 ## 8. Next steps
 
 1. Transcribe the four artwork assets in §6 (A-3 and A-4 first — they gate every mode).
-2. Decide the five residual unknowns in §7.1 and the red-number-adjacency question in §7.2.
+2. Close the four verification tasks in §7.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
 3. Build the board topology module (19/54/72) with precomputed adjacency, and validate against the invariants in §5.5.
-4. Turn each `R-x.y` rule into an acceptance test; the §5.7 list is the priority set.
-5. Implement Variable Setup first (fully specified in text); add Fixed Setup once A-1/A-2 exist.
+4. Turn each `R-x.y` rule into an acceptance test; the §5.7 list is the priority set. Every `HOUSE` rule (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) needs a test too — they have no external source to fall back on.
+5. Design the open-market trade protocol (R-7.19) against the concurrency notes in §7.1, before building the trade UI.
+6. Implement Variable Setup first (fully specified in text); add Fixed Setup once A-1/A-2 exist.
+
+All six project decisions are recorded in §7.1. Nothing now blocks starting on the engine except the A-3/A-4 artwork data.
 
 ---
 
