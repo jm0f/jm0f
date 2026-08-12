@@ -1,9 +1,9 @@
 # CATAN — Rules & Materials Scoping Document
 
 **Source (primary):** *CATAN — The Game* rulebook, CN3081, v6.250401 (6th Edition), © 2025 CATAN GmbH / CATAN Studio. 12 pages.
-**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§13](#13-sources).
-**Status:** Draft 5 — rules, engine architecture, history/analytics, platform scope, and bot strategy recorded. 25 project decisions registered.
-**Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), and heuristic and LLM opponents (§9). This document is the reference for the state schema, action model, rules validation, data model, and product scope.
+**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§14](#14-sources).
+**Status:** Draft 6 — rules, engine architecture, history/data model, platform scope, bot strategy, and analytics/rating design recorded. 25 decisions registered; §10 proposed pending ratification.
+**Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), heuristic and LLM opponents (§9), and a statistics and rating layer (§10). This document is the reference for the state schema, action model, rules validation, data model, product scope, and analytics methods.
 
 **Scope boundary**
 
@@ -13,7 +13,7 @@
 **Conventions used here**
 
 - Rules are numbered `R-x.y` so they can be referenced from tickets, tests, and code.
-- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§11](#11-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
+- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§12](#12-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
 - Facts read from **diagrams/artwork** rather than rules text are marked *(image-derived)*.
 
 ---
@@ -460,7 +460,9 @@ Targets to validate with a benchmark harness — **not measurements**, and nothi
 
 ---
 
-## 7. Game history, replay & analytics
+## 7. Game history, replay & data model
+
+*(Recording and storage. The metrics computed from this data are §10.)*
 
 Every game can be recorded in full: a complete, ordered event log that serves as the source material for replays *and* as the raw data for statistics at game, player, and cross-game scope.
 
@@ -689,7 +691,118 @@ Internal and flagged accounts only for now. Before any wider exposure: per-game 
 
 ---
 
-## 10. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
+## 10. Analytics and player rating
+
+Everything here is derived from the canonical event log (§7) and is regenerable. Nothing in this section is computed inside `catan-core`.
+
+**Status:** the methods below are **proposed**, not yet ratified as decisions — unlike the D-, H-, P-, and B- registers elsewhere in this document. The rating design in §10.5 in particular has four open choices flagged inline.
+
+### 10.1 Dice fairness — two different questions
+
+These get conflated constantly, and they need opposite statistical treatment.
+
+**(a) Was this game's dice sequence unusual?** Small sample — roughly 60–100 rolls. The theoretical distribution over 2–12 is known exactly: `(1,2,3,4,5,6,5,4,3,2,1)/36`.
+
+- A plain chi-squared goodness-of-fit test is **not valid at this sample size**. With ~70 rolls the expected count for 2 and for 12 is under 2, well below the ≥5 rule of thumb. Either bin the tails — which discards exactly the information players care about — or compute an **exact Monte Carlo p-value** by simulating multinomial draws under the null. Simulation is cheap and correct; use it.
+- Report an **effect size**, not just a p-value: KL divergence of the empirical distribution from theoretical, in bits. It is interpretable and comparable across games of different length.
+- **Do not show a per-game p-value as a fairness verdict.** Across thousands of games, ~5% will clear p<0.05 by construction, and those are precisely the games players screenshot as proof of rigging. Present it as an **empirical percentile instead**: "the dice in this game deviated more than 87% of recorded games." Same information, no significance claim, no multiple-comparisons trap.
+- If per-game p-values are ever used analytically across the corpus, apply Benjamini–Hochberg FDR control.
+
+**(b) Is our RNG actually fair?** A trust and QA question, answered on the **pooled corpus** of millions of rolls, never per game.
+
+- At that sample size chi-squared is valid — but the opposite problem appears: any trivial deviation becomes "significant". Report effect size (KL, maximum per-face deviation) alongside the p-value and judge on effect size.
+- Marginal frequencies are not enough; a bad RNG can produce correct marginals with serial structure. Add an **independence check** — lag-1 autocorrelation and a Wald–Wolfowitz runs test over the pooled roll sequence.
+- Track the 7 separately: it is 16.7% of rolls and drives the entire robber economy.
+
+The general principle, worth stating once: **small n makes p-values invalid, large n makes them uninformative.** Both regimes need effect sizes.
+
+### 10.2 Expected vs actual production
+
+The flagship analysis, and the one that separates luck from play.
+
+**Expected production per roll.** For player *i*, given the current board:
+
+```
+EPR_i = Σ  P(n_hex) × yield(building)        yield = 1 settlement, 2 city
+      hexes adjacent to i's buildings         P(n) = pips(n) / 36
+```
+
+**Exact variance, no simulation needed.** Production on a single roll is a deterministic function of the roll, so per-roll production `X_i,t` has a known pmf over 11 outcomes. Rolls are independent, so over a game:
+
+```
+E[total_i] = Σ_t E[X_i,t]        Var[total_i] = Σ_t Var[X_i,t]
+```
+
+This holds even though buildings change during the game — each turn simply contributes its own term. A per-player, per-resource **z-score** `(actual − expected) / sd` follows directly and is exact.
+
+**Decompose the gap.** A raw expected-vs-actual difference silently mixes four causes. Replay lets us separate all of them:
+
+| Term | Meaning |
+|---|---|
+| `E_raw` | Expected production ignoring robber and supply limits |
+| `RobberCost` = `E_raw − E_robber` | Expected production lost to the robber sitting on your hexes (R-5.8) |
+| `SupplyDenial` | Production owed but not paid because a stack was empty (R-5.6) |
+| `DiceLuck` = `A_ideal − E_robber` | What the dice actually did, given the real robber positions |
+
+giving the identity:
+
+```
+Actual = E_raw − RobberCost − SupplyDenial + DiceLuck
+```
+
+This matters because the four have completely different meanings. `DiceLuck` is chance. `RobberCost` is *other players choosing to target you* — a social outcome, not a random one. `SupplyDenial` is a rules artefact. Reporting them as one number tells a player nothing about which happened.
+
+**Presentation:** cumulative expected vs actual over turns, per player and per resource type, with the decomposition as a stacked breakdown. Per-resource z-scores answer "was I starved of ore specifically."
+
+### 10.3 Descriptive statistics
+
+**Per game**
+Length in turns and wall time · winner and final VP breakdown · roll histogram with §10.1(a) percentile · 7-count · total production by resource · robber moves and target hexes · steal matrix (who robbed whom) · trade counts by type (player, 4:1, 3:1, 2:1) · offers made/accepted/rejected · development cards bought and played by type · VP progression curve per player · Longest Route and Largest Army holders over time and number of transfers · discards forced by 7s.
+
+**Per player, within a game**
+Expected vs actual production with the §10.2 decomposition · income by source (production, trade, Invention, Monopoly, steals) · outflow by sink (builds, trades, discards, robbed, Monopoly losses) · resources spent per VP earned · average and peak hand size · cards lost to discards · opening placement quality (pip count, resource diversity, port access) · trade profile (proposal rate, acceptance rate as proposer and as accepter, net resource balance per counterparty) · robber exposure (times targeted, cards lost) · think time by decision type.
+
+**Per player, across games** *(requires H-6 identity)*
+Games played, win rate, average finishing VP · win rate segmented by seat position, player count, setup variant, and rules version · opening preferences · build-order tendency (city-first vs expansion vs development cards) · trade behaviour and generosity · **luck-adjusted performance** (see §10.4) · rating and rating trajectory (§10.5).
+
+**Corpus and balance**
+Seat/turn-order win rate — the first-player advantage question · board layout imbalance · Fixed vs Variable setup outcomes · effect of the red-number option (R-3.12) · effect of trade mode · human vs bot and bot-version comparisons · the §10.1(b) RNG audit.
+
+### 10.4 Luck-adjusted performance
+
+Rating (§10.5) measures results; results in Catan carry a large chance component. The complementary metric: **VP earned relative to what the player's production entitled them to.**
+
+Concretely — regress final VP on total production (or on the §10.2 z-scores) across the corpus, and report each player's **residual**. A player who consistently finishes above the curve converted resources better than average; one below did not. This is the single most useful "were you good or lucky" number, and it is only computable because §10.2 gives an exact expectation rather than an estimate.
+
+### 10.5 Player rating
+
+**"Halo ranking algorithm" is TrueSkill** — Microsoft Research, developed for Xbox Live and first deployed on Halo 2. It is a good instinct for this problem, for a specific reason: **Elo is fundamentally a two-player system**, and Catan is a 3–4 player free-for-all. Elo extensions to multiplayer are pairwise-decomposition hacks. TrueSkill models N-player outcomes natively and maintains a Gaussian belief `(μ, σ)` per player rather than a point estimate.
+
+**Recommendation: a TrueSkill-family model, implemented via the Weng–Lin / Plackett–Luce approach (OpenSkill) rather than TrueSkill itself.** Comparable behaviour and accuracy, actively maintained open implementations, and it sidesteps the patent questions around TrueSkill proper. *Worth a legal check before committing either way — that is a flag, not advice.* TrueSkill 2 (2018) adds margin and experience effects but has no public reference implementation.
+
+Design points specific to Catan:
+
+1. **Use the full finishing order, not just the winner.** Final VP totals rank all 3–4 players, so every game yields a complete ranking rather than one bit. Plackett–Luce consumes this natively, and it roughly triples the information per game — which matters given how slowly high-variance games converge.
+2. **Display a conservative rating**, `μ − 3σ`, so new players aren't shown an inflated number before their uncertainty collapses.
+3. **Bots share the rating pool.** This is the baselining answer: a pinned heuristic bot with tight σ after thousands of games becomes an **absolute yardstick**. "Trained agent v4 at μ=32 vs heuristic at μ=25" is directly meaningful, and human ratings become comparable to bot ratings on one scale.
+4. **Separate rating pools per major configuration.** Trade mode in particular changes the game enough that ratings across modes are not comparable. Rules version likewise (§7.4's aggregation hazard).
+5. **Control for seat position.** First-player advantage is real in Catan. At minimum randomise seating and report per-seat win rates; better, include seat as a covariate so the rating isn't partly a measure of seat luck.
+6. **Exclude substituted games** (P-2) from rated updates — neither the departed human nor the bot that finished for them played a whole game.
+7. **Guests rate provisionally**, and the rating carries across on claim (P-1) via the identity alias in §8.2.
+8. **Expect slow convergence.** Catan's variance means σ shrinks slowly; show it rather than hiding it, and resist ranking players publicly before σ is small.
+
+### 10.6 Statistical pitfalls to design around
+
+1. **Multiple comparisons** on per-game dice tests — §10.1.
+2. **Truncation bias.** Games end when someone reaches 10 VP, so "average VP at turn 25" includes only games that lasted 25 turns, biasing toward slow games. Report n per turn explicitly, or use survival-analysis framing.
+3. **Players within a game are not independent.** One player's gain is literally another's loss; treating player-games as i.i.d. samples will understate variance in any aggregate.
+4. **Configuration heterogeneity.** `rules_version`, trade mode, setup variant, and the R-3.12 option all change gameplay — mandatory filter columns, per §7.4.
+5. **Bot games can swamp human data.** Self-play corpora are orders of magnitude larger; never pool them with human games without explicit segmentation.
+6. **Survivor bias in player stats.** Players who quit early are underrepresented in long-run aggregates.
+
+---
+
+## 11. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
 
 These exist only as artwork and are **not** transcribed in this document, per the current scoping decision. Someone with the physical components or a high-resolution scan needs to fill them in:
 
@@ -704,9 +817,9 @@ A-3 and A-4 are needed for *any* implementation; A-1 and A-2 only gate the Fixed
 
 ---
 
-## 11. Resolved rulings (edge cases)
+## 12. Resolved rulings (edge cases)
 
-The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§13](#13-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
+The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§14](#14-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
 
 | # | Question | Official ruling | Source |
 |---|---|---|---|
@@ -731,7 +844,7 @@ The CN3081 rulebook leaves the following open. Each is now resolved against the 
 | 19 | Rebuild on an intersection freed by a city upgrade? | Yes, the returned settlement is reusable; buildings may never be *moved*, though. | FAQ |
 | 20 | Coastal intersections without a port? | Legal building spots. Any point where three hexes meet is an intersection. | FAQ |
 
-### 11.1 Residual unknowns
+### 12.1 Residual unknowns
 
 Questions not settled by any official source. All six have now been **decided for this project** — these are house rulings, not CATAN rules, and are marked `HOUSE` where they appear in the rule tables.
 
@@ -757,7 +870,7 @@ Questions not settled by any official source. All six have now been **decided fo
 3. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
 4. **The four inferred trade rules** — R-7.13, R-7.14, R-7.15, R-7.10 — rest on reading rather than source text. R-7.15 (no trading before the dice roll) is the least certain, since a development card *may* legally be played pre-roll.
 
-### 11.2 Edition drift when consulting official sources
+### 12.2 Edition drift when consulting official sources
 
 The FAQ and Almanac are written for the 5th Edition and use older terms. Translation table, to avoid mis-citing them:
 
@@ -782,7 +895,7 @@ Two of these are **rule changes, not just renames**, and the FAQ cannot be used 
 
 The 5th Edition also adds a Variable-Setup constraint the 6th Edition rulebook does not state: **red numbers (6 and 8) must not be adjacent** in a fully random layout. Decide whether to adopt it — it materially affects generated-board quality and is a common expectation.
 
-### 11.3 Trade rules — completeness audit
+### 12.3 Trade rules — completeness audit
 
 Trade is the least completely specified area of the rulebook. Status of every trade question identified:
 
@@ -813,12 +926,12 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 ---
 
-## 12. Next steps
+## 13. Next steps
 
 **Unblock (no dependencies, needed by everything)**
 
 1. Transcribe artwork assets **A-3 and A-4** (§10) — port layout and disc letters gate every mode. A-1/A-2 gate Fixed Setup only.
-2. Close the four verification tasks in §11.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
+2. Close the four verification tasks in §12.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
 
 **Engine**
 
@@ -846,11 +959,18 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 15. Forced-move auto-play in the engine (§9.4) — it cuts LLM call volume and RL rollout cost simultaneously.
 16. LLM player behind the B-3 flag, with pinned model version and spend caps; measure real cost per game before considering wider access.
 
-**Decision register:** six rules decisions (§11.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1). Nothing blocks starting the engine except the A-3/A-4 artwork data.
+**Analytics**
+
+17. Expected-production engine (§10.2) — the exact mean/variance computation and the four-way decomposition. It underpins per-game luck reporting *and* the luck-adjusted metric in §10.4, so build it once, in the replay layer.
+18. Dice reporting as an **empirical percentile**, not a per-game p-value (§10.1a), with the pooled RNG audit (§10.1b) as a separate scheduled job.
+19. Ratify the four open rating choices in §10.5, then implement rating as a post-game batch job over completed, non-substituted games.
+20. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters, explicit per-turn n, no i.i.d. pooling of player-games.
+
+**Decision register:** six rules decisions (§12.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1). Nothing blocks starting the engine except the A-3/A-4 artwork data.
 
 ---
 
-## 13. Sources
+## 14. Sources
 
 1. *CATAN — The Game* rulebook, CN3081, v6.250401, 6th Edition, © 2025 CATAN GmbH / CATAN Studio — the primary source, supplied as PDF.
 2. [Official CATAN base-game FAQ](https://www.catan.com/faq/basegame) — used for all `FAQ`-marked rulings.
