@@ -1,34 +1,35 @@
-# CATAN — Rules & Materials Scoping Document
+# Carranta — Rules & Materials Scoping Document
 
-**Source (primary):** *CATAN — The Game* rulebook, CN3081, v6.250401 (6th Edition), © 2025 CATAN GmbH / CATAN Studio. 12 pages.
-**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§14](#14-sources).
-**Status:** Draft 7 — rules, engine architecture, history/data model, platform scope, bot strategy, and analytics/rating design recorded. 29 decisions registered.
-**Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), heuristic and LLM opponents (§9), and a statistics and rating layer (§10). This document is the reference for the state schema, action model, rules validation, data model, product scope, and analytics methods.
+**Status:** Draft 8 — rules, engine architecture, history/data model, platform scope, bot strategy, and analytics/rating design recorded. 29 decisions registered.
+**Target:** **Digital implementation** of Carranta: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), heuristic and LLM opponents (§9), and a statistics and rating layer (§10). This document is the reference for the state schema, action model, rules validation, data model, product scope, and analytics methods.
+
+**What Carranta is**
+
+A hex-tile resource-trading and settlement-building game for 3–4 players — an original implementation of a well-established board game genre. Mechanics and systems are not protectable by copyright; specific rulebook wording, artwork, names, and trademarks are. This document deliberately contains none of the latter: the rule set below is Carranta's own specification, written in its own words, and no element name, board layout, or text is carried over from any published product. *This is a statement of intent and of how the document was written, not a legal opinion — worth a lawyer's review before publication.*
 
 **Scope boundary**
 
-- **In scope:** base game, **3–4 players**, both setup variants (Fixed and Variable).
-- **Out of scope:** the 5–6 player extension (and its Special Building Phase), Seafarers, Cities & Knights, Traders & Barbarians, and all scenarios/promos. The state model should not hard-code a player count of 4, but no expansion mechanics are specified here.
+- **In scope:** the core game, **3–4 players**, both setup modes (Beginner and Random).
+- **Out of scope:** larger player counts, team play, seafaring or campaign variants, and any expansion mechanics. The state model should not hard-code a player count of 4, but no expansion is specified here.
 
 **Conventions used here**
 
 - Rules are numbered `R-x.y` so they can be referenced from tickets, tests, and code.
-- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§12](#12-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
-- Facts read from **diagrams/artwork** rather than rules text are marked *(image-derived)*.
+- Where a rule embodies a deliberate design choice rather than an obvious consequence of the system, it cites the decision that settled it (`D-n`, §12.1).
+- Content marked *(to author)* is a design asset that does not exist yet — see §11.
 
 ---
 
 ## 1. Game parameters
 
-| Parameter | Value | Source |
-|---|---|---|
-| Players | 3–4 (in a 3-player game the white pieces are not used) | p.5 |
-| Win condition | First player to reach 10 VPs **on their own turn** | p.2, p.10 |
-| Turn order | Clockwise, starting with the first player | p.6 |
-| Turn structure | Production phase → Action phase | p.6 |
-| Setup variants | Fixed Setup (recommended for first game) / Variable Setup | p.4, p.11 |
-| Board topology | 19 hexes, 54 intersections, 72 edges | derived |
-| Designer | Klaus Teuber (1952–2023); ongoing design Benjamin Teuber | p.12 |
+| Parameter | Value |
+|---|---|
+| Players | 3–4 (in a 3-player game the white pieces are not used) |
+| Win condition | First player to reach 10 VPs **on their own turn** |
+| Turn order | Clockwise, starting with the first player |
+| Turn structure | Production phase → Action phase |
+| Setup modes | Beginner Setup (prescribed layout) / Random Setup |
+| Board topology | 19 hexes, 54 intersections, 72 edges |
 
 ---
 
@@ -36,102 +37,102 @@
 
 ### 2.1 Objective (R-1)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-1.1 | The first player to reach 10 victory points (VPs) on their turn wins. | p.2 |
-| R-1.2 | VPs are earned by building. Resources needed for building are collected and traded for. | p.2 |
-| R-1.3 | VP sources: settlement = 1 VP, city = 2 VPs, Longest Route tile = 2 VPs, Largest Army tile = 2 VPs, each Victory Point development card = 1 VP, road = 0 VP. | p.8, p.9, p.3 |
+| ID | Rule |
+|---|---|
+| R-1.1 | The first player to reach 10 victory points (VPs) on their turn wins. |
+| R-1.2 | VPs are earned by building. Resources needed for building are collected and traded for. |
+| R-1.3 | VP sources: settlement = 1 VP, city = 2 VPs, Longest Road tile = 2 VPs, Largest Militia tile = 2 VPs, each Victory Point development card = 1 VP, road = 0 VP. |
 
-### 2.2 Setup — Fixed Setup (R-2)
+### 2.2 Setup — Beginner Setup (R-2)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-2.1 | **Assemble the frame.** Match the numbers at the puzzle-piece ends of the 6 sea frame pieces to assemble the coast of Catan. | p.4 |
-| R-2.2 | **Place hexes and number discs** inside the frame exactly as shown in the setup diagram (fixed, prescribed layout). | p.4 |
-| R-2.3 | **Create the supply.** Sort resource cards by type into five **faceup** stacks in the card trays. Shuffle the development cards into one **facedown** stack in the remaining card tray slot. Place the Longest Route and Largest Army tiles near the board. | p.4 |
-| R-2.4 | **Place the robber** on the desert hex. | p.5 |
-| R-2.5 | Each player selects a color and takes that color's roads and buildings (settlements + cities) plus a player aid. In a 3-player game the white pieces are not used. | p.5 |
-| R-2.6 | Place 2 starting settlements and 2 roads per player, at the prescribed positions shown in the diagram. | p.5 |
-| R-2.7 | **Starting resources.** Each player takes from the supply the resource cards matching the hexes adjacent to their **second** settlement (highlighted in the diagram). These cards are kept **hidden in hand**. | p.5 |
-| R-2.8 | **First player.** Each player rolls the dice; highest roll is the first player. | p.5 |
+| ID | Rule |
+|---|---|
+| R-2.1 | **Assemble the frame.** Match the numbers at the puzzle-piece ends of the 6 sea frame pieces to assemble the coast of Carranta. |
+| R-2.2 | **Place hexes and number discs** inside the frame exactly as shown in the setup diagram (fixed, prescribed layout). |
+| R-2.3 | **Create the supply.** Sort resource cards by type into five **faceup** stacks in the card trays. Shuffle the development cards into one **facedown** stack in the remaining card tray slot. Place the Longest Road and Largest Militia tiles near the board. |
+| R-2.4 | **Place the robber** on the desert hex. |
+| R-2.5 | Each player selects a color and takes that color's roads and buildings (settlements + cities) plus a player aid. In a 3-player game the white pieces are not used. |
+| R-2.6 | Place 2 starting settlements and 2 roads per player, at the prescribed positions shown in the diagram. |
+| R-2.7 | **Starting resources.** Each player takes from the supply the resource cards matching the hexes adjacent to their **second** settlement (highlighted in the diagram). These cards are kept **hidden in hand**. |
+| R-2.8 | **First player.** Each player rolls the dice; highest roll is the first player. |
 
-### 2.3 Setup — Variable Setup (R-3)
+### 2.3 Setup — Random Setup (R-3)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-3.1 | **Assemble the frame.** Shuffle the sea frame pieces and connect their puzzle-piece ends (random coast, port positions vary). | p.11 |
-| R-3.2 | **Place the hexes** randomly, face up, inside the frame. | p.11 |
-| R-3.3 | **Place the number discs.** Arrange the discs facedown in A-B-C (alphabetical) order. Starting at any corner of the board, place them on the hexes counterclockwise, **skipping the desert**. Then flip them so the number side is faceup. | p.11 |
-| R-3.4 | **Place the robber** on the desert hex. | p.11 |
-| R-3.5 | **Create the supply** — identical to R-2.3. | p.11 |
-| R-3.6 | **First player.** Each player rolls the dice; highest roll is first player. Then each player selects a color and takes their roads, buildings, and a player aid. | p.12 |
-| R-3.7 | **Placement round 1.** The first player places 1 settlement on an empty intersection of their choice, then 1 road on an empty edge adjacent to that settlement. Continue **clockwise** (to the left) until every player has 1 settlement and 1 road. | p.12 |
-| R-3.8 | **Placement round 2.** Starting with the last player and going in **reverse order**, each player places 1 settlement on an empty intersection of their choice and their second road on an empty adjacent edge. | p.12 |
-| R-3.9 | The Distance Rule applies to all setup settlement placements: stay at least two edges away from all other settlements. | p.12 |
-| R-3.10 | **Starting resources.** Each player takes 1 matching resource card from the supply for each hex adjacent to their **second** settlement. Kept **hidden in hand**. | p.12 |
-| R-3.11 | Setup placement is the **only** time a settlement may be placed without connecting to one of your own roads. | FAQ |
-| R-3.12 | **Red-number adjacency** (6 and 8) on a randomly generated board is controlled by a game option, **enabled by default**: when on, generated boards where two red numbers are adjacent are rejected or repaired. The 5th Edition requires this; the 6th Edition rulebook does not state it. | `HOUSE` D-6 |
+| ID | Rule |
+|---|---|
+| R-3.1 | **Assemble the frame.** Shuffle the sea frame pieces and connect their puzzle-piece ends (random coast, port positions vary). |
+| R-3.2 | **Place the hexes** randomly, face up, inside the frame. |
+| R-3.3 | **Place the number discs.** Arrange the discs facedown in A-B-C (alphabetical) order. Starting at any corner of the board, place them on the hexes counterclockwise, **skipping the desert**. Then flip them so the number side is faceup. |
+| R-3.4 | **Place the robber** on the desert hex. |
+| R-3.5 | **Create the supply** — identical to R-2.3. |
+| R-3.6 | **First player.** Each player rolls the dice; highest roll is first player. Then each player selects a color and takes their roads, buildings, and a player aid. |
+| R-3.7 | **Placement round 1.** The first player places 1 settlement on an empty intersection of their choice, then 1 road on an empty edge adjacent to that settlement. Continue **clockwise** (to the left) until every player has 1 settlement and 1 road. |
+| R-3.8 | **Placement round 2.** Starting with the last player and going in **reverse order**, each player places 1 settlement on an empty intersection of their choice and their second road on an empty adjacent edge. |
+| R-3.9 | The Distance Rule applies to all setup settlement placements: stay at least two edges away from all other settlements. |
+| R-3.10 | **Starting resources.** Each player takes 1 matching resource card from the supply for each hex adjacent to their **second** settlement. Kept **hidden in hand**. |
+| R-3.11 | Setup placement is the **only** time a settlement may be placed without connecting to one of your own roads. |
+| R-3.12 | **Red-number adjacency** (6 and 8) on a randomly generated board is controlled by a game option, **enabled by default**: when on, generated boards where two red numbers are adjacent are rejected or repaired. Without it, a random layout can concentrate the two highest-probability numbers on adjacent hexes. |
 
 ### 2.4 Turn structure (R-4)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-4.1 | Play proceeds in turns, starting with the first player, clockwise around the table. | p.6 |
-| R-4.2 | A turn consists of exactly two phases in order: 1. Production phase, 2. Action phase. | p.6 |
-| R-4.3 | After finishing the Action phase, if the player has not won, they pass the dice to the player on their left, who begins their Production phase. | p.6 |
+| ID | Rule |
+|---|---|
+| R-4.1 | Play proceeds in turns, starting with the first player, clockwise around the table. |
+| R-4.2 | A turn consists of exactly two phases in order: 1. Production phase, 2. Action phase. |
+| R-4.3 | After finishing the Action phase, if the player has not won, they pass the dice to the player on their left, who begins their Production phase. |
 
 ### 2.5 Production phase (R-5)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-5.1 | **(Optional) Play a development card** before rolling the dice. | p.6 |
-| R-5.2 | **Roll dice.** Roll both dice and add them. The total determines which hexes produce this turn. | p.6 |
-| R-5.3 | **Production.** Every hex whose number disc matches the roll produces. Each player with a **settlement** on a producing hex receives 1 resource card of that hex's type from the supply. | p.6 |
-| R-5.4 | A player with 2 or 3 settlements on the same producing hex receives 1 card per settlement. | p.6 |
-| R-5.5 | A player receives **2** resource cards for each of their **cities** on a producing hex. | p.6 |
-| R-5.6 | **Supply shortage.** If there are not enough cards of a produced resource in the supply to satisfy everyone's production, **no one** receives any of that resource. Exception: if only **one** player is affected, that player receives as many of those cards as remain in the supply. | p.6 |
-| R-5.7 | Terrain → resource mapping: forest → wood, hills → brick, pasture → wool, mountains → ore, fields → wheat, desert → nothing. | p.6 |
-| R-5.8 | A hex occupied by the robber does **not** produce resources when its number is rolled. Other hexes of the same type — including ones bearing the same number — still produce normally. | p.6, FAQ |
+| ID | Rule |
+|---|---|
+| R-5.1 | **(Optional) Play a development card** before rolling the dice. |
+| R-5.2 | **Roll dice.** Roll both dice and add them. The total determines which hexes produce this turn. |
+| R-5.3 | **Production.** Every hex whose number disc matches the roll produces. Each player with a **settlement** on a producing hex receives 1 resource card of that hex's type from the supply. |
+| R-5.4 | A player with 2 or 3 settlements on the same producing hex receives 1 card per settlement. |
+| R-5.5 | A player receives **2** resource cards for each of their **cities** on a producing hex. |
+| R-5.6 | **Supply shortage.** If there are not enough cards of a produced resource in the supply to satisfy everyone's production, **no one** receives any of that resource. Exception: if only **one** player is affected, that player receives as many of those cards as remain in the supply. |
+| R-5.7 | Terrain → resource mapping: forest → wood, hills → brick, pasture → wool, mountains → ore, fields → wheat, desert → nothing. |
+| R-5.8 | A hex occupied by the robber does **not** produce resources when its number is rolled. Other hexes of the same type — including ones bearing the same number — still produce normally. |
 
 ### 2.6 Rolling a 7 (R-6)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-6.1 | On a roll of 7, **no hex produces** any resources. | p.6 |
-| R-6.2 | **Discard.** Each player (all players, not just the active one) holding **more than 7** resource cards must choose half of them, rounded down, and return them to the supply. *(Example: 9 cards in hand → discard 4.)* | p.6 |
-| R-6.2a | Discards resolve **simultaneously** — all affected players choose at once, and play continues when the last confirms. | `HOUSE` D-2 |
-| R-6.3 | **Activate the robber.** The active player **must** move the robber to a **different** hex — leaving it in place is not a legal option. Any other land hex is a legal destination, including the desert. | p.6, FAQ, ALM |
-| R-6.4 | The active player then steals 1 **random** resource card from an **opponent** who has a building on the robber's new hex. If several opponents have buildings there, the active player chooses which one to rob. The victim holds their cards facedown; the card is taken at random, unseen. | p.6, ALM |
-| R-6.5 | Development cards are never stolen by the robber, and do not count toward the discard threshold in R-6.2. | p.9 |
-| R-6.6 | No trading is allowed between the dice roll and the completion of the discard + robber resolution. The active player continues their turn normally afterwards. | FAQ |
+| ID | Rule |
+|---|---|
+| R-6.1 | On a roll of 7, **no hex produces** any resources. |
+| R-6.2 | **Discard.** Each player (all players, not just the active one) holding **more than 7** resource cards must choose half of them, rounded down, and return them to the supply. *(Example: 9 cards in hand → discard 4.)* |
+| R-6.2a | Discards resolve **simultaneously** — all affected players choose at once, and play continues when the last confirms. |
+| R-6.3 | **Activate the robber.** The active player **must** move the robber to a **different** hex — leaving it in place is not a legal option. Any other land hex is a legal destination, including the desert. |
+| R-6.4 | The active player then steals 1 **random** resource card from an **opponent** who has a building on the robber's new hex. If several opponents have buildings there, the active player chooses which one to rob. The victim holds their cards facedown; the card is taken at random, unseen. |
+| R-6.5 | Development cards are never stolen by the robber, and do not count toward the discard threshold in R-6.2. |
+| R-6.6 | No trading is allowed between the dice roll and the completion of the discard + robber resolution. The active player continues their turn normally afterwards. |
 
 ### 2.7 Action phase — Trade (R-7)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-7.1 | Actions may be taken as often as desired and in any order, as long as the player has the resources. | p.7 |
-| R-7.2 | The active player may trade freely with other players and with the supply. | p.7 |
-| R-7.3 | During a player's turn, other players may only trade **with the active player** — not with each other and not with the supply. Triangular (three-way) trades are forbidden. | p.7, FAQ |
-| R-7.4 | **Player trade.** The active player announces which resource(s) they want and which they offer. Other players may accept, counteroffer, or make their own proposals. | p.7 |
-| R-7.5 | **No gifting.** Cards may not be given away in any form. This includes trading matching resource types (e.g., 3 ore for 1 ore is not allowed). A trade must involve giving *and* taking resources — nothing may be traded for nothing, for a service, or for a promise (no credit or deferred trades). | p.7, FAQ |
-| R-7.6 | **General supply trade (4:1).** Put 4 identical resource cards into the supply and take 1 card of a **different** resource. | p.7 |
-| R-7.7 | **3:1 port trade.** With a building on a 3:1 port, put 3 identical resource cards into the supply and take 1 card of a **different** resource. | p.7 |
-| R-7.8 | **2:1 port trade.** With a building on a 2:1 port, put 2 cards of the resource shown on that port into the supply and take 1 card of a **different** resource. | p.7 |
-| R-7.9 | Port access requires the player's own building (settlement or city) on that port's intersection. A player may never use an opponent's port. | p.7, FAQ |
-| R-7.10 | Development cards may not be traded or given away. Bonus tiles are likewise never transferable by trade — they move only by meeting their own conditions (R-10). | p.9, *inferred* |
-| R-7.11 | Trades must be public: no secret trades, and no player may be required to reveal their hand. | FAQ |
-| R-7.12 | The robber never blocks trading, including port trades. | FAQ |
-| R-7.13 | **Player trades have no ratio restriction.** Any number of cards and any mix of types may be exchanged for any other, subject only to R-7.5. There is no requirement that the counts match or that either side be a single type. | *inferred from p.7 "resource(s)"* |
-| R-7.14 | No player is ever obliged to trade or to accept an offer, and the active player is not bound by an announced offer until the exchange is made. | *inferred* |
-| R-7.15 | Trading is confined to the Action phase. No trade may occur before the dice roll, nor during discard/robber resolution (R-6.6). | p.7, *inferred* |
-| R-7.16 | Maritime trades (4:1, 3:1, 2:1) may be performed as often as the player can pay for them, and are always available regardless of ports — only the improved ratios require a port. | p.7, ALM |
-| R-7.17 | **Empty supply stack.** A maritime trade is illegal unless the target stack can supply the full amount taken. An Invention card takes as many of the requested cards as remain (possibly 1 or 0). | `HOUSE` D-3 |
-| R-7.18 | **No type overlap.** No resource type may appear on both the give and take side of a single trade — a generalization of R-7.5 covering multi-type offers. | `HOUSE` D-4 |
-| R-7.19 | **Open-market offers.** Multiple trade offers may be live simultaneously, and any player may accept any live offer during the active player's turn. Every offer must still have the active player as one party (R-7.3). Acceptances resolve atomically, first-come, re-validating both parties' holdings at execution; offers invalidated by an intervening state change are rejected with a reason, never executed against stale state. | `HOUSE` D-5 |
+| ID | Rule |
+|---|---|
+| R-7.1 | Actions may be taken as often as desired and in any order, as long as the player has the resources. |
+| R-7.2 | The active player may trade freely with other players and with the supply. |
+| R-7.3 | During a player's turn, other players may only trade **with the active player** — not with each other and not with the supply. Triangular (three-way) trades are forbidden. |
+| R-7.4 | **Player trade.** The active player announces which resource(s) they want and which they offer. Other players may accept, counteroffer, or make their own proposals. |
+| R-7.5 | **No gifting.** Cards may not be given away in any form. This includes trading matching resource types (e.g., 3 ore for 1 ore is not allowed). A trade must involve giving *and* taking resources — nothing may be traded for nothing, for a service, or for a promise (no credit or deferred trades). |
+| R-7.6 | **General supply trade (4:1).** Put 4 identical resource cards into the supply and take 1 card of a **different** resource. |
+| R-7.7 | **3:1 port trade.** With a building on a 3:1 port, put 3 identical resource cards into the supply and take 1 card of a **different** resource. |
+| R-7.8 | **2:1 port trade.** With a building on a 2:1 port, put 2 cards of the resource shown on that port into the supply and take 1 card of a **different** resource. |
+| R-7.9 | Port access requires the player's own building (settlement or city) on that port's intersection. A player may never use an opponent's port. |
+| R-7.10 | Development cards may not be traded or given away. Bonus tiles are likewise never transferable by trade — they move only by meeting their own conditions (R-10). |
+| R-7.11 | Trades must be public: no secret trades, and no player may be required to reveal their hand. |
+| R-7.12 | The robber never blocks trading, including port trades. |
+| R-7.13 | **Player trades have no ratio restriction.** Any number of cards and any mix of types may be exchanged for any other, subject only to R-7.5. There is no requirement that the counts match or that either side be a single type. |
+| R-7.14 | No player is ever obliged to trade or to accept an offer, and the active player is not bound by an announced offer until the exchange is made. |
+| R-7.15 | Trading is confined to the Action phase. No trade may occur before the dice roll, nor during discard/robber resolution (R-6.6). |
+| R-7.16 | Maritime trades (4:1, 3:1, 2:1) may be performed as often as the player can pay for them, and are always available regardless of ports — only the improved ratios require a port. |
+| R-7.17 | **Empty supply stack.** A maritime trade is illegal unless the target stack can supply the full amount taken. An Invention card takes as many of the requested cards as remain (possibly 1 or 0). |
+| R-7.18 | **No type overlap.** No resource type may appear on both the give and take side of a single trade — a generalization of R-7.5 covering multi-type offers. |
+| R-7.19 | **Open-market offers.** Multiple trade offers may be live simultaneously, and any player may accept any live offer during the active player's turn. Every offer must still have the active player as one party (R-7.3). Acceptances resolve atomically, first-come, re-validating both parties' holdings at execution; offers invalidated by an intervening state change are rejected with a reason, never executed against stale state. |
 
 ### 2.8 Action phase — Build (R-8)
 
-Building costs (player aid, *image-derived* iconography):
+Building costs — a working set, not yet balance-tested (§12.1):
 
 | Structure | Cost | VP |
 |---|---|---|
@@ -140,66 +141,66 @@ Building costs (player aid, *image-derived* iconography):
 | City | 2 wheat + 3 ore | 2 |
 | Development card | 1 wool + 1 wheat + 1 ore | ? (0 or 1) |
 
-| ID | Rule | Source |
-|---|---|---|
-| R-8.1 | To build, return the required resource cards from hand to the supply. | p.8 |
-| R-8.2 | **Roads** are placed on empty hex edges — one road per edge. A new road must connect to one of the player's own existing roads, settlements, or cities. Coastal edges are legal. | p.8, FAQ, ALM |
-| R-8.3 | A road may not be built starting on the far side of an **opponent's building** — an opponent's settlement or city blocks continuation through that intersection. | p.8, FAQ |
-| R-8.4 | **Settlements** are placed on empty intersections, must satisfy the Distance Rule, and must connect to at least one of the player's own roads (after setup). Any point where three hexes meet is a legal intersection, including coastal points without a port. | p.8, FAQ |
-| R-8.5 | **Distance Rule.** When placing a settlement, stay at least two edges away from all other buildings (own and opponents'). Equivalently: every building must remain surrounded by three unoccupied intersections, for the whole game. | p.8, FAQ |
-| R-8.6 | A player has 5 settlement pieces; to build further settlements, one must first be upgraded to a city. Piece pools are hard caps: 5 settlements, 4 cities, 15 roads. | p.8, FAQ |
-| R-8.7 | **Cities always replace settlements.** Remove one of your settlements from the board, return it to your player area, and place the city on that intersection. A city may never be built on an empty intersection. | p.9, FAQ |
-| R-8.8 | A player has 4 cities and may not build more. | p.9 |
-| R-8.9 | **Development cards** are bought by drawing the top card of the facedown deck. A player may buy as many per turn as they can pay for. | p.9, FAQ |
-| R-8.10 | If the development card deck runs out, no more development cards may be built. Development cards never return to the supply. | p.9 |
-| R-8.11 | Buildings may never be relocated. A settlement removed by a city upgrade returns to the player's pool and may be rebuilt later at a legal intersection. | FAQ |
-| R-8.12 | The robber does not block building. | FAQ |
-| R-8.13 | Intersections cannot be reserved — a player may not claim a spot without building on it. | FAQ |
+| ID | Rule |
+|---|---|
+| R-8.1 | To build, return the required resource cards from hand to the supply. |
+| R-8.2 | **Roads** are placed on empty hex edges — one road per edge. A new road must connect to one of the player's own existing roads, settlements, or cities. Coastal edges are legal. |
+| R-8.3 | A road may not be built starting on the far side of an **opponent's building** — an opponent's settlement or city blocks continuation through that intersection. |
+| R-8.4 | **Settlements** are placed on empty intersections, must satisfy the Distance Rule, and must connect to at least one of the player's own roads (after setup). Any point where three hexes meet is a legal intersection, including coastal points without a port. |
+| R-8.5 | **Distance Rule.** When placing a settlement, stay at least two edges away from all other buildings (own and opponents'). Equivalently: every building must remain surrounded by three unoccupied intersections, for the whole game. |
+| R-8.6 | A player has 5 settlement pieces; to build further settlements, one must first be upgraded to a city. Piece pools are hard caps: 5 settlements, 4 cities, 15 roads. |
+| R-8.7 | **Cities always replace settlements.** Remove one of your settlements from the board, return it to your player area, and place the city on that intersection. A city may never be built on an empty intersection. |
+| R-8.8 | A player has 4 cities and may not build more. |
+| R-8.9 | **Development cards** are bought by drawing the top card of the facedown deck. A player may buy as many per turn as they can pay for. |
+| R-8.10 | If the development card deck runs out, no more development cards may be built. Development cards never return to the supply. |
+| R-8.11 | Buildings may never be relocated. A settlement removed by a city upgrade returns to the player's pool and may be rebuilt later at a legal intersection. |
+| R-8.12 | The robber does not block building. |
+| R-8.13 | Intersections cannot be reserved — a player may not claim a spot without building on it. |
 
 ### 2.9 Development cards (R-9)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-9.1 | Development cards stay **hidden** until played. | p.9 |
-| R-9.2 | Development cards do **not** count toward hand size when a 7 is rolled, and cannot be stolen by the robber. | p.9 |
-| R-9.3 | A player may play **at most 1** development card per turn, placing it **face up** in their player area. | p.9 |
-| R-9.4 | A development card may not be played on the turn it was bought. | p.9 |
-| R-9.5 | A development card may be played either **before rolling the dice** or at any time during the Action phase — including in the middle of trading. Playing one before the roll consumes the turn's single card play. | p.6, p.9, FAQ |
-| R-9.6 | Development cards may not be traded or given away, and never go back into the supply. | p.9 |
+| ID | Rule |
+|---|---|
+| R-9.1 | Development cards stay **hidden** until played. |
+| R-9.2 | Development cards do **not** count toward hand size when a 7 is rolled, and cannot be stolen by the robber. |
+| R-9.3 | A player may play **at most 1** development card per turn, placing it **face up** in their player area. |
+| R-9.4 | A development card may not be played on the turn it was bought. |
+| R-9.5 | A development card may be played either **before rolling the dice** or at any time during the Action phase — including in the middle of trading. Playing one before the roll consumes the turn's single card play. |
+| R-9.6 | Development cards may not be traded or given away, and never go back into the supply. |
 
 **Card effects**
 
-| ID | Card | Effect | Source |
-|---|---|---|---|
-| R-9.7 | **Knight** (14×) | Activate the Robber (R-6.3, R-6.4): move the robber to a different hex and steal 1 random resource card from an opponent with a building on that hex. Played Knights remain face up for the rest of the game. | p.9 |
-| R-9.8 | **Invention** (2×) | Take any 2 resource cards from the supply into hand — 2 of the same or 2 different resources. (Called *Year of Plenty* in earlier editions.) | p.9 |
-| R-9.9 | **Monopoly** (2×) | Announce **one** resource type; every other player must give you all their resource cards of that type. Only one type may be named, regardless of how many cards are received. Players are not required to reveal their hands — the rules assume honesty. | p.9, FAQ |
-| R-9.10 | **Road Building** (2×) | Build 2 roads at no cost (no resources spent). Normal road placement rules apply. | p.9 |
-| R-9.10a | — | If fewer than 2 legal road placements exist (blocked board or road pool short), place as many as are legal (1 or 0); the card is still discarded and the turn's development-card allowance is still consumed. | `HOUSE` D-1 |
-| R-9.11 | **Victory Point** (5×) | Worth 1 VP. Must be kept **hidden** in the player area unless revealing them reaches the VP total needed to win; then reveal all VP cards at once, including those built this turn. | p.9, p.2, FAQ |
-| R-9.12 | **VP card exception.** Any number of VP cards may be played, even on the turn they were bought, in order to win — this bypasses R-9.3 and R-9.4. | p.2, p.9 |
+| ID | Card | Effect |
+|---|---|---|
+| R-9.7 | **Militia** (14×) | Activate the Robber (R-6.3, R-6.4): move the robber to a different hex and steal 1 random resource card from an opponent with a building on that hex. Played Militia remain face up for the rest of the game. |
+| R-9.8 | **Invention** (2×) | Draw 2 resource cards of your choosing from the supply into hand. They may be the same type or two different types. |
+| R-9.9 | **Monopoly** (2×) | Name a single resource type. Every opponent surrenders their entire holding of that type to you. Exactly one type may be named per play, however many or few cards that yields. Opponents answer truthfully but are not required to display their hands. |
+| R-9.10 | **Road Building** (2×) | Place 2 roads without paying their cost. All ordinary placement restrictions still apply. |
+| R-9.10a | — | If fewer than 2 legal road placements exist (blocked board or road pool short), place as many as are legal (1 or 0); the card is still discarded and the turn's development-card allowance is still consumed. |
+| R-9.11 | **Victory Point** (5×) | Worth 1 VP. Must be kept **hidden** in the player area unless revealing them reaches the VP total needed to win; then reveal all VP cards at once, including those built this turn. |
+| R-9.12 | **VP card exception.** Any number of VP cards may be played, even on the turn they were bought, in order to win — this bypasses R-9.3 and R-9.4. |
 
 ### 2.10 Bonus tiles (R-10)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-10.1 | **Longest Route** (2 VPs). The first player with **5 continuous roads** in play receives the tile. | p.8 |
-| R-10.2 | If another player has **more** continuous roads in play, they immediately receive the tile. | p.8 |
-| R-10.3 | A route is a continuous path of road segments connecting two intersections, not interrupted by another player's pieces. **Forks do not add length** — only the longest single path counts. Your own settlements and cities do **not** interrupt your route; an opponent's building does. Closed loops are possible and count as their individual segments. | p.8, FAQ, ALM |
-| R-10.4 | A route can be **broken** by an opponent building a settlement on an intersection within it, splitting it into two segments. All normal building rules must be observed to do this. | p.8, FAQ |
-| R-10.5 | If a player's route is broken such that they no longer meet the requirement, the tile returns to the supply and stays there until a **single** player has the longest continuous route of at least 5 roads; that player immediately receives the tile and its 2 VPs. If the current holder still qualifies, they keep it. | p.8, FAQ |
-| R-10.6 | **Ties do not transfer.** A tile passes only to a player with strictly *more* than the current holder; on a tie the tile stays with its current owner. | FAQ |
-| R-10.7 | A broken route may be repaired by building a "bypass" — a detour around the blocking building. | FAQ |
-| R-10.8 | **Largest Army** (2 VPs). The first player with **3 Knight cards in play** receives the tile. If another player has more Knights in play, they immediately receive it. Only *played* (faceup) Knights count; Knights in hand count for nothing. | p.9, FAQ |
+| ID | Rule |
+|---|---|
+| R-10.1 | **Longest Road** (2 VPs). The first player with **5 continuous roads** in play receives the tile. |
+| R-10.2 | If another player has **more** continuous roads in play, they immediately receive the tile. |
+| R-10.3 | A route is a continuous path of road segments connecting two intersections, not interrupted by another player's pieces. **Forks do not add length** — only the longest single path counts. Your own settlements and cities do **not** interrupt your route; an opponent's building does. Closed loops are possible and count as their individual segments. |
+| R-10.4 | A route can be **broken** by an opponent building a settlement on an intersection within it, splitting it into two segments. All normal building rules must be observed to do this. |
+| R-10.5 | If a player's route is broken such that they no longer meet the requirement, the tile returns to the supply and stays there until a **single** player has the longest continuous route of at least 5 roads; that player immediately receives the tile and its 2 VPs. If the current holder still qualifies, they keep it. |
+| R-10.6 | **Ties do not transfer.** A tile passes only to a player with strictly *more* than the current holder; on a tie the tile stays with its current owner. |
+| R-10.7 | A broken route may be repaired by building a "bypass" — a detour around the blocking building. |
+| R-10.8 | **Largest Militia** (2 VPs). The first player with **3 Militia cards in play** receives the tile. If another player has more Militia in play, they immediately receive it. Only *played* (faceup) Militia count; Militia in hand count for nothing. |
 
 ### 2.11 Winning (R-11)
 
-| ID | Rule | Source |
-|---|---|---|
-| R-11.1 | If a player has 10 or more VPs at any point **during their own turn**, the game ends immediately and they win. A player can never win during another player's turn. | p.10, FAQ |
-| R-11.2 | To claim victory, the player turns over any number of Victory Point cards, including ones built that turn, to demonstrate reaching 10 VPs. | p.10 |
-| R-11.3 | VP tally components: settlements (1 each), cities (2 each), Longest Route tile (2), Largest Army tile (2), VP cards (1 each), roads (0), Knights played (0 in themselves). | p.10 |
-| R-11.4 | Victory is immediate and cannot be declined or deferred. If the winning player does not notice, the other players should tell them — a won game cannot be taken back. | FAQ |
+| ID | Rule |
+|---|---|
+| R-11.1 | If a player has 10 or more VPs at any point **during their own turn**, the game ends immediately and they win. A player can never win during another player's turn. |
+| R-11.2 | To claim victory, the player turns over any number of Victory Point cards, including ones built that turn, to demonstrate reaching 10 VPs. |
+| R-11.3 | VP tally components: settlements (1 each), cities (2 each), Longest Road tile (2), Largest Militia tile (2), VP cards (1 each), roads (0), Militia played (0 in themselves). |
+| R-11.4 | Victory is immediate and cannot be declined or deferred. If the winning player does not notice, the other players should tell them — a won game cannot be taken back. |
 
 ---
 
@@ -210,9 +211,9 @@ Building costs (player aid, *image-derived* iconography):
 | # | Item | Qty | Detail |
 |---|---|---|---|
 | M-01 | Sea frame pieces | 6 | Puzzle-piece ends with matching numbers; carry the ports |
-| M-02 | Ports (printed on frame) | 9 *(image-derived; corroborated by the 5th Ed. 9 harbour pieces)* | 4× 3:1 generic; 5× 2:1 (one each: brick, wood, wool, wheat, ore) |
+| M-02 | Ports (printed on frame) | 9 *(to author — ART-1)* | 4× 3:1 generic; 5× 2:1 (one each: brick, wood, wool, wheat, ore) — a working default, not a balanced design |
 | M-03 | Terrain hexes | 19 | 4× forest, 4× pasture, 4× fields, 3× hills, 3× mountains, 1× desert |
-| M-04 | Number discs | 18 | 1×2, 2×3, 2×4, 2×5, 2×6, 2×8, 2×9, 2×10, 2×11, 1×12. 6 and 8 printed in red. Backs lettered A–R for the variable setup |
+| M-04 | Number discs | 18 | 1×2, 2×3, 2×4, 2×5, 2×6, 2×8, 2×9, 2×10, 2×11, 1×12. 6 and 8 printed in red. Backs lettered A–R for the random setup |
 | M-05 | Robber | 1 | Grey/neutral figure |
 
 ### 3.2 Cards
@@ -220,7 +221,7 @@ Building costs (player aid, *image-derived* iconography):
 | # | Item | Qty | Detail |
 |---|---|---|---|
 | M-06 | Resource cards | 95 | 19× each of brick, wood, wool, wheat, ore. Shared card back |
-| M-07 | Development cards | 25 | 14× Knight, 5× Victory Point, 2× Monopoly, 2× Road Building, 2× Invention. Shared card back |
+| M-07 | Development cards | 25 | 14× Militia, 5× Victory Point, 2× Monopoly, 2× Road Building, 2× Invention. Shared card back |
 
 ### 3.3 Player pieces (4 colors: blue, red, white, orange)
 
@@ -234,12 +235,12 @@ Building costs (player aid, *image-derived* iconography):
 
 | # | Item | Qty | Detail |
 |---|---|---|---|
-| M-11 | Longest Route tile | 1 | Bonus VP tile, 2 VPs |
-| M-12 | Largest Army tile | 1 | Bonus VP tile, 2 VPs |
+| M-11 | Longest Road tile | 1 | Bonus VP tile, 2 VPs |
+| M-12 | Largest Militia tile | 1 | Bonus VP tile, 2 VPs |
 | M-13 | Dice | 2 | Standard d6 (one red, one yellow) |
 | M-14 | Player aids | 4 | Front: building costs; back: turn overview + development card rules |
 | M-15 | Card trays | 2 | 6 slots total: 5 resource stacks + 1 development deck |
-| M-16 | Rulebook | 1 | Not a play component |
+| M-16 | Rules reference | 1 | Not a play component |
 
 ---
 
@@ -264,16 +265,16 @@ Building costs (player aid, *image-derived* iconography):
 |---|---|---|---|
 | **Sea frame piece** (M-01) | assembled in frame | `PUBLIC` | Static after setup. Arrangement fixed (R-2.1) or randomized (R-3.1) |
 | **Port** (M-02) | on frame | `PUBLIC` | Access = own building on the port intersection; access status is public |
-| **Terrain hex** (M-03) | in frame slot | `PUBLIC` (faceup once placed) | Momentarily `HIDDEN` while being drawn randomly in variable setup (R-3.2) |
-| **Number disc** (M-04) | on a hex / off-board (desert has none) | `HIDDEN` (facedown, letter side up during variable setup) → `PUBLIC` (number faceup) | Variable setup explicitly uses a facedown ordered phase (R-3.3) |
+| **Terrain hex** (M-03) | in frame slot | `PUBLIC` (faceup once placed) | Momentarily `HIDDEN` while being drawn randomly in random setup (R-3.2) |
+| **Number disc** (M-04) | on a hex / off-board (desert has none) | `HIDDEN` (facedown, letter side up during random setup) → `PUBLIC` (number faceup) | Variable setup explicitly uses a facedown ordered phase (R-3.3) |
 | **Robber** (M-05) | on exactly one hex (starts on desert) | `PUBLIC` | Always public; blocks production on its hex (R-5.8) but not building or trade (R-7.12, R-8.12) |
 | **Resource card** (M-06) | supply stack / player hand / in-transit during trade / discarded to supply | supply: `PUBLIC` (faceup stacks, count visible) · hand: `OWNER` + `COUNTABLE` · trade: `TRANSIENT` (revealed to the trade partner and, being a public trade, to the table) · stolen: `TRANSIENT` to the thief only, never revealed to the table | Supply counts are public and may be checked before distribution (R-5.6). Steals are random and unseen (R-6.4). Monopoly forcibly reveals part of every hand for one resource type (R-9.9) |
-| **Development card** (M-07) | facedown deck / player hand (unplayed) / player area (played, faceup) / VP card (held hidden until win) | deck: `HIDDEN` (order unknown to all; remaining count `PUBLIC`) · hand: `OWNER` + `COUNTABLE` · played: `PUBLIC` · VP card: `OWNER` until win, then `PUBLIC` | Never returns to supply (R-9.6). Played Knights stay faceup and are publicly counted for Largest Army (R-10.8) |
+| **Development card** (M-07) | facedown deck / player hand (unplayed) / player area (played, faceup) / VP card (held hidden until win) | deck: `HIDDEN` (order unknown to all; remaining count `PUBLIC`) · hand: `OWNER` + `COUNTABLE` · played: `PUBLIC` · VP card: `OWNER` until win, then `PUBLIC` | Never returns to supply (R-9.6). Played Militia stay faceup and are publicly counted for Largest Militia (R-10.8) |
 | **Settlement** (M-08) | player pool (unbuilt) / on intersection / returned to pool on city upgrade | `PUBLIC` in all states | 5 per player, hard cap (R-8.6) |
 | **City** (M-09) | player pool / on intersection | `PUBLIC` | 4 per player, hard cap (R-8.8); always replaces a settlement (R-8.7) |
 | **Road** (M-10) | player pool / on edge | `PUBLIC` | 15 per player; never removed once placed |
-| **Longest Route tile** (M-11) | unowned near board / held by a player | `PUBLIC` | Returns to the unowned pool when a route breaks and no single player qualifies (R-10.5) |
-| **Largest Army tile** (M-12) | unowned near board / held by a player | `PUBLIC` | Transfers only on strictly more Knights (R-10.6, R-10.8); can never return to the unowned pool once claimed |
+| **Longest Road tile** (M-11) | unowned near board / held by a player | `PUBLIC` | Returns to the unowned pool when a route breaks and no single player qualifies (R-10.5) |
+| **Largest Militia tile** (M-12) | unowned near board / held by a player | `PUBLIC` | Transfers only on strictly more Militia (R-10.6, R-10.8); can never return to the unowned pool once claimed |
 | **Dice** (M-13) | idle / rolled | roll result `PUBLIC` | Also used to determine the first player (R-2.8) |
 | **Player aid** (M-14) | with each player | `PUBLIC` (reference only) | No game state |
 | **Card tray** (M-15) | table | `PUBLIC` | Organizational only |
@@ -284,7 +285,7 @@ Building costs (player aid, *image-derived* iconography):
 |---|---|---|
 | Player VP total | Partly public | Buildings and tiles are `PUBLIC`; hidden VP cards make the true total private until revealed (R-9.11) — track *apparent* and *actual* VP separately |
 | Longest continuous route per player | `PUBLIC` | Computed from public road/building positions, forks excluded, opponent buildings breaking (R-10.3) |
-| Knights played per player | `PUBLIC` | Faceup in player areas |
+| Militia played per player | `PUBLIC` | Faceup in player areas |
 | Resource hand size per player | `PUBLIC` | Required for the 7-discard rule (R-6.2); players must answer honestly |
 | Development-card hand size per player | `PUBLIC` | Excluded from the discard count (R-9.2) |
 | Supply stack counts per resource | `PUBLIC` | Drives the shortage rule (R-5.6) |
@@ -321,10 +322,10 @@ Everything else — board, buildings, roads, robber, played cards, tiles, supply
 | `board.edges[72]` | road + owner | `PUBLIC` |
 | `supply.resources{5}` | remaining count per resource type | `PUBLIC` |
 | `supply.devDeck` | ordered list of remaining development cards | `HIDDEN` (count `PUBLIC`) |
-| `tiles` | holder of Longest Route / Largest Army (or unowned) | `PUBLIC` |
+| `tiles` | holder of Longest Road / Largest Militia (or unowned) | `PUBLIC` |
 | `players[n].hand.resources` | multiset of resource cards | `OWNER`, size `PUBLIC` |
 | `players[n].hand.devCards` | list of unplayed development cards, each with `boughtOnTurn` | `OWNER`, size `PUBLIC` |
-| `players[n].played.knights` | count of faceup Knights | `PUBLIC` |
+| `players[n].played.knights` | count of faceup Militia | `PUBLIC` |
 | `players[n].played.vpCards` | count of VP cards (revealed only on win) | `OWNER` until win |
 | `players[n].pool` | unbuilt settlements / cities / roads | `PUBLIC` |
 | `turn` | active player, phase, dice roll, `devCardPlayedThisTurn` flag, pending sub-states | `PUBLIC` |
@@ -351,7 +352,7 @@ ACTION         → any number of: TRADE / BUILD / BUY_DEV_CARD
 END_TURN → next player's PRE_ROLL      |      GAME_OVER             [R-11.1]
 ```
 
-Playing a Knight in `PRE_ROLL` and then rolling a 7 activates the robber **twice** in one turn — this is correct, not a bug (R-9.7 + R-6.3).
+Playing a Militia in `PRE_ROLL` and then rolling a 7 activates the robber **twice** in one turn — this is correct, not a bug (R-9.7 + R-6.3).
 
 ### 5.4 Action catalogue
 
@@ -382,12 +383,12 @@ Cheap assertions worth running after every state transition:
 4. No two buildings within one edge of each other (Distance Rule holds continuously, R-8.5).
 5. At most one road per edge, at most one building per intersection.
 6. Exactly one robber, always on a land hex.
-7. Each bonus tile is held by at most one player; Largest Army requires ≥3 played Knights and Longest Route requires ≥5 continuous roads, in both cases strictly more than every other player.
+7. Each bonus tile is held by at most one player; Largest Militia requires ≥3 played Militia and Longest Road requires ≥5 continuous roads, in both cases strictly more than every other player.
 8. `devCardPlayedThisTurn` ≤ 1 (excluding VP reveals).
 
 ### 5.6 Authority & randomness
 
-Four randomness sources must be server-side and unforgeable: dice rolls, development deck shuffle, the random steal (R-6.4), and — in the Variable Setup — hex and frame randomization. The steal is the one place where a card moves between private zones without either party choosing it; the victim must not learn what left their hand until they inspect it, and no other player may learn it at all.
+Four randomness sources must be server-side and unforgeable: dice rolls, development deck shuffle, the random steal (R-6.4), and — in the Random Setup — hex and frame randomization. The steal is the one place where a card moves between private zones without either party choosing it; the victim must not learn what left their hand until they inspect it, and no other player may learn it at all.
 
 ### 5.7 Rules that are easy to get wrong
 
@@ -397,7 +398,7 @@ Four randomness sources must be server-side and unforgeable: dice rolls, develop
 - **Forks don't count** toward route length (R-10.3), and your own buildings don't break your route.
 - **Ties never transfer a bonus tile** (R-10.6).
 - **Victory is only checked on the active player's turn** (R-11.1) — losing or gaining a tile during someone else's turn cannot end the game.
-- **Trade is turn-gated** (R-7.3) and must be a genuine two-sided exchange (R-7.5). The trade *protocol* — offer lifecycle, binding, concurrency — has no rulebook basis at all and is a house ruling (R-7.19, open market), with the concurrency consequences in §9.1.
+- **Trade is turn-gated** (R-7.3) and must be a genuine two-sided exchange (R-7.5). The trade *protocol* — offer lifecycle, binding, concurrency — does not follow from the rules at all and is a design decision (R-7.19, open market), with the concurrency consequences in §12.1.
 - **Cities replace settlements** (R-8.7); the freed settlement returns to the pool and is reusable.
 
 ---
@@ -414,14 +415,14 @@ This matters most for the AI-training use case. A single engine step should land
 
 | Crate | Responsibility | Depends on |
 |---|---|---|
-| `catan-core` | State, rules, legal-move generation, action application, event emission. Pure, deterministic, no I/O | nothing |
-| `catan-replay` | Log read/write, replay driver, snapshot & seek, per-seat redaction | core |
-| `catan-py` | PyO3 bindings: batched environments, observation encoding, action masks | core |
-| `catan-server` | HTTP/WS service, matchmaking, persistence | core, replay |
-| `catan-wasm` | Browser bindings for the client | core, replay |
-| `catan-analytics` | Parquet/Arrow export, derived-event materialization | replay |
+| `carranta-core` | State, rules, legal-move generation, action application, event emission. Pure, deterministic, no I/O | nothing |
+| `carranta-replay` | Log read/write, replay driver, snapshot & seek, per-seat redaction | core |
+| `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core |
+| `carranta-server` | HTTP/WS service, matchmaking, persistence | core, replay |
+| `carranta-wasm` | Browser bindings for the client | core, replay |
+| `carranta-analytics` | Parquet/Arrow export, derived-event materialization | replay |
 
-The dependency direction is strictly one-way: everything depends on `catan-core`, and `catan-core` depends on nothing. If the core ever needs a network or database type, the design has gone wrong.
+The dependency direction is strictly one-way: everything depends on `carranta-core`, and `carranta-core` depends on nothing. If the core ever needs a network or database type, the design has gone wrong.
 
 ### 6.3 State representation
 
@@ -436,15 +437,15 @@ Determinism is required for reproducible training, debuggable replays, and the s
 
 - **Split RNG streams** — separate seeded generators for dice, deck shuffle, the random steal (R-6.4), and setup randomization. Holding one fixed while varying another is essential when debugging and when running paired evaluations.
 - **No incidental nondeterminism.** `std::HashMap` randomizes its seed per process; use `BTreeMap` or a fixed hasher anywhere iteration order can reach game state.
-- **Version stamping.** Every game records `engine_version` and `rules_version`. With six `HOUSE` rules and four inferred rules outstanding, the rules *will* change, and old data must remain interpretable.
+- **Version stamping.** Every game records `engine_version` and `rules_version`. With six design decisions and four derived rules outstanding, the rules *will* change, and old data must remain interpretable.
 
 ### 6.5 AI training interface
 
 - **Batched environments.** Crossing the PyO3 boundary once per step costs more than the step itself. Step *N* games per call, EnvPool-style, with observations written directly into caller-provided numpy buffers.
 - **Action masks in Rust.** RL needs a legal-action mask every step; generating it in Python would negate the engine's speed. This is a primary consumer of the bitboard representation.
 - **Per-seat observations** are generated from the §4 visibility model — the same classification that drives replay redaction (§7.3). One implementation, two consumers.
-- **Determinization for imperfect-information search.** Catan is not a perfect-information game, so tree search needs opponents' hidden state resampled consistently with public history. The four items in §4.4 are exactly and completely what must be resampled — that list is the specification.
-- **Trade mode is configurable.** D-5's open market gives an unbounded, combinatorial trade action space *and* lets non-active players act, which breaks the clean turn-based MDP most RL machinery assumes. Published Catan RL work generally disables or heavily restricts trading. The engine therefore exposes trade policy as a dimension — `full` (open market, for human play), `restricted` (a small fixed offer menu), `disabled` — rather than hard-coding R-7.19. **Build this seam now; retrofitting it later means touching every layer.**
+- **Determinization for imperfect-information search.** Carranta is not a perfect-information game, so tree search needs opponents' hidden state resampled consistently with public history. The four items in §4.4 are exactly and completely what must be resampled — that list is the specification.
+- **Trade mode is configurable.** D-5's open market gives an unbounded, combinatorial trade action space *and* lets non-active players act, which breaks the clean turn-based MDP most RL machinery assumes. Published Carranta RL work generally disables or heavily restricts trading. The engine therefore exposes trade policy as a dimension — `full` (open market, for human play), `restricted` (a small fixed offer menu), `disabled` — rather than hard-coding R-7.19. **Build this seam now; retrofitting it later means touching every layer.**
 
 ### 6.6 Performance targets
 
@@ -478,7 +479,7 @@ Every game can be recorded in full: a complete, ordered event log that serves as
 | H-6 | Identity | **Every seat carries a durable ID**, with agents identified by name + version |
 | H-7 | Derived events | **Separate regenerable stream.** The primitive log is canonical; derived events are a materialized view |
 
-**Why H-1 matters most.** Recording resolved randomness rather than just a seed decouples stored games from any single engine build. A seed-only log requires bit-exact determinism *forever* — and with six `HOUSE` rules and four unverified inferences still in play, a rules correction would silently reinterpret every historical game rather than failing loudly. Explicit outcomes make replay a pure fold over data.
+**Why H-1 matters most.** Recording resolved randomness rather than just a seed decouples stored games from any single engine build. A seed-only log requires bit-exact determinism *forever* — and with six design decisions and four unverified derivations still in play, a rules correction would silently reinterpret every historical game rather than failing loudly. Explicit outcomes make replay a pure fold over data.
 
 ### 7.2 Event model
 
@@ -528,7 +529,7 @@ The log is the source of truth; everything below is derived and regenerable (H-7
 
 A sketch for the Parquet layer: `dim_game` (rules_version, engine_version, options, setup variant, board hash), `dim_player` (identity, human/agent, agent version), `fact_game_player` (seat, colour, final VP breakdown, win flag), `fact_events`, `fact_turns`. All regenerated from the canonical logs, never hand-maintained.
 
-**Aggregation hazard:** because `HOUSE` rules and options like R-3.12 change actual gameplay, games are not homogeneous. Every aggregate must be filterable by `rules_version` and game options, or analyses will silently mix incomparable games. Make those columns mandatory rather than nullable.
+**Aggregation hazard:** because design decisions and options like R-3.12 change actual gameplay, games are not homogeneous. Every aggregate must be filterable by `rules_version` and game options, or analyses will silently mix incomparable games. Make those columns mandatory rather than nullable.
 
 ### 7.5 Sizing
 
@@ -546,7 +547,7 @@ Rough estimates to validate, not measurements. A game runs a few hundred state-c
 
 ## 8. Platform scope
 
-The engine (§6) is one component of a product: accounts, lobbies, matchmaking, spectating, and chat sit above it. Nothing in this section may leak into `catan-core`.
+The engine (§6) is one component of a product: accounts, lobbies, matchmaking, spectating, and chat sit above it. Nothing in this section may leak into `carranta-core`.
 
 ### 8.1 Decisions
 
@@ -667,9 +668,9 @@ Because P-2 and B-3 both depend on it, the heuristic bot is a **prerequisite for
 
 The board never changes after setup, so it belongs in the cached prefix rather than being resent hundreds of times. Rough estimates to measure, not facts: static prefix on the order of 1–2k tokens, dynamic suffix a few hundred.
 
-**Cut the call count before optimising the call.** The engine should **auto-resolve forced decisions** — any state with exactly one legal action — without consulting any player. Much of a Catan game is forced or near-forced, so this removes most LLM calls outright, and it benefits RL rollouts identically.
+**Cut the call count before optimising the call.** The engine should **auto-resolve forced decisions** — any state with exactly one legal action — without consulting any player. Much of a Carranta game is forced or near-forced, so this removes most LLM calls outright, and it benefits RL rollouts identically.
 
-**Where the reasoning budget goes (B-2).** Index-only everywhere except: initial placement (R-3.7, R-3.8), robber placement and victim choice (R-6.3, R-6.4), trade evaluation, and development card timing. These are where Catan games are actually decided; everything else is bookkeeping.
+**Where the reasoning budget goes (B-2).** Index-only everywhere except: initial placement (R-3.7, R-3.8), robber placement and victim choice (R-6.3, R-6.4), trade evaluation, and development card timing. These are where Carranta games are actually decided; everything else is bookkeeping.
 
 **Trade mode must be `restricted`.** R-7.19's open market makes the legal action list unbounded — all possible offers cannot be enumerated into a prompt. LLM play uses the same `restricted` seam that RL needs (§6.5), which is the second independent reason that seam has to exist before either is built.
 
@@ -693,7 +694,7 @@ Internal and flagged accounts only for now. Before any wider exposure: per-game 
 
 ## 10. Analytics and player rating
 
-Everything here is derived from the canonical event log (§7) and is regenerable. Nothing in this section is computed inside `catan-core`.
+Everything here is derived from the canonical event log (§7) and is regenerable. Nothing in this section is computed inside `carranta-core`.
 
 **Status:** the rating design (§10.5) is **decided** — register `A-1`…`A-4`. The statistical methods in §10.1–§10.4 and §10.6 are **recommended practice** rather than ratified decisions: they describe how to compute things correctly, not choices between valid alternatives.
 
@@ -757,7 +758,7 @@ This matters because the four have completely different meanings. `DiceLuck` is 
 ### 10.3 Descriptive statistics
 
 **Per game**
-Length in turns and wall time · winner and final VP breakdown · roll histogram with §10.1(a) percentile · 7-count · total production by resource · robber moves and target hexes · steal matrix (who robbed whom) · trade counts by type (player, 4:1, 3:1, 2:1) · offers made/accepted/rejected · development cards bought and played by type · VP progression curve per player · Longest Route and Largest Army holders over time and number of transfers · discards forced by 7s.
+Length in turns and wall time · winner and final VP breakdown · roll histogram with §10.1(a) percentile · 7-count · total production by resource · robber moves and target hexes · steal matrix (who robbed whom) · trade counts by type (player, 4:1, 3:1, 2:1) · offers made/accepted/rejected · development cards bought and played by type · VP progression curve per player · Longest Road and Largest Militia holders over time and number of transfers · discards forced by 7s.
 
 **Per player, within a game**
 Expected vs actual production with the §10.2 decomposition · income by source (production, trade, Invention, Monopoly, steals) · outflow by sink (builds, trades, discards, robbed, Monopoly losses) · resources spent per VP earned · average and peak hand size · cards lost to discards · opening placement quality (pip count, resource diversity, port access) · trade profile (proposal rate, acceptance rate as proposer and as accepter, net resource balance per counterparty) · robber exposure (times targeted, cards lost) · think time by decision type.
@@ -770,13 +771,13 @@ Seat/turn-order win rate — the first-player advantage question · board layout
 
 ### 10.4 Luck-adjusted performance
 
-Rating (§10.5) measures results; results in Catan carry a large chance component. The complementary metric: **VP earned relative to what the player's production entitled them to.**
+Rating (§10.5) measures results; results in Carranta carry a large chance component. The complementary metric: **VP earned relative to what the player's production entitled them to.**
 
 Concretely — regress final VP on total production (or on the §10.2 z-scores) across the corpus, and report each player's **residual**. A player who consistently finishes above the curve converted resources better than average; one below did not. This is the single most useful "were you good or lucky" number, and it is only computable because §10.2 gives an exact expectation rather than an estimate.
 
 ### 10.5 Player rating
 
-**"Halo ranking algorithm" is TrueSkill** — Microsoft Research, developed for Xbox Live and first deployed on Halo 2. It is a good instinct for this problem, for a specific reason: **Elo is fundamentally a two-player system**, and Catan is a 3–4 player free-for-all. Elo extensions to multiplayer are pairwise-decomposition hacks. TrueSkill models N-player outcomes natively and maintains a Gaussian belief `(μ, σ)` per player rather than a point estimate.
+**"Halo ranking algorithm" is TrueSkill** — Microsoft Research, developed for Xbox Live and first deployed on Halo 2. It is a good instinct for this problem, for a specific reason: **Elo is fundamentally a two-player system**, and Carranta is a 3–4 player free-for-all. Elo extensions to multiplayer are pairwise-decomposition hacks. TrueSkill models N-player outcomes natively and maintains a Gaussian belief `(μ, σ)` per player rather than a point estimate.
 
 #### Decisions
 
@@ -798,7 +799,7 @@ Concretely — regress final VP on total production (or on the §10.2 z-scores) 
 5. **Randomised seating (A-4) makes seat effects average out** over a player's games without modelling anything. It does *not* protect a player with very few games, so seat effects remain a known limitation at low game counts — visible in the per-seat corpus statistics rather than corrected in the rating.
 6. **Exclude substituted games** (P-2) from rated updates — neither the departed human nor the bot that finished for them played a whole game.
 7. **Guest ratings transfer on claim** (A-3) through the identity alias in §8.2 — never by rewriting historical games.
-8. **Expect slow convergence.** Catan's variance means σ shrinks slowly; show it rather than hiding it, and resist ranking players publicly before σ is small.
+8. **Expect slow convergence.** Carranta's variance means σ shrinks slowly; show it rather than hiding it, and resist ranking players publicly before σ is small.
 
 #### Known exposure
 
@@ -815,51 +816,55 @@ A-3 rates guests, and guest identity is a device-persistent ID (P-1). That combi
 
 ---
 
-## 11. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
+## 11. Content to author
 
-These exist only as artwork and are **not** transcribed in this document, per the current scoping decision. Someone with the physical components or a high-resolution scan needs to fill them in:
+Four design assets are referenced by the rules but not yet specified. They are **ours to design** — none is a transcription task, and none blocks the engine, because each has a trivially valid default we can ship and tune later.
 
-| ID | Asset | Needed for |
-|---|---|---|
-| ART-1 | Exact **Fixed Setup** layout: terrain hex + number disc for each of the 19 board positions (p.4–5 diagram) | Fixed Setup only |
-| ART-2 | Exact **Fixed Setup** starting positions of the 8 settlements and 8 roads, and which settlement is each player's "second" (p.5 diagram) | Fixed Setup only |
-| ART-3 | **Port layout** per sea frame piece: port type, its two intersections, and each piece's puzzle-end numbers (p.3 artwork) | Both setups |
-| ART-4 | **A–R letter → number mapping** on the number disc backs (p.3, p.11) | Variable Setup |
+| ID | Asset | Needed for | Default if undesigned |
+|---|---|---|---|
+| ART-1 | **Port distribution and placement**: how many 3:1 and 2:1 ports, which resource each 2:1 serves, and which intersection pairs carry them | Both setup modes | 4× 3:1 and 5× 2:1 (one per resource), spaced evenly around the coast |
+| ART-2 | **Number-disc placement order** for Random Setup — the traversal that R-3.3 walks | Random Setup | Spiral inward from a corner, skipping the desert, with the D-6 red-number check |
+| ART-3 | **Beginner Setup board layout**: terrain and number for each of the 19 positions | Beginner Setup | — (mode unavailable until designed) |
+| ART-4 | **Beginner Setup starting pieces**: the 8 settlement and 8 road positions, and which settlement is each player's "second" | Beginner Setup | — (mode unavailable until designed) |
 
-ART-3 and ART-4 are needed for *any* implementation; ART-1 and ART-2 only gate the Fixed Setup mode. The Variable Setup is fully specified in rules text (R-3), so a first implementation can ship with Variable Setup alone.
+**These are balance decisions, not data entry.** Port distribution in particular shapes the whole trading economy, and a beginner layout is a curated teaching board — both deserve playtesting rather than a first guess treated as final. Ship Random Setup first (fully specified by R-3), and treat the Beginner mode as a later content drop.
 
 ---
 
-## 12. Resolved rulings (edge cases)
+## 12. Rules decisions
 
-The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§14](#14-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
+Every rule in §2 is Carranta's own specification. This section records the rules that required a deliberate decision rather than following obviously from the system — the ones most likely to be questioned later, and therefore the ones most needing a written rationale.
 
-| # | Question | Official ruling | Source |
-|---|---|---|---|
-| 1 | Robber moved to a hex with no buildings? | Legal. The robber must move to a different hex; if no opponent has a building there, no card is stolen. Production on that hex is still blocked. | FAQ, ALM |
-| 2 | Robbing a player who has no resource cards? | "Bad luck" — no card is drawn, and the active player does not get to pick a different victim. | FAQ |
-| 3 | Must the robber move at all? | Yes. It must be placed on a *different* hex; the desert is a legal destination. | FAQ, ALM |
-| 4 | Can the robber block building or port trading? | No. It only blocks production on its own hex. | FAQ |
-| 5 | Bonus tile ties? | The tile stays with its current owner. Transfer requires strictly more. | FAQ |
-| 6 | Longest Route broken — who gets it? | Current holder keeps it if they still qualify; another player takes it if they now qualify; **no one** holds it if zero or multiple players tie for longest. It may be regained via a bypass. | FAQ |
-| 7 | Do forks count toward route length? | No. A route is a single continuous path between two intersections; own buildings don't break it, opponents' do. | FAQ, ALM |
-| 8 | Can Largest Army be lost? | Only to a player with strictly more *played* Knights. Knights never leave the table, so the tile never returns to the unowned pool once claimed. Unplayed Knights count for nothing. | FAQ |
-| 9 | Monopoly — must players reveal hands? | No. The rules assume honesty; players must answer truthfully about their holdings but need not show cards. | FAQ |
-| 10 | Trading after a 7 is rolled? | Not allowed until the discard and robber resolution are complete; the turn then continues normally. | FAQ |
-| 11 | Knight before the roll, then a 7? | Both resolve — the robber is activated twice. Playing a development card is independent of the dice result. | FAQ |
-| 12 | Can a player voluntarily discard or gift cards to dodge the robber? | No. No voluntary reduction, no gifts, no one-sided trades, no credit. | FAQ |
-| 13 | Three-way / secret trades? | Both forbidden. Every trade is public and strictly two-party, with the active player as one party. | FAQ |
-| 14 | Use an opponent's port? | No. Only the owner of a building on a port may use it. | FAQ |
-| 15 | How many development cards per turn? | Buy as many as you can pay for; play at most one (VP cards excepted). | FAQ |
-| 16 | Can a player win outside their own turn? | No. Victory is checked and claimed only on the winner's own turn — but it is then immediate and irrevocable. | FAQ |
-| 17 | Settlement placement without a road connection? | Only during setup. Afterwards every settlement needs an own-road connection. | FAQ |
-| 18 | City on an empty intersection? | Never — cities only upgrade an existing own settlement. | FAQ |
-| 19 | Rebuild on an intersection freed by a city upgrade? | Yes, the returned settlement is reusable; buildings may never be *moved*, though. | FAQ |
-| 20 | Coastal intersections without a port? | Legal building spots. Any point where three hexes meet is an intersection. | FAQ |
+### 12.0 Resolved edge cases
 
-### 12.1 Residual unknowns
+Situations a naive reading of §2 leaves ambiguous. Each is settled here and reflected in the rule tables above.
 
-Questions not settled by any official source. All six have now been **decided for this project** — these are house rulings, not CATAN rules, and are marked `HOUSE` where they appear in the rule tables.
+| # | Question | Ruling |
+|---|---|---|
+| 1 | Robber moved to a hex with no buildings? | Legal. The robber must move to a different hex; if no opponent has a building there, no card is stolen. Production on that hex is still blocked. |
+| 2 | Robbing a player who has no resource cards? | No card is drawn, and the active player does not get to pick a different victim. |
+| 3 | Must the robber move at all? | Yes. It must be placed on a *different* hex; the desert is a legal destination. |
+| 4 | Can the robber block building or port trading? | No. It only blocks production on its own hex. |
+| 5 | Bonus tile ties? | The tile stays with its current owner. Transfer requires strictly more. |
+| 6 | Longest Road broken — who gets it? | Current holder keeps it if they still qualify; another player takes it if they now qualify; **no one** holds it if zero or multiple players tie for longest. It may be regained via a bypass. |
+| 7 | Do forks count toward route length? | No. A route is a single continuous path between two intersections; own buildings don't break it, opponents' do. |
+| 8 | Can Largest Militia be lost? | Only to a player with strictly more *played* Militia. Militia never leave the table, so the tile never returns to the unowned pool once claimed. Unplayed Militia count for nothing. |
+| 9 | Monopoly — must players reveal hands? | No. Players must answer truthfully about their holdings but need not show cards. |
+| 10 | Trading after a 7 is rolled? | Not allowed until the discard and robber resolution are complete; the turn then continues normally. |
+| 11 | Militia before the roll, then a 7? | Both resolve — the robber is activated twice. Playing a development card is independent of the dice result. |
+| 12 | Can a player voluntarily discard or gift cards to dodge the robber? | No. No voluntary reduction, no gifts, no one-sided trades, no credit. |
+| 13 | Three-way / secret trades? | Both forbidden. Every trade is public and strictly two-party, with the active player as one party. |
+| 14 | Use an opponent's port? | No. Only the owner of a building on a port may use it. |
+| 15 | How many development cards per turn? | Buy as many as you can pay for; play at most one (VP cards excepted). |
+| 16 | Can a player win outside their own turn? | No. Victory is checked and claimed only on the winner's own turn — but it is then immediate and irrevocable. |
+| 17 | Settlement placement without a road connection? | Only during setup. Afterwards every settlement needs an own-road connection. |
+| 18 | City on an empty intersection? | Never — cities only upgrade an existing own settlement. |
+| 19 | Rebuild on an intersection freed by a city upgrade? | Yes, the returned settlement is reusable; buildings may never be *moved*, though. |
+| 20 | Coastal intersections without a port? | Legal building spots. Any point where three hexes meet is an intersection. |
+
+### 12.1 Design decisions
+
+Six questions where more than one rule would have worked and we chose. These are the rules most likely to be revisited, so each records what was chosen and why.
 
 | # | Question | Decision | Rule |
 |---|---|---|---|
@@ -876,41 +881,15 @@ Questions not settled by any official source. All six have now been **decided fo
 - **Acceptance races are real.** Two players may accept offers the proposer can only cover once. Resolve atomically on a first-come basis, re-validating both parties' holdings at the moment of execution, and reject the loser with a clear reason rather than silently dropping it.
 - Offers must be **re-validated, not merely displayed**, when the board or a hand changes. An offer that was legal when made can become illegal (cards spent on a build, a Monopoly played); it should be invalidated rather than executed against stale state.
 
-**Still open — verification tasks** (not decisions; they need the physical components or a second look at the source):
+**Still open — design confirmations** (not rules questions; they need playtesting or a second look):
 
-1. **Building costs** are read from player-aid iconography (§2.8), not from rules prose — verify against the physical aid.
-2. **Port count and distribution** (4× 3:1, 5× 2:1) are read from component artwork; the 5th Edition's 9 harbour pieces corroborate the total but not the 6th Edition's fixed distribution across the 6 frame pieces.
-3. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
-4. **The four inferred trade rules** — R-7.13, R-7.14, R-7.15, R-7.10 — rest on reading rather than source text. R-7.15 (no trading before the dice roll) is the least certain, since a development card *may* legally be played pre-roll.
+1. **Building costs** (§2.8) are carried as a working set and have never been balance-tested for Carranta specifically. They are the single biggest lever on game pace — confirm by playtesting, not by assumption.
+2. **Port distribution** (ART-1, §11) is a default, not a decision. It shapes the whole trading economy.
+3. **The four inferred trade rules** — R-7.10, R-7.13, R-7.14, R-7.15 — follow from the system rather than being stated outright. R-7.15 (no trading before the dice roll) is the least certain, since a development card *may* legally be played pre-roll; confirm that the asymmetry is intended.
 
-### 12.2 Edition drift when consulting official sources
+### 12.2 Trade rules — completeness audit
 
-The FAQ and Almanac are written for the 5th Edition and use older terms. Translation table, to avoid mis-citing them:
-
-| 6th Ed. (CN3081) | 5th Ed. / FAQ |
-|---|---|
-| Longest Route | Longest Road |
-| Supply | Bank |
-| Invention | Year of Plenty |
-| Development card colours (single back) | Progress cards (green frame) / Knight cards (purple frame) |
-| Ports (printed on frame) | Harbours (9 loose harbour pieces, randomly placed) |
-| Sea frame pieces (6, puzzle-jointed) | Frame pieces (fixed layout) |
-| 3-player game removes **white** | 3-player game removes **red** |
-| First player = highest dice roll | Starting setup: oldest player |
-| Number disc | Number token |
-| Single Action phase, any order (R-7.1) | Separate trade phase / build phase, with a "combined phase" variant recommended for experienced players |
-| 4:1 trade takes a **different** resource | 4:1 trade takes "**any** 1 resource card of your choice" |
-
-Two of these are **rule changes, not just renames**, and the FAQ cannot be used to validate the 6th Edition behaviour:
-
-- The 6th Edition requires the resource taken in *any* maritime trade to differ from the one given (R-7.6–R-7.8); the 5th Edition permitted taking any type. Practically harmless — trading 4 wood for 1 wood is self-defeating — but a validator written from the FAQ would be wrong.
-- The 6th Edition has no trade/build phase separation at all; trading and building interleave freely (R-7.1). Any FAQ answer conditioned on "strict separation" is inapplicable.
-
-The 5th Edition also adds a Variable-Setup constraint the 6th Edition rulebook does not state: **red numbers (6 and 8) must not be adjacent** in a fully random layout. Resolved as D-6 — a game option, enabled by default (R-3.12).
-
-### 12.3 Trade rules — completeness audit
-
-Trade is the least completely specified area of the rulebook. Status of every trade question identified:
+Trade is the most intricate area of the rule set and the easiest to leave with gaps. Status of every trade question identified:
 
 | Question | Status | Rule |
 |---|---|---|
@@ -925,15 +904,15 @@ Trade is the least completely specified area of the rulebook. Status of every tr
 | Repeat trades within one turn | **Defined** | R-7.1, R-7.16 |
 | Counteroffers and player-initiated proposals | **Defined** | R-7.4 |
 | Trade after a 7, before robber resolution | **Defined** (forbidden) | R-6.6 |
-| Player-trade ratios / multi-type trades | **Inferred** — implied by "resource(s)", never stated | R-7.13 |
-| Obligation to accept; when an offer binds | **Inferred** | R-7.14 |
-| Trading before the dice roll | **Inferred** — placement in the Action phase implies no, but never stated, and a *development card* may be played pre-roll, so the phase boundary is not simply "nothing before the roll" | R-7.15 |
-| Bonus tiles tradeable | **Inferred** (no) — never mentioned in any source | R-7.10 |
-| Trading from an exhausted supply stack | **House ruling** (D-3) | R-7.17 |
-| Same type on both sides of a multi-type trade | **House ruling** (D-4) | R-7.18 |
-| Offer lifecycle / binding / concurrency | **House ruling** (D-5) | R-7.19 |
+| Player-trade ratios / multi-type trades | **Derived** — follows from the system, worth confirming | R-7.13 |
+| Obligation to accept; when an offer binds | **Derived** | R-7.14 |
+| Trading before the dice roll | **Derived** — placement in the Action phase implies no, but a *development card* may be played pre-roll, so the phase boundary is not simply "nothing before the roll" | R-7.15 |
+| Bonus tiles tradeable | **Derived** (no) — they move only by meeting their own conditions | R-7.10 |
+| Trading from an exhausted supply stack | **Decision** (D-3) | R-7.17 |
+| Same type on both sides of a multi-type trade | **Decision** (D-4) | R-7.18 |
+| Offer lifecycle / binding / concurrency | **Decision** (D-5) | R-7.19 |
 
-Twelve trade questions are settled by the rulebook or FAQ, four rest on inference that should still be confirmed (R-7.10, R-7.13, R-7.14, R-7.15), and three had no answer in any source — those are now house rulings, marked as such so they are never mistaken for CATAN rules.
+Twelve trade questions are settled outright, four are derived from the system and worth an explicit confirmation (R-7.10, R-7.13, R-7.14, R-7.15), and three were genuine forks in the road — those are decisions D-3, D-4 and D-5.
 
 The open-market decision (D-5) makes trade the most concurrency-sensitive part of the system: it is the only place where a non-active player initiates a state change, and the only place where two valid requests can race. Treat `ACCEPT` as a transaction against current state, never against the state the offer was authored in.
 
@@ -943,15 +922,15 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 **Unblock (no dependencies, needed by everything)**
 
-1. Transcribe artwork assets **ART-3 and ART-4** (§11) — port layout and disc letters gate every mode. ART-1/ART-2 gate Fixed Setup only.
-2. Close the four verification tasks in §12.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
+1. Specify **ART-1 and ART-2** (§11) — port distribution and disc placement order. Both have workable defaults, so this is balance work rather than a blocker. ART-3/ART-4 gate the Beginner mode only.
+2. Close the three design confirmations in §12.1 — building-cost balance, port distribution, and the four derived trade rules.
 
 **Engine**
 
 3. Board topology module (19/54/72) with precomputed adjacency, validated against the §5.5 invariants.
-4. `catan-core` (§6.2): bitboard state, enum state machine, legal-move generation, plus a benchmark harness to replace the §6.6 *targets* with measurements.
-5. Every `R-x.y` rule becomes an acceptance test; §5.7 is the priority set. The six `HOUSE` rules (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) need tests most — they have no external source to fall back on.
-6. Variable Setup first (fully specified in text); Fixed Setup once ART-1/ART-2 exist.
+4. `carranta-core` (§6.2): bitboard state, enum state machine, legal-move generation, plus a benchmark harness to replace the §6.6 *targets* with measurements.
+5. Every `R-x.y` rule becomes an acceptance test; §5.7 is the priority set. The six decision-backed rules (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) need tests most — nothing outside this document defines them.
+6. Random Setup first (fully specified by R-3); Beginner Setup once ART-3/ART-4 are designed and playtested.
 7. Build the **trade mode seam** (`full` / `restricted` / `disabled`, §6.5) early — RL (§6.5) and the LLM player (§9.4) both depend on it, independently.
 
 **History and data**
@@ -979,14 +958,6 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 19. Implement rating (A-1…A-4, §10.5) as a post-game batch job over completed, non-substituted games, with seat assignment randomised at lobby start.
 20. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters, explicit per-turn n, no i.i.d. pooling of player-games.
 
-**Decision register:** six rules decisions (§12.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1), four rating decisions (§10.5) — 29 in total. Nothing blocks starting the engine except the ART-3/ART-4 artwork data.
+**Decision register:** six rules decisions (§12.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1), four rating decisions (§10.5) — 29 in total.
 
----
-
-## 14. Sources
-
-1. *CATAN — The Game* rulebook, CN3081, v6.250401, 6th Edition, © 2025 CATAN GmbH / CATAN Studio — the primary source, supplied as PDF.
-2. [Official CATAN base-game FAQ](https://www.catan.com/faq/basegame) — used for all `FAQ`-marked rulings.
-3. [CATAN 5th Edition Game Rules & Almanac (PDF)](https://www.catan.com/sites/default/files/2021-06/catan_base_rules_2020_200707.pdf) — used for all `ALM`-marked rulings.
-
-Where the 6th Edition rulebook and the older sources conflict, **the CN3081 rulebook wins**; the FAQ and Almanac are used only to fill gaps it leaves silent.
+**Nothing blocks starting the engine.** The Random Setup is fully specified by R-3, and the four assets in §11 have workable defaults or gate only the Beginner mode.
