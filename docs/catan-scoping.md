@@ -2,7 +2,7 @@
 
 **Source (primary):** *CATAN — The Game* rulebook, CN3081, v6.250401 (6th Edition), © 2025 CATAN GmbH / CATAN Studio. 12 pages.
 **Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§14](#14-sources).
-**Status:** Draft 6 — rules, engine architecture, history/data model, platform scope, bot strategy, and analytics/rating design recorded. 25 decisions registered; §10 proposed pending ratification.
+**Status:** Draft 7 — rules, engine architecture, history/data model, platform scope, bot strategy, and analytics/rating design recorded. 29 decisions registered.
 **Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), heuristic and LLM opponents (§9), and a statistics and rating layer (§10). This document is the reference for the state schema, action model, rules validation, data model, product scope, and analytics methods.
 
 **Scope boundary**
@@ -695,7 +695,7 @@ Internal and flagged accounts only for now. Before any wider exposure: per-game 
 
 Everything here is derived from the canonical event log (§7) and is regenerable. Nothing in this section is computed inside `catan-core`.
 
-**Status:** the methods below are **proposed**, not yet ratified as decisions — unlike the D-, H-, P-, and B- registers elsewhere in this document. The rating design in §10.5 in particular has four open choices flagged inline.
+**Status:** the rating design (§10.5) is **decided** — register `A-1`…`A-4`. The statistical methods in §10.1–§10.4 and §10.6 are **recommended practice** rather than ratified decisions: they describe how to compute things correctly, not choices between valid alternatives.
 
 ### 10.1 Dice fairness — two different questions
 
@@ -778,18 +778,31 @@ Concretely — regress final VP on total production (or on the §10.2 z-scores) 
 
 **"Halo ranking algorithm" is TrueSkill** — Microsoft Research, developed for Xbox Live and first deployed on Halo 2. It is a good instinct for this problem, for a specific reason: **Elo is fundamentally a two-player system**, and Catan is a 3–4 player free-for-all. Elo extensions to multiplayer are pairwise-decomposition hacks. TrueSkill models N-player outcomes natively and maintains a Gaussian belief `(μ, σ)` per player rather than a point estimate.
 
-**Recommendation: a TrueSkill-family model, implemented via the Weng–Lin / Plackett–Luce approach (OpenSkill) rather than TrueSkill itself.** Comparable behaviour and accuracy, actively maintained open implementations, and it sidesteps the patent questions around TrueSkill proper. *Worth a legal check before committing either way — that is a flag, not advice.* TrueSkill 2 (2018) adds margin and experience effects but has no public reference implementation.
+#### Decisions
 
-Design points specific to Catan:
+| # | Question | Decision |
+|---|---|---|
+| A-1 | Model and implementation | **OpenSkill (Weng–Lin), Plackett–Luce variant.** TrueSkill-family behaviour, maintained open implementations, no patent exposure |
+| A-2 | Pool segmentation | **One pool per major configuration** — (trade mode × major rules version) |
+| A-3 | Guest rating | **Rated provisionally**, high σ, shown as provisional, carried across on account claim |
+| A-4 | Seat position | **Randomise seating** and report per-seat win rates across the corpus |
 
-1. **Use the full finishing order, not just the winner.** Final VP totals rank all 3–4 players, so every game yields a complete ranking rather than one bit. Plackett–Luce consumes this natively, and it roughly triples the information per game — which matters given how slowly high-variance games converge.
-2. **Display a conservative rating**, `μ − 3σ`, so new players aren't shown an inflated number before their uncertainty collapses.
+*TrueSkill 2 (2018) adds margin and experience effects but has no public reference implementation. The patent position on TrueSkill proper is worth a legal check if A-1 is ever revisited — that is a flag, not advice.*
+
+#### Design points
+
+1. **Use the full finishing order, not just the winner.** Final VP totals rank all 3–4 players, so every game yields a complete ranking rather than one bit. Plackett–Luce consumes this natively (A-1), and it roughly triples the information per game — which matters given how slowly high-variance games converge.
+2. **Display a conservative rating**, `μ − 3σ`, so new players aren't shown an inflated number before their uncertainty collapses. This is also what makes A-3's provisional guest ratings honest rather than misleading.
 3. **Bots share the rating pool.** This is the baselining answer: a pinned heuristic bot with tight σ after thousands of games becomes an **absolute yardstick**. "Trained agent v4 at μ=32 vs heuristic at μ=25" is directly meaningful, and human ratings become comparable to bot ratings on one scale.
-4. **Separate rating pools per major configuration.** Trade mode in particular changes the game enough that ratings across modes are not comparable. Rules version likewise (§7.4's aggregation hazard).
-5. **Control for seat position.** First-player advantage is real in Catan. At minimum randomise seating and report per-seat win rates; better, include seat as a covariate so the rating isn't partly a measure of seat luck.
+4. **Keep the set of "major" configurations deliberately small** (A-2). Every additional pool fragments player ratings and slows convergence, so a config should only earn its own pool when it genuinely changes how the game is played — trade mode does, a cosmetic option does not.
+5. **Randomised seating (A-4) makes seat effects average out** over a player's games without modelling anything. It does *not* protect a player with very few games, so seat effects remain a known limitation at low game counts — visible in the per-seat corpus statistics rather than corrected in the rating.
 6. **Exclude substituted games** (P-2) from rated updates — neither the departed human nor the bot that finished for them played a whole game.
-7. **Guests rate provisionally**, and the rating carries across on claim (P-1) via the identity alias in §8.2.
+7. **Guest ratings transfer on claim** (A-3) through the identity alias in §8.2 — never by rewriting historical games.
 8. **Expect slow convergence.** Catan's variance means σ shrinks slowly; show it rather than hiding it, and resist ranking players publicly before σ is small.
+
+#### Known exposure
+
+A-3 rates guests, and guest identity is a device-persistent ID (P-1). That combination is **smurf-friendly**: a player wanting a fresh rating can clear device state. Accepted for now — the alternative costs real signal from every guest game — but if rated play ever carries stakes (leaderboards, rewards, competitive matchmaking), revisit A-3 rather than trying to patch it downstream.
 
 ### 10.6 Statistical pitfalls to design around
 
@@ -808,12 +821,12 @@ These exist only as artwork and are **not** transcribed in this document, per th
 
 | ID | Asset | Needed for |
 |---|---|---|
-| A-1 | Exact **Fixed Setup** layout: terrain hex + number disc for each of the 19 board positions (p.4–5 diagram) | Fixed Setup only |
-| A-2 | Exact **Fixed Setup** starting positions of the 8 settlements and 8 roads, and which settlement is each player's "second" (p.5 diagram) | Fixed Setup only |
-| A-3 | **Port layout** per sea frame piece: port type, its two intersections, and each piece's puzzle-end numbers (p.3 artwork) | Both setups |
-| A-4 | **A–R letter → number mapping** on the number disc backs (p.3, p.11) | Variable Setup |
+| ART-1 | Exact **Fixed Setup** layout: terrain hex + number disc for each of the 19 board positions (p.4–5 diagram) | Fixed Setup only |
+| ART-2 | Exact **Fixed Setup** starting positions of the 8 settlements and 8 roads, and which settlement is each player's "second" (p.5 diagram) | Fixed Setup only |
+| ART-3 | **Port layout** per sea frame piece: port type, its two intersections, and each piece's puzzle-end numbers (p.3 artwork) | Both setups |
+| ART-4 | **A–R letter → number mapping** on the number disc backs (p.3, p.11) | Variable Setup |
 
-A-3 and A-4 are needed for *any* implementation; A-1 and A-2 only gate the Fixed Setup mode. The Variable Setup is fully specified in rules text (R-3), so a first implementation can ship with Variable Setup alone.
+ART-3 and ART-4 are needed for *any* implementation; ART-1 and ART-2 only gate the Fixed Setup mode. The Variable Setup is fully specified in rules text (R-3), so a first implementation can ship with Variable Setup alone.
 
 ---
 
@@ -930,7 +943,7 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 **Unblock (no dependencies, needed by everything)**
 
-1. Transcribe artwork assets **A-3 and A-4** (§10) — port layout and disc letters gate every mode. A-1/A-2 gate Fixed Setup only.
+1. Transcribe artwork assets **ART-3 and ART-4** (§11) — port layout and disc letters gate every mode. ART-1/ART-2 gate Fixed Setup only.
 2. Close the four verification tasks in §12.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
 
 **Engine**
@@ -938,7 +951,7 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 3. Board topology module (19/54/72) with precomputed adjacency, validated against the §5.5 invariants.
 4. `catan-core` (§6.2): bitboard state, enum state machine, legal-move generation, plus a benchmark harness to replace the §6.6 *targets* with measurements.
 5. Every `R-x.y` rule becomes an acceptance test; §5.7 is the priority set. The six `HOUSE` rules (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) need tests most — they have no external source to fall back on.
-6. Variable Setup first (fully specified in text); Fixed Setup once A-1/A-2 exist.
+6. Variable Setup first (fully specified in text); Fixed Setup once ART-1/ART-2 exist.
 7. Build the **trade mode seam** (`full` / `restricted` / `disabled`, §6.5) early — RL (§6.5) and the LLM player (§9.4) both depend on it, independently.
 
 **History and data**
@@ -963,10 +976,10 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 17. Expected-production engine (§10.2) — the exact mean/variance computation and the four-way decomposition. It underpins per-game luck reporting *and* the luck-adjusted metric in §10.4, so build it once, in the replay layer.
 18. Dice reporting as an **empirical percentile**, not a per-game p-value (§10.1a), with the pooled RNG audit (§10.1b) as a separate scheduled job.
-19. Ratify the four open rating choices in §10.5, then implement rating as a post-game batch job over completed, non-substituted games.
+19. Implement rating (A-1…A-4, §10.5) as a post-game batch job over completed, non-substituted games, with seat assignment randomised at lobby start.
 20. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters, explicit per-turn n, no i.i.d. pooling of player-games.
 
-**Decision register:** six rules decisions (§12.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1). Nothing blocks starting the engine except the A-3/A-4 artwork data.
+**Decision register:** six rules decisions (§12.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1), four rating decisions (§10.5) — 29 in total. Nothing blocks starting the engine except the ART-3/ART-4 artwork data.
 
 ---
 
