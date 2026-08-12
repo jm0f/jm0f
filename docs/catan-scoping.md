@@ -1,9 +1,9 @@
 # CATAN — Rules & Materials Scoping Document
 
 **Source (primary):** *CATAN — The Game* rulebook, CN3081, v6.250401 (6th Edition), © 2025 CATAN GmbH / CATAN Studio. 12 pages.
-**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§9](#9-sources).
-**Status:** Draft 3 — rules extracted, edge cases resolved against official rulings, implementation model added, six project decisions recorded.
-**Target:** **Digital implementation** of the base game. This document is the reference for the state schema, action model, and rules validation.
+**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§11](#11-sources).
+**Status:** Draft 4 — rules extracted, edge cases resolved, implementation model, engine architecture, and history/analytics design recorded.
+**Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7). This document is the reference for the state schema, action model, rules validation, and data model.
 
 **Scope boundary**
 
@@ -13,7 +13,7 @@
 **Conventions used here**
 
 - Rules are numbered `R-x.y` so they can be referenced from tickets, tests, and code.
-- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§7](#7-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
+- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§9](#9-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
 - Facts read from **diagrams/artwork** rather than rules text are marked *(image-derived)*.
 
 ---
@@ -397,12 +397,152 @@ Four randomness sources must be server-side and unforgeable: dice rolls, develop
 - **Forks don't count** toward route length (R-10.3), and your own buildings don't break your route.
 - **Ties never transfer a bonus tile** (R-10.6).
 - **Victory is only checked on the active player's turn** (R-11.1) — losing or gaining a tile during someone else's turn cannot end the game.
-- **Trade is turn-gated** (R-7.3) and must be a genuine two-sided exchange (R-7.5). The trade *protocol* — offer lifecycle, binding, timeouts — has no rulebook basis at all and must be designed (§7.1 #8).
+- **Trade is turn-gated** (R-7.3) and must be a genuine two-sided exchange (R-7.5). The trade *protocol* — offer lifecycle, binding, concurrency — has no rulebook basis at all and is a house ruling (R-7.19, open market), with the concurrency consequences in §9.1.
 - **Cities replace settlements** (R-8.7); the freed settlement returns to the pool and is reusable.
 
 ---
 
-## 6. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
+## 6. Engine architecture
+
+### 6.1 Principle: library-first, not service-first
+
+The engine is a **pure Rust library** — no I/O, no async, no networking in the core. Every consumer is a thin adapter around it.
+
+This matters most for the AI-training use case. A single engine step should land in the low single-digit **microseconds**; an HTTP round-trip costs tens to hundreds of microseconds at minimum. Putting a network boundary on the training hot path would make serialization and syscalls dominate wall-clock time and render the language choice underneath irrelevant. "API first" here means *stable, well-specified interface* — the action catalogue in §5.4 — not *service first*.
+
+### 6.2 Crate layout
+
+| Crate | Responsibility | Depends on |
+|---|---|---|
+| `catan-core` | State, rules, legal-move generation, action application, event emission. Pure, deterministic, no I/O | nothing |
+| `catan-replay` | Log read/write, replay driver, snapshot & seek, per-seat redaction | core |
+| `catan-py` | PyO3 bindings: batched environments, observation encoding, action masks | core |
+| `catan-server` | HTTP/WS service, matchmaking, persistence | core, replay |
+| `catan-wasm` | Browser bindings for the client | core, replay |
+| `catan-analytics` | Parquet/Arrow export, derived-event materialization | replay |
+
+The dependency direction is strictly one-way: everything depends on `catan-core`, and `catan-core` depends on nothing. If the core ever needs a network or database type, the design has gone wrong.
+
+### 6.3 State representation
+
+- **Fixed-size and `Copy`.** From the §5.2 zones — 19 hexes, 54 intersections, 72 edges, ≤4 players, pools, hands, deck, turn flags — the whole state is on the order of **~300 bytes** with no heap allocation. Cloning a state for an MCTS node is a `memcpy` of a few cache lines, effectively free.
+- **Bitboards.** 72 edges fit in a `u128` and 54 intersections in a `u64`, one per player. Legal road generation becomes `expand(own_roads) & !occupied & !blocked_by_opponents` — a handful of bit operations rather than a graph walk. This is where the order of magnitude over a scripting language comes from.
+- **Enum state machine.** The §5.3 phases and §5.4 actions are an enum-and-`match` problem. Exhaustive matching means adding a phase without handling a transition is a compile error, which is the right failure mode for a rules engine whose bugs otherwise manifest as subtly illegal states.
+- **Hot spot: longest route** (R-10.3). The only nontrivial algorithm in the game, run on every road placement, made a genuine path search by the forks-don't-count rule. Design it incremental or memoized from the start; it will dominate the profile otherwise.
+
+### 6.4 Determinism
+
+Determinism is required for reproducible training, debuggable replays, and the snapshot-verification invariant in §7.6.
+
+- **Split RNG streams** — separate seeded generators for dice, deck shuffle, the random steal (R-6.4), and setup randomization. Holding one fixed while varying another is essential when debugging and when running paired evaluations.
+- **No incidental nondeterminism.** `std::HashMap` randomizes its seed per process; use `BTreeMap` or a fixed hasher anywhere iteration order can reach game state.
+- **Version stamping.** Every game records `engine_version` and `rules_version`. With six `HOUSE` rules and four inferred rules outstanding, the rules *will* change, and old data must remain interpretable.
+
+### 6.5 AI training interface
+
+- **Batched environments.** Crossing the PyO3 boundary once per step costs more than the step itself. Step *N* games per call, EnvPool-style, with observations written directly into caller-provided numpy buffers.
+- **Action masks in Rust.** RL needs a legal-action mask every step; generating it in Python would negate the engine's speed. This is a primary consumer of the bitboard representation.
+- **Per-seat observations** are generated from the §4 visibility model — the same classification that drives replay redaction (§7.3). One implementation, two consumers.
+- **Determinization for imperfect-information search.** Catan is not a perfect-information game, so tree search needs opponents' hidden state resampled consistently with public history. The four items in §4.4 are exactly and completely what must be resampled — that list is the specification.
+- **Trade mode is configurable.** D-5's open market gives an unbounded, combinatorial trade action space *and* lets non-active players act, which breaks the clean turn-based MDP most RL machinery assumes. Published Catan RL work generally disables or heavily restricts trading. The engine therefore exposes trade policy as a dimension — `full` (open market, for human play), `restricted` (a small fixed offer menu), `disabled` — rather than hard-coding R-7.19. **Build this seam now; retrofitting it later means touching every layer.**
+
+### 6.6 Performance targets
+
+Targets to validate with a benchmark harness — **not measurements**, and nothing here should be quoted as fact until benchmarked:
+
+| Metric | Target |
+|---|---|
+| Single action application | low single-digit µs |
+| Full random game (setup → win) | sub-millisecond |
+| Self-play throughput | millions of steps/sec across cores via rayon |
+| State clone (MCTS node) | ~memcpy of ~300 bytes |
+| Batched env step, N=1024 | FFI overhead amortized below per-step cost |
+
+---
+
+## 7. Game history, replay & analytics
+
+Every game can be recorded in full: a complete, ordered event log that serves as the source material for replays *and* as the raw data for statistics at game, player, and cross-game scope.
+
+### 7.1 Recording decisions
+
+| # | Decision | Choice |
+|---|---|---|
+| H-1 | Log content | **Actions + resolved randomness.** Every action plus the concrete outcome of each random event, with periodic state snapshots for seeking |
+| H-2 | Hidden information | **Omniscient log, redacted on serve.** Full truth stored; per-seat fog applied at serve time |
+| H-3 | Recording scope | **Configurable per session.** Default on for served games, off for self-play unless requested |
+| H-4 | Negotiation churn | **Record everything** — proposals, counteroffers, rejections, withdrawals |
+| H-5 | Storage | **Object store + Parquet exports.** Compact binary logs in S3-compatible storage; periodic columnar exports for analytics |
+| H-6 | Identity | **Every seat carries a durable ID**, with agents identified by name + version |
+| H-7 | Derived events | **Separate regenerable stream.** The primitive log is canonical; derived events are a materialized view |
+
+**Why H-1 matters most.** Recording resolved randomness rather than just a seed decouples stored games from any single engine build. A seed-only log requires bit-exact determinism *forever* — and with six `HOUSE` rules and four unverified inferences still in play, a rules correction would silently reinterpret every historical game rather than failing loudly. Explicit outcomes make replay a pure fold over data.
+
+### 7.2 Event model
+
+Every event shares an envelope:
+
+| Field | Purpose |
+|---|---|
+| `game_id`, `seq` | Identity and total ordering |
+| `wall_time`, `mono_time` | Timestamps for pacing on replay and think-time analytics |
+| `actor` | Seat index + durable player ID (H-6), or `system` |
+| `type`, `payload` | Discriminated union of the categories below |
+| `visibility` | A §4.1 class, attached at emission so redaction is mechanical |
+
+Categories:
+
+1. **Lifecycle** — `GameCreated` (rules_version, engine_version, options incl. R-3.12 and trade mode, seat assignment, seeds), `GameEnded` (winner, final VP breakdown).
+2. **Setup** — placements from R-3.7/R-3.8, board generation result.
+3. **Decisions** — the §5.4 action catalogue: builds, buys, dev card plays, robber moves, discards, end turn.
+4. **Randomness resolution** — `DiceRolled{d1,d2}`, `DevCardDrawn{card}`, `CardStolen{resource, from, to}`, `BoardGenerated{layout}`. Recording the *outcome*, per H-1.
+5. **Negotiation** — `TradeProposed`, `TradeCountered`, `TradeRejected`, `TradeWithdrawn`, `TradeAccepted`. Non-state-changing but recorded in full per H-4; under R-7.19's open market this is most of the player interaction in the game.
+6. **Snapshots** — `StateSnapshot` every *N* events, carrying a state checksum.
+
+### 7.3 Replay and redaction
+
+Replay is `fold(apply, events)` from a snapshot or from the start. Snapshots give seeking without replaying from event zero.
+
+Redaction derives entirely from §4: `PUBLIC` data is served to everyone, `OWNER` data only to its owner, `HIDDEN` data to no one. The four items in §4.4 are exactly what must be masked.
+
+Two things about redaction are easy to get wrong:
+
+- **It is a function of `(event, viewer, time)`, not a static classification.** A card that is `OWNER` when drawn becomes `PUBLIC` when played; VP cards are hidden until the winning reveal (R-9.11); Monopoly forcibly exposes part of every hand (R-9.9). A redaction layer that classifies by event type alone will either leak or over-hide.
+- **It must run server-side, before serialization.** Never ship a full log to a client and filter in the UI. Live spectating and mid-series replay sharing both depend on this path being correct, which makes it security-critical rather than merely cosmetic.
+
+### 7.4 Analytics scopes
+
+The log is the source of truth; everything below is derived and regenerable (H-7).
+
+| Scope | Examples |
+|---|---|
+| Per game | Length, VP progression, dice distribution, robber activity |
+| Per player, across games | Win rate, build-order tendencies, negotiation behaviour, resource efficiency |
+| Per seat / turn order | First-player advantage, position effects |
+| Per agent version | v3 vs v4 head-to-head across thousands of games (H-6) |
+| Per rules version / options | Effect of the R-3.12 red-number option, trade mode comparisons |
+| Per board / setup variant | Fixed vs Variable outcomes, layout-driven imbalance |
+| Within-game temporal | Per-turn and per-phase slices, think time |
+
+A sketch for the Parquet layer: `dim_game` (rules_version, engine_version, options, setup variant, board hash), `dim_player` (identity, human/agent, agent version), `fact_game_player` (seat, colour, final VP breakdown, win flag), `fact_events`, `fact_turns`. All regenerated from the canonical logs, never hand-maintained.
+
+**Aggregation hazard:** because `HOUSE` rules and options like R-3.12 change actual gameplay, games are not homogeneous. Every aggregate must be filterable by `rules_version` and game options, or analyses will silently mix incomparable games. Make those columns mandatory rather than nullable.
+
+### 7.5 Sizing
+
+Rough estimates to validate, not measurements. A game runs a few hundred state-changing actions; H-4's negotiation churn could multiply total event count several-fold under an open market. At tens of bytes per binary event, expect **tens of KB per game uncompressed, low single-digit KB compressed**, putting a million games in the order of gigabytes — comfortable for object storage.
+
+### 7.6 Risks
+
+1. **Trade churn is unbounded.** R-7.19 lets any player propose at any time during a turn, and H-4 records all of it. A misbehaving client or bot could inflate a log arbitrarily. Rate-limit offers per turn in the engine — this is a log-bloat and denial-of-service vector, not just a tidiness concern.
+2. **Redaction leaks are silent.** Add an explicit test asserting that no `OWNER` or `HIDDEN` datum appears in any other seat's serialized view, across a corpus of replayed games. A leak will not otherwise surface until someone exploits it.
+3. **Replay divergence.** Verify replayed state against the checksum in each `StateSnapshot`. A mismatch means either a corrupted log or an engine change that altered semantics — both need to fail loudly, immediately.
+4. **Rules drift across the corpus.** See the aggregation hazard in §7.4.
+5. **Identity and privacy.** H-6 creates durable cross-game player records. Retention, deletion, and pseudonymisation of human identities need a policy before the first human game is recorded, not after.
+
+---
+
+## 8. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
 
 These exist only as artwork and are **not** transcribed in this document, per the current scoping decision. Someone with the physical components or a high-resolution scan needs to fill them in:
 
@@ -417,9 +557,9 @@ A-3 and A-4 are needed for *any* implementation; A-1 and A-2 only gate the Fixed
 
 ---
 
-## 7. Resolved rulings (edge cases)
+## 9. Resolved rulings (edge cases)
 
-The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§9](#9-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
+The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§11](#11-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
 
 | # | Question | Official ruling | Source |
 |---|---|---|---|
@@ -444,7 +584,7 @@ The CN3081 rulebook leaves the following open. Each is now resolved against the 
 | 19 | Rebuild on an intersection freed by a city upgrade? | Yes, the returned settlement is reusable; buildings may never be *moved*, though. | FAQ |
 | 20 | Coastal intersections without a port? | Legal building spots. Any point where three hexes meet is an intersection. | FAQ |
 
-### 7.1 Residual unknowns
+### 9.1 Residual unknowns
 
 Questions not settled by any official source. All six have now been **decided for this project** — these are house rulings, not CATAN rules, and are marked `HOUSE` where they appear in the rule tables.
 
@@ -470,7 +610,7 @@ Questions not settled by any official source. All six have now been **decided fo
 3. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
 4. **The four inferred trade rules** — R-7.13, R-7.14, R-7.15, R-7.10 — rest on reading rather than source text. R-7.15 (no trading before the dice roll) is the least certain, since a development card *may* legally be played pre-roll.
 
-### 7.2 Edition drift when consulting official sources
+### 9.2 Edition drift when consulting official sources
 
 The FAQ and Almanac are written for the 5th Edition and use older terms. Translation table, to avoid mis-citing them:
 
@@ -495,7 +635,7 @@ Two of these are **rule changes, not just renames**, and the FAQ cannot be used 
 
 The 5th Edition also adds a Variable-Setup constraint the 6th Edition rulebook does not state: **red numbers (6 and 8) must not be adjacent** in a fully random layout. Decide whether to adopt it — it materially affects generated-board quality and is a common expectation.
 
-### 7.3 Trade rules — completeness audit
+### 9.3 Trade rules — completeness audit
 
 Trade is the least completely specified area of the rulebook. Status of every trade question identified:
 
@@ -526,20 +666,24 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 ---
 
-## 8. Next steps
+## 10. Next steps
 
-1. Transcribe the four artwork assets in §6 (A-3 and A-4 first — they gate every mode).
-2. Close the four verification tasks in §7.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
+1. Transcribe the four artwork assets in §8 (A-3 and A-4 first — they gate every mode).
+2. Close the four verification tasks in §9.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
 3. Build the board topology module (19/54/72) with precomputed adjacency, and validate against the invariants in §5.5.
 4. Turn each `R-x.y` rule into an acceptance test; the §5.7 list is the priority set. Every `HOUSE` rule (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) needs a test too — they have no external source to fall back on.
-5. Design the open-market trade protocol (R-7.19) against the concurrency notes in §7.1, before building the trade UI.
+5. Design the open-market trade protocol (R-7.19) against the concurrency notes in §9.1, before building the trade UI.
 6. Implement Variable Setup first (fully specified in text); add Fixed Setup once A-1/A-2 exist.
+7. Stand up `catan-core` (§6.2) with the bitboard state and the enum state machine, plus a benchmark harness to replace the §6.6 targets with measurements.
+8. Build the event log and replay path (§7.2, §7.3) alongside the engine, not after it — retrofitting event emission into a finished engine is far more invasive than emitting from the start.
+9. Write the redaction leak test (§7.6 risk 2) and the snapshot-checksum verification (§7.6 risk 3) as part of the first replay milestone.
+10. Set the human-identity retention and deletion policy (§7.6 risk 5) before the first human game is recorded.
 
-All six project decisions are recorded in §7.1. Nothing now blocks starting on the engine except the A-3/A-4 artwork data.
+All six rules decisions are recorded in §9.1 and all seven data decisions in §7.1. Nothing now blocks starting on the engine except the A-3/A-4 artwork data.
 
 ---
 
-## 9. Sources
+## 11. Sources
 
 1. *CATAN — The Game* rulebook, CN3081, v6.250401, 6th Edition, © 2025 CATAN GmbH / CATAN Studio — the primary source, supplied as PDF.
 2. [Official CATAN base-game FAQ](https://www.catan.com/faq/basegame) — used for all `FAQ`-marked rulings.
