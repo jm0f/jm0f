@@ -116,9 +116,13 @@
 | R-7.7 | **3:1 port trade.** With a building on a 3:1 port, put 3 identical resource cards into the supply and take 1 card of a **different** resource. | p.7 |
 | R-7.8 | **2:1 port trade.** With a building on a 2:1 port, put 2 cards of the resource shown on that port into the supply and take 1 card of a **different** resource. | p.7 |
 | R-7.9 | Port access requires the player's own building (settlement or city) on that port's intersection. A player may never use an opponent's port. | p.7, FAQ |
-| R-7.10 | Development cards may not be traded or given away. | p.9 |
+| R-7.10 | Development cards may not be traded or given away. Bonus tiles are likewise never transferable by trade — they move only by meeting their own conditions (R-10). | p.9, *inferred* |
 | R-7.11 | Trades must be public: no secret trades, and no player may be required to reveal their hand. | FAQ |
 | R-7.12 | The robber never blocks trading, including port trades. | FAQ |
+| R-7.13 | **Player trades have no ratio restriction.** Any number of cards and any mix of types may be exchanged for any other, subject only to R-7.5. There is no requirement that the counts match or that either side be a single type. | *inferred from p.7 "resource(s)"* |
+| R-7.14 | No player is ever obliged to trade or to accept an offer, and the active player is not bound by an announced offer until the exchange is made. | *inferred* |
+| R-7.15 | Trading is confined to the Action phase. No trade may occur before the dice roll, nor during discard/robber resolution (R-6.6). | p.7, *inferred* |
+| R-7.16 | Maritime trades (4:1, 3:1, 2:1) may be performed as often as the player can pay for them, and are always available regardless of ports — only the improved ratios require a port. | p.7, ALM |
 
 ### 2.8 Action phase — Build (R-8)
 
@@ -359,7 +363,7 @@ Playing a Knight in `PRE_ROLL` and then rolling a 7 activates the robber **twice
 | `BUY_DEV_CARD` | deck non-empty, cost payable | Unlimited per turn (R-8.9) |
 | `PLAY_DEV_CARD(card, params)` | not bought this turn, none played this turn, own turn | VP cards exempt (R-9.12) |
 | `TRADE_SUPPLY(give, take)` | ratio 4:1, or 3:1/2:1 with port access; `give` uniform; `take != give` type | R-7.6–R-7.9 |
-| `PROPOSE_TRADE(give, want)` / `ACCEPT` / `REJECT` / `COUNTER` | active player is one party; both sides non-empty; no overlapping resource type on both sides | R-7.3–R-7.5 |
+| `PROPOSE_TRADE(give, want)` / `ACCEPT` / `REJECT` / `COUNTER` | active player is one party; both sides non-empty; no overlapping resource type on both sides *(unsourced — see §7.1 #7)*; both parties hold what they offer at the moment of resolution | R-7.3–R-7.5, R-7.13 |
 | `END_TURN` | phase = `ACTION`, no pending sub-state | R-4.3 |
 
 ### 5.5 Validation invariants
@@ -387,7 +391,7 @@ Four randomness sources must be server-side and unforgeable: dice rolls, develop
 - **Forks don't count** toward route length (R-10.3), and your own buildings don't break your route.
 - **Ties never transfer a bonus tile** (R-10.6).
 - **Victory is only checked on the active player's turn** (R-11.1) — losing or gaining a tile during someone else's turn cannot end the game.
-- **Trade is turn-gated** (R-7.3) and must be a genuine two-sided exchange (R-7.5).
+- **Trade is turn-gated** (R-7.3) and must be a genuine two-sided exchange (R-7.5). The trade *protocol* — offer lifecycle, binding, timeouts — has no rulebook basis at all and must be designed (§7.1 #8).
 - **Cities replace settlements** (R-8.7); the freed settlement returns to the pool and is reusable.
 
 ---
@@ -444,6 +448,12 @@ Not settled by either official source; these need a project decision:
 4. **Port count and distribution** (4× 3:1, 5× 2:1) are read from component artwork; the 5th Edition's 9 harbour pieces corroborate the total but not the 6th Edition's fixed distribution across the 6 frame pieces.
 5. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
 
+**Trade-specific gaps** — see [§7.3](#73-trade-rules-completeness-audit) for the full audit:
+
+6. **Taking from an exhausted supply stack.** The rulebook defines a shortage rule for *production* only (R-5.6); it says nothing about a 4:1/port trade or an Invention card that would draw a resource whose stack is empty. **Recommended:** the trade is illegal if the stack cannot pay in full; Invention takes as many as remain.
+7. **Same resource type on both sides of a multi-type player trade** (e.g., 2 ore + 1 wood for 1 wheat + 1 ore). R-7.5 forbids only the pure case (3 ore for 1 ore). **Recommended:** forbid any type appearing on both sides — this is what §5.4's validator assumes, and it closes the disguised-gift loophole.
+8. **Trade offer protocol.** Binding-ness of an accepted offer, whether offers persist across other actions, how counteroffers are structured, and timeouts are all undefined — they don't exist as problems at a physical table but are mandatory for a digital build. **Recommended:** offers are non-binding until both sides confirm; the exchange resolves atomically; any board-state change cancels open offers.
+
 ### 7.2 Edition drift when consulting official sources
 
 The FAQ and Almanac are written for the 5th Edition and use older terms. Translation table, to avoid mis-citing them:
@@ -459,8 +469,42 @@ The FAQ and Almanac are written for the 5th Edition and use older terms. Transla
 | 3-player game removes **white** | 3-player game removes **red** |
 | First player = highest dice roll | Starting setup: oldest player |
 | Number disc | Number token |
+| Single Action phase, any order (R-7.1) | Separate trade phase / build phase, with a "combined phase" variant recommended for experienced players |
+| 4:1 trade takes a **different** resource | 4:1 trade takes "**any** 1 resource card of your choice" |
+
+Two of these are **rule changes, not just renames**, and the FAQ cannot be used to validate the 6th Edition behaviour:
+
+- The 6th Edition requires the resource taken in *any* maritime trade to differ from the one given (R-7.6–R-7.8); the 5th Edition permitted taking any type. Practically harmless — trading 4 wood for 1 wood is self-defeating — but a validator written from the FAQ would be wrong.
+- The 6th Edition has no trade/build phase separation at all; trading and building interleave freely (R-7.1). Any FAQ answer conditioned on "strict separation" is inapplicable.
 
 The 5th Edition also adds a Variable-Setup constraint the 6th Edition rulebook does not state: **red numbers (6 and 8) must not be adjacent** in a fully random layout. Decide whether to adopt it — it materially affects generated-board quality and is a common expectation.
+
+### 7.3 Trade rules — completeness audit
+
+Trade is the least completely specified area of the rulebook. Status of every trade question identified:
+
+| Question | Status | Rule |
+|---|---|---|
+| Who may trade with whom on a turn | **Defined** | R-7.3 |
+| Three-way / secret / credit trades | **Defined** (all forbidden) | R-7.3, R-7.5, R-7.11 |
+| No gifting; no matching-type trades | **Defined** | R-7.5 |
+| 4:1 / 3:1 / 2:1 ratios and port access | **Defined** | R-7.6–R-7.9 |
+| Taken resource must differ from given | **Defined** | R-7.6–R-7.8 |
+| Using an opponent's port | **Defined** (forbidden) | R-7.9 |
+| Development cards tradeable | **Defined** (no) | R-7.10 |
+| Robber blocking trade | **Defined** (no) | R-7.12 |
+| Repeat trades within one turn | **Defined** | R-7.1, R-7.16 |
+| Counteroffers and player-initiated proposals | **Defined** | R-7.4 |
+| Trade after a 7, before robber resolution | **Defined** (forbidden) | R-6.6 |
+| Player-trade ratios / multi-type trades | **Inferred** — implied by "resource(s)", never stated | R-7.13 |
+| Obligation to accept; when an offer binds | **Inferred** | R-7.14 |
+| Trading before the dice roll | **Inferred** — placement in the Action phase implies no, but never stated, and a *development card* may be played pre-roll, so the phase boundary is not simply "nothing before the roll" | R-7.15 |
+| Bonus tiles tradeable | **Inferred** (no) — never mentioned in any source | R-7.10 |
+| Trading from an exhausted supply stack | **Undefined** | §7.1 #6 |
+| Same type on both sides of a multi-type trade | **Undefined** | §7.1 #7 |
+| Offer lifecycle / binding / timeouts | **Undefined** (physical game has no need for it) | §7.1 #8 |
+
+Twelve trade questions are settled by the rulebook or FAQ, four rest on inference that should be confirmed, and three are genuinely undefined and need a project decision before the trade UI and validator can be built.
 
 ---
 
