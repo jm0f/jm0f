@@ -1,6 +1,6 @@
 # Carranta — Rules & Materials Scoping Document
 
-**Status:** Draft 8 — rules, engine architecture, history/data model, platform scope, bot strategy, and analytics/rating design recorded. 29 decisions registered.
+**Status:** Draft 9 — rules, engine architecture, history/data model, platform scope, bot strategy, analytics/rating, client and operational choices recorded. 46 decisions registered.
 **Target:** **Digital implementation** of Carranta: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), heuristic and LLM opponents (§9), and a statistics and rating layer (§10). This document is the reference for the state schema, action model, rules validation, data model, product scope, and analytics methods.
 
 **What Carranta is**
@@ -129,6 +129,7 @@ A hex-tile resource-trading and settlement-building game for 3–4 players — a
 | R-7.17 | **Empty supply stack.** A maritime trade is illegal unless the target stack can supply the full amount taken. An Invention card takes as many of the requested cards as remain (possibly 1 or 0). |
 | R-7.18 | **No type overlap.** No resource type may appear on both the give and take side of a single trade — a generalization of R-7.5 covering multi-type offers. |
 | R-7.19 | **Open-market offers.** Multiple trade offers may be live simultaneously, and any player may accept any live offer during the active player's turn. Every offer must still have the active player as one party (R-7.3). Acceptances resolve atomically, first-come, re-validating both parties' holdings at execution; offers invalidated by an intervening state change are rejected with a reason, never executed against stale state. |
+| R-7.20 | **Offer limits** (D-7). A player may make at most ~20 trade offers per turn, with a short minimum interval between them. Enforced in the engine, not the client — client-side limits are advisory, and the threat model is a client speaking the protocol directly. Rejections are surfaced to the offender, never silent. |
 
 ### 2.8 Action phase — Build (R-8)
 
@@ -478,6 +479,8 @@ Every game can be recorded in full: a complete, ordered event log that serves as
 | H-5 | Storage | **Object store + Parquet exports.** Compact binary logs in S3-compatible storage; periodic columnar exports for analytics |
 | H-6 | Identity | **Every seat carries a durable ID**, with agents identified by name + version |
 | H-7 | Derived events | **Separate regenerable stream.** The primitive log is canonical; derived events are a materialized view |
+| H-8 | Retention | **Game logs indefinite, chat bounded.** Logs are pseudonymous and are the analytics and training corpus; chat carries the personal content and expires after 90 days |
+| H-9 | Object store | **Self-hosted MinIO.** S3-compatible, no storage vendor — durability and backup are therefore ours |
 
 **Why H-1 matters most.** Recording resolved randomness rather than just a seed decouples stored games from any single engine build. A seed-only log requires bit-exact determinism *forever* — and with six design decisions and four unverified derivations still in play, a rules correction would silently reinterpret every historical game rather than failing loudly. Explicit outcomes make replay a pure fold over data.
 
@@ -537,11 +540,12 @@ Rough estimates to validate, not measurements. A game runs a few hundred state-c
 
 ### 7.6 Risks
 
-1. **Trade churn is unbounded.** R-7.19 lets any player propose at any time during a turn, and H-4 records all of it. A misbehaving client or bot could inflate a log arbitrarily. Rate-limit offers per turn in the engine — this is a log-bloat and denial-of-service vector, not just a tidiness concern.
+1. **Trade churn.** R-7.19 lets any player propose at any time during a turn, and H-4 records all of it. Bounded by R-7.20 (D-7): ~20 offers per player per turn plus a minimum interval, enforced in the engine. Without that cap this is a log-bloat and denial-of-service vector, not merely a tidiness concern.
 2. **Redaction leaks are silent.** Add an explicit test asserting that no `OWNER` or `HIDDEN` datum appears in any other seat's serialized view, across a corpus of replayed games. A leak will not otherwise surface until someone exploits it.
 3. **Replay divergence.** Verify replayed state against the checksum in each `StateSnapshot`. A mismatch means either a corrupted log or an engine change that altered semantics — both need to fail loudly, immediately.
 4. **Rules drift across the corpus.** See the aggregation hazard in §7.4.
-5. **Identity and privacy.** H-6 creates durable cross-game player records. Retention, deletion, and pseudonymisation of human identities need a policy before the first human game is recorded, not after.
+5. **Identity and privacy.** H-6 creates durable cross-game player records. Retention is settled by H-8 — logs indefinite, chat 90 days — which is what makes a deletion request satisfiable without touching immutable game history. Pseudonymisation of the principal table still needs a concrete design.
+6. **Storage durability.** H-9 self-hosts MinIO, so replication and off-box backup are ours. Game logs are simultaneously the source of truth and the training corpus; losing them is unrecoverable. Do not put real games in a single-node deployment without a backup plan.
 
 ---
 
@@ -556,11 +560,22 @@ The engine (§6) is one component of a product: accounts, lobbies, matchmaking, 
 | P-1 | Guest identity | **Device-persistent and claimable.** A guest carries a durable ID and can later attach email or Google, keeping full history |
 | P-2 | Disconnect / abandonment | **Bot takeover after a timeout.** The game continues; the substitution is recorded |
 | P-3 | Pacing | **Real-time only** for v1. All players present, turn timers |
-| P-4 | Authentication | **Self-hosted open source** (Ory, Keycloak, or self-hosted Supabase) |
+| P-4 | Authentication | **Self-hosted / self-owned**, not a managed identity vendor — settled as Auth.js in P-15 |
 | P-5 | Discovery | **Browsable lobby list.** No matchmaking queue in v1 |
 | P-6 | Spectators | **Allowed, with fog** — public observer view only |
 | P-7 | Communication | **Text chat in v1**; voice designed-for-later, not built |
-| P-8 | Chat data | **Recorded in a separate stream**, with its own retention class |
+| P-8 | Chat data | **Recorded in a separate stream**, with its own retention class (90 days, H-8) |
+| P-9 | Client | **Responsive web app.** One codebase, desktop and mobile browsers, invite links open straight into a lobby |
+| P-10 | Hosting | **Railway.** Managed deploys with WebSocket and TLS support |
+| P-11 | Minimum age | **16+**, self-declared at signup and for guests — chat is the trigger, not the account |
+| P-12 | Localisation | **English only, i18n-ready.** Every user-facing string routed through a translation layer from day one |
+| P-13 | Accessibility | **Standard palette with a colourblind mode** — alternate palette plus non-colour encodings, selectable in settings |
+| P-14 | Rating in lobbies | **Display only.** Ratings shown, never used to gate joining |
+| P-15 | Auth | **Auth.js**, owning our own principal table |
+| P-16 | Moderation | **Wordlist filter plus report queue**, with the retained chat log as evidence |
+| P-17 | Turn timers | **Configurable per lobby**, offering all three modes. Bot-only games are untimed |
+| P-18 | Disconnects | **60–90s grace**, then bot takeover; the seat is **reclaimable** on reconnect |
+| P-19 | Spectator delay | **None.** Spectators hold strictly less information than players, so relaying gains them nothing |
 
 ### 8.2 Identity model
 
@@ -598,7 +613,9 @@ Notes:
 
 - **Invite links** use unguessable, revocable tokens. A private lobby's security is entirely the token's entropy.
 - **Bots fill seats in the lobby** and may be added or removed before start. One human plus two or three bots is a valid game — the rules require 3–4 *players*, not 3–4 humans.
-- **Turn timers are mandatory** under P-3. On expiry the turn auto-resolves (forced actions only) or the seat passes to a bot per P-2.
+- **Turn timer mode is a lobby setting** (P-17), offering all three: per-decision reset (~60–90s, generous, never cuts off a multi-action turn), a chess-clock per-player budget for competitive play, or a short strict per-turn limit for brisk casual games. **Bot-only games run untimed** at engine speed — which is exactly what self-play and evaluation need.
+- On expiry the turn auto-resolves (forced actions only) or the seat passes to a bot per P-2.
+- **Ratings are shown but never gate joining** (P-14), so every listed lobby stays joinable — which is what keeps a thin player pool from looking dead.
 - **Accepted consequence of P-3:** live state may assume all players are present. Adding correspondence play later would mean re-architecting live state handling, not just extending timeouts.
 
 ### 8.4 Spectators — and what P-6 costs
@@ -607,7 +624,7 @@ Choosing fogged spectating over no spectating **moves §7.3 redaction from a pos
 
 1. **The redaction leak test (§7.6, risk 2) becomes a launch blocker**, not a later hardening task. A bug there now exposes live hands to strangers rather than mis-rendering an old replay.
 2. **Spectator view is the neutral observer view**: `PUBLIC` data only, no seat's `OWNER` data, ever. It is not "a player view minus that player" — it is strictly less than any player's view.
-3. **Fog does not eliminate collusion.** A spectator can relay timing, board reads, and inference back to a seated player out-of-band. Mitigate with a configurable **broadcast delay** on public games, and consider disabling spectating entirely for rated play once rating exists.
+3. **Collusion risk is smaller than it first appears** (P-19). Because a spectator's view is strictly *less* than any player's, they cannot relay information a player could not already see. The residual is attention assistance — noticing a hand size or a probability the player missed — which is coaching, not leakage. No broadcast delay is applied; revisit only if rated play ever carries stakes.
 
 Spectators are not seats: they hold no `player_id` in the game log and never appear in `fact_game_player`.
 
@@ -617,13 +634,27 @@ Text chat in v1 (P-7), per-lobby and per-game channels. Under R-7.19's open mark
 
 **Storage (P-8).** Chat lives in its own stream keyed by `game_id` and correlated to the game log by sequence number and timestamp, so replay can interleave conversation with actions without embedding personal data in the canonical corpus. This is what makes a deletion request satisfiable without rewriting immutable game logs — the reason to accept the small cost of correlating two streams.
 
-**Moderation baseline:** per-player mute and block, a report flow, and server-side filtering. The chat log is the evidence trail; that is a substantial part of why it is recorded at all.
+**Moderation (P-16):** per-player mute and block, a report flow, and a maintained wordlist filter applied server-side. The wordlist catches the obvious cases at no latency or cost; human review of reports handles the rest, with the retained chat log (H-8, 90 days) as the evidence trail. That evidentiary role is a substantial part of why chat is recorded at all. A 16+ policy (P-11) is an assertion of duty of care, so reactive-only moderation was not an option.
 
 **Voice (deferred).** Keep the transport abstraction voice-ready without building it. For ≤4 participants a WebRTC mesh is viable; beyond that, an SFU or a vendor (LiveKit, Daily, Agora). **Voice is not recorded** — the consent, storage, and jurisdiction burden is disproportionate, and none of the analytics goals need it.
 
-### 8.6 Authentication (P-4)
+### 8.6 Authentication (P-15)
 
-Self-hosted, and must cover: email + password with verification and reset, Google OAuth, guest-to-account claiming, and session tokens usable over WebSocket. Running it ourselves means patching, key rotation, and breach response are ours — budget for that as ongoing work rather than a one-off integration.
+**Auth.js** (P-15), running in the web client, with the principal table owned by us (§8.2). Chosen over a standalone identity server because guest-to-account claiming becomes our own code against our own schema rather than a fight with someone else's user model — and it is one less service to operate.
+
+Three consequences to plan for:
+
+- **Password flows are ours to build.** Auth.js deliberately ships no batteries-included email/password path, so hashing (Argon2), verification mail, and reset tokens are security-sensitive code we write. Leaning on Google OAuth as the primary route reduces how much of this is on the critical path.
+- **Cross-language session validation.** The game server is Rust and Auth.js lives in the web app. Issue JWTs the Rust server verifies against a shared JWKS, rather than calling back into the JS app on every WebSocket connect.
+- **It picks the client framework.** Auth.js runs inside a JS meta-framework, so P-9's web app is a Next.js or SvelteKit application by implication.
+
+### 8.7 Client (P-9, P-12, P-13)
+
+A **responsive web app** — one codebase for desktop and mobile browsers. This matters more than it looks: invite links (§8.3) and guest play (P-1) both depend on a shared URL putting someone at a table with nothing to install. Auth.js (P-15) implies a JS meta-framework, so the client is a Next.js or SvelteKit application rendering a `carranta-wasm` game view.
+
+**Localisation (P-12).** English only at launch, but every user-facing string goes through a translation layer from day one and none are hard-coded in components. Adding a language then becomes a content task rather than a refactor.
+
+**Accessibility (P-13).** Carranta leans on colour twice — four player colours, and red-marked high-probability numbers — and red/orange player pieces collide directly for the ~8% of men with red-green colour vision deficiency. Ship the standard palette with a **colourblind mode** in settings: an alternate palette that separates under deuteranopia and protanopia, plus a second encoding channel (a glyph per player, a non-colour marker on the 6 and 8). Two consequences to accept: two palettes to maintain and test, and a setting players must find before the game becomes fully playable for them — so surface it at first run rather than burying it.
 
 ---
 
@@ -637,6 +668,8 @@ Self-hosted, and must cover: email + password with verification and reset, Googl
 | B-2 | LLM output budget | **Adaptive** — index-only by default, brief reasoning on decisions that carry the game |
 | B-3 | LLM access | **Internal and flagged accounts only.** Not in public lobbies |
 | B-4 | LLM purpose | **All four**: stand-in, live opponent, evaluation baseline, bootstrap training data |
+| B-5 | Trained agent | **Self-play reinforcement learning** over the batched envs (§6.5), trade mode restricted |
+| B-6 | LLM tier | **Two pinned models**: a small fast one for index-only decisions, a stronger one for the decisions in B-2's reasoning list |
 
 ### 9.2 One player interface
 
@@ -670,6 +703,8 @@ The board never changes after setup, so it belongs in the cached prefix rather t
 
 **Cut the call count before optimising the call.** The engine should **auto-resolve forced decisions** — any state with exactly one legal action — without consulting any player. Much of a Carranta game is forced or near-forced, so this removes most LLM calls outright, and it benefits RL rollouts identically.
 
+**Two models, routed (B-6).** The cheap fast model handles index-only decisions, which carry the volume; the stronger model is invoked only for the decisions listed below. Both are pinned, so B-4's benchmark role survives — two versions to track instead of one.
+
 **Where the reasoning budget goes (B-2).** Index-only everywhere except: initial placement (R-3.7, R-3.8), robber placement and victim choice (R-6.3, R-6.4), trade evaluation, and development card timing. These are where Carranta games are actually decided; everything else is bookkeeping.
 
 **Trade mode must be `restricted`.** R-7.19's open market makes the legal action list unbounded — all possible offers cannot be enumerated into a prompt. LLM play uses the same `restricted` seam that RL needs (§6.5), which is the second independent reason that seam has to exist before either is built.
@@ -678,11 +713,17 @@ The board never changes after setup, so it belongs in the cached prefix rather t
 
 **Capture rationales.** When B-2 produces reasoning tokens, store them in a side stream keyed to the event sequence — the same pattern as chat (P-8), and directly useful later for distillation into a trained agent.
 
-### 9.5 Cost control (B-3)
+### 9.5 Trained agent (B-5)
+
+Self-play reinforcement learning over the batched environments in §6.5, with trade mode set to `restricted` so the action space stays tractable. **This requires no new engine capability** — action masks, microsecond steps, vectorised envs, and forced-move auto-play are all already specified for other reasons. What it needs is training infrastructure: a rollout harness, checkpointing, and an evaluation loop against the pinned heuristic and LLM baselines sharing the rating pool (§10.5).
+
+Bootstrap options, in increasing cost: behavioural cloning from recorded LLM and human games (H-1 captures everything needed), then self-play from that warm start.
+
+### 9.6 Cost control (B-3)
 
 Internal and flagged accounts only for now. Before any wider exposure: per-game and global spend caps, and graceful degradation to the heuristic bot when a cap is hit or the provider errors. Guests must never be able to initiate LLM spend.
 
-### 9.6 Risks
+### 9.7 Risks
 
 1. **Prompt injection through chat.** If free-text chat is ever placed into an LLM player's prompt, players can issue instructions to the bot — "give me all your wood" is a trade negotiation to a human and an instruction to a model. **Do not include chat text in the LLM player's prompt.** If social play later demands it, isolate it as clearly-delimited untrusted data and never as instructions. This is the sharpest interaction between §8.5 and this section.
 2. **Latency shapes the game feel.** An LLM call per decision at human pace is tolerable; hundreds per game is not. Forced-move auto-play is the primary mitigation, and turn timers need to accommodate bot think time.
@@ -787,6 +828,7 @@ Concretely — regress final VP on total production (or on the §10.2 z-scores) 
 | A-2 | Pool segmentation | **One pool per major configuration** — (trade mode × major rules version) |
 | A-3 | Guest rating | **Rated provisionally**, high σ, shown as provisional, carried across on account claim |
 | A-4 | Seat position | **Randomise seating** and report per-seat win rates across the corpus |
+| A-5 | Leaderboards | **Account holders only**, above a games-played threshold so σ has converged |
 
 *TrueSkill 2 (2018) adds margin and experience effects but has no public reference implementation. The patent position on TrueSkill proper is worth a legal check if A-1 is ever revisited — that is a flag, not advice.*
 
@@ -864,7 +906,7 @@ Situations a naive reading of §2 leaves ambiguous. Each is settled here and ref
 
 ### 12.1 Design decisions
 
-Six questions where more than one rule would have worked and we chose. These are the rules most likely to be revisited, so each records what was chosen and why.
+Seven questions where more than one rule would have worked and we chose. These are the rules most likely to be revisited, so each records what was chosen and why.
 
 | # | Question | Decision | Rule |
 |---|---|---|---|
@@ -874,6 +916,7 @@ Six questions where more than one rule would have worked and we chose. These are
 | D-4 | Same resource type on both sides of a multi-type player trade | **Forbid any overlap.** No resource type may appear on both sides of a trade. | R-7.18 |
 | D-5 | Trade offer lifecycle | **Open market** — see D-5 notes below. | R-7.19 |
 | D-6 | Red numbers (6/8) adjacent on a randomly generated board | **Game option**, defaulting to the constraint enabled. | R-3.12 |
+| D-7 | Bounding trade offers under the open market | **Per-turn cap (~20) plus a rate limit**, enforced in the engine. | R-7.20 |
 
 **D-5 notes — open market.** Multiple offers stay live at once and any player may accept any live offer at any point during the active player's turn. This is the most table-like option and the most state to manage; three consequences follow:
 
@@ -942,22 +985,25 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 **Platform**
 
-12. Auth (P-4), lobby lifecycle and config (§8.3), turn timers, and seat-actor substitution events (§8.2).
-13. Text chat as a separate stream (§8.5) with mute, block, and report from the start — moderation is much harder to add to a live product than to build into it.
+12. Auth.js with our own principal table (P-15, §8.6) — including the JWT/JWKS seam to the Rust server, which is the part most likely to be underestimated.
+13. Lobby lifecycle and config (§8.3), configurable turn timers (P-17), and seat-actor substitution with reclaim (P-18).
+14. Web client on Railway (P-9, P-10), with the i18n layer (P-12) in place before the first strings are written.
+15. Text chat as a separate stream (§8.5) with mute, block, report and the wordlist filter from the start — moderation is much harder to add to a live product than to build into it.
+16. Colourblind mode (P-13) alongside the default palette, not after it.
 
 **Bots**
 
-14. Heuristic bot — a **launch prerequisite**, since P-2 disconnect takeover, lobby filling, and LLM fallback all depend on it.
-15. Forced-move auto-play in the engine (§9.4) — it cuts LLM call volume and RL rollout cost simultaneously.
-16. LLM player behind the B-3 flag, with pinned model version and spend caps; measure real cost per game before considering wider access.
+17. Heuristic bot — a **launch prerequisite**, since P-2 disconnect takeover, lobby filling, and LLM fallback all depend on it.
+18. Forced-move auto-play in the engine (§9.4) — it cuts LLM call volume and RL rollout cost simultaneously.
+19. LLM player behind the B-3 flag, with the two-model routing of B-6, with pinned model version and spend caps; measure real cost per game before considering wider access.
 
 **Analytics**
 
-17. Expected-production engine (§10.2) — the exact mean/variance computation and the four-way decomposition. It underpins per-game luck reporting *and* the luck-adjusted metric in §10.4, so build it once, in the replay layer.
-18. Dice reporting as an **empirical percentile**, not a per-game p-value (§10.1a), with the pooled RNG audit (§10.1b) as a separate scheduled job.
-19. Implement rating (A-1…A-4, §10.5) as a post-game batch job over completed, non-substituted games, with seat assignment randomised at lobby start.
-20. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters, explicit per-turn n, no i.i.d. pooling of player-games.
+20. Expected-production engine (§10.2) — the exact mean/variance computation and the four-way decomposition. It underpins per-game luck reporting *and* the luck-adjusted metric in §10.4, so build it once, in the replay layer.
+21. Dice reporting as an **empirical percentile**, not a per-game p-value (§10.1a), with the pooled RNG audit (§10.1b) as a separate scheduled job.
+22. Implement rating (A-1…A-5, §10.5) as a post-game batch job over completed, non-substituted games, with seat assignment randomised at lobby start.
+23. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters, explicit per-turn n, no i.i.d. pooling of player-games.
 
-**Decision register:** six rules decisions (§12.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1), four rating decisions (§10.5) — 29 in total.
+**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), five rating decisions (§10.5) — 46 in total.
 
 **Nothing blocks starting the engine.** The Random Setup is fully specified by R-3, and the four assets in §11 have workable defaults or gate only the Beginner mode.
