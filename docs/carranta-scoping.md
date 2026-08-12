@@ -450,15 +450,23 @@ Determinism is required for reproducible training, debuggable replays, and the s
 
 ### 6.6 Performance targets
 
-Targets to validate with a benchmark harness — **not measurements**, and nothing here should be quoted as fact until benchmarked:
+Full table, method notes, and the measured baseline live in
+[`engine-performance.md`](engine-performance.md). Summary:
 
-| Metric | Target |
-|---|---|
-| Single action application | low single-digit µs |
-| Full random game (setup → win) | sub-millisecond |
-| Self-play throughput | millions of steps/sec across cores via rayon |
-| State clone (MCTS node) | ~memcpy of ~300 bytes |
-| Batched env step, N=1024 | FFI overhead amortized below per-step cost |
+| Operation | Target | Measured |
+|---|---|---|
+| Longest road, realistic 15-road network | ≤ 100 ns | **364 ns** |
+| Longest road, four-player sweep | ≤ 400 ns | **1 004 ns** |
+| Apply one action | ≤ 50 ns | not built |
+| Full random game | ≤ 50 µs | not built |
+| Self-play, one core | ≥ 20 000 games/s | not built |
+
+The full-game target sets everything else: ~300 actions in ≤ 50 µs is ~160 ns
+per action including production, legality and scoring.
+
+**Nothing in this table may be quoted as a fact about the engine until it has a
+measured value.** The two that do are from a batched benchmark in the repo,
+reproducible with `cargo run --release --example bench_longest_road`.
 
 ---
 

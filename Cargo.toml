@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/carranta-core"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Benchmarks and profiling runs use this: release codegen, but with debug
+# symbols so perf/samply can attribute time to source lines.
+[profile.bench]
+inherits = "release"
+debug = true
