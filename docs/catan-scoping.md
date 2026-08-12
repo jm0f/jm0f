@@ -1,9 +1,9 @@
 # CATAN — Rules & Materials Scoping Document
 
 **Source (primary):** *CATAN — The Game* rulebook, CN3081, v6.250401 (6th Edition), © 2025 CATAN GmbH / CATAN Studio. 12 pages.
-**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§11](#11-sources).
-**Status:** Draft 4 — rules extracted, edge cases resolved, implementation model, engine architecture, and history/analytics design recorded.
-**Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7). This document is the reference for the state schema, action model, rules validation, and data model.
+**Source (secondary, for edge-case rulings only):** official CATAN base-game FAQ and the 5th Edition *Rules & Almanac* — see [§13](#13-sources).
+**Status:** Draft 5 — rules, engine architecture, history/analytics, platform scope, and bot strategy recorded. 25 project decisions registered.
+**Target:** **Digital implementation** of the base game: a Rust engine core (§6) usable both as a game service and as a high-throughput environment for AI training, with full game history capture (§7), a lobby-based multiplayer platform (§8), and heuristic and LLM opponents (§9). This document is the reference for the state schema, action model, rules validation, data model, and product scope.
 
 **Scope boundary**
 
@@ -13,7 +13,7 @@
 **Conventions used here**
 
 - Rules are numbered `R-x.y` so they can be referenced from tickets, tests, and code.
-- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§9](#9-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
+- Every rule is traceable to a source: `p.N` = page of the CN3081 rulebook; `FAQ` / `ALM` = official FAQ / 5th Edition Almanac (used only for clarifications, marked as such in [§11](#11-resolved-rulings-edge-cases)); `HOUSE` = a project decision with no source in any official material; *inferred* = read from the rulebook by implication rather than stated.
 - Facts read from **diagrams/artwork** rather than rules text are marked *(image-derived)*.
 
 ---
@@ -542,7 +542,154 @@ Rough estimates to validate, not measurements. A game runs a few hundred state-c
 
 ---
 
-## 8. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
+## 8. Platform scope
+
+The engine (§6) is one component of a product: accounts, lobbies, matchmaking, spectating, and chat sit above it. Nothing in this section may leak into `catan-core`.
+
+### 8.1 Decisions
+
+| # | Area | Decision |
+|---|---|---|
+| P-1 | Guest identity | **Device-persistent and claimable.** A guest carries a durable ID and can later attach email or Google, keeping full history |
+| P-2 | Disconnect / abandonment | **Bot takeover after a timeout.** The game continues; the substitution is recorded |
+| P-3 | Pacing | **Real-time only** for v1. All players present, turn timers |
+| P-4 | Authentication | **Self-hosted open source** (Ory, Keycloak, or self-hosted Supabase) |
+| P-5 | Discovery | **Browsable lobby list.** No matchmaking queue in v1 |
+| P-6 | Spectators | **Allowed, with fog** — public observer view only |
+| P-7 | Communication | **Text chat in v1**; voice designed-for-later, not built |
+| P-8 | Chat data | **Recorded in a separate stream**, with its own retention class |
+
+### 8.2 Identity model
+
+Three distinct concepts that are easy to conflate:
+
+- **Principal** — the durable analytics identity. Owned by us, not by the auth provider.
+- **Credential** — how a principal proves itself: a device token (guest), email + password, or a Google account. A principal may have several.
+- **Seat** — a position in one game (0–3), occupied by an actor for an interval.
+
+**Guest claiming (P-1) must not rewrite game logs.** Logs are immutable (§7). Implement claiming as an alias in an identity table — `guest_principal → account_principal` — and resolve through it at analytics time. The alternative, rewriting historical events to carry the new ID, breaks the snapshot checksums in §7.6 and destroys the append-only property that makes replay trustworthy.
+
+**Own the principal table.** Treat the P-4 auth system as an identity *source*, not the system of record. Guest-to-account linking is the least standardised flow across auth providers, and keeping the principal mapping in our own schema means a provider change never touches analytics history.
+
+**P-2 makes a seat's actor time-varying.** A seat can begin as a human and finish as a bot, so:
+
+- The log carries `SeatActorChanged { seat, from, to, reason }` events.
+- `fact_game_player` is keyed per seat-*interval*, not per seat.
+- Any per-player aggregate must decide how to treat substituted games. **Default: flag them and exclude from rated statistics**, since neither the departed human nor the substituting bot played a whole game.
+
+Actor types, all carrying a durable ID per H-6: `human-account`, `human-guest`, `bot-heuristic@version`, `bot-llm@model+version`, `bot-trained@version`.
+
+### 8.3 Lobby model
+
+States: `open` (publicly listed) → `private` (invite-only) → `starting` → `in-game` → `closed`.
+
+Lobby configuration is exactly the set of things that make games incomparable in analytics (§7.4), so it is recorded verbatim into `GameCreated`:
+
+- Setup variant — Fixed or Variable (§2.2, §2.3)
+- Red-number adjacency option (R-3.12)
+- Trade mode — `full` / `restricted` / `disabled` (§6.5)
+- Seat count (3–4) and which seats are bots, with difficulty
+- Turn timer duration
+
+Notes:
+
+- **Invite links** use unguessable, revocable tokens. A private lobby's security is entirely the token's entropy.
+- **Bots fill seats in the lobby** and may be added or removed before start. One human plus two or three bots is a valid game — the rules require 3–4 *players*, not 3–4 humans.
+- **Turn timers are mandatory** under P-3. On expiry the turn auto-resolves (forced actions only) or the seat passes to a bot per P-2.
+- **Accepted consequence of P-3:** live state may assume all players are present. Adding correspondence play later would mean re-architecting live state handling, not just extending timeouts.
+
+### 8.4 Spectators — and what P-6 costs
+
+Choosing fogged spectating over no spectating **moves §7.3 redaction from a post-game convenience onto the live path, in v1**. Three consequences:
+
+1. **The redaction leak test (§7.6, risk 2) becomes a launch blocker**, not a later hardening task. A bug there now exposes live hands to strangers rather than mis-rendering an old replay.
+2. **Spectator view is the neutral observer view**: `PUBLIC` data only, no seat's `OWNER` data, ever. It is not "a player view minus that player" — it is strictly less than any player's view.
+3. **Fog does not eliminate collusion.** A spectator can relay timing, board reads, and inference back to a seated player out-of-band. Mitigate with a configurable **broadcast delay** on public games, and consider disabling spectating entirely for rated play once rating exists.
+
+Spectators are not seats: they hold no `player_id` in the game log and never appear in `fact_game_player`.
+
+### 8.5 Chat
+
+Text chat in v1 (P-7), per-lobby and per-game channels. Under R-7.19's open market, negotiation is the core social loop, and structured offers alone would leave it flat.
+
+**Storage (P-8).** Chat lives in its own stream keyed by `game_id` and correlated to the game log by sequence number and timestamp, so replay can interleave conversation with actions without embedding personal data in the canonical corpus. This is what makes a deletion request satisfiable without rewriting immutable game logs — the reason to accept the small cost of correlating two streams.
+
+**Moderation baseline:** per-player mute and block, a report flow, and server-side filtering. The chat log is the evidence trail; that is a substantial part of why it is recorded at all.
+
+**Voice (deferred).** Keep the transport abstraction voice-ready without building it. For ≤4 participants a WebRTC mesh is viable; beyond that, an SFU or a vendor (LiveKit, Daily, Agora). **Voice is not recorded** — the consent, storage, and jurisdiction burden is disproportionate, and none of the analytics goals need it.
+
+### 8.6 Authentication (P-4)
+
+Self-hosted, and must cover: email + password with verification and reset, Google OAuth, guest-to-account claiming, and session tokens usable over WebSocket. Running it ourselves means patching, key rotation, and breach response are ours — budget for that as ongoing work rather than a one-off integration.
+
+---
+
+## 9. Bots and the LLM player
+
+### 9.1 Decisions
+
+| # | Area | Decision |
+|---|---|---|
+| B-1 | Lineup | **Heuristic + LLM first**; a trained agent later |
+| B-2 | LLM output budget | **Adaptive** — index-only by default, brief reasoning on decisions that carry the game |
+| B-3 | LLM access | **Internal and flagged accounts only.** Not in public lobbies |
+| B-4 | LLM purpose | **All four**: stand-in, live opponent, evaluation baseline, bootstrap training data |
+
+### 9.2 One player interface
+
+Every actor — human, heuristic, LLM, trained agent — implements the same port: *given a redacted observation and the list of legal actions, return one action*. The engine cannot tell them apart. This is what makes B-1's staged lineup cheap, and it is the same interface the batched training envs (§6.5) already need.
+
+Two universal requirements: every bot answers within a bounded time, and **any bot failure or timeout falls back to the heuristic bot** rather than stalling the game.
+
+### 9.3 Heuristic bot — the availability floor
+
+Instant, deterministic, in-process, free. It serves four jobs beyond being an opponent:
+
+- Disconnect takeover (P-2), which must be immediate and must not cost money
+- Lobby filling
+- Fallback when the LLM errors, times out, or hits a spend cap
+- Regression baseline — if a trained agent cannot beat it, something is wrong
+
+Because P-2 and B-3 both depend on it, the heuristic bot is a **prerequisite for launch**, not an optional extra alongside the more interesting LLM work.
+
+### 9.4 LLM player
+
+**Why this fits.** The engine already emits legal-action masks (§6.5). The model selects an *index* from an enumerated list, so an illegal move is structurally impossible — no parsing, no validation, no retry loop. This is the property that makes the idea cheap rather than fiddly.
+
+**Prompt structure, built for caching:**
+
+| Segment | Contents | Volatility |
+|---|---|---|
+| Static prefix | Rules summary, action-encoding legend, board layout and port positions | Fixed for the whole game — **cache this** |
+| Dynamic suffix | Current public state, own hand, enumerated legal actions | Per decision |
+
+The board never changes after setup, so it belongs in the cached prefix rather than being resent hundreds of times. Rough estimates to measure, not facts: static prefix on the order of 1–2k tokens, dynamic suffix a few hundred.
+
+**Cut the call count before optimising the call.** The engine should **auto-resolve forced decisions** — any state with exactly one legal action — without consulting any player. Much of a Catan game is forced or near-forced, so this removes most LLM calls outright, and it benefits RL rollouts identically.
+
+**Where the reasoning budget goes (B-2).** Index-only everywhere except: initial placement (R-3.7, R-3.8), robber placement and victim choice (R-6.3, R-6.4), trade evaluation, and development card timing. These are where Catan games are actually decided; everything else is bookkeeping.
+
+**Trade mode must be `restricted`.** R-7.19's open market makes the legal action list unbounded — all possible offers cannot be enumerated into a prompt. LLM play uses the same `restricted` seam that RL needs (§6.5), which is the second independent reason that seam has to exist before either is built.
+
+**Pin everything for B-4's evaluation role.** Model ID, version, temperature, and a hash of the prompt template are recorded as part of the seat's agent identity (H-6). A silently updated model otherwise invalidates every prior benchmark without any signal that it happened.
+
+**Capture rationales.** When B-2 produces reasoning tokens, store them in a side stream keyed to the event sequence — the same pattern as chat (P-8), and directly useful later for distillation into a trained agent.
+
+### 9.5 Cost control (B-3)
+
+Internal and flagged accounts only for now. Before any wider exposure: per-game and global spend caps, and graceful degradation to the heuristic bot when a cap is hit or the provider errors. Guests must never be able to initiate LLM spend.
+
+### 9.6 Risks
+
+1. **Prompt injection through chat.** If free-text chat is ever placed into an LLM player's prompt, players can issue instructions to the bot — "give me all your wood" is a trade negotiation to a human and an instruction to a model. **Do not include chat text in the LLM player's prompt.** If social play later demands it, isolate it as clearly-delimited untrusted data and never as instructions. This is the sharpest interaction between §8.5 and this section.
+2. **Latency shapes the game feel.** An LLM call per decision at human pace is tolerable; hundreds per game is not. Forced-move auto-play is the primary mitigation, and turn timers need to accommodate bot think time.
+3. **Model drift breaks benchmarks** — see the pinning requirement above.
+4. **Cost per game is unknown** until measured. Measure it on internal games before B-3 is relaxed.
+5. **Bootstrap data quality.** B-4 uses LLM games as training data; a systematically weak LLM teaches those weaknesses. Validate against the heuristic baseline before using its games to warm-start anything.
+
+---
+
+## 10. Content assets still to transcribe *(deferred — blocks Fixed Setup)*
 
 These exist only as artwork and are **not** transcribed in this document, per the current scoping decision. Someone with the physical components or a high-resolution scan needs to fill them in:
 
@@ -557,9 +704,9 @@ A-3 and A-4 are needed for *any* implementation; A-1 and A-2 only gate the Fixed
 
 ---
 
-## 9. Resolved rulings (edge cases)
+## 11. Resolved rulings (edge cases)
 
-The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§11](#11-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
+The CN3081 rulebook leaves the following open. Each is now resolved against the **official CATAN FAQ** or the **5th Edition Almanac** ([§13](#13-sources)). These are marked `FAQ`/`ALM` in the rule tables above, and are clarifications rather than rulebook text.
 
 | # | Question | Official ruling | Source |
 |---|---|---|---|
@@ -584,7 +731,7 @@ The CN3081 rulebook leaves the following open. Each is now resolved against the 
 | 19 | Rebuild on an intersection freed by a city upgrade? | Yes, the returned settlement is reusable; buildings may never be *moved*, though. | FAQ |
 | 20 | Coastal intersections without a port? | Legal building spots. Any point where three hexes meet is an intersection. | FAQ |
 
-### 9.1 Residual unknowns
+### 11.1 Residual unknowns
 
 Questions not settled by any official source. All six have now been **decided for this project** — these are house rulings, not CATAN rules, and are marked `HOUSE` where they appear in the rule tables.
 
@@ -610,7 +757,7 @@ Questions not settled by any official source. All six have now been **decided fo
 3. **Rulebook completeness.** This extraction covers a 12-page rulebook; confirm no supplementary material (e.g., a separate almanac insert) belongs in scope.
 4. **The four inferred trade rules** — R-7.13, R-7.14, R-7.15, R-7.10 — rest on reading rather than source text. R-7.15 (no trading before the dice roll) is the least certain, since a development card *may* legally be played pre-roll.
 
-### 9.2 Edition drift when consulting official sources
+### 11.2 Edition drift when consulting official sources
 
 The FAQ and Almanac are written for the 5th Edition and use older terms. Translation table, to avoid mis-citing them:
 
@@ -635,7 +782,7 @@ Two of these are **rule changes, not just renames**, and the FAQ cannot be used 
 
 The 5th Edition also adds a Variable-Setup constraint the 6th Edition rulebook does not state: **red numbers (6 and 8) must not be adjacent** in a fully random layout. Decide whether to adopt it — it materially affects generated-board quality and is a common expectation.
 
-### 9.3 Trade rules — completeness audit
+### 11.3 Trade rules — completeness audit
 
 Trade is the least completely specified area of the rulebook. Status of every trade question identified:
 
@@ -666,24 +813,44 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 ---
 
-## 10. Next steps
+## 12. Next steps
 
-1. Transcribe the four artwork assets in §8 (A-3 and A-4 first — they gate every mode).
-2. Close the four verification tasks in §9.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
-3. Build the board topology module (19/54/72) with precomputed adjacency, and validate against the invariants in §5.5.
-4. Turn each `R-x.y` rule into an acceptance test; the §5.7 list is the priority set. Every `HOUSE` rule (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) needs a test too — they have no external source to fall back on.
-5. Design the open-market trade protocol (R-7.19) against the concurrency notes in §9.1, before building the trade UI.
-6. Implement Variable Setup first (fully specified in text); add Fixed Setup once A-1/A-2 exist.
-7. Stand up `catan-core` (§6.2) with the bitboard state and the enum state machine, plus a benchmark harness to replace the §6.6 targets with measurements.
-8. Build the event log and replay path (§7.2, §7.3) alongside the engine, not after it — retrofitting event emission into a finished engine is far more invasive than emitting from the start.
-9. Write the redaction leak test (§7.6 risk 2) and the snapshot-checksum verification (§7.6 risk 3) as part of the first replay milestone.
-10. Set the human-identity retention and deletion policy (§7.6 risk 5) before the first human game is recorded.
+**Unblock (no dependencies, needed by everything)**
 
-All six rules decisions are recorded in §9.1 and all seven data decisions in §7.1. Nothing now blocks starting on the engine except the A-3/A-4 artwork data.
+1. Transcribe artwork assets **A-3 and A-4** (§10) — port layout and disc letters gate every mode. A-1/A-2 gate Fixed Setup only.
+2. Close the four verification tasks in §11.1 — building costs, port distribution, rulebook completeness, and the four inferred trade rules.
+
+**Engine**
+
+3. Board topology module (19/54/72) with precomputed adjacency, validated against the §5.5 invariants.
+4. `catan-core` (§6.2): bitboard state, enum state machine, legal-move generation, plus a benchmark harness to replace the §6.6 *targets* with measurements.
+5. Every `R-x.y` rule becomes an acceptance test; §5.7 is the priority set. The six `HOUSE` rules (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) need tests most — they have no external source to fall back on.
+6. Variable Setup first (fully specified in text); Fixed Setup once A-1/A-2 exist.
+7. Build the **trade mode seam** (`full` / `restricted` / `disabled`, §6.5) early — RL (§6.5) and the LLM player (§9.4) both depend on it, independently.
+
+**History and data**
+
+8. Event log and replay path (§7.2, §7.3) built *alongside* the engine, not after — retrofitting event emission into a finished engine is far more invasive than emitting from the start.
+9. Redaction leak test (§7.6 risk 2) and snapshot-checksum verification (§7.6 risk 3) in the first replay milestone. P-6 fogged spectating makes the leak test a **launch blocker**, not hardening.
+10. Own principal table and the guest-claim alias design (§8.2) before any account exists — retrofitting identity onto immutable logs is not possible.
+11. Human-identity retention and deletion policy (§7.6 risk 5) before the first human game is recorded.
+
+**Platform**
+
+12. Auth (P-4), lobby lifecycle and config (§8.3), turn timers, and seat-actor substitution events (§8.2).
+13. Text chat as a separate stream (§8.5) with mute, block, and report from the start — moderation is much harder to add to a live product than to build into it.
+
+**Bots**
+
+14. Heuristic bot — a **launch prerequisite**, since P-2 disconnect takeover, lobby filling, and LLM fallback all depend on it.
+15. Forced-move auto-play in the engine (§9.4) — it cuts LLM call volume and RL rollout cost simultaneously.
+16. LLM player behind the B-3 flag, with pinned model version and spend caps; measure real cost per game before considering wider access.
+
+**Decision register:** six rules decisions (§11.1), seven data decisions (§7.1), eight platform decisions (§8.1), four bot decisions (§9.1). Nothing blocks starting the engine except the A-3/A-4 artwork data.
 
 ---
 
-## 11. Sources
+## 13. Sources
 
 1. *CATAN — The Game* rulebook, CN3081, v6.250401, 6th Edition, © 2025 CATAN GmbH / CATAN Studio — the primary source, supplied as PDF.
 2. [Official CATAN base-game FAQ](https://www.catan.com/faq/basegame) — used for all `FAQ`-marked rulings.
