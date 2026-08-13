@@ -7,7 +7,7 @@
 //! number. Timing is batched — per-call `Instant::now()` costs tens of ns and
 //! its scheduler noise swamps a sub-microsecond measurement.
 
-use carranta_core::longest_road::{Scratch, longest_road_in};
+use carranta_core::longest_road::{MAX_PLAYERS, Scratch, Tracker, longest_road_in};
 use carranta_core::topology::*;
 use std::time::Instant;
 
@@ -110,5 +110,82 @@ fn main() {
     println!(
         "\nfour-player sweep: {:.1} ns",
         t.elapsed().as_nanos() as f64 / reps as f64
+    );
+
+    // ---- Whole-game cost: the number that actually matters. ----
+    //
+    // A game is roughly 60 roads and 20 buildings across four seats, with
+    // every seat's length needed after each move (the Longest Road tile can
+    // change hands at any point). Compare recomputing all four every time
+    // against the tracker, which recomputes only what can have changed.
+    let moves: Vec<(usize, bool, u8)> = {
+        let mut v = Vec::new();
+        let mut sd = 0xA5A5_u64;
+        let nx = |s: &mut u64| {
+            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *s >> 33
+        };
+        for i in 0..80 {
+            let p = (nx(&mut sd) as usize) % MAX_PLAYERS;
+            let building = i % 4 == 3;
+            let id = if building {
+                (nx(&mut sd) % 54) as u8
+            } else {
+                (nx(&mut sd) % 72) as u8
+            };
+            v.push((p, building, id));
+        }
+        v
+    };
+
+    let reps = 20_000;
+    let t = Instant::now();
+    let mut acc = 0u64;
+    for _ in 0..reps {
+        let mut roads = [0u128; MAX_PLAYERS];
+        let mut builds = [0u64; MAX_PLAYERS];
+        let mut s = Scratch::new();
+        for &(p, building, id) in &moves {
+            if building {
+                builds[p] |= 1u64 << id;
+            } else {
+                roads[p] |= 1u128 << id;
+            }
+            for (q, &r) in roads.iter().enumerate() {
+                let blocked = (0..MAX_PLAYERS)
+                    .filter(|&x| x != q)
+                    .fold(0u64, |a, x| a | builds[x]);
+                acc += longest_road_in(&mut s, r, blocked) as u64;
+            }
+        }
+    }
+    let naive = t.elapsed().as_nanos() as f64 / reps as f64;
+
+    let t = Instant::now();
+    let mut acc2 = 0u64;
+    for _ in 0..reps {
+        let mut tr = Tracker::new();
+        for &(p, building, id) in &moves {
+            if building {
+                tr.add_building(p, id);
+            } else {
+                tr.add_road(p, id);
+            }
+            for q in 0..MAX_PLAYERS {
+                acc2 += tr.get(q) as u64;
+            }
+        }
+    }
+    let tracked = t.elapsed().as_nanos() as f64 / reps as f64;
+    assert_eq!(acc, acc2, "tracker must agree with full recomputation");
+
+    println!(
+        "\nwhole game ({} moves, all seats queried after each):",
+        moves.len()
+    );
+    println!("  recompute every time  {naive:>9.0} ns");
+    println!(
+        "  incremental tracker   {tracked:>9.0} ns   ({:.1}x faster)",
+        naive / tracked
     );
 }

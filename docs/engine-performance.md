@@ -23,7 +23,8 @@ scheduler noise swamps a sub-microsecond measurement).
 | Longest road — realistic, 5 roads | ≤ 40 ns | **32 ns** | met |
 | Longest road — realistic, 15 roads, blocked | ≤ 150 ns | **111 ns** | met |
 | Longest road — four-player sweep | ≤ 400 ns | **293 ns** | met |
-| Longest road — dense/adversarial, 15 roads | ≤ 500 ns | **1 629 ns** | 3.3× off |
+| Longest road — dense/adversarial, 15 roads | ≤ 500 ns | **1 455 ns** | 2.9× off |
+| Whole game, all seats after every move | ≤ 10 µs | **6.8 µs** | met |
 | Apply one action | ≤ 50 ns | — | not built |
 | Legal action mask, full turn | ≤ 200 ns | — | not built |
 | State clone (MCTS node) | ≤ 20 ns | — | not built |
@@ -48,6 +49,15 @@ test runs first.
 | Diameter | acyclic, no split cycle | two linear sweeps | branching trees |
 | Search | cycle **and** ≥4 odd junctions | contraction, then bounded DFS | rare |
 
+### Skipping the work entirely
+
+[`Tracker`] keeps every seat's length current and recomputes only what can have
+changed: a seat whose own roads moved, or one whose network an opponent has
+just built across — the latter detected with a single mask test against the
+intersection's roads, and usually true for nobody. That is a 3.6× saving on the
+whole-game figure above, and it compounds with every per-call improvement
+below rather than competing with them.
+
 ### Optimisation history
 
 | Change | Realistic 15 roads |
@@ -56,6 +66,14 @@ test runs first.
 | Tier reorder (Euler before tree) + padded tables | 321 ns |
 | Intersection-space flood, no graph build | 204 ns |
 | Edge-space flood with fused parity | **91 ns** |
+
+And at the level that actually matters, the whole-game cost of keeping every
+seat's road length current across 80 building moves:
+
+| Change | Whole game |
+|---|---|
+| Recompute all four seats after every move | 24.0 µs |
+| [`Tracker`] — recompute only what can have changed | **6.8 µs** |
 
 The last step is the one that mattered, and it is worth stating why. The
 earlier versions built an explicit adjacency graph before deciding anything.
@@ -100,24 +118,30 @@ see the remaining ideas below.
 
 ### Remaining ideas, in expected order of value
 
-1. **Incremental caching** — recompute only when a player's roads change, or
-   when an opponent's building lands on their network. The largest practical
-   win by far, and it belongs in the engine rather than this module: it turns
-   ~200 calls per game into ~60.
-2. **Tighter bound via minimum T-join** for the dense case. The current cap
-   sheds the `k−1` lightest chains; the true minimum parity repair is a T-join,
-   computable by subset DP over the few odd junctions. This is the most likely
-   route to bringing the adversarial case under target, and it costs nothing on
-   the common path because it only runs in the search tier.
-3. **Skipping the split-graph rebuild** in the search tier when the component
-   has no blocked intersections.
+1. **Minimum T-join bound** for the dense case. The current cap takes the
+   better of two cheap relaxations; the exact minimum parity repair is a
+   T-join, via shortest paths between odd junctions plus a subset-DP matching.
+   It is the only remaining idea likely to close the adversarial gap — but note
+   the arithmetic before starting: a subset DP over 8–10 odd junctions is on
+   the order of 10–20k operations, which at this graph size is comparable to
+   the search it would replace. It should be gated on a small odd-junction
+   count, and it must be measured rather than assumed.
+2. **Exploiting that the exact length is rarely needed.** The tile only changes
+   hands on a strict lead (R-10.6), so a caller that knows the current holder's
+   length can often stop at the bound instead of proving the maximum.
 
 ## Correctness
 
-18 tests, including ~40 000 differential comparisons against a brute-force
-reference — an obviously-correct exhaustive trail search with no contraction,
-tiers or bounds — half of them with opponent buildings scattered over the
-network.
+20 tests. ~40 000 differential comparisons against a brute-force reference — an
+obviously-correct exhaustive trail search with no contraction, tiers or bounds
+— half of them with opponent buildings scattered over the network, and running
+up to the full 15-road piece limit so that the search tier and its bounds are
+actually exercised. A further ~48 000 checks confirm [`Tracker`]'s cached
+answers against full recomputation after every move of simulated games.
+
+Both bounds in `shed_bound` are correctness-critical: a bound below the true
+maximum would make the search stop early and silently return a short answer.
+The differential tests are what stands behind them.
 
 That differential test earned its keep. It caught two bugs that every
 hand-written case missed, both in blocking:

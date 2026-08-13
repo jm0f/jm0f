@@ -457,7 +457,8 @@ Full table, method notes, and the measured baseline live in
 |---|---|---|
 | Longest road, realistic 15-road network | ≤ 100 ns | **91 ns** — met |
 | Longest road, four-player sweep | ≤ 400 ns | **293 ns** — met |
-| Longest road, dense/adversarial network | ≤ 500 ns | **1 629 ns** |
+| Longest road, dense/adversarial network | ≤ 500 ns | **1 455 ns** |
+| Whole game, all seats current throughout | ≤ 10 µs | **6.8 µs** — met |
 | Apply one action | ≤ 50 ns | not built |
 | Full random game | ≤ 50 µs | not built |
 | Self-play, one core | ≥ 20 000 games/s | not built |

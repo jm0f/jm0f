@@ -8,5 +8,5 @@
 pub mod longest_road;
 pub mod topology;
 
-pub use longest_road::longest_road;
+pub use longest_road::{Tracker, longest_road};
 pub use topology::{EdgeSet, VertexSet};
