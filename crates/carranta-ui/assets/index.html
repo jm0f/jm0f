@@ -226,6 +226,7 @@ function portGroups() {
 // Player colours as values rather than CSS variables, because a piece is
 // drawn in several tones of one colour and they have to be computed.
 const SEAT_HEX = ['#4a9eff', '#e05c5c', '#f0f0f0', '#f0913a'];
+const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
 
 // The palette the drawings are in, and how light each tone is relative to the
 // piece's base colour. Recolouring by lookup rather than by measuring the
@@ -280,6 +281,7 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
   node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
   svg.appendChild(node);
+  return node;
 }
 
 function draw() {
@@ -392,26 +394,37 @@ function draw() {
   solids.sort((a, b) => a.y - b.y);
   solids.forEach((s) => place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor));
 
-  // Where you may build, drawn over the pieces so a spot is never buried
-  // under one. These went missing when the pieces were rewritten; without
-  // them the board is a picture rather than something you can play on.
+  // Where you may build, shown as a ghost of the piece you would get rather
+  // than an abstract marker: the same drawing, in your colour, at a fraction
+  // of its opacity. It answers "what goes here" without a legend, and a city
+  // upgrade looks different from a new settlement, which a dot never did.
+  const ghost = (name, x, y, k, anchor, choice) => {
+    const node = place(svg, name, x, y, k, HUMAN_SEAT, anchor);
+    if (!node) return;
+    node.setAttribute('opacity', 0.45);
+    const g = el('g', { class: 'spot' });
+    svg.removeChild(node);
+    g.appendChild(node);
+    g.onclick = () => act(choice);
+    svg.appendChild(g);
+  };
+
   for (const e in byEdge) {
     const edge = view.edges[e];
     const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
-    const g = el('g', { class: 'spot' });
-    g.appendChild(el('line', {
-      x1, y1, x2, y2, stroke: '#ffffff', 'stroke-width': 7,
-      'stroke-linecap': 'round', 'stroke-dasharray': '5 5', opacity: .85,
-    }));
-    g.onclick = () => act(byEdge[e][0].i);
-    svg.appendChild(g);
+    const deg = ((Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI) % 180 + 180) % 180;
+    const name = deg < 60 ? 'road-30' : (deg < 120 ? 'road-90' : 'road-150');
+    ghost(name, (x1 + x2) / 2, (y1 + y2) / 2,
+          Math.hypot(x2 - x1, y2 - y1) * 0.70 / ROAD_LENGTH,
+          name === 'road-90' ? 0.54 : 0.62, byEdge[e][0].i);
   }
   for (const v in byVertex) {
     const [x, y] = vxy[v];
-    const g = el('g', { class: 'spot' });
-    g.appendChild(el('circle', { cx: x, cy: y, r: 11, fill: '#ffffff', opacity: .8 }));
-    g.onclick = () => act(byVertex[v][0].i);
-    svg.appendChild(g);
+    // An upgrade and a new settlement are offered at the same kind of place,
+    // so the label is what says which piece is on offer here.
+    const city = /city/i.test(byVertex[v][0].label || '');
+    ghost(city ? 'city' : 'settlement', x, y,
+          (city ? 31 : 23) / (city ? 72 : 60), 0.72, byVertex[v][0].i);
   }
 
   // Intersection numbers, for talking about specific places on the board —
