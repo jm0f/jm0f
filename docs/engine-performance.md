@@ -25,16 +25,49 @@ scheduler noise swamps a sub-microsecond measurement).
 | Longest road — four-player sweep | ≤ 400 ns | **293 ns** | met |
 | Longest road — dense/adversarial, 15 roads | ≤ 500 ns | **1 455 ns** | 2.9× off |
 | Whole game, all seats after every move | ≤ 10 µs | **6.8 µs** | met |
-| Apply one action | ≤ 50 ns | — | not built |
-| Legal action mask, full turn | ≤ 200 ns | — | not built |
-| State clone (MCTS node) | ≤ 20 ns | — | not built |
-| Full random game, setup → win | ≤ 50 µs | — | not built |
-| Self-play throughput, one core | ≥ 20 000 games/s | — | not built |
+| Apply one action | ≤ 50 ns | **~35 ns** | met |
+| Legal move generation | ≤ 200 ns | **~22 ns** | met |
+| State clone (search node) | ≤ 20 ns | **~6 ns** (384 B) | met |
+| Full random game, setup → win | ≤ 50 µs | **~130 µs** | see below |
+| Self-play throughput, one core | ≥ 20 000 games/s | **~7 700** | see below |
 | Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
+
+Engine figures come from `cargo run --release --example bench_engine`. They
+move ±20% between runs on this machine, so treat them as magnitudes.
+
+**The whole-game target rests on a premise that turned out to be wrong.** It
+was set at ~300 actions per game; random play actually takes **~1 058**. The
+per-action cost is fine — ~134 ns against the ~160 ns the target implies — so
+the engine is not slow, the assumed action count was. A game of 300 actions
+would finish in ~40 µs, inside target.
+
+Random play inflates the count because a random policy trades maritime
+constantly and builds badly, dragging games out. Re-baseline this against the
+heuristic bot once it exists rather than against random play, and until then
+read the per-action line as the real measure.
 
 The full-game target is the demanding one: ~300 actions at ≤ 50 µs means an
 average of ~160 ns per action *including* production, legality and scoring.
 That is the number every other line has to serve.
+
+## Engine
+
+State is one fixed-size `Copy` struct of **384 bytes** — a few cache lines, so
+cloning a node for search is a `memcpy` and measures ~6 ns. Occupancy lives in
+bitboards (one `u128` per player over the 72 edges, one `u64` each for
+settlements and cities over the 54 intersections), which is what makes "do I
+hold this port", "which of my roads touch here" and the Distance Rule single
+mask operations rather than scans.
+
+Legal moves are *generated*, not filtered: a search or policy needs the whole
+legal set every step, and building it directly is cheaper than proposing and
+rejecting. The two are kept honest by a test asserting that every generated
+action is accepted by `apply`.
+
+Correctness rests on random playouts: 300 full games with `assert_invariants`
+run after **every** action — resource and piece conservation, one owner per
+edge and intersection, and the Distance Rule holding continuously (§5.5).
+Rule interactions no hand-written case would reach get exercised that way.
 
 ## Longest road
 

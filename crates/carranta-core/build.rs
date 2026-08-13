@@ -218,6 +218,39 @@ fn main() {
     )
     .unwrap();
 
+    // Each intersection's neighbours as a mask. The Distance Rule bans every
+    // intersection within one edge of a building, so the forbidden set is a
+    // union of these rather than a walk over edges.
+    let mut vertex_neighbor_mask = vec![0u64; verts.len()];
+    for (vi, nb) in vertex_neighbors.iter().enumerate() {
+        for &w in nb {
+            if w != NONE {
+                vertex_neighbor_mask[vi] |= 1u64 << w;
+            }
+        }
+    }
+    vertex_neighbor_mask.resize(SLOTS, 0);
+    writeln!(
+        s,
+        "pub const VERTEX_NEIGHBOR_MASK: [u64; {SLOTS}] = {vertex_neighbor_mask:?};"
+    )
+    .unwrap();
+
+    // Each hex's six corners as an intersection mask, so production for a
+    // player on a hex is two popcounts.
+    let mut hex_vertex_mask = vec![0u64; hexes.len()];
+    for (hi, hv) in hex_vertices.iter().enumerate() {
+        for &v in hv {
+            hex_vertex_mask[hi] |= 1u64 << v;
+        }
+    }
+    writeln!(
+        s,
+        "pub const HEX_VERTEX_MASK: [u64; {}] = {hex_vertex_mask:?};",
+        hexes.len()
+    )
+    .unwrap();
+
     vertex_edge_mask.resize(SLOTS, 0);
     writeln!(
         s,

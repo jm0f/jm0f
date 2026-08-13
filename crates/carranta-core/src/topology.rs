@@ -39,6 +39,18 @@ pub fn edge_other(e: u8, v: u8) -> u8 {
     if a == v { b } else { a }
 }
 
+/// The intersections one edge away from `v`.
+#[inline(always)]
+pub fn neighbors(v: u8) -> VertexSet {
+    VERTEX_NEIGHBOR_MASK[v as usize]
+}
+
+/// The six corners of a hex, as an intersection bitset.
+#[inline(always)]
+pub fn hex_vertices(h: u8) -> VertexSet {
+    HEX_VERTEX_MASK[h as usize]
+}
+
 /// Roads sharing an intersection with `e`, as a bitset (including `e`).
 #[inline(always)]
 pub fn edge_adj(e: u8) -> EdgeSet {
