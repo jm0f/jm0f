@@ -224,6 +224,37 @@ function el(tag, attrs, kids) {
   return n;
 }
 
+// Each terrain as a gradient rather than a flat fill. The identity hue stays
+// dominant and the run is within its own family — a forest travels through
+// greens, fields through golds — so a hex still names itself at a glance
+// while the board stops looking like a chart. Direction alternates by terrain
+// so neighbouring hexes do not band into one another.
+const TERRAIN_RAMP = {
+  hills:     ['#f5834a', '#d2622b', '#a83c17', 18],
+  forest:    ['#2bc07c', '#17915a', '#0a6642', 200],
+  pasture:   ['#b7e35c', '#86c232', '#549b18', 340],
+  fields:    ['#ffd85c', '#e9a814', '#c9820a', 160],
+  mountains: ['#b3c1d4', '#8496ad', '#5d6f89', 20],
+  desert:    ['#f0e6cc', '#ddd0ae', '#c2ae85', 200],
+};
+
+function terrainDefs(svg) {
+  const defs = el('defs', {});
+  for (const name in TERRAIN_RAMP) {
+    const [a, b, c, deg] = TERRAIN_RAMP[name];
+    const r = (deg * Math.PI) / 180;
+    const g = el('linearGradient', {
+      id: `t-${name}`, gradientUnits: 'objectBoundingBox',
+      x1: 0.5 - Math.cos(r) / 2, y1: 0.5 - Math.sin(r) / 2,
+      x2: 0.5 + Math.cos(r) / 2, y2: 0.5 + Math.sin(r) / 2,
+    });
+    [[0, a], [0.52, b], [1, c]].forEach(([o, col]) =>
+      g.appendChild(el('stop', { offset: o, 'stop-color': col })));
+    defs.appendChild(g);
+  }
+  svg.appendChild(defs);
+}
+
 // How many ways there are to roll each number: the dots under a disc.
 function pips(n) { return n === 0 ? 0 : 6 - Math.abs(7 - n); }
 
@@ -315,6 +346,7 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
 function draw() {
   const svg = document.getElementById('board');
   svg.textContent = '';
+  terrainDefs(svg);
   const vxy = {};
   view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
 
@@ -330,7 +362,7 @@ function draw() {
     const [cx, cy] = px(h.q, h.r);
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
     g.appendChild(el('polygon', {
-      points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
+      points: hexPoints(cx, cy), fill: `url(#t-${h.terrain})`,
       stroke: byHex[h.id] ? '#fff' : '#0008',
       'stroke-width': byHex[h.id] ? 3 : 1.5,
     }));
