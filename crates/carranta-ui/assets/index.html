@@ -223,12 +223,22 @@ function portGroups() {
   return out;
 }
 
-// Player colours as values rather than CSS variables, because a solid piece
-// needs three tones of one colour and they have to be computed.
+// Player colours as values rather than CSS variables, because a piece is
+// drawn in several tones of one colour and they have to be computed.
 const SEAT_HEX = ['#4a9eff', '#e05c5c', '#f0f0f0', '#f0913a'];
 
-// Mix towards white or black. The three tones and their spacing are taken
-// from art/road.svg, which is the specification for how a piece is lit.
+// The palette the drawings are in, and how light each tone is relative to the
+// piece's base colour. Recolouring by lookup rather than by measuring the
+// pixel keeps the artist's intent: these five values are the lighting, and a
+// blue road should be lit exactly as the pink one was.
+const ART_TONES = {
+  '#FFACD5': 0.26,   // top faces, catching the light
+  '#FF87C2': 0.13,
+  '#FF71B7': 0.00,   // the base tone everything is relative to
+  '#FC65B0': -0.10,
+  '#FE5BAC': -0.20,  // faces turned away
+};
+
 function tone(hex, amount) {
   const n = parseInt(hex.slice(1), 16);
   const mix = (c) => Math.round(amount > 0 ? c + (255 - c) * amount : c * (1 + amount));
@@ -236,34 +246,37 @@ function tone(hex, amount) {
   return `rgb(${r},${g},${b})`;
 }
 
-// Draw a solid from its top face: skirts first, then the face itself on top.
-//
-// An edge earns a skirt when its outward normal points down the screen — those
-// are the faces a viewer can see. Sideways-facing skirts take the darker tone,
-// which is what gives the piece a light direction instead of a flat outline.
-function extrude(svg, top, height, seat) {
-  const base = SEAT_HEX[seat];
-  const cx = top.reduce((s, p) => s + p[0], 0) / top.length;
-  const cy = top.reduce((s, p) => s + p[1], 0) / top.length;
-  // A thin dark edge, because a piece and the terrain under it can be close
-  // enough in tone that the silhouette disappears otherwise.
-  const poly = (pts, fill) => svg.appendChild(el('polygon', {
-    points: pts.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' '),
-    fill, stroke: '#0009', 'stroke-width': 1, 'stroke-linejoin': 'round',
-  }));
-
-  for (let i = 0; i < top.length; i++) {
-    const p = top[i], q = top[(i + 1) % top.length];
-    let nx = q[1] - p[1], ny = -(q[0] - p[0]);
-    const k = Math.hypot(nx, ny) || 1;
-    nx /= k; ny /= k;
-    // Point it away from the middle, whichever way the face is wound.
-    if (nx * (p[0] - cx) + ny * (p[1] - cy) < 0) { nx = -nx; ny = -ny; }
-    if (ny <= 0.01) continue;                      // facing away; not visible
-    poly([p, q, [q[0], q[1] + height], [p[0], p[1] + height]],
-         tone(base, Math.abs(nx) > 0.7 ? -0.30 : -0.16));
+// The drawings, fetched once and kept as parsed nodes to clone per piece.
+const art = {};
+async function loadArt() {
+  for (const name of ['road-30', 'road-150', 'settlement', 'city']) {
+    const text = await (await fetch(`/art/${name}.svg`)).text();
+    art[name] = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
   }
-  poly(top, tone(base, 0.22));
+}
+
+// Place a drawing on the board: centred on (x, y), scaled to `height` board
+// units tall, in the seat's colour. `anchor` shifts it down by a fraction of
+// its height, so a building stands on its intersection rather than floating
+// with the point in the middle of it.
+function place(svg, name, x, y, height, seat, anchor = 0.5) {
+  const src = art[name];
+  if (!src) return;
+  const w = parseFloat(src.getAttribute('width'));
+  const h = parseFloat(src.getAttribute('height'));
+  const k = height / h;
+
+  const node = src.cloneNode(true);
+  node.querySelectorAll('[fill]').forEach((n) => {
+    const f = (n.getAttribute('fill') || '').toUpperCase();
+    if (f in ART_TONES) n.setAttribute('fill', tone(SEAT_HEX[seat], ART_TONES[f]));
+  });
+  node.setAttribute('width', w * k);
+  node.setAttribute('height', height);
+  node.setAttribute('x', x - (w * k) / 2);
+  node.setAttribute('y', y - height * anchor);
+  node.removeAttribute('style');
+  svg.appendChild(node);
 }
 
 function draw() {
@@ -337,56 +350,33 @@ function draw() {
   view.roads.forEach(([seat, e]) => {
     const edge = view.edges[e];
     const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
-    // Pulled back from both intersections, so a road stops short of the
-    // buildings at its ends rather than growing out of them.
-    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
-    const ux = dx / len, uy = dy / len, inset = 8, half = 5.5;   // roads lie low
-    const ax = x1 + ux * inset, ay = y1 + uy * inset;
-    const bx = x2 - ux * inset, by = y2 - uy * inset;
-    const nx = -uy * half, ny = ux * half;
+    // Which drawing to use is decided by the edge's angle. A piece drawn in
+    // perspective cannot be rotated to face another way — it would lean the
+    // wrong direction — so each orientation needs its own drawing rather than
+    // a transform.
+    let deg = Math.abs(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI) % 180;
+    const name = deg < 90 ? 'road-30' : 'road-150';
     solids.push({
-      seat, height: 4,
-      top: [[ax + nx, ay + ny], [bx + nx, by + ny], [bx - nx, by - ny], [ax - nx, ay - ny]],
+      art: name, seat, x: (x1 + x2) / 2, y: (y1 + y2) / 2,
+      size: Math.hypot(x2 - x1, y2 - y1) * 0.62, anchor: 0.5,
     });
   });
-
-  // Clickable edges sit above the drawn roads.
-  for (const e in byEdge) {
-    const edge = view.edges[e];
-    const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
-    const g = el('g', { class: 'spot' });
-    g.appendChild(el('line', {
-      x1, y1, x2, y2, stroke: '#ffffff', 'stroke-width': 7,
-      'stroke-linecap': 'round', 'stroke-dasharray': '5 5', opacity: .85,
-    }));
-    g.onclick = () => act(byEdge[e][0].i);
-    svg.appendChild(g);
-  }
 
   view.buildings.forEach(([seat, v, city]) => {
     const [x, y] = vxy[v];
-    // Buildings are told apart from roads by height rather than footprint: a
-    // road lying flat and a settlement standing up read differently at a
-    // glance, where two similar slabs do not. A city is taller again, and
-    // wider, so the two are distinguishable across the board.
-    const r = city ? 11 : 8;
     solids.push({
-      seat, height: city ? 21 : 13,
-      top: [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]],
+      art: city ? 'city' : 'settlement', seat, x, y,
+      size: city ? 52 : 42,
+      // Buildings stand on their intersection: most of the drawing rises
+      // above it rather than straddling it.
+      anchor: 0.72,
     });
   });
 
-  // Painter's order: whatever sits lowest on the board goes on last.
-  solids.sort((a, b) => Math.max(...a.top.map(p => p[1])) - Math.max(...b.top.map(p => p[1])));
-  solids.forEach(s => extrude(svg, s.top, s.height, s.seat));
-
-  for (const v in byVertex) {
-    const [x, y] = vxy[v];
-    const g = el('g', { class: 'spot' });
-    g.appendChild(el('circle', { cx: x, cy: y, r: 11, fill: '#ffffff', opacity: .8 }));
-    g.onclick = () => act(byVertex[v][0].i);
-    svg.appendChild(g);
-  }
+  // Painter's order: whatever sits lowest on the board goes on last, or a
+  // piece in front is covered by the one behind it.
+  solids.sort((a, b) => a.y - b.y);
+  solids.forEach((s) => place(svg, s.art, s.x, s.y, s.size, s.seat, s.anchor));
 
   // Intersection numbers, for talking about specific places on the board —
   // "the port between 8 and 16" rather than "the one at the top left". The
@@ -667,7 +657,7 @@ document.getElementById('new').onclick = () => {
   const mode = document.getElementById('mode').value;
   load(`/api/new?seats=${seats}&mode=${mode}`, { method: 'POST' });
 };
-load('/api/state');
+loadArt().then(() => load('/api/state'));
 
 // The server is restarted whenever a change is pulled, and a page served by
 // the old one cannot re-render its way up to date. Watch the build stamp and

@@ -20,6 +20,20 @@ use crate::view;
 
 const PAGE: &str = include_str!("../assets/index.html");
 
+/// The board art, compiled in and served from memory.
+///
+/// Named here rather than read from disk so the binary stays a single file
+/// that runs from anywhere, and so a missing drawing is a build error rather
+/// than a board with holes in it. The page fetches these once and reuses them;
+/// they are the drawings in `art/`, unmodified, which keeps one copy of each
+/// rather than a second pasted into the page to drift from the first.
+const ART: [(&str, &str); 4] = [
+    ("road-30", include_str!("../../../art/road-30.svg")),
+    ("road-150", include_str!("../../../art/road-150.svg")),
+    ("settlement", include_str!("../../../art/settlement.svg")),
+    ("city", include_str!("../../../art/city.svg")),
+];
+
 /// Largest request body accepted. A click is a few dozen bytes; anything
 /// larger is a mistake or a probe, and is refused rather than buffered.
 const MAX_BODY: usize = 4 * 1024;
@@ -100,6 +114,13 @@ impl Server {
                 "text/html; charset=utf-8",
                 PAGE.as_bytes(),
             ),
+            ("GET", p) if p.starts_with("/art/") => {
+                let name = p.trim_start_matches("/art/").trim_end_matches(".svg");
+                match ART.iter().find(|(n, _)| *n == name) {
+                    Some((_, body)) => respond(&mut stream, 200, "image/svg+xml", body.as_bytes()),
+                    None => respond(&mut stream, 404, "text/plain", b"not found"),
+                }
+            }
             ("GET", "/api/state") => {
                 let session = self.session.lock().unwrap();
                 let payload = view::render(&session);
