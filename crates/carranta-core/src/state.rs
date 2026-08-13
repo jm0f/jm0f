@@ -271,19 +271,37 @@ impl State {
             terrain.copy_from_slice(&bag);
         }
 
-        // 18 number discs, skipping the desert (R-3.3).
+        // Number discs in letter order along the spiral, from a corner,
+        // counterclockwise, skipping the desert (R-3.3).
+        //
+        // The sequence does the work the rules intend it to: the discs are
+        // ordered so that following the path separates the high-probability
+        // numbers. It is not a guarantee, though, because the desert can fall
+        // anywhere and skipping it shifts everything after it — which is
+        // exactly why R-3.12 exists. So the terrain and the starting corner
+        // are drawn again when they land two reds together. Redrawing keeps
+        // the result uniform over the boards that satisfy the constraint,
+        // where nudging discs afterwards would bias which hex carries what.
         let mut number = [0u8; HEX_COUNT];
-        {
-            let mut discs: [u8; 18] = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
-            rng.shuffle(Stream::Board, &mut discs);
-            let mut next = 0;
-            for (h, t) in terrain.iter().enumerate() {
-                if *t != Terrain::Desert {
-                    number[h] = discs[next];
-                    next += 1;
+        for _ in 0..1_000 {
+            let path = spiral_from(rng.below(Stream::Board, 6) as usize);
+            let mut disc = 0;
+            number = [0u8; HEX_COUNT];
+            for h in path {
+                if terrain[h as usize] != Terrain::Desert {
+                    number[h as usize] = DISCS[disc];
+                    disc += 1;
                 }
             }
-            debug_assert_eq!(next, 18);
+            debug_assert_eq!(disc, DISCS.len());
+            if !red_numbers_touch(&number) {
+                break;
+            }
+            // A fresh island as well: with the sequence fixed, where the
+            // desert falls is most of what decides whether reds collide.
+            let mut bag: [Terrain; HEX_COUNT] = terrain;
+            rng.shuffle(Stream::Board, &mut bag);
+            terrain = bag;
         }
 
         let robber = terrain
@@ -539,6 +557,127 @@ impl State {
     }
 }
 
+/// The number discs in the order they are laid down (R-3.3, ART-2).
+///
+/// The discs go face down in letter order and are placed along a fixed path,
+/// so the *sequence* is what separates the high-probability numbers rather
+/// than luck: 6s and 8s sit far apart in it. Dealing numbers at random
+/// instead puts two reds together on about six boards in seven.
+///
+/// These eighteen values are content, not rules — the path in [`spiral_from`]
+/// is what R-3.3 fixes, and a different sequence over the same multiset is a
+/// design choice this is deliberately easy to change.
+pub const DISCS: [u8; 18] = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
+
+/// The path the discs are laid along: from one corner, counterclockwise round
+/// the coast, then the inner ring, then the middle (R-3.3).
+///
+/// `corner` selects which of the six corners to start from — the rules say
+/// "any corner", and starting somewhere different is the only variety the
+/// placement has once the sequence is fixed.
+///
+/// The result is a connected walk: every hex in it touches the one before.
+pub fn spiral_from(corner: usize) -> [u8; HEX_COUNT] {
+    // Axial ring: how many steps out from the middle a hex sits.
+    let ring = |h: u8| {
+        let [q, r] = crate::topology::hex_axial(h);
+        let (q, r) = (q as i32, r as i32);
+        (q.abs() + r.abs() + (q + r).abs()) as u32 / 2
+    };
+    // Screen position, so "counterclockwise" means what it does to a player
+    // looking at the board rather than what it means to the lattice.
+    let angle = |h: u8| {
+        let [q, r] = crate::topology::hex_axial(h);
+        let (x, y) = (3f64.sqrt() * (q as f64 + r as f64 / 2.0), 1.5 * r as f64);
+        y.atan2(x)
+    };
+
+    let mut out = [0u8; HEX_COUNT];
+    let mut next = 0;
+    for r in (0..=2).rev() {
+        let mut band: Vec<u8> = (0..HEX_COUNT as u8).filter(|&h| ring(h) == r).collect();
+        if r == 0 {
+            out[next] = band[0];
+            next += 1;
+            continue;
+        }
+        // The six corners of a ring are the hexes furthest from the middle;
+        // on the inner ring every hex is one, which is why the start is taken
+        // from the outer ring and the inner one simply follows round.
+        let start = if r == 2 {
+            let corners: Vec<u8> = {
+                let mut c: Vec<u8> = band
+                    .iter()
+                    .copied()
+                    .filter(|&h| {
+                        let [q, rr] = crate::topology::hex_axial(h);
+                        q == 0 || rr == 0 || q + rr == 0
+                    })
+                    .collect();
+                c.sort_by(|&a, &b| angle(a).partial_cmp(&angle(b)).unwrap());
+                c
+            };
+            corners[corner % corners.len()]
+        } else {
+            // Continue from wherever the last ring finished, so the walk stays
+            // connected rather than jumping across the board.
+            let prev = out[next - 1];
+            *band
+                .iter()
+                .min_by(|&&a, &&b| {
+                    let touching = |h: u8| {
+                        if (hex_vertices(prev) & hex_vertices(h)).count_ones() == 2 {
+                            0
+                        } else {
+                            1
+                        }
+                    };
+                    (touching(a), angle(a) - angle(prev))
+                        .partial_cmp(&(touching(b), angle(b) - angle(prev)))
+                        .unwrap()
+                })
+                .expect("the inner ring is not empty")
+        };
+
+        // Counterclockwise on screen is decreasing angle, because y grows
+        // downward in the drawing.
+        let base = angle(start);
+        band.sort_by(|&a, &b| {
+            let key = |h: u8| {
+                let mut d = base - angle(h);
+                if d < -1e-9 {
+                    d += std::f64::consts::TAU;
+                }
+                d
+            };
+            key(a).partial_cmp(&key(b)).unwrap()
+        });
+        for h in band {
+            out[next] = h;
+            next += 1;
+        }
+    }
+    debug_assert_eq!(next, HEX_COUNT);
+    out
+}
+
+/// Whether a 6 or an 8 sits next to another one (R-3.12, D-6).
+///
+/// The two highest-probability numbers are marked red on the disc for a
+/// reason: putting them side by side concentrates a sixth of all production
+/// on two touching hexes, and whoever opens on that corner is handed the
+/// game. Two hexes are adjacent when they share an edge, which is to say two
+/// intersections.
+pub fn red_numbers_touch(number: &[u8; HEX_COUNT]) -> bool {
+    let red = |n: u8| n == 6 || n == 8;
+    (0..HEX_COUNT as u8).any(|a| {
+        red(number[a as usize])
+            && (a + 1..HEX_COUNT as u8).any(|b| {
+                red(number[b as usize]) && (hex_vertices(a) & hex_vertices(b)).count_ones() == 2
+            })
+    })
+}
+
 /// The coastline, in order, as a closed walk.
 ///
 /// A coastal intersection is one that does not touch three hexes — the sea
@@ -739,6 +878,120 @@ mod tests {
         assert!(s.production(roll)[0][res] >= 1);
         s.robber = h as u8;
         assert_eq!(s.production(roll)[0][res], 0);
+    }
+
+    #[test]
+    fn the_disc_path_is_one_connected_spiral_from_a_corner() {
+        for corner in 0..6 {
+            let path = spiral_from(corner);
+            let mut seen = [false; HEX_COUNT];
+            for &h in &path {
+                assert!(!seen[h as usize], "hex {h} twice from corner {corner}");
+                seen[h as usize] = true;
+            }
+            assert!(seen.iter().all(|&s| s), "corner {corner} misses a hex");
+
+            // Every step lands on a hex touching the one before, which is what
+            // makes it a walk round the board rather than an ordering that
+            // merely happens to visit everything.
+            for pair in path.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                assert_eq!(
+                    (hex_vertices(a) & hex_vertices(b)).count_ones(),
+                    2,
+                    "corner {corner}: {a} does not touch {b}",
+                );
+            }
+            // Outside first, middle last.
+            let ring = |h: u8| {
+                let [q, r] = crate::topology::hex_axial(h);
+                let (q, r) = (q as i32, r as i32);
+                (q.abs() + r.abs() + (q + r).abs()) / 2
+            };
+            let rings: Vec<i32> = path.iter().map(|&h| ring(h)).collect();
+            assert_eq!(rings[..12], [2; 12], "the coast is walked first");
+            assert_eq!(rings[12..18], [1; 6], "then the inner ring");
+            assert_eq!(rings[18], 0, "the middle is last");
+        }
+    }
+
+    #[test]
+    fn the_six_starting_corners_give_six_different_boards() {
+        // "Any corner" is the only variety left once the sequence is fixed,
+        // so it had better actually vary.
+        let paths: Vec<[u8; HEX_COUNT]> = (0..6).map(spiral_from).collect();
+        for i in 0..6 {
+            for j in i + 1..6 {
+                assert_ne!(paths[i], paths[j], "corners {i} and {j} walk alike");
+            }
+        }
+    }
+
+    #[test]
+    fn the_discs_are_the_set_the_rules_call_for() {
+        let mut sorted = DISCS;
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12],
+        );
+    }
+
+    #[test]
+    fn no_board_puts_two_red_numbers_side_by_side() {
+        // R-3.12 is on by default, so this holds for every board dealt, not
+        // most of them. Unconstrained dealing violates it 86% of the time,
+        // which is why it was so visible in play.
+        for seed in 0..2_000 {
+            let s = State::new(4, seed);
+            assert!(
+                !red_numbers_touch(&s.number),
+                "seed {seed} deals adjacent red numbers: {:?}",
+                s.number,
+            );
+        }
+    }
+
+    #[test]
+    fn the_constraint_is_the_only_thing_the_redeal_changes() {
+        // Dealing again must still deal a whole set of discs — a repair that
+        // quietly dropped or duplicated one would pass the adjacency test.
+        for seed in [1u64, 7, 99, 1234] {
+            let s = State::new(4, seed);
+            let mut dealt: Vec<u8> = s.number.iter().copied().filter(|&n| n > 0).collect();
+            dealt.sort_unstable();
+            assert_eq!(
+                dealt,
+                vec![2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12],
+                "seed {seed}",
+            );
+            assert_eq!(s.number[s.robber as usize], 0, "the desert has no disc");
+        }
+    }
+
+    #[test]
+    fn the_red_number_check_sees_adjacency_rather_than_index_distance() {
+        // Hexes that are neighbours in the array are not always neighbours on
+        // the board, and vice versa; a check on indices would be wrong in both
+        // directions.
+        let mut number = [3u8; HEX_COUNT];
+        assert!(!red_numbers_touch(&number));
+
+        // Two hexes sharing an edge share exactly two intersections.
+        let (a, b) = (0..HEX_COUNT as u8)
+            .flat_map(|a| (a + 1..HEX_COUNT as u8).map(move |b| (a, b)))
+            .find(|&(a, b)| (hex_vertices(a) & hex_vertices(b)).count_ones() == 2)
+            .expect("the board has adjacent hexes");
+        number[a as usize] = 6;
+        number[b as usize] = 8;
+        assert!(red_numbers_touch(&number), "6 next to 8 is a violation");
+
+        number[b as usize] = 3;
+        let far = (0..HEX_COUNT as u8)
+            .find(|&h| h != a && (hex_vertices(a) & hex_vertices(h)).count_ones() < 2)
+            .expect("the board has non-adjacent hexes");
+        number[far as usize] = 8;
+        assert!(!red_numbers_touch(&number), "reds apart are fine");
     }
 
     #[test]

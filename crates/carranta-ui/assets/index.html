@@ -30,6 +30,10 @@
   }
   h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .02em; }
   header .status { color: var(--dim); }
+  header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .vid { font: 600 8px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
+         dominant-baseline: central; pointer-events: none; fill: #0b0d10; }
+  .vid.coast { fill: #7fd1ff; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
   button, select {
@@ -117,6 +121,7 @@
     <option value="restricted">1-for-1 trades</option>
     <option value="disabled">no trading</option>
   </select>
+  <label class="toggle"><input type="checkbox" id="labels"> ids</label>
   <button id="new">New game</button>
 </header>
 
@@ -315,6 +320,25 @@ function draw() {
     g.appendChild(el('circle', { cx: x, cy: y, r: 11, fill: '#ffffff', opacity: .8 }));
     g.onclick = () => act(byVertex[v][0].i);
     svg.appendChild(g);
+  }
+
+  // Intersection numbers, for talking about specific places on the board —
+  // "the port between 8 and 16" rather than "the one at the top left". The
+  // coastal ones are picked out, since those are the only ones a port can sit
+  // on. Drawn last so nothing covers them.
+  if (document.getElementById('labels').checked) {
+    const coastal = new Set();
+    view.ports.forEach(code => coastal.add(Math.floor(code / 8)));
+    view.vertices.forEach(v => {
+      const [x, y] = vxy[v.id];
+      const onCoast = (view.coast || []).includes(v.id);
+      svg.appendChild(el('circle', {
+        cx: x, cy: y, r: 8.5, fill: onCoast ? '#0b2b3d' : '#e8eaee', opacity: .95,
+      }));
+      const t = el('text', { x, y, class: onCoast ? 'vid coast' : 'vid' });
+      t.textContent = v.id;
+      svg.appendChild(t);
+    });
   }
 
   fit(svg);
@@ -571,6 +595,7 @@ function act(i) {
     body: JSON.stringify({ action: i, version: view.version }),
   });
 }
+document.getElementById('labels').onchange = () => { if (view) { draw(); } };
 document.getElementById('new').onclick = () => {
   const seats = document.getElementById('seats').value;
   const mode = document.getElementById('mode').value;

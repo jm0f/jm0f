@@ -668,18 +668,36 @@ mod tests {
         reach_action_phase(&mut s);
         deal(&mut s, [2, 2, 0, 0, 0]);
 
-        let v = s.version();
-        s.propose(None, [2, 1, 0, 0, 0], [0, 0, 0, 0, 1], v)
+        // What reaches the market is checked on a copy of the position rather
+        // than after the fact, because `propose` lets the bots run and one of
+        // them may take the offer — a fine outcome for a game, and a poor one
+        // for a test of what was offered, which would then depend on how the
+        // seat to the left happens to value ore.
+        let before = *s.state();
+        let mut probe = before;
+        probe
+            .apply(Action::ProposeTrade {
+                by: HUMAN,
+                to: None,
+                give: [2, 1, 0, 0, 0],
+                want: [0, 0, 0, 0, 1],
+            })
             .expect("a mixed offer is legal");
-        let mine = s.state().offers[..s.state().offer_count as usize]
+        let mine = probe.offers[..probe.offer_count as usize]
             .iter()
             .find(|o| o.from == HUMAN)
             .expect("the offer reached the market");
         assert_eq!(mine.give, [2, 1, 0, 0, 0]);
         assert_eq!(mine.want, [0, 0, 0, 0, 1]);
-        // And it is a shape `legal_into` would never have produced.
+
+        // And the composer takes it too, which is the path a person walks.
+        let v = s.version();
+        s.propose(None, [2, 1, 0, 0, 0], [0, 0, 0, 0, 1], v)
+            .expect("the composer accepts a mixed offer");
+
+        // It is a shape `legal_into` would never have produced.
         let mut buf = Vec::new();
-        s.state().legal_into(&mut buf);
+        before.legal_into(&mut buf);
         assert!(
             !buf.iter().any(|a| matches!(
                 a,

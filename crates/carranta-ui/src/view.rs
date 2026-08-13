@@ -96,6 +96,14 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
             .int("q3", t.iter().map(|p| p[0] as i64).sum::<i64>())
             .int("r3", t.iter().map(|p| p[1] as i64).sum::<i64>());
     });
+    // The coastline in order, so the page can pick out the intersections a
+    // port could sit on — and so a person can name one precisely.
+    j.ints(
+        "coast",
+        carranta_core::state::coast_ring()
+            .into_iter()
+            .map(i64::from),
+    );
     j.array("edges", 0..EDGE_COUNT as u8, |o, e| {
         let [a, b] = edge_endpoints(e);
         o.int("id", e as i64).int("a", a as i64).int("b", b as i64);
