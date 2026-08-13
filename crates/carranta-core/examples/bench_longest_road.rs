@@ -7,7 +7,9 @@
 //! number. Timing is batched — per-call `Instant::now()` costs tens of ns and
 //! its scheduler noise swamps a sub-microsecond measurement.
 
-use carranta_core::longest_road::{MAX_PLAYERS, Scratch, Tracker, longest_road_in};
+use carranta_core::longest_road::{
+    MAX_PLAYERS, Scratch, Tracker, longest_road_exceeds, longest_road_in,
+};
 use carranta_core::topology::*;
 use std::time::Instant;
 
@@ -187,5 +189,68 @@ fn main() {
     println!(
         "  incremental tracker   {tracked:>9.0} ns   ({:.1}x faster)",
         naive / tracked
+    );
+
+    // ---- Does a floor pay? ----
+    //
+    // `longest_road_exceeds` starts the search at a floor instead of zero, so
+    // it can stop as soon as a network clears the bar rather than proving its
+    // exact length. Measured against the exact call at three floors: none, the
+    // network's own length (the worst case — it must still prove it), and a
+    // floor no network can reach (the best case — every one is dismissed).
+    let nets = mk(15, false, &mut seed);
+    let exact: Vec<u32> = {
+        let mut s = Scratch::new();
+        nets.iter()
+            .map(|&r| longest_road_in(&mut s, r, 0))
+            .collect()
+    };
+
+    let mut sc = Scratch::new();
+    let reps = 4_000;
+    let mut row = |label: &str, floor: Box<dyn Fn(usize) -> u32>| {
+        let t = Instant::now();
+        let mut acc = 0u64;
+        for _ in 0..reps {
+            for (i, &r) in nets.iter().enumerate() {
+                acc += longest_road_exceeds(&mut sc, std::hint::black_box(r), 0, floor(i))
+                    .unwrap_or(0) as u64;
+            }
+        }
+        std::hint::black_box(acc);
+        let per = t.elapsed().as_nanos() as f64 / (reps * nets.len()) as f64;
+        println!("  {label:<38} {per:>7.1} ns");
+    };
+
+    println!("\nfloored queries, realistic 15-road networks:");
+    row("floor 0 (equivalent to exact)", Box::new(|_| 0));
+    let ex = exact.clone();
+    row("floor = the network's own length", Box::new(move |i| ex[i]));
+    row("floor 99 (nothing can clear it)", Box::new(|_| 99));
+
+    // ---- Whole game, tile holder only. ----
+    //
+    // `Tracker::leader` uses exact lengths. The floored version was built and
+    // measured slower in every scenario tried — early game 0.6x, cold position
+    // 1.0x, whole game 0.8x — because the tracker's caching had already removed
+    // the redundancy the floor was meant to prune. Kept here as the shape of
+    // the query a rollout actually issues.
+    let t = Instant::now();
+    let mut acc3 = 0u64;
+    for _ in 0..20_000 {
+        let mut tr = Tracker::new();
+        for &(p, building, id) in &moves {
+            if building {
+                tr.add_building(p, id);
+            } else {
+                tr.add_road(p, id);
+            }
+            acc3 += tr.leader().map_or(0, |l| l as u64 + 1);
+        }
+    }
+    std::hint::black_box(acc3);
+    println!(
+        "\nwhole game, tile holder only: {:.0} ns",
+        t.elapsed().as_nanos() as f64 / 20_000.0
     );
 }

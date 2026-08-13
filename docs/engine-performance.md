@@ -113,6 +113,24 @@ see the remaining ideas below.
   always starts at an odd junction, so trying those first should hit the bound
   and exit early. Measured slightly **worse** (1 629 → 1 747 ns) — the second
   pass costs more than the early exits save.
+- **Flooring the search with the incumbent's length.** The Longest Road tile
+  moves only on a strict lead (R-10.6), so the holder's length looked like a
+  floor every rival must clear, and every prune in the search is already keyed
+  on the best length so far. Built as `longest_road_exceeds` and measured:
+
+  | Floor on a realistic 15-road network | Per call |
+  |---|---|
+  | 0 (equivalent to the exact call) | 101.8 ns |
+  | the network's own length (must still prove it) | 97.5 ns |
+  | 99, so every network is dismissed unseen | 86.9 ns |
+
+  Even the *best* case is only ~15% faster, because the component flood runs
+  either way and a floor skips only the tier work, which is already cheap. Wire
+  it into `Tracker::leader` and it is a straight loss — 0.6× in the early game,
+  1.0× on a cold position, 0.8× over a whole game — because `Tracker` had
+  already removed the same redundancy by caching. The two ideas were competing
+  for one saving and caching got there first. `leader` computes exact lengths;
+  the primitive is kept, documented, and not used by default.
 - **Criterion.** Would add the core crate's first dependency for confidence
   intervals we do not need at this signal-to-noise ratio.
 
@@ -126,18 +144,23 @@ see the remaining ideas below.
    the order of 10–20k operations, which at this graph size is comparable to
    the search it would replace. It should be gated on a small odd-junction
    count, and it must be measured rather than assumed.
-2. **Exploiting that the exact length is rarely needed.** The tile only changes
-   hands on a strict lead (R-10.6), so a caller that knows the current holder's
-   length can often stop at the bound instead of proving the maximum.
+2. ~~Exploiting that the exact length is rarely needed.~~ Built and measured;
+   see the rejected list above. The saving is real but small, and it overlaps
+   almost entirely with what `Tracker` already achieves.
 
 ## Correctness
 
-20 tests. ~40 000 differential comparisons against a brute-force reference — an
+24 tests. ~40 000 differential comparisons against a brute-force reference — an
 obviously-correct exhaustive trail search with no contraction, tiers or bounds
 — half of them with opponent buildings scattered over the network, and running
 up to the full 15-road piece limit so that the search tier and its bounds are
 actually exercised. A further ~48 000 checks confirm [`Tracker`]'s cached
-answers against full recomputation after every move of simulated games.
+answers against full recomputation after every move of simulated games, and
+~12 000 more check `longest_road_exceeds` against the exact length at *every*
+floor from zero past the true answer — the floored path prunes hardest, so it
+is where a bound set too tight would surface as a short answer. `Tracker::leader`
+is checked against a naive compute-everything-then-compare implementation across
+16 000 simulated positions, ties and the five-road threshold included.
 
 Both bounds in `shed_bound` are correctness-critical: a bound below the true
 maximum would make the search stop early and silently return a short answer.

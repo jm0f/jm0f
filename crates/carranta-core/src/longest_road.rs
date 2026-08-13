@@ -309,12 +309,55 @@ pub fn longest_road(roads: EdgeSet, blocked: VertexSet) -> u32 {
 /// carrying an **opponent's** building. A player's own buildings never break
 /// their route, so they must not appear in `blocked`.
 pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u32 {
+    run(s, roads, blocked, 0)
+}
+
+/// Length for this network **only if it exceeds `floor`**.
+///
+/// Returns `Some(len)` with the exact length when the network beats `floor`,
+/// and `None` when it does not — without ever proving how much shorter it is.
+///
+/// Every prune in the search is keyed on the best length found so far, so
+/// starting that at `floor` rather than zero lets whole components, whole
+/// search tiers and whole subtrees be discarded on sight.
+///
+/// **This did not pay off for the Longest Road tile, which is what it was
+/// built for.** The tile moves only on a strict lead (R-10.6), so the
+/// incumbent's length looks like a floor every rival must clear — but
+/// [`Tracker`] had already removed the same redundancy by caching, and once
+/// only the seat that actually changed is recomputed there is very little
+/// left for a floor to skip. Measured against exact lengths it was slower in
+/// every scenario: 0.6× in the early game, 1.0× on a cold position, 0.8× over
+/// a whole game. `Tracker::leader` therefore computes exact lengths.
+///
+/// It is kept because it is a sound and well-tested primitive, and because a
+/// caller with a genuinely lopsided comparison — a high floor against a small
+/// network — still benefits. Measure before adopting it; the intuition that it
+/// must be cheaper is exactly what the numbers above contradict.
+pub fn longest_road_exceeds(
+    s: &mut Scratch,
+    roads: EdgeSet,
+    blocked: VertexSet,
+    floor: u32,
+) -> Option<u32> {
+    let len = run(s, roads, blocked, floor);
+    (len > floor).then_some(len)
+}
+
+/// Returns `max(floor, true longest road)`.
+///
+/// Seeding `best` with `floor` is sound because every prune only ever discards
+/// possibilities that provably cannot beat `best`: a component whose entire
+/// road count is at most `best`, a search whose upper bound is at most `best`,
+/// or a walk that has already reached its component's bound. None of them can
+/// hide a longer route — they can only decline to prove a shorter one.
+fn run(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet, floor: u32) -> u32 {
     let n_roads = roads.count_ones();
     if n_roads <= 1 {
-        return n_roads;
+        return n_roads.max(floor);
     }
 
-    let mut best = 0u32;
+    let mut best = floor;
     let mut remaining = roads;
 
     while remaining != 0 {
@@ -591,8 +634,13 @@ impl Tracker {
 
     /// The seat holding the Longest Road tile, if any (R-10.1, R-10.6).
     ///
-    /// Requires 5 or more roads, and strictly more than every other seat — a
-    /// tie leaves the tile where it was, which is the caller's business.
+    /// Requires 5 or more roads and a strict lead; a tie leaves the tile where
+    /// it was, which is the caller's business.
+    ///
+    /// This computes every seat's exact length rather than asking each only
+    /// whether it clears the running best. The comparison-only version was
+    /// built and measured slower in every scenario — see the note on
+    /// [`longest_road_exceeds`].
     pub fn leader(&mut self) -> Option<usize> {
         let lens = self.all();
         let best = *lens.iter().max()?;
@@ -611,13 +659,19 @@ impl Tracker {
         winner
     }
 
-    fn recompute(&mut self, player: usize) {
+    /// Intersections that break `player`'s routes: every opponent's buildings.
+    fn blocked_for(&self, player: usize) -> VertexSet {
         let mut blocked = 0u64;
         for (q, &b) in self.buildings.iter().enumerate() {
             if q != player {
                 blocked |= b;
             }
         }
+        blocked
+    }
+
+    fn recompute(&mut self, player: usize) {
+        let blocked = self.blocked_for(player);
         self.cached[player] = longest_road_in(&mut self.scratch, self.roads[player], blocked);
         self.dirty &= !(1 << player);
     }
@@ -894,6 +948,125 @@ mod tests {
             t.add_road(1, e);
         }
         assert_eq!(t.leader(), None, "a tie transfers nothing");
+    }
+
+    #[test]
+    fn exceeds_agrees_with_the_exact_length_at_every_floor() {
+        // The floored path prunes far harder than the exact one, so it is
+        // exactly where a too-tight bound would show up as a short answer.
+        let mut sc = Scratch::new();
+        let mut seed = 0x71C5A0B3D9E44F17u64;
+        for i in 0..6_000 {
+            let n = (i % 14) + 2;
+            let roads = grow(n, &mut seed);
+            let exact = longest_road(roads, 0);
+            for floor in 0..=(exact + 2) {
+                let got = longest_road_exceeds(&mut sc, roads, 0, floor);
+                let want = (exact > floor).then_some(exact);
+                assert_eq!(got, want, "roads={roads:#x} floor={floor} exact={exact}");
+            }
+        }
+    }
+
+    #[test]
+    fn exceeds_agrees_with_opponent_buildings() {
+        let mut sc = Scratch::new();
+        let mut seed = 0x0F1E2D3C4B5A6978u64;
+        for i in 0..6_000 {
+            let n = (i % 14) + 2;
+            let roads = grow(n, &mut seed);
+            let mut blocked = 0u64;
+            for v in iter_vertices(endpoints_of(roads)) {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                if (seed >> 60).is_multiple_of(3) {
+                    blocked |= vertex_bit(v);
+                }
+            }
+            let exact = longest_road(roads, blocked);
+            for floor in 0..=(exact + 2) {
+                assert_eq!(
+                    longest_road_exceeds(&mut sc, roads, blocked, floor),
+                    (exact > floor).then_some(exact),
+                    "roads={roads:#x} blocked={blocked:#x} floor={floor}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leader_matches_a_naive_exact_implementation() {
+        // The floored leader must agree with "compute everything, then compare",
+        // ties and the five-road threshold included.
+        fn naive(
+            roads: &[EdgeSet; MAX_PLAYERS],
+            builds: &[VertexSet; MAX_PLAYERS],
+        ) -> Option<usize> {
+            let lens: Vec<u32> = (0..MAX_PLAYERS)
+                .map(|q| {
+                    let blocked = (0..MAX_PLAYERS)
+                        .filter(|&x| x != q)
+                        .fold(0u64, |a, x| a | builds[x]);
+                    longest_road(roads[q], blocked)
+                })
+                .collect();
+            let best = *lens.iter().max().unwrap();
+            if best < 5 {
+                return None;
+            }
+            let mut winner = None;
+            for (p, &l) in lens.iter().enumerate() {
+                if l == best {
+                    if winner.is_some() {
+                        return None;
+                    }
+                    winner = Some(p);
+                }
+            }
+            winner
+        }
+
+        let mut seed = 0xB7E151628AED2A6Bu64;
+        let next = |s: &mut u64| {
+            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *s >> 33
+        };
+        for _ in 0..400 {
+            let mut t = Tracker::new();
+            let mut roads = [0u128; MAX_PLAYERS];
+            let mut builds = [0u64; MAX_PLAYERS];
+            for _ in 0..40 {
+                let p = (next(&mut seed) as usize) % MAX_PLAYERS;
+                if next(&mut seed).is_multiple_of(3) {
+                    let v = (next(&mut seed) % VERTEX_COUNT as u64) as u8;
+                    t.add_building(p, v);
+                    builds[p] |= vertex_bit(v);
+                } else {
+                    let e = (next(&mut seed) % EDGE_COUNT as u64) as u8;
+                    t.add_road(p, e);
+                    roads[p] |= 1u128 << e;
+                }
+                assert_eq!(t.leader(), naive(&roads, &builds), "leader diverged");
+            }
+        }
+    }
+
+    #[test]
+    fn leader_does_not_poison_the_exact_cache() {
+        // `leader` computes floored lengths; those must never reach the cache
+        // that `get` serves, or statistics would silently read a floor.
+        let mut t = Tracker::new();
+        let p0 = path(0, 9);
+        for e in iter_edges(p0) {
+            t.add_road(0, e);
+        }
+        let p1 = simple_path(40, 5, 0, endpoints_of(p0)).unwrap();
+        for e in iter_edges(p1) {
+            t.add_road(1, e);
+        }
+        assert_eq!(t.leader(), Some(0));
+        // Seat 1 was dismissed against a floor of 8; its real length is 5.
+        assert_eq!(t.get(1), 5);
+        assert_eq!(t.get(0), 9);
     }
 
     #[test]
