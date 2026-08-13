@@ -363,7 +363,7 @@ function draw() {
     // Scaled by the bar's own length rather than the drawing's box, which for
     // a diagonal piece is far bigger than the bar inside it — the mistake that
     // made the roads overshoot their edges.
-    const k = Math.hypot(x2 - x1, y2 - y1) * 0.88 / ROAD_LENGTH;
+    const k = Math.hypot(x2 - x1, y2 - y1) * 0.77 / ROAD_LENGTH;
     // Lifted so the piece's underside sits on the edge rather than its middle.
     // Centring the drawing puts half the thickness below the line, which reads
     // as the road having slid off it.
