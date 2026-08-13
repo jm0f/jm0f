@@ -39,6 +39,18 @@ pub fn edge_other(e: u8, v: u8) -> u8 {
     if a == v { b } else { a }
 }
 
+/// Roads sharing an intersection with `e`, as a bitset (including `e`).
+#[inline(always)]
+pub fn edge_adj(e: u8) -> EdgeSet {
+    EDGE_ADJ_MASK[e as usize]
+}
+
+/// The two intersections of `e`, as a bitset.
+#[inline(always)]
+pub fn edge_endpoint_mask(e: u8) -> VertexSet {
+    EDGE_ENDPOINT_MASK[e as usize]
+}
+
 /// Edges meeting at an intersection, as a bitset. Degree is 2 or 3.
 #[inline(always)]
 pub fn edges_at(v: u8) -> EdgeSet {

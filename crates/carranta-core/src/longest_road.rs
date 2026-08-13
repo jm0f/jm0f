@@ -37,45 +37,43 @@
 //! vertices decomposes into `k` edge-disjoint trails, so at least `k-1` whole
 //! chains go unused, giving an admissible bound of `total - (k-1 lightest)`.
 
-use crate::topology::{EDGE_COUNT, EdgeSet, VERTEX_COUNT, VertexSet, edge_endpoints, iter_edges};
+use crate::topology::{
+    EdgeSet, VertexSet, edge_adj, edge_endpoint_mask, edge_endpoints, edge_other, edges_at,
+};
 use core::cell::RefCell;
 
-/// An intersection splits into at most one node per incident road, so two
-/// nodes per road bounds the working graph.
-const MAX_NODES: usize = 2 * EDGE_COUNT;
-const MAX_CEDGES: usize = EDGE_COUNT;
+/// Working arrays are sized to the full range of a `u8` index.
+///
+/// A performance decision, not a capacity one: a network yields at most
+/// `2 * EDGE_COUNT` nodes. Sizing at 256 lets the compiler prove every
+/// `u8 as usize` index is in bounds and drop the check, and those reads are
+/// the inner loop of the search tier.
+const SLOTS: usize = 256;
 const NO_NODE: u8 = u8::MAX;
 
-/// Reusable working memory.
+/// Working memory for the search tier.
 ///
-/// The engine holds one of these and passes it to every call, so recomputing a
-/// road length performs **no allocation and no bulk clearing**. Visited marks
-/// use a monotonic tick compared against per-slot stamps; at this size zeroing
-/// arrays would cost more than the search itself.
+/// The common tiers need none of this — they run entirely in registers on
+/// bitmasks. It exists so that the rare component with both a cycle and four
+/// odd junctions can build an explicit contracted graph without allocating.
 pub struct Scratch {
-    // Split graph over the player's roads.
-    adj_edge: [[u8; 3]; MAX_NODES],
-    adj_node: [[u8; 3]; MAX_NODES],
-    deg: [u8; MAX_NODES],
+    adj_edge: [[u8; 3]; SLOTS],
+    adj_node: [[u8; 3]; SLOTS],
+    deg: [u8; SLOTS],
     n_nodes: usize,
 
-    node_of_vertex: [u8; VERTEX_COUNT],
-    vertex_stamp: [u64; VERTEX_COUNT],
+    node_of_vertex: [u8; SLOTS],
+    vertex_stamp: [u64; SLOTS],
 
-    // Contracted multigraph: chains of degree-2 nodes become weighted edges.
-    cu: [u8; MAX_CEDGES],
-    cv: [u8; MAX_CEDGES],
-    cw: [u8; MAX_CEDGES],
-    cadj: [[u8; 3]; MAX_NODES],
-    cdeg: [u8; MAX_NODES],
+    cu: [u8; SLOTS],
+    cv: [u8; SLOTS],
+    cw: [u8; SLOTS],
+    cadj: [[u8; 3]; SLOTS],
+    cdeg: [u8; SLOTS],
     n_cedges: usize,
 
-    consumed: EdgeSet,
-    seen_stamp: [u64; MAX_NODES],
-    dist: [u32; MAX_NODES],
-    dist_stamp: [u64; MAX_NODES],
-    stack: [u8; MAX_NODES],
-    comp: [u8; MAX_NODES],
+    dist: [u32; SLOTS],
+    dist_stamp: [u64; SLOTS],
     tick: u64,
 }
 
@@ -88,62 +86,59 @@ impl Default for Scratch {
 impl Scratch {
     pub const fn new() -> Self {
         Scratch {
-            adj_edge: [[NO_NODE; 3]; MAX_NODES],
-            adj_node: [[NO_NODE; 3]; MAX_NODES],
-            deg: [0; MAX_NODES],
+            adj_edge: [[NO_NODE; 3]; SLOTS],
+            adj_node: [[NO_NODE; 3]; SLOTS],
+            deg: [0; SLOTS],
             n_nodes: 0,
-            node_of_vertex: [NO_NODE; VERTEX_COUNT],
-            vertex_stamp: [0; VERTEX_COUNT],
-            cu: [0; MAX_CEDGES],
-            cv: [0; MAX_CEDGES],
-            cw: [0; MAX_CEDGES],
-            cadj: [[NO_NODE; 3]; MAX_NODES],
-            cdeg: [0; MAX_NODES],
+            node_of_vertex: [NO_NODE; SLOTS],
+            vertex_stamp: [0; SLOTS],
+            cu: [0; SLOTS],
+            cv: [0; SLOTS],
+            cw: [0; SLOTS],
+            cadj: [[NO_NODE; 3]; SLOTS],
+            cdeg: [0; SLOTS],
             n_cedges: 0,
-            consumed: 0,
-            seen_stamp: [0; MAX_NODES],
-            dist: [0; MAX_NODES],
-            dist_stamp: [0; MAX_NODES],
-            stack: [0; MAX_NODES],
-            comp: [0; MAX_NODES],
+            dist: [0; SLOTS],
+            dist_stamp: [0; SLOTS],
             tick: 0,
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn new_node(&mut self) -> u8 {
         let id = self.n_nodes as u8;
         self.n_nodes += 1;
-        // Only degree needs resetting; adjacency slots below `deg` are always
-        // written before they are read.
         self.deg[id as usize] = 0;
         self.cdeg[id as usize] = 0;
         id
     }
 
-    #[inline]
-    fn node_for(&mut self, v: u8, blocked: VertexSet, stamp: u64) -> u8 {
-        if blocked & (1u64 << v) != 0 {
-            return self.new_node();
-        }
-        if self.vertex_stamp[v as usize] != stamp {
-            self.vertex_stamp[v as usize] = stamp;
-            let n = self.new_node();
-            self.node_of_vertex[v as usize] = n;
-            n
-        } else {
-            self.node_of_vertex[v as usize]
-        }
-    }
-
+    /// Build an explicit graph over `roads`, splitting blocked intersections
+    /// into one degree-1 node per road. Only the search tier needs this.
     fn build_split(&mut self, roads: EdgeSet, blocked: VertexSet) {
         self.tick += 1;
         let stamp = self.tick;
         self.n_nodes = 0;
-        for e in iter_edges(roads) {
-            let [va, vb] = edge_endpoints(e);
-            let a = self.node_for(va, blocked, stamp);
-            let b = self.node_for(vb, blocked, stamp);
+
+        let mut rem = roads;
+        while rem != 0 {
+            let e = rem.trailing_zeros() as u8;
+            rem &= rem - 1;
+            let ends = edge_endpoints(e);
+            let mut ids = [0u8; 2];
+            for (slot, &v) in ends.iter().enumerate() {
+                ids[slot] = if blocked & (1u64 << v) != 0 {
+                    self.new_node()
+                } else if self.vertex_stamp[v as usize] != stamp {
+                    self.vertex_stamp[v as usize] = stamp;
+                    let n = self.new_node();
+                    self.node_of_vertex[v as usize] = n;
+                    n
+                } else {
+                    self.node_of_vertex[v as usize]
+                };
+            }
+            let [a, b] = ids;
             for (n, other) in [(a, b), (b, a)] {
                 let d = self.deg[n as usize] as usize;
                 self.adj_edge[n as usize][d] = e;
@@ -153,89 +148,55 @@ impl Scratch {
         }
     }
 
-    /// Collapse every maximal chain of degree-2 nodes into one weighted edge.
-    ///
-    /// Returns the longest pure-cycle component (one with no junction at all).
-    /// Those are Eulerian by construction, so they need no further work, but
-    /// each is a candidate answer in its own right.
-    fn contract(&mut self, roads: EdgeSet) -> u32 {
+    /// Collapse maximal chains of degree-2 nodes into single weighted edges.
+    fn contract(&mut self) -> u128 {
         self.n_cedges = 0;
-        self.consumed = 0;
+        let mut consumed: EdgeSet = 0;
+        let mut cedges: u128 = 0;
 
         for j in 0..self.n_nodes as u8 {
             if self.deg[j as usize] == 2 {
                 continue; // not a junction
             }
-            for i in 0..self.deg[j as usize] as usize {
-                let first = self.adj_edge[j as usize][i];
-                if self.consumed & (1u128 << first) != 0 {
+            for slot in 0..self.deg[j as usize] as usize {
+                let first = self.adj_edge[j as usize][slot];
+                if consumed & (1u128 << first) != 0 {
                     continue;
                 }
-                self.consumed |= 1u128 << first;
+                consumed |= 1u128 << first;
                 let mut weight = 1u8;
-                let mut prev_edge = first;
-                let mut at = self.adj_node[j as usize][i];
+                let mut prev = first;
+                let mut at = self.adj_node[j as usize][slot];
                 while self.deg[at as usize] == 2 {
-                    let e0 = self.adj_edge[at as usize][0];
-                    let slot = if e0 == prev_edge { 1 } else { 0 };
-                    let next = self.adj_edge[at as usize][slot];
-                    self.consumed |= 1u128 << next;
+                    let take = usize::from(self.adj_edge[at as usize][0] == prev);
+                    let next = self.adj_edge[at as usize][take];
+                    consumed |= 1u128 << next;
                     weight += 1;
-                    prev_edge = next;
-                    at = self.adj_node[at as usize][slot];
+                    prev = next;
+                    at = self.adj_node[at as usize][take];
                 }
-                self.add_cedge(j, at, weight);
-            }
-        }
-
-        // Anything unconsumed is a component with no junction: a bare cycle,
-        // a closed Eulerian trail worth all of its roads.
-        let mut best_cycle = 0u32;
-        let mut left = roads & !self.consumed;
-        while left != 0 {
-            let start = left.trailing_zeros() as u8;
-            let [va, _] = edge_endpoints(start);
-            let n0 = self.node_of_vertex[va as usize];
-            let mut count = 0u32;
-            let mut at = n0;
-            let mut prev_edge = NO_NODE;
-            loop {
-                let e0 = self.adj_edge[at as usize][0];
-                let slot = if e0 == prev_edge { 1 } else { 0 };
-                let next = self.adj_edge[at as usize][slot];
-                left &= !(1u128 << next);
-                count += 1;
-                prev_edge = next;
-                at = self.adj_node[at as usize][slot];
-                if at == n0 {
-                    break;
+                let id = self.n_cedges as u8;
+                self.cu[id as usize] = j;
+                self.cv[id as usize] = at;
+                self.cw[id as usize] = weight;
+                self.n_cedges += 1;
+                cedges |= 1u128 << id;
+                for n in [j, at] {
+                    let d = self.cdeg[n as usize] as usize;
+                    if d < 3 {
+                        self.cadj[n as usize][d] = id;
+                        self.cdeg[n as usize] = d as u8 + 1;
+                    }
+                    if j == at {
+                        break; // a self-loop takes one adjacency slot, not two
+                    }
                 }
             }
-            best_cycle = best_cycle.max(count);
         }
-        best_cycle
+        cedges
     }
 
-    #[inline]
-    fn add_cedge(&mut self, a: u8, b: u8, w: u8) {
-        let id = self.n_cedges as u8;
-        self.cu[id as usize] = a;
-        self.cv[id as usize] = b;
-        self.cw[id as usize] = w;
-        self.n_cedges += 1;
-        for n in [a, b] {
-            let d = self.cdeg[n as usize] as usize;
-            if d < 3 {
-                self.cadj[n as usize][d] = id;
-                self.cdeg[n as usize] = d as u8 + 1;
-            }
-            if a == b {
-                break; // a self-loop occupies one adjacency slot, not two
-            }
-        }
-    }
-
-    #[inline]
+    #[inline(always)]
     fn cother(&self, ce: u8, at: u8) -> u8 {
         if self.cu[ce as usize] == at {
             self.cv[ce as usize]
@@ -268,63 +229,109 @@ pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u
         return n_roads;
     }
 
-    s.build_split(roads, blocked);
-    let mut best = s.contract(roads);
+    let mut best = 0u32;
+    let mut remaining = roads;
 
-    s.tick += 1;
-    let seen = s.tick;
+    while remaining != 0 {
+        // ---- Flood one component, entirely in bitmasks. ----
+        //
+        // No graph is built. `edge_adj(e)` is a precomputed mask of the roads
+        // sharing an intersection with `e`, so expanding a road is one load
+        // and one OR. Degree parity is accumulated in the same pass by XORing
+        // each road's two-intersection mask: bit `v` of `parity` ends up as
+        // `degree(v) & 1`, which is the entire input to the Euler test.
+        let seed = remaining.trailing_zeros() as u8;
+        let mut comp: EdgeSet = 1u128 << seed;
+        let mut frontier: EdgeSet = comp;
+        let mut parity: VertexSet = 0;
+        let mut verts: VertexSet = 0;
 
-    for start in 0..s.n_nodes as u8 {
-        if s.cdeg[start as usize] == 0 || s.seen_stamp[start as usize] == seen {
-            continue;
-        }
-
-        // Flood one contracted component.
-        let mut sp = 1usize;
-        s.stack[0] = start;
-        s.seen_stamp[start as usize] = seen;
-        let mut n_comp = 0usize;
-        let mut comp_edges: u128 = 0;
-        let mut odd = 0u32;
-
-        while sp > 0 {
-            sp -= 1;
-            let n = s.stack[sp];
-            s.comp[n_comp] = n;
-            n_comp += 1;
-            // Parity comes from the *original* degree; contraction preserves it
-            // at junctions, and a self-loop contributes 2 either way.
-            odd += (s.deg[n as usize] & 1) as u32;
-            for i in 0..s.cdeg[n as usize] as usize {
-                let ce = s.cadj[n as usize][i];
-                comp_edges |= 1u128 << ce;
-                let w = s.cother(ce, n);
-                if s.seen_stamp[w as usize] != seen {
-                    s.seen_stamp[w as usize] = seen;
-                    s.stack[sp] = w;
-                    sp += 1;
+        while frontier != 0 {
+            let mut next: EdgeSet = 0;
+            let mut f = frontier;
+            while f != 0 {
+                let e = f.trailing_zeros() as u8;
+                f &= f - 1;
+                let em = edge_endpoint_mask(e);
+                parity ^= em;
+                verts |= em;
+                if blocked & em == 0 {
+                    next |= edge_adj(e);
+                } else {
+                    // A route may end on an opponent's building but not pass
+                    // through, so the component only grows via the free end.
+                    let [a, b] = edge_endpoints(e);
+                    if blocked & (1u64 << a) == 0 {
+                        next |= edges_at(a);
+                    }
+                    if blocked & (1u64 << b) == 0 {
+                        next |= edges_at(b);
+                    }
                 }
             }
+            next &= roads & !comp;
+            comp |= next;
+            frontier = next;
+        }
+        remaining &= !comp;
+
+        let free_verts = verts & !blocked;
+        let mut odd = (parity & !blocked).count_ones();
+        let mut n_verts = free_verts.count_ones();
+
+        // Each blocked intersection contributes one degree-1 node per road,
+        // and a degree-1 node is odd.
+        let mut bs = verts & blocked;
+        let mut blocked_multi = false;
+        while bs != 0 {
+            let v = bs.trailing_zeros() as u8;
+            bs &= bs - 1;
+            let d = (edges_at(v) & comp).count_ones();
+            n_verts += d;
+            odd += d;
+            // Two roads at a blocked intersection means a cycle runs through
+            // it that splitting breaks. Parity above stays right, but
+            // intersection-space traversal would still see the cycle, so the
+            // diameter shortcut is off the table.
+            blocked_multi |= d >= 2;
         }
 
-        let total: u32 = iter_edges(comp_edges)
-            .map(|ce| s.cw[ce as usize] as u32)
-            .sum();
-        if total <= best {
+        let e = comp.count_ones();
+        if e <= best {
             continue;
         }
-        let (ec, vc) = (comp_edges.count_ones(), n_comp as u32);
 
-        let len = if ec == vc - 1 {
-            weighted_diameter(s, n_comp)
-        } else if odd <= 2 {
-            total
+        // Tier order puts the cheapest test first. Euler costs one parity
+        // counter the flood already gathered, and it answers every straight
+        // chain and every bare loop — which is nearly all real road networks —
+        // without any traversal at all.
+        let len = if odd <= 2 {
+            // An Eulerian trail exists and uses every road.
+            e
+        } else if e == n_verts - 1 && !blocked_multi {
+            // A tree, and every blocked intersection in it is a leaf, so
+            // intersection space and split space agree: the answer is the
+            // diameter.
+            let root = free_verts.trailing_zeros() as u8;
+            let (far, _) = farthest(s, comp, blocked, root);
+            let (_, d) = farthest(s, comp, blocked, far);
+            d
         } else {
+            // Either a genuine cycle with four or more odd junctions, or a
+            // component split apart at a blocked intersection. The general
+            // path handles both; contraction earns its pass here and nowhere
+            // else, and on a tree it collapses to a handful of chains.
+            s.build_split(comp, blocked);
+            let cedges = s.contract();
+
             let k = odd / 2;
-            let mut weights = [0u8; MAX_CEDGES];
-            let mut n = 0;
-            for ce in iter_edges(comp_edges) {
-                weights[n] = s.cw[ce as usize];
+            let mut weights = [0u8; crate::topology::EDGE_COUNT];
+            let mut n = 0usize;
+            let mut rem = cedges;
+            while rem != 0 {
+                let ce = rem.trailing_zeros() as usize;
+                rem &= rem - 1;
+                weights[n] = s.cw[ce];
                 n += 1;
             }
             weights[..n].sort_unstable();
@@ -332,11 +339,11 @@ pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u
                 .iter()
                 .map(|&w| w as u32)
                 .sum();
-            let bound = total - shed;
+            let bound = e - shed;
             if bound <= best {
                 continue;
             }
-            search(s, n_comp, comp_edges, total, bound, best)
+            search(s, cedges, e, bound, best)
         };
 
         best = best.max(len);
@@ -345,39 +352,42 @@ pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u
     best
 }
 
-/// Longest weighted path in a contracted tree: farthest node, then measure.
-fn weighted_diameter(s: &mut Scratch, n_comp: usize) -> u32 {
-    debug_assert!(n_comp > 0);
-    let (far, _) = farthest(s, s.comp[0]);
-    let (_, d) = farthest(s, far);
-    d
-}
-
-fn farthest(s: &mut Scratch, from: u8) -> (u8, u32) {
+/// Farthest intersection from `from`, in roads, within one tree component.
+///
+/// Correct for trees only, which is all it is used for: a tree has exactly one
+/// route between any two intersections, so a vertex's distance is fixed the
+/// moment it is discovered and the traversal order does not matter.
+fn farthest(s: &mut Scratch, comp_edges: EdgeSet, blocked: VertexSet, from: u8) -> (u8, u32) {
     s.tick += 1;
     let stamp = s.tick;
     s.dist[from as usize] = 0;
     s.dist_stamp[from as usize] = stamp;
-    s.stack[0] = from;
-    let mut sp = 1usize;
+    let mut pending: VertexSet = 1u64 << from;
     let (mut best_node, mut best_dist) = (from, 0u32);
 
-    while sp > 0 {
-        sp -= 1;
-        let n = s.stack[sp];
-        let d = s.dist[n as usize];
+    while pending != 0 {
+        let v = pending.trailing_zeros() as u8;
+        pending &= pending - 1;
+        let d = s.dist[v as usize];
         if d > best_dist {
             best_dist = d;
-            best_node = n;
+            best_node = v;
         }
-        for i in 0..s.cdeg[n as usize] as usize {
-            let ce = s.cadj[n as usize][i];
-            let w = s.cother(ce, n);
+        // A route may not pass *through* an opponent's building, but it may
+        // start at one — the second sweep legitimately begins at a blocked
+        // leaf, and refusing to expand it there would report a length of 0.
+        if v != from && blocked & (1u64 << v) != 0 {
+            continue;
+        }
+        let mut m = edges_at(v) & comp_edges;
+        while m != 0 {
+            let e = m.trailing_zeros() as u8;
+            m &= m - 1;
+            let w = edge_other(e, v);
             if s.dist_stamp[w as usize] != stamp {
                 s.dist_stamp[w as usize] = stamp;
-                s.dist[w as usize] = d + s.cw[ce as usize] as u32;
-                s.stack[sp] = w;
-                sp += 1;
+                s.dist[w as usize] = d + 1;
+                pending |= 1u64 << w;
             }
         }
     }
@@ -385,20 +395,16 @@ fn farthest(s: &mut Scratch, from: u8) -> (u8, u32) {
 }
 
 /// Exhaustive weighted-trail search over one contracted component.
-fn search(
-    s: &Scratch,
-    n_comp: usize,
-    comp_edges: u128,
-    total: u32,
-    bound: u32,
-    best_so_far: u32,
-) -> u32 {
+fn search(s: &Scratch, cedges: u128, total: u32, bound: u32, best_so_far: u32) -> u32 {
     let mut best = best_so_far;
-    for i in 0..n_comp {
+    for n in 0..s.n_nodes as u8 {
         if best >= bound {
             break;
         }
-        walk(s, s.comp[i], comp_edges, 0, total, &mut best, bound);
+        if s.cdeg[n as usize] == 0 {
+            continue;
+        }
+        walk(s, n, cedges, 0, total, &mut best, bound);
     }
     best
 }
@@ -439,7 +445,7 @@ fn walk(s: &Scratch, at: u8, unused: u128, len: u32, left: u32, best: &mut u32, 
 mod tests {
     use super::*;
     use crate::topology::{
-        ALL_EDGES, HEX_EDGES, HEX_VERTICES, edge_other, edges_at, endpoints_of, iter_edges,
+        ALL_EDGES, EDGE_COUNT, HEX_EDGES, HEX_VERTICES, edges_at, endpoints_of, iter_edges,
         iter_vertices, vertex_bit,
     };
 
@@ -615,7 +621,7 @@ mod tests {
         // The contraction, tier and bound machinery is where subtle wrongness
         // would hide. Check it against an obviously-correct reference.
         let mut seed = 0x243F6A8885A308D3u64;
-        for i in 0..4_000 {
+        for i in 0..20_000 {
             let n = (i % 11) + 2; // up to 12 roads: brute force stays viable
             let roads = grow(n, &mut seed);
             assert_eq!(longest_road(roads, 0), brute(roads, 0), "roads={roads:#x}");
@@ -624,16 +630,19 @@ mod tests {
 
     #[test]
     fn matches_brute_force_with_opponent_buildings() {
+        // Blocking is where the shortcuts are most fragile: it splits the
+        // graph, and a cycle through a blocked intersection turns into a tree
+        // that intersection-space traversal still sees as cyclic. Block
+        // densely and often so those shapes actually come up.
         let mut seed = 0x13198A2E03707344u64;
-        for i in 0..4_000 {
-            let n = (i % 9) + 2;
+        for i in 0..20_000 {
+            let n = (i % 11) + 2;
             let roads = grow(n, &mut seed);
-            // Block a random subset of the network's own intersections.
             let touched: Vec<u8> = iter_vertices(endpoints_of(roads)).collect();
             let mut blocked = 0u64;
-            for (k, &v) in touched.iter().enumerate() {
+            for &v in touched.iter() {
                 seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-                if (seed >> 60).is_multiple_of(4) && k.is_multiple_of(2) {
+                if (seed >> 60).is_multiple_of(3) {
                     blocked |= vertex_bit(v);
                 }
             }

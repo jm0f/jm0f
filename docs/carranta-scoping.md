@@ -430,7 +430,7 @@ The dependency direction is strictly one-way: everything depends on `carranta-co
 - **Fixed-size and `Copy`.** From the §5.2 zones — 19 hexes, 54 intersections, 72 edges, ≤4 players, pools, hands, deck, turn flags — the whole state is on the order of **~300 bytes** with no heap allocation. Cloning a state for an MCTS node is a `memcpy` of a few cache lines, effectively free.
 - **Bitboards.** 72 edges fit in a `u128` and 54 intersections in a `u64`, one per player. Legal road generation becomes `expand(own_roads) & !occupied & !blocked_by_opponents` — a handful of bit operations rather than a graph walk. This is where the order of magnitude over a scripting language comes from.
 - **Enum state machine.** The §5.3 phases and §5.4 actions are an enum-and-`match` problem. Exhaustive matching means adding a phase without handling a transition is a compile error, which is the right failure mode for a rules engine whose bugs otherwise manifest as subtly illegal states.
-- **Hot spot: longest route** (R-10.3). The only nontrivial algorithm in the game, run on every road placement, made a genuine path search by the forks-don't-count rule. Design it incremental or memoized from the start; it will dominate the profile otherwise.
+- **Hot spot: longest route** (R-10.3). The only nontrivial algorithm in the game, run on every road placement, made a genuine path search by the forks-don't-count rule. Built and measured — see `engine-performance.md`. The decisive insight was that the board's adjacency is already implicit in precomputed bitmasks, so the common case never builds a graph at all. Incremental caching remains the largest outstanding win and belongs in the engine, not the module.
 
 ### 6.4 Determinism
 
@@ -455,8 +455,9 @@ Full table, method notes, and the measured baseline live in
 
 | Operation | Target | Measured |
 |---|---|---|
-| Longest road, realistic 15-road network | ≤ 100 ns | **364 ns** |
-| Longest road, four-player sweep | ≤ 400 ns | **1 004 ns** |
+| Longest road, realistic 15-road network | ≤ 100 ns | **91 ns** — met |
+| Longest road, four-player sweep | ≤ 400 ns | **293 ns** — met |
+| Longest road, dense/adversarial network | ≤ 500 ns | **1 629 ns** |
 | Apply one action | ≤ 50 ns | not built |
 | Full random game | ≤ 50 µs | not built |
 | Self-play, one core | ≥ 20 000 games/s | not built |
@@ -465,7 +466,7 @@ The full-game target sets everything else: ~300 actions in ≤ 50 µs is ~160 ns
 per action including production, legality and scoring.
 
 **Nothing in this table may be quoted as a fact about the engine until it has a
-measured value.** The two that do are from a batched benchmark in the repo,
+measured value.** The three that do are from a batched benchmark in the repo,
 reproducible with `cargo run --release --example bench_longest_road`.
 
 ---

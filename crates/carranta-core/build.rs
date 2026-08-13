@@ -28,6 +28,9 @@ const DIRS: [(i32, i32); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1
 /// Board radius: 2 gives the classic 19-hex island.
 const RADIUS: i32 = 2;
 
+/// Hot-path tables are padded to the full `u8` range; see `emit_2`.
+const SLOTS: usize = 256;
+
 type Hex = (i32, i32);
 
 fn add(a: Hex, d: (i32, i32)) -> Hex {
@@ -175,18 +178,50 @@ fn main() {
     writeln!(s, "pub const EDGE_COUNT: usize = {};", edges.len()).unwrap();
     writeln!(s, "pub const NONE: u8 = u8::MAX;").unwrap();
 
-    emit_2(&mut s, "EDGE_ENDPOINTS", "u8", 2, &edge_endpoints);
-    emit_2(&mut s, "VERTEX_EDGES", "u8", 3, &vertex_edges);
-    emit_2(&mut s, "VERTEX_NEIGHBORS", "u8", 3, &vertex_neighbors);
-    emit_2(&mut s, "VERTEX_HEXES", "u8", 3, &vertex_hexes);
-    emit_2(&mut s, "HEX_VERTICES", "u8", 6, &hex_vertices);
-    emit_2(&mut s, "HEX_EDGES", "u8", 6, &hex_edge_ids);
+    // Tables read on the hot path are padded to the full u8 range so that
+    // `table[i as usize]` with `i: u8` is provably in bounds and the compiler
+    // drops the check. Those reads are the inner loop of `longest_road`.
+    emit_2(&mut s, "EDGE_ENDPOINTS", 2, &edge_endpoints, SLOTS);
+    emit_2(&mut s, "VERTEX_EDGES", 3, &vertex_edges, verts.len());
+    emit_2(
+        &mut s,
+        "VERTEX_NEIGHBORS",
+        3,
+        &vertex_neighbors,
+        verts.len(),
+    );
+    emit_2(&mut s, "VERTEX_HEXES", 3, &vertex_hexes, verts.len());
+    emit_2(&mut s, "HEX_VERTICES", 6, &hex_vertices, hexes.len());
+    emit_2(&mut s, "HEX_EDGES", 6, &hex_edge_ids, hexes.len());
 
+    // Edge-space adjacency, for the component flood: for each road, the mask
+    // of roads sharing an intersection with it, and the mask of its two
+    // intersections. Together these let the flood run one load per edge and
+    // accumulate degree parity at the same time.
+    let mut edge_adj_mask = vec![0u128; edges.len()];
+    let mut edge_endpoint_mask = vec![0u64; edges.len()];
+    for ei in 0..edges.len() {
+        let [a, b] = edge_endpoints[ei];
+        edge_endpoint_mask[ei] = (1u64 << a) | (1u64 << b);
+        edge_adj_mask[ei] = vertex_edge_mask[a as usize] | vertex_edge_mask[b as usize];
+    }
+    edge_adj_mask.resize(SLOTS, 0);
+    edge_endpoint_mask.resize(SLOTS, 0);
     writeln!(
         s,
-        "pub const VERTEX_EDGE_MASK: [u128; {}] = {:?};",
-        verts.len(),
-        vertex_edge_mask
+        "pub const EDGE_ADJ_MASK: [u128; {SLOTS}] = {edge_adj_mask:?};"
+    )
+    .unwrap();
+    writeln!(
+        s,
+        "pub const EDGE_ENDPOINT_MASK: [u64; {SLOTS}] = {edge_endpoint_mask:?};"
+    )
+    .unwrap();
+
+    vertex_edge_mask.resize(SLOTS, 0);
+    writeln!(
+        s,
+        "pub const VERTEX_EDGE_MASK: [u128; {SLOTS}] = {vertex_edge_mask:?};"
     )
     .unwrap();
 
@@ -194,11 +229,15 @@ fn main() {
     fs::write(out, s).unwrap();
 }
 
-fn emit_2<const N: usize>(s: &mut String, name: &str, ty: &str, n: usize, data: &[[u8; N]]) {
+fn emit_2<const N: usize>(s: &mut String, name: &str, n: usize, data: &[[u8; N]], pad_to: usize) {
     debug_assert_eq!(n, N);
-    write!(s, "pub const {name}: [[{ty}; {N}]; {}] = [", data.len()).unwrap();
+    assert!(pad_to >= data.len());
+    write!(s, "pub const {name}: [[u8; {N}]; {pad_to}] = [").unwrap();
     for row in data {
         write!(s, "{row:?},").unwrap();
+    }
+    for _ in data.len()..pad_to {
+        write!(s, "[u8::MAX; {N}],").unwrap();
     }
     writeln!(s, "];").unwrap();
 }
