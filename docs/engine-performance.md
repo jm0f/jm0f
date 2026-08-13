@@ -95,11 +95,11 @@ needs them.
 | Network shape | 15 roads |
 |---|---|
 | Realistic growth (97% acyclic) | 91 ns |
-| Uniform-random growth (dense, loop-heavy) | 1 629 ns |
+| Uniform-random growth (dense, loop-heavy) | 1 455 ns |
 
 Real play grows roads outward from existing ends, which is overwhelmingly
 tree-shaped; loops are rare and small. Benchmarking against uniformly random
-networks overstates the cost by ~18×, which is why the benchmark reports both.
+networks overstates the cost by ~16×, which is why the benchmark reports both.
 The dense case is the one still short of target, and it is search-dominated —
 see the remaining ideas below.
 
