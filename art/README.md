@@ -22,12 +22,33 @@ Two things that save a round trip:
 
 ## Projection
 
-Pieces are drawn in **2:1 dimetric** — two across for one down. It matters for
-a reason that is not aesthetic: true isometric uses 30° angles, where the
-vertical squash is `tan 30° = 1/√3`. That is irrational, so every coordinate
-is a rounded decimal by definition and faces that share an edge disagree about
-where it is, by a little. At 2:1 every vertex of a box lands on an integer,
-shared edges are shared exactly, and there is nothing left to round.
+Pieces are drawn in **true isometric**: the two ground axes at 30° above and
+below horizontal, the vertical axis straight up, so a unit cube's three edges
+project to equal lengths on screen.
 
-`road.svg` is the first piece rebuilt that way. To the eye it is the same
-piece; on paper every vertex is a whole number.
+The seams that showed in the first drawing were not caused by those angles.
+They came from each face carrying its own copy of a shared corner, rounded
+separately. Every corner here is computed once and rounded once, and the faces
+quote it; two faces meeting at an edge then hold identical numbers and no gap
+can open between them, whatever the angle.
+
+Four decimals is the working precision. It is not arbitrary: at three the top
+face misses being a parallelogram by 0.001, and at five by 0.00001, while four
+happens to close exactly for this piece. Worth re-checking when the dimensions
+change rather than assumed.
+
+The board stays flat top-down, so a piece like this does not sit on it
+directly — see the note below.
+
+## Pieces on a flat board
+
+A flat board and a fully isometric piece cannot share a scene. What works is
+extrusion: the piece's top face is drawn in the board's own plane, aligned to
+the edge or intersection it occupies, with a short skirt below it for
+thickness. That reads as a solid object on a flat board, and it follows the
+piece to every orientation the board needs — three for roads, and any
+rotation for buildings — because the top face is computed from the board's
+geometry rather than drawn once and reused.
+
+So `road.svg` is the specification: proportions, colours, and how the three
+tones fall. The renderer generates the pieces from it.
