@@ -287,7 +287,12 @@ impl Heuristic {
         match action {
             Action::Roll => self.value(state, me) - base_other,
 
-            Action::ProposeTrade { give, want, .. } => {
+            Action::ProposeTrade {
+                to: None,
+                give,
+                want,
+                ..
+            } => {
                 // One ply cannot value a proposal: making it changes nothing
                 // until someone takes it, so a brilliant offer and an absurd
                 // one score identically. Value it by the swap it would produce

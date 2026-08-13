@@ -133,6 +133,7 @@ impl Session {
             if probe
                 .apply(Action::ProposeTrade {
                     by: HUMAN,
+                    to: None,
                     give,
                     want,
                 })
@@ -192,19 +193,29 @@ impl Session {
         Ok(())
     }
 
-    /// Compose and make an offer of any shape (R-7.19).
+    /// Compose and make an offer of any shape, to anyone (R-7.19).
     ///
-    /// Separate from [`Session::act`] because the engine *generates* only
+    /// Separate from [`Session::act`] because the engine *generates* only open,
     /// single-type offers — a bound on enumeration, not on legality. A person
-    /// composing "two wood and a brick for an ore" is making a perfectly legal
-    /// offer that simply was not in the generated set, so it is built here and
-    /// handed to the engine, which validates it exactly as it would any other.
-    pub fn propose(&mut self, give: [u8; 5], want: [u8; 5], version: u64) -> Result<(), Refused> {
+    /// composing "two wood and a brick for an ore, and only to seat 2" is
+    /// making a perfectly legal offer that simply was not in the generated set,
+    /// so it is built here and handed to the engine, which validates it exactly
+    /// as it would any other.
+    ///
+    /// `to` is `None` for the open market and `Some(seat)` to address it.
+    pub fn propose(
+        &mut self,
+        to: Option<u8>,
+        give: [u8; 5],
+        want: [u8; 5],
+        version: u64,
+    ) -> Result<(), Refused> {
         if version != self.version {
             return Err(Refused::Stale);
         }
         let action = Action::ProposeTrade {
             by: HUMAN,
+            to,
             give,
             want,
         };
@@ -420,9 +431,10 @@ pub fn describe(a: &Action) -> String {
             "Trade {} for {} at the port",
             RESOURCE_NAMES[give as usize], RESOURCE_NAMES[take as usize]
         ),
-        Action::ProposeTrade { give, want, .. } => {
-            format!("Offer {} for {}", cards(&give), cards(&want))
-        }
+        Action::ProposeTrade { to, give, want, .. } => match to {
+            Some(seat) => format!("Offer seat {seat} {} for {}", cards(&give), cards(&want)),
+            None => format!("Offer {} for {}", cards(&give), cards(&want)),
+        },
         Action::AcceptTrade { offer, .. } => format!("Accept offer {offer}"),
         Action::WithdrawTrade { offer, .. } => format!("Withdraw offer {offer}"),
         Action::EndTurn => "End turn".to_string(),
@@ -611,7 +623,7 @@ mod tests {
         deal(&mut s, [2, 2, 0, 0, 0]);
 
         let v = s.version();
-        s.propose([2, 1, 0, 0, 0], [0, 0, 0, 0, 1], v)
+        s.propose(None, [2, 1, 0, 0, 0], [0, 0, 0, 0, 1], v)
             .expect("a mixed offer is legal");
         let mine = s.state().offers[..s.state().offer_count as usize]
             .iter()
@@ -641,15 +653,15 @@ mod tests {
         // A gift, a self-trade, and cards not held are all refused (R-7.5,
         // R-7.18) — the composer does not get its own rulebook.
         assert!(matches!(
-            s.propose([1, 0, 0, 0, 0], [0; 5], v),
+            s.propose(None, [1, 0, 0, 0, 0], [0; 5], v),
             Err(Refused::Illegal(Illegal::EmptySide))
         ));
         assert!(matches!(
-            s.propose([1, 0, 0, 0, 0], [1, 0, 0, 0, 0], v),
+            s.propose(None, [1, 0, 0, 0, 0], [1, 0, 0, 0, 0], v),
             Err(Refused::Illegal(Illegal::TypeOverlap))
         ));
         assert!(matches!(
-            s.propose([9, 0, 0, 0, 0], [0, 1, 0, 0, 0], v),
+            s.propose(None, [9, 0, 0, 0, 0], [0, 1, 0, 0, 0], v),
             Err(Refused::Illegal(Illegal::CannotAfford))
         ));
         assert_eq!(s.version(), v, "a refused offer changes nothing");
@@ -661,7 +673,7 @@ mod tests {
         reach_action_phase(&mut s);
         deal(&mut s, [1, 0, 0, 0, 0]);
         assert_eq!(
-            s.propose([1, 0, 0, 0, 0], [0, 1, 0, 0, 0], s.version() + 5),
+            s.propose(None, [1, 0, 0, 0, 0], [0, 1, 0, 0, 0], s.version() + 5),
             Err(Refused::Stale)
         );
     }
@@ -678,7 +690,7 @@ mod tests {
 
         // Something generous enough that a bot should take it.
         let v = s.version();
-        s.propose([3, 0, 0, 0, 0], [0, 0, 0, 0, 1], v)
+        s.propose(None, [3, 0, 0, 0, 0], [0, 0, 0, 0, 1], v)
             .expect("offer");
         let settled = !s.state().offers[..s.state().offer_count as usize]
             .iter()
@@ -742,6 +754,13 @@ mod tests {
             },
             Action::ProposeTrade {
                 by: 0,
+                to: None,
+                give: [1, 0, 0, 0, 0],
+                want: [0, 0, 0, 0, 1],
+            },
+            Action::ProposeTrade {
+                by: 0,
+                to: Some(2),
                 give: [1, 0, 0, 0, 0],
                 want: [0, 0, 0, 0, 1],
             },

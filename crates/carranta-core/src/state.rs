@@ -122,6 +122,15 @@ pub enum TradeMode {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Offer {
     pub from: u8,
+    /// The one seat this offer is addressed to, or `None` for the whole table.
+    ///
+    /// R-7.19's market is open by default — any entitled seat may take any live
+    /// offer — and that stays the default. Addressing one is a *protocol*
+    /// choice rather than a rule (nothing in R-7 mentions it), and it exists
+    /// because "I'll trade you, and only you" is a normal thing to say at a
+    /// table. R-7.3 still binds: an addressed offer must have the active player
+    /// as one of its two parties.
+    pub to: Option<u8>,
     pub give: [u8; 5],
     pub want: [u8; 5],
 }

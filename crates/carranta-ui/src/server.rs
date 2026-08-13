@@ -123,11 +123,13 @@ impl Server {
                 let give = json::read_u8_array(&body, "give", 5);
                 let want = json::read_u8_array(&body, "want", 5);
                 let version = json::read_u64(&body, "version");
+                // Absent means the open market; a seat number addresses it.
+                let to = json::read_u64(&body, "to").map(|n| n as u8);
                 let payload = match (give, want, version) {
                     (Some(g), Some(w), Some(v)) => {
                         let g = [g[0], g[1], g[2], g[3], g[4]];
                         let w = [w[0], w[1], w[2], w[3], w[4]];
-                        match session.propose(g, w, v) {
+                        match session.propose(to, g, w, v) {
                             Ok(()) => view::render(&session),
                             Err(e) => view::render_with_note(&session, &refusal(&e)),
                         }

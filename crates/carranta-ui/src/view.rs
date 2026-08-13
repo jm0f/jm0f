@@ -159,6 +159,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
         o.int("i", i as i64)
             .int("from", offer.from as i64)
             .bool("mine", offer.from == HUMAN)
+            .opt_int("to", offer.to.map(|t| t as i64))
             .ints("give", offer.give.iter().map(|&n| n as i64))
             .ints("want", offer.want.iter().map(|&n| n as i64));
     });

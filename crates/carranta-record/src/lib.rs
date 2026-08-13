@@ -30,7 +30,12 @@ pub use fog::{Fog, Seen, SeenResolved, Viewer};
 pub const RULES_VERSION: u16 = 1;
 
 /// The engine build that produced a game. Bumped when behaviour changes.
-pub const ENGINE_VERSION: u16 = 1;
+///
+/// 2: offers may be addressed to a single seat (R-7.21). The action catalogue
+/// gained a field, so a log written by build 1 does not describe the same
+/// action space — which is exactly the drift §7.4 makes this column mandatory
+/// to catch.
+pub const ENGINE_VERSION: u16 = 2;
 
 /// Who a seat belongs to, durably (H-6).
 ///

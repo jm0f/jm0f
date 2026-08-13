@@ -67,6 +67,13 @@ pub enum Action {
     /// (R-7.3) — either they made it, or it is addressed to them.
     ProposeTrade {
         by: u8,
+        /// Addressed to one seat, or `None` for the open market (R-7.19).
+        ///
+        /// Generated offers are always open: an addressed one multiplies the
+        /// action space by the number of opponents for no gain to a search,
+        /// and the enumeration bound exists precisely to keep that space
+        /// small. `apply` accepts either, so a human client may address one.
+        to: Option<u8>,
         give: [u8; 5],
         want: [u8; 5],
     },
@@ -596,15 +603,16 @@ impl State {
                 Ok(())
             }
 
-            (Phase::Action, Action::ProposeTrade { by, give, want }) => {
+            (Phase::Action, Action::ProposeTrade { by, to, give, want }) => {
                 let from = by as usize;
                 if from >= self.players as usize {
                     return Err(Illegal::NotAParty);
                 }
-                self.check_offer(from, &give, &want)?;
+                self.check_offer(from, to, &give, &want)?;
                 let i = self.offer_count as usize;
                 self.offers[i] = Offer {
                     from: from as u8,
+                    to,
                     give,
                     want,
                 };
@@ -732,6 +740,8 @@ impl State {
                         w[want as usize] = wn;
                         out.push(Action::ProposeTrade {
                             by: p as u8,
+                            // Generated offers are open: see the field's note.
+                            to: None,
                             give: g,
                             want: w,
                         });
@@ -750,6 +760,11 @@ impl State {
         if p == from {
             return false;
         }
+        // An addressed offer is for that seat alone, and R-7.3 still requires
+        // the active player to be one of the two parties.
+        if let Some(to) = offer.to {
+            return p == to as usize && (from == active || p == active);
+        }
         if from == active {
             true // the active player's offer is open to any opponent
         } else {
@@ -757,9 +772,20 @@ impl State {
         }
     }
 
-    fn check_offer(&self, p: usize, give: &[u8; 5], want: &[u8; 5]) -> Result {
+    fn check_offer(&self, p: usize, to: Option<u8>, give: &[u8; 5], want: &[u8; 5]) -> Result {
         if self.trade_mode == TradeMode::Disabled {
             return Err(Illegal::TradeDisabled);
+        }
+        if let Some(t) = to {
+            let t = t as usize;
+            // Addressing yourself is not a trade, and R-7.3 turn-gates the
+            // pair: one of the two parties must be the active player.
+            if t == p || t >= self.players as usize {
+                return Err(Illegal::NotAParty);
+            }
+            if p != self.to_act as usize && t != self.to_act as usize {
+                return Err(Illegal::NotAParty);
+            }
         }
         // A trade must give and take (R-7.5).
         let (gn, wn): (u32, u32) = (
@@ -1418,6 +1444,7 @@ mod tests {
         deal(&mut s, 1, one(Resource::Wood, 3));
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Ore, 2),
             want: one(Resource::Wood, 3),
         })
@@ -1438,6 +1465,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Ore, 1),
                 want: [0; 5]
             }),
@@ -1447,6 +1475,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: [0; 5],
                 want: one(Resource::Wood, 1)
             }),
@@ -1463,6 +1492,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Ore, 3),
                 want
             }),
@@ -1480,6 +1510,7 @@ mod tests {
         // Seat 1 proposes; seat 0 is active, so the offer is addressed to it.
         s.apply(Action::ProposeTrade {
             by: 1,
+            to: None,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 1),
         })
@@ -1504,6 +1535,7 @@ mod tests {
         s.hand[1] = one(Resource::Wood, 1);
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 1),
         })
@@ -1525,6 +1557,7 @@ mod tests {
         deal(&mut s, 1, one(Resource::Ore, 1));
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Brick, 1),
             want: one(Resource::Ore, 1),
         })
@@ -1561,6 +1594,7 @@ mod tests {
         // has — or than anyone could have.
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 200),
         })
@@ -1586,6 +1620,7 @@ mod tests {
         deal(&mut s, 1, one(Resource::Wood, 2));
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 3),
         })
@@ -1600,6 +1635,7 @@ mod tests {
         deal(&mut s, 1, one(Resource::Wood, 1));
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 3),
         })
@@ -1625,6 +1661,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: [0; 5],
                 want: [0; 5],
             }),
@@ -1634,12 +1671,132 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Ore, 1),
                 want: one(Resource::Ore, 1),
             }),
             Err(Illegal::TypeOverlap)
         );
         assert_eq!(s.offer_count, 0);
+    }
+
+    #[test]
+    fn an_addressed_offer_is_for_that_seat_alone() {
+        // R-7.19 leaves the market open by default; addressing one narrows it
+        // to a single seat. Everyone else must be turned away, not merely
+        // discouraged.
+        let mut s = trading_game(41);
+        deal(&mut s, 0, one(Resource::Ore, 1));
+        deal(&mut s, 1, one(Resource::Wood, 1));
+        deal(&mut s, 2, one(Resource::Wood, 1));
+
+        s.apply(Action::ProposeTrade {
+            by: 0,
+            to: Some(2),
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 1),
+        })
+        .unwrap();
+        assert_eq!(s.offers[0].to, Some(2));
+
+        // Seat 1 could have taken this were it open, and holds what it asks.
+        assert_eq!(
+            s.apply(Action::AcceptTrade { offer: 0, by: 1 }),
+            Err(Illegal::NotAParty),
+            "an addressed offer is not open to the table"
+        );
+        // The seat it was addressed to takes it.
+        s.apply(Action::AcceptTrade { offer: 0, by: 2 }).unwrap();
+        assert_eq!(s.hand[2][Resource::Ore as usize], 1);
+        assert_eq!(s.hand[0][Resource::Wood as usize], 1);
+        s.assert_invariants();
+    }
+
+    #[test]
+    fn an_open_offer_is_still_open() {
+        // The default must not have moved: `to: None` behaves exactly as
+        // before, or every existing offer changes meaning.
+        let mut s = trading_game(42);
+        deal(&mut s, 0, one(Resource::Ore, 1));
+        deal(&mut s, 1, one(Resource::Wood, 1));
+        s.apply(Action::ProposeTrade {
+            by: 0,
+            to: None,
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 1),
+        })
+        .unwrap();
+        s.apply(Action::AcceptTrade { offer: 0, by: 1 }).unwrap();
+        assert_eq!(s.hand[1][Resource::Ore as usize], 1);
+    }
+
+    #[test]
+    fn an_addressed_offer_still_obeys_the_turn_rule() {
+        // R-7.3: whoever the parties are, one of them is the active player.
+        // Addressing must not become a way around that — seat 1 offering seat 2
+        // during seat 0's turn is the triangular trade the rule forbids.
+        let mut s = trading_game(43);
+        deal(&mut s, 1, one(Resource::Ore, 1));
+        assert_eq!(s.to_act, 0);
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                by: 1,
+                to: Some(2),
+                give: one(Resource::Ore, 1),
+                want: one(Resource::Wood, 1),
+            }),
+            Err(Illegal::NotAParty),
+            "R-7.3 forbids two non-active players trading"
+        );
+        // Addressed to the active player, the same offer is fine.
+        s.apply(Action::ProposeTrade {
+            by: 1,
+            to: Some(0),
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 1),
+        })
+        .unwrap();
+        assert_eq!(s.offer_count, 1);
+    }
+
+    #[test]
+    fn an_offer_cannot_be_addressed_to_nobody_or_to_oneself() {
+        let mut s = trading_game(44);
+        deal(&mut s, 0, one(Resource::Ore, 1));
+        for to in [Some(0), Some(9)] {
+            assert_eq!(
+                s.apply(Action::ProposeTrade {
+                    by: 0,
+                    to,
+                    give: one(Resource::Ore, 1),
+                    want: one(Resource::Wood, 1),
+                }),
+                Err(Illegal::NotAParty),
+                "addressed to {to:?}"
+            );
+        }
+        assert_eq!(s.offer_count, 0);
+    }
+
+    #[test]
+    fn generated_offers_stay_open() {
+        // The action space a search consumes must not multiply by the number
+        // of opponents. Addressing is for clients, not for enumeration.
+        let mut s = trading_game(45);
+        deal(&mut s, 0, [2, 2, 2, 2, 2]);
+        let mut buf = Vec::new();
+        s.legal_into(&mut buf);
+        let proposals: Vec<_> = buf
+            .iter()
+            .filter(|a| matches!(a, Action::ProposeTrade { to: None, .. }))
+            .collect();
+        assert!(!proposals.is_empty(), "a full hand should generate offers");
+        assert!(
+            proposals
+                .iter()
+                .all(|a| matches!(a, Action::ProposeTrade { to: None, .. })),
+            "generation must not enumerate recipients"
+        );
     }
 
     #[test]
@@ -1651,6 +1808,7 @@ mod tests {
         for _ in 0..MAX_OFFERS {
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1),
             })
@@ -1659,6 +1817,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1)
             }),
@@ -1679,6 +1838,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1)
             }),
@@ -1693,6 +1853,7 @@ mod tests {
         s.hand[0] = one(Resource::Ore, 1);
         s.apply(Action::ProposeTrade {
             by: 0,
+            to: None,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 1),
         })
@@ -1718,6 +1879,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Ore, 1),
                 want: one(Resource::Wood, 1)
             }),
@@ -1736,6 +1898,7 @@ mod tests {
         assert!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1)
             })
@@ -1744,6 +1907,7 @@ mod tests {
         assert_eq!(
             s.apply(Action::ProposeTrade {
                 by: 0,
+                to: None,
                 give: one(Resource::Brick, 2),
                 want: one(Resource::Ore, 1)
             }),
