@@ -420,6 +420,7 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-bot` | Heuristic policy, self-play driver, market settlement | core | **built** |
 | `carranta-record` | Log, replay driver, snapshot & seek, per-viewer redaction | core | **built** |
 | `carranta-analytics` | Dice fairness, production decomposition, descriptives, rating | core, record | **built** |
+| `carranta-evolve` | Population loop, parallel evaluation, checkpoints (§9.5) | core, bot, analytics | |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
@@ -714,7 +715,7 @@ A **responsive web app** — one codebase for desktop and mobile browsers. This 
 | B-2 | LLM output budget | **Adaptive** — index-only by default, brief reasoning on decisions that carry the game |
 | B-3 | LLM access | **Internal and flagged accounts only.** Not in public lobbies |
 | B-4 | LLM purpose | **All four**: stand-in, live opponent, evaluation baseline, bootstrap training data |
-| B-5 | Trained agent | **Self-play reinforcement learning** over the batched envs (§6.5), trade mode restricted |
+| B-5 | Trained agent | **Neuroevolution first, on one machine** (§9.5). Gradient methods stay open as a later track |
 | B-6 | LLM tier | **Two pinned models**: a small fast one for index-only decisions, a stronger one for the decisions in B-2's reasoning list |
 
 ### 9.2 One player interface
@@ -759,11 +760,71 @@ The board never changes after setup, so it belongs in the cached prefix rather t
 
 **Capture rationales.** When B-2 produces reasoning tokens, store them in a side stream keyed to the event sequence — the same pattern as chat (P-8), and directly useful later for distillation into a trained agent.
 
-### 9.5 Trained agent (B-5)
+### 9.5 Trained agent (B-5) — neuroevolution on one machine
 
-Self-play reinforcement learning over the batched environments in §6.5, with trade mode set to `restricted` so the action space stays tractable. **This requires no new engine capability** — action masks, microsecond steps, vectorised envs, and forced-move auto-play are all already specified for other reasons. What it needs is training infrastructure: a rollout harness, checkpointing, and an evaluation loop against the pinned heuristic and LLM baselines sharing the rating pool (§10.5).
+The engine turned out fast enough to pull training forward. Rather than waiting on cloud infrastructure and a gradient stack, the first trained agent is evolved locally: **no GPU, no cluster, no gradients — one laptop, all cores, for days at a time.**
 
-Bootstrap options, in increasing cost: behavioural cloning from recorded LLM and human games (H-1 captures everything needed), then self-play from that warm start.
+**This requires no new engine capability.** Action masks, microsecond steps and forced-move auto-play are already specified for other reasons. What it needs is a population loop, an evaluation harness, and a progress measure — and §10.5 already supplies the third.
+
+#### Decisions
+
+| # | Question | Decision |
+|---|---|---|
+| E-1 | Method | **Evolution strategy over the existing weights first, then NEAT.** The cheap step de-risks the expensive one and shares its whole harness |
+| E-2 | Hardware | **One machine, every core, no accelerator.** Evaluation is embarrassingly parallel and the networks are small enough that a GPU would idle |
+| E-3 | Network inputs | **Engineered features, not raw board.** NEAT complexifies badly with hundreds of inputs |
+| E-4 | Evaluation | **Paired trials on common random numbers**, variants mirrored across seat pairs |
+| E-5 | Evaluation budget | **Grows as the population converges.** A fixed budget is wrong at both ends |
+| E-6 | Fitness | **Mean finishing position**, not win rate — the full order, for the same reason §10.5 uses it |
+| E-7 | Opponents | **Fixed anchor plus a hall of fame.** The current heuristic, pinned, and past champions |
+| E-8 | Progress measure | **The §10.5 rating, with the heuristic's μ frozen** as an absolute reference |
+| E-9 | Trade mode | **Restricted.** Roughly twice the cost of trading off, and the cheapest setting a strategy can transfer out of |
+
+#### What the measurements say
+
+From `cargo run --release -p carranta-analytics --example bench_evolution`, on a 4-core x86 machine:
+
+| Threads | Games/s | Speedup | Efficiency |
+|---|---|---|---|
+| 1 | 558 | 1.00× | 100% |
+| 2 | 1 040 | 1.86× | 93% |
+| 4 | 2 093 | 3.75× | 94% |
+
+**Scaling is essentially free** — nothing shared gets in the way, which is what a `Copy` state and a dependency-free core buy. At ~543 games/s/core, eight cores play **~376 M games/day**, so a corpus in the billions is a matter of days rather than weeks.
+
+That figure is measured on x86 and should not be quoted for an M1 without checking. An M1 laptop has more per-core throughput, but four of its eight cores are efficiency cores and the chassis is fanless, so sustained all-core output will not be eight times a performance core. **Plan on ~300 M games/day and measure the real machine before relying on it.**
+
+#### The number that actually governs the design
+
+Throughput is not the constraint. Variance is. Perturbing one weight of the heuristic and playing paired trials:
+
+| Change | Effect on mean finishing position | Paired trials to resolve at 95% |
+|---|---|---|
+| Production weight ×3 | +0.266 | **37** |
+| +50% | +0.105 | 207 |
+| +17% | +0.032 | 2 092 |
+| +8% | +0.009 | **26 859** |
+
+*(Position, 1 = winner, so a positive effect means the change made it play worse. The hand-set production weight is at or above its local optimum.)*
+
+Cost scales as **1/effect²**: halve the difference and the games quadruple. Hence E-5. Early generations, where genomes differ wildly, resolve in tens of trials and are nearly free; late-stage fine-tuning at the ±8% level costs seven hundred times more. A fixed per-genome budget either wastes compute early or stalls out late.
+
+**Pairing is exact, which is why E-4 is a decision and not a detail.** Identical agents on the same board play the identical game, so the paired difference is *exactly* zero — board luck and seat effects are removed by construction rather than averaged away. Without it the trial counts above would be far larger.
+
+Two further findings worth carrying:
+
+- **The landscape has flat plateaus.** Quartering the victory-point weight changed almost nothing — it is still dominant at a quarter strength, and the games mostly play out identically. A local search that assumes a smooth response will waste its budget on regions where nothing responds.
+- **A generation is cheap at every plausible budget.** 150 genomes at 1 000 trials each is 300 000 games — about a minute on eight cores. Even 5 000 trials each leaves ~250 generations per day. Generations are not the scarce resource; *resolution within a generation* is.
+
+#### The reservation
+
+NEAT extracts **one scalar per game**. A policy-gradient method extracts a learning signal from each of ~500 decisions in that same game. That gap is the real risk, and no amount of throughput closes it — which is why E-1 sequences a cheap, certain step ahead of the ambitious one, and why E-3 hands the network features rather than making it discover them.
+
+What would change the plan: if evolution over the 14 existing weights stalls well short of what hand-tuning suggests is available, the flat-plateau finding is the likely cause, and the answer is a method that reads per-decision signal rather than a bigger population.
+
+#### Later tracks, unchanged
+
+Gradient self-play over the batched environments of §6.5 remains open, as does behavioural cloning from recorded LLM and human games — H-1 captures everything needed for it. Neither blocks the other: both consume the same player interface (§9.2) and are scored on the same rating scale (§10.5).
 
 ### 9.6 Cost control (B-3)
 
@@ -1037,27 +1098,29 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 ## 13. Next steps
 
+Items struck through are **built**; see `engine-performance.md` for what each was measured at.
+
 **Unblock (no dependencies, needed by everything)**
 
 1. Specify **ART-1 and ART-2** (§11) — port distribution and disc placement order. Both have workable defaults, so this is balance work rather than a blocker. ART-3/ART-4 gate the Beginner mode only.
 2. Close the three design confirmations in §12.1 — building-cost balance, port distribution, and the four derived trade rules.
 
-**Engine**
+**Engine** — ~~3–7 built~~
 
-3. Board topology module (19/54/72) with precomputed adjacency, validated against the §5.5 invariants.
-4. `carranta-core` (§6.2): bitboard state, enum state machine, legal-move generation, plus a benchmark harness to replace the §6.6 *targets* with measurements.
-5. Every `R-x.y` rule becomes an acceptance test; §5.7 is the priority set. The six decision-backed rules (R-3.12, R-6.2a, R-7.17, R-7.18, R-7.19, R-9.10a) need tests most — nothing outside this document defines them.
-6. Random Setup first (fully specified by R-3); Beginner Setup once ART-3/ART-4 are designed and playtested.
-7. Build the **trade mode seam** (`full` / `restricted` / `disabled`, §6.5) early — RL (§6.5) and the LLM player (§9.4) both depend on it, independently.
+3. ~~Board topology module (19/54/72) with precomputed adjacency.~~ Generated at compile time in `build.rs`, validated against Euler's formula and the §5.5 invariants.
+4. ~~`carranta-core`: bitboard state, enum state machine, legal-move generation, benchmark harness.~~ 68 tests; targets in §6.6 replaced by measurements.
+5. ~~Every `R-x.y` rule as an acceptance test.~~ Including the six decision-backed rules, plus random playouts asserting invariants after every action.
+6. ~~Random Setup.~~ Beginner Setup still waits on ART-3/ART-4.
+7. ~~Trade mode seam (`full` / `restricted` / `disabled`).~~
 
-**History and data**
+**History and data** — ~~8–9 built~~
 
-8. Event log and replay path (§7.2, §7.3) built *alongside* the engine, not after — retrofitting event emission into a finished engine is far more invasive than emitting from the start.
-9. Redaction leak test (§7.6 risk 2) and snapshot-checksum verification (§7.6 risk 3) in the first replay milestone. P-6 fogged spectating makes the leak test a **launch blocker**, not hardening.
+8. ~~Event log and replay path (§7.2, §7.3), built alongside the engine.~~ `carranta-record`; recording costs nothing measurable, replay is ~55× cheaper than play.
+9. ~~Redaction leak test and snapshot verification.~~ Redaction asserts *indistinguishability* — perturb hidden state, and every other viewer's projection must be byte-identical. Still a launch blocker to re-verify against the real serving path once a server exists.
 10. Own principal table and the guest-claim alias design (§8.2) before any account exists — retrofitting identity onto immutable logs is not possible.
 11. Human-identity retention and deletion policy (§7.6 risk 5) before the first human game is recorded.
 
-**Platform**
+**Platform** — none built
 
 12. Auth.js with our own principal table (P-15, §8.6) — including the JWT/JWKS seam to the Rust server, which is the part most likely to be underestimated.
 13. Lobby lifecycle and config (§8.3), configurable turn timers (P-17), and seat-actor substitution with reclaim (P-18).
@@ -1067,17 +1130,24 @@ The open-market decision (D-5) makes trade the most concurrency-sensitive part o
 
 **Bots**
 
-17. Heuristic bot — a **launch prerequisite**, since P-2 disconnect takeover, lobby filling, and LLM fallback all depend on it.
-18. Forced-move auto-play in the engine (§9.4) — it cuts LLM call volume and RL rollout cost simultaneously.
-19. LLM player behind the B-3 flag, with the two-model routing of B-6, with pinned model version and spend caps; measure real cost per game before considering wider access.
+17. ~~Heuristic bot.~~ 99.76% against random over 5 000 boards × 4 seats.
+18. Forced-move auto-play in the engine (§9.4) — it cuts LLM call volume and evolution rollout cost simultaneously, so it now pays twice.
+19. LLM player behind the B-3 flag, with the two-model routing of B-6, pinned model version and spend caps; measure real cost per game before considering wider access.
 
-**Analytics**
+**Training** (§9.5, new)
 
-20. Expected-production engine (§10.2) — the exact mean/variance computation and the four-way decomposition. It underpins per-game luck reporting *and* the luck-adjusted metric in §10.4, so build it once, in the replay layer.
-21. Dice reporting as an **empirical percentile**, not a per-game p-value (§10.1a), with the pooled RNG audit (§10.1b) as a separate scheduled job.
-22. Implement rating (A-1…A-5, §10.5) as a post-game batch job over completed, non-substituted games, with seat assignment randomised at lobby start.
-23. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters, explicit per-turn n, no i.i.d. pooling of player-games.
+20. `carranta-evolve`: population loop, work-stealing evaluation across cores, checkpointing, and resumable runs. The evaluation harness is the substantial part; the population loop is small.
+21. **Evolution strategy over the 14 existing weights first** (E-1). It will produce a better bot with certainty, and it maps the fitness landscape before NEAT commits to a topology search over it.
+22. Feature encoder (E-3) — the observation NEAT actually sees. Reuse the heuristic's features as the starting set; this is the piece most likely to decide whether the whole track works.
+23. Pin the current heuristic as an immutable rating anchor (E-8) *before* the first run, so progress is measured against something that cannot drift.
 
-**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), five rating decisions (§10.5) — 46 in total.
+**Analytics** — ~~24–26 built~~
 
-**Nothing blocks starting the engine.** The Random Setup is fully specified by R-3, and the four assets in §11 have workable defaults or gate only the Beginner mode.
+24. ~~Expected-production engine (§10.2).~~ Four-way decomposition, asserted as an identity to 1e-9.
+25. ~~Dice as an empirical percentile, with the pooled audit separate.~~ The engine's own dice clear the audit on 115 595 rolls.
+26. ~~Rating (A-1…A-5).~~ With the caveat in §10.7: not cross-checked against a reference implementation, and its tie handling is counterintuitive and pinned but unresolved.
+27. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters are enforced by `Corpus::accepts`, but explicit per-turn *n* and the no-i.i.d.-pooling rule are documented rather than enforced.
+
+**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), nine evolution decisions (§9.5), five rating decisions (§10.5) — 55 in total.
+
+**The critical path is now the platform, not the engine.** Everything from the engine down through analytics is built and measured; nothing in §12–13 blocks the training track, and the training track blocks nothing else.
