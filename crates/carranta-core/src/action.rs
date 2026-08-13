@@ -9,8 +9,8 @@
 use crate::longest_road::longest_road;
 use crate::rng::Stream;
 use crate::state::{
-    CITY_POOL, DevCard, MAX_PLAYERS, Phase, RESOURCES, ROAD_POOL, Resource, SETTLEMENT_POOL, State,
-    WINNING_VP,
+    CITY_POOL, DevCard, MAX_OFFERS, MAX_PLAYERS, OFFERS_PER_TURN, Offer, Phase, RESOURCES,
+    ROAD_POOL, Resource, SETTLEMENT_POOL, State, TradeMode, WINNING_VP,
 };
 use crate::topology::{
     HEX_COUNT, edge_bit, edge_endpoint_mask, hex_vertices, iter_edges, iter_vertices, vertex_bit,
@@ -58,6 +58,19 @@ pub enum Action {
         give: Resource,
         take: Resource,
     },
+    /// Put an offer on the market (R-7.4, R-7.19).
+    ///
+    /// Both sides are from the proposer's point of view. Any seat may propose,
+    /// but every offer has the active player as one party (R-7.3): either they
+    /// made it, or it is addressed to them.
+    ProposeTrade {
+        give: [u8; 5],
+        want: [u8; 5],
+    },
+    /// Take a live offer, by its index in the market.
+    AcceptTrade(u8),
+    /// Pull one's own offer back off the market (R-7.14).
+    WithdrawTrade(u8),
     EndTurn,
 }
 
@@ -78,6 +91,22 @@ pub enum Illegal {
     SupplyEmpty,
     BadDiscard,
     GameOver,
+    /// Player trading is switched off for this game (§6.5).
+    TradeDisabled,
+    /// A side of the offer was empty: a trade is not a gift (R-7.5).
+    EmptySide,
+    /// A resource appeared on both sides of the offer (R-7.18).
+    TypeOverlap,
+    /// Every trade needs the active player as one party (R-7.3).
+    NotAParty,
+    /// This seat has made its allowance of offers this turn (R-7.20).
+    OfferLimit,
+    /// The market is full.
+    MarketFull,
+    NoSuchOffer,
+    NotYourOffer,
+    /// The offer was legal when made but one side can no longer pay (R-7.19).
+    OfferStale,
 }
 
 type Result = core::result::Result<(), Illegal>;
@@ -176,6 +205,7 @@ impl State {
             Phase::Action => {
                 out.push(Action::EndTurn);
                 self.push_dev_plays(p, out);
+                self.push_market(p, out);
 
                 let free = self.free_roads > 0;
                 if self.roads_left[p] > 0 && (free || can_pay(&self.hand[p], &ROAD_COST)) {
@@ -484,6 +514,59 @@ impl State {
                 Ok(())
             }
 
+            (Phase::Action, Action::ProposeTrade { give, want }) => {
+                // Any seat may propose, so this is the one action not routed
+                // through `decider`. Attribute it to whoever can pay.
+                let from = self.proposer(&give);
+                self.check_offer(from, &give, &want)?;
+                let i = self.offer_count as usize;
+                self.offers[i] = Offer {
+                    from: from as u8,
+                    give,
+                    want,
+                };
+                self.offer_count += 1;
+                self.offers_made[from] += 1;
+                Ok(())
+            }
+
+            (Phase::Action, Action::AcceptTrade(i)) => {
+                let idx = i as usize;
+                if idx >= self.offer_count as usize {
+                    return Err(Illegal::NoSuchOffer);
+                }
+                let offer = self.offers[idx];
+                let taker = self.taker(&offer);
+                if !self.may_accept(taker, &offer) {
+                    return Err(Illegal::NotAParty);
+                }
+                // Re-validate both sides at execution, never at proposal
+                // (R-7.19): an intervening build or Monopoly can have emptied
+                // a hand since the offer was made.
+                let from = offer.from as usize;
+                if !self.holds(from, &offer.give) || !self.holds(taker, &offer.want) {
+                    self.drop_offer(idx);
+                    return Err(Illegal::OfferStale);
+                }
+                for r in 0..5 {
+                    self.hand[from][r] -= offer.give[r];
+                    self.hand[taker][r] += offer.give[r];
+                    self.hand[taker][r] -= offer.want[r];
+                    self.hand[from][r] += offer.want[r];
+                }
+                self.drop_offer(idx);
+                Ok(())
+            }
+
+            (Phase::Action, Action::WithdrawTrade(i)) => {
+                let idx = i as usize;
+                if idx >= self.offer_count as usize {
+                    return Err(Illegal::NoSuchOffer);
+                }
+                self.drop_offer(idx);
+                Ok(())
+            }
+
             (Phase::Action, Action::EndTurn) => {
                 self.end_turn();
                 Ok(())
@@ -494,6 +577,109 @@ impl State {
             }
             _ => Err(Illegal::WrongPhase),
         }
+    }
+
+    /// Everything `seat` may do right now, whoever is to act.
+    ///
+    /// [`Self::legal_into`] answers for the seat whose decision it is, which is
+    /// what a search or a policy consumes. The open market breaks that
+    /// single-agent shape — an opponent may propose or accept at any point in
+    /// the active player's turn — so the live game asks this per connected
+    /// seat instead.
+    pub fn legal_for(&self, seat: u8, out: &mut Vec<Action>) {
+        if seat == self.decider() {
+            self.legal_into(out);
+            return;
+        }
+        out.clear();
+        if self.phase != Phase::Action || self.trade_mode == TradeMode::Disabled {
+            return;
+        }
+        self.push_market(seat as usize, out);
+    }
+
+    /// Offers and responses available to `p`.
+    ///
+    /// Proposals are generated one-card-for-one-card only, even in `Full`
+    /// mode. The full space of offers is combinatorial and cannot be
+    /// enumerated, so the *generated* set stays bounded while `apply` still
+    /// accepts any well-formed offer a human composes.
+    fn push_market(&self, p: usize, out: &mut Vec<Action>) {
+        if self.trade_mode == TradeMode::Disabled {
+            return;
+        }
+        for (i, o) in self.live_offers().iter().enumerate() {
+            if o.from as usize == p {
+                out.push(Action::WithdrawTrade(i as u8));
+            } else if self.may_accept(p, o) && self.holds(p, &o.want) {
+                out.push(Action::AcceptTrade(i as u8));
+            }
+        }
+        if self.offers_made[p] >= OFFERS_PER_TURN || self.offer_count as usize >= MAX_OFFERS {
+            return;
+        }
+        for give in RESOURCES {
+            if self.hand[p][give as usize] == 0 {
+                continue;
+            }
+            for want in RESOURCES {
+                if want == give {
+                    continue; // R-7.18
+                }
+                let mut g = [0u8; 5];
+                let mut w = [0u8; 5];
+                g[give as usize] = 1;
+                w[want as usize] = 1;
+                out.push(Action::ProposeTrade { give: g, want: w });
+            }
+        }
+    }
+
+    /// May `p` take this offer? Every trade needs the active player as one
+    /// party (R-7.3), and nobody trades with themselves.
+    #[inline]
+    fn may_accept(&self, p: usize, offer: &Offer) -> bool {
+        let active = self.to_act as usize;
+        let from = offer.from as usize;
+        if p == from {
+            return false;
+        }
+        if from == active {
+            true // the active player's offer is open to any opponent
+        } else {
+            p == active // an opponent's offer is addressed to the active player
+        }
+    }
+
+    fn check_offer(&self, p: usize, give: &[u8; 5], want: &[u8; 5]) -> Result {
+        if self.trade_mode == TradeMode::Disabled {
+            return Err(Illegal::TradeDisabled);
+        }
+        // A trade must give and take (R-7.5).
+        let (gn, wn): (u32, u32) = (
+            give.iter().map(|&n| n as u32).sum(),
+            want.iter().map(|&n| n as u32).sum(),
+        );
+        if gn == 0 || wn == 0 {
+            return Err(Illegal::EmptySide);
+        }
+        // No resource on both sides (R-7.18).
+        if (0..5).any(|r| give[r] > 0 && want[r] > 0) {
+            return Err(Illegal::TypeOverlap);
+        }
+        if self.trade_mode == TradeMode::Restricted && (gn != 1 || wn != 1) {
+            return Err(Illegal::TradeDisabled);
+        }
+        if !self.holds(p, give) {
+            return Err(Illegal::CannotAfford);
+        }
+        if self.offers_made[p] >= OFFERS_PER_TURN {
+            return Err(Illegal::OfferLimit);
+        }
+        if self.offer_count as usize >= MAX_OFFERS {
+            return Err(Illegal::MarketFull);
+        }
+        Ok(())
     }
 
     fn take_dev(&mut self, p: usize, card: DevCard) -> Result {
@@ -659,8 +845,54 @@ impl State {
         }
     }
 
+    /// Which seat a proposed offer belongs to.
+    ///
+    /// The decider by default; if they cannot pay but a single opponent can,
+    /// it is that opponent's offer — which is how a non-active seat proposes
+    /// through the same action.
+    fn proposer(&self, give: &[u8; 5]) -> usize {
+        let d = self.decider() as usize;
+        if self.holds(d, give) {
+            return d;
+        }
+        let mut only = None;
+        for q in 0..self.players as usize {
+            if q != d && self.holds(q, give) {
+                if only.is_some() {
+                    return d; // ambiguous, so blame the decider and let it fail
+                }
+                only = Some(q);
+            }
+        }
+        only.unwrap_or(d)
+    }
+
+    /// Which seat is taking an offer: the active player, unless they made it.
+    fn taker(&self, offer: &Offer) -> usize {
+        let active = self.to_act as usize;
+        if offer.from as usize != active {
+            return active;
+        }
+        // The active player's offer is open to any opponent; take the first
+        // that can actually pay.
+        (0..self.players as usize)
+            .find(|&q| q != active && self.holds(q, &offer.want))
+            .unwrap_or(active)
+    }
+
+    fn drop_offer(&mut self, idx: usize) {
+        let last = self.offer_count as usize - 1;
+        self.offers[idx] = self.offers[last];
+        self.offers[last] = Offer::default();
+        self.offer_count -= 1;
+    }
+
     fn end_turn(&mut self) {
         let p = self.to_act as usize;
+        // Offers do not survive the turn they were made in.
+        self.offer_count = 0;
+        self.offers = [Offer::default(); MAX_OFFERS];
+        self.offers_made = [0; MAX_PLAYERS];
         self.dev_fresh[p] = [0; 5];
         self.dev_played_this_turn = false;
         self.free_roads = 0;
@@ -1076,6 +1308,284 @@ mod tests {
         s.dev_drawn = DEV_DECK_SIZE as u8;
         s.hand[0] = [0, 0, 1, 1, 1];
         assert_eq!(s.apply(Action::BuyDev), Err(Illegal::SupplyEmpty), "R-8.10");
+    }
+
+    fn trading_game(seed: u64) -> State {
+        let mut s = State::new(4, seed).with_trade_mode(TradeMode::Full);
+        s.phase = Phase::Action;
+        s
+    }
+
+    fn one(r: Resource, n: u8) -> [u8; 5] {
+        let mut c = [0u8; 5];
+        c[r as usize] = n;
+        c
+    }
+
+    /// Deal cards from the supply, so conservation still holds.
+    fn deal(s: &mut State, seat: usize, cards: [u8; 5]) {
+        for (r, &n) in cards.iter().enumerate() {
+            s.hand[seat][r] += n;
+            s.supply[r] -= n;
+        }
+    }
+
+    #[test]
+    fn an_offer_is_taken_and_the_cards_change_hands() {
+        let mut s = trading_game(20);
+        deal(&mut s, 0, one(Resource::Ore, 2));
+        deal(&mut s, 1, one(Resource::Wood, 3));
+        s.apply(Action::ProposeTrade {
+            give: one(Resource::Ore, 2),
+            want: one(Resource::Wood, 3),
+        })
+        .unwrap();
+        assert_eq!(s.offer_count, 1);
+
+        s.apply(Action::AcceptTrade(0)).unwrap();
+        assert_eq!(s.hand[0][Resource::Wood as usize], 3);
+        assert_eq!(s.hand[1][Resource::Ore as usize], 2);
+        assert_eq!(s.offer_count, 0, "a taken offer leaves the market");
+        s.assert_invariants();
+    }
+
+    #[test]
+    fn a_trade_must_give_and_take() {
+        let mut s = trading_game(21);
+        s.hand[0] = one(Resource::Ore, 2);
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Ore, 1),
+                want: [0; 5]
+            }),
+            Err(Illegal::EmptySide),
+            "R-7.5 forbids a gift"
+        );
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: [0; 5],
+                want: one(Resource::Wood, 1)
+            }),
+            Err(Illegal::EmptySide)
+        );
+    }
+
+    #[test]
+    fn no_resource_may_sit_on_both_sides() {
+        let mut s = trading_game(22);
+        s.hand[0] = one(Resource::Ore, 3);
+        let mut want = one(Resource::Wood, 1);
+        want[Resource::Ore as usize] = 1;
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Ore, 3),
+                want
+            }),
+            Err(Illegal::TypeOverlap),
+            "R-7.18"
+        );
+    }
+
+    #[test]
+    fn two_opponents_cannot_trade_with_each_other() {
+        // Every trade needs the active player as one party (R-7.3).
+        let mut s = trading_game(23);
+        s.hand[1] = one(Resource::Ore, 1);
+        s.hand[2] = one(Resource::Wood, 1);
+        // Seat 1 proposes; seat 0 is active, so the offer is addressed to it.
+        s.apply(Action::ProposeTrade {
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 1),
+        })
+        .unwrap();
+        assert_eq!(s.offers[0].from, 1);
+
+        // Seat 2 holds what the offer wants, but may not take it.
+        let mut buf = Vec::new();
+        s.legal_for(2, &mut buf);
+        assert!(
+            !buf.iter().any(|a| matches!(a, Action::AcceptTrade(_))),
+            "seat 2 is not a party to this offer"
+        );
+    }
+
+    #[test]
+    fn a_second_acceptance_of_the_same_offer_is_stale() {
+        // The acceptance race of R-7.19: offers resolve first-come, and the
+        // loser is told why rather than silently executing.
+        let mut s = trading_game(24);
+        s.hand[0] = one(Resource::Ore, 1);
+        s.hand[1] = one(Resource::Wood, 1);
+        s.apply(Action::ProposeTrade {
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 1),
+        })
+        .unwrap();
+        s.apply(Action::AcceptTrade(0)).unwrap();
+        assert_eq!(
+            s.apply(Action::AcceptTrade(0)),
+            Err(Illegal::NoSuchOffer),
+            "the offer is gone once taken"
+        );
+    }
+
+    #[test]
+    fn an_offer_the_proposer_can_no_longer_pay_is_rejected_not_executed() {
+        // R-7.19: re-validate at execution, never against the state the offer
+        // was authored in.
+        let mut s = trading_game(25);
+        deal(&mut s, 0, [1, 1, 1, 1, 0]);
+        deal(&mut s, 1, one(Resource::Ore, 1));
+        s.apply(Action::ProposeTrade {
+            give: one(Resource::Brick, 1),
+            want: one(Resource::Ore, 1),
+        })
+        .unwrap();
+
+        // The proposer spends the brick on a settlement before anyone accepts.
+        let v = iter_vertices(s.settlement_spots(0, true)).next().unwrap();
+        s.settlements[0] |= vertex_bit(v);
+        s.settlements_left[0] -= 1;
+        pay(&mut s, 0, &SETTLEMENT_COST);
+
+        assert_eq!(
+            s.apply(Action::AcceptTrade(0)),
+            Err(Illegal::OfferStale),
+            "the offer went stale and must not execute"
+        );
+        assert_eq!(s.offer_count, 0, "and it is pruned from the market");
+        s.assert_invariants();
+    }
+
+    #[test]
+    fn offers_are_capped_per_turn_and_cleared_at_its_end() {
+        let mut s = trading_game(26);
+        s.hand[0] = [9, 9, 9, 9, 9];
+        s.supply = [10, 10, 10, 10, 10];
+        // The market fills before the per-turn cap bites (R-7.20, D-7).
+        for _ in 0..MAX_OFFERS {
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Brick, 1),
+                want: one(Resource::Ore, 1),
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Brick, 1),
+                want: one(Resource::Ore, 1)
+            }),
+            Err(Illegal::MarketFull)
+        );
+        assert_eq!(s.offers_made[0], MAX_OFFERS as u8);
+
+        s.apply(Action::EndTurn).unwrap();
+        assert_eq!(s.offer_count, 0, "offers do not survive the turn");
+        assert_eq!(s.offers_made, [0; MAX_PLAYERS]);
+    }
+
+    #[test]
+    fn the_per_turn_offer_cap_is_enforced() {
+        let mut s = trading_game(27);
+        s.hand[0] = [9, 0, 0, 0, 0];
+        s.offers_made[0] = OFFERS_PER_TURN;
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Brick, 1),
+                want: one(Resource::Ore, 1)
+            }),
+            Err(Illegal::OfferLimit),
+            "R-7.20 bounds a turn's offers"
+        );
+    }
+
+    #[test]
+    fn only_the_proposer_withdraws() {
+        let mut s = trading_game(28);
+        s.hand[0] = one(Resource::Ore, 1);
+        s.apply(Action::ProposeTrade {
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 1),
+        })
+        .unwrap();
+        let mut buf = Vec::new();
+        s.legal_for(1, &mut buf);
+        assert!(
+            !buf.iter().any(|a| matches!(a, Action::WithdrawTrade(_))),
+            "an opponent cannot withdraw someone else's offer"
+        );
+        s.legal_into(&mut buf);
+        assert!(buf.contains(&Action::WithdrawTrade(0)));
+        s.apply(Action::WithdrawTrade(0)).unwrap();
+        assert_eq!(s.offer_count, 0);
+    }
+
+    #[test]
+    fn trading_is_off_unless_the_game_enables_it() {
+        let mut s = State::new(4, 29);
+        s.phase = Phase::Action;
+        s.hand[0] = one(Resource::Ore, 1);
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Ore, 1),
+                want: one(Resource::Wood, 1)
+            }),
+            Err(Illegal::TradeDisabled)
+        );
+        let mut buf = Vec::new();
+        s.legal_for(1, &mut buf);
+        assert!(buf.is_empty(), "no market when trading is off");
+    }
+
+    #[test]
+    fn restricted_mode_allows_only_one_for_one() {
+        let mut s = State::new(4, 30).with_trade_mode(TradeMode::Restricted);
+        s.phase = Phase::Action;
+        s.hand[0] = [3, 0, 0, 0, 0];
+        assert!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Brick, 1),
+                want: one(Resource::Ore, 1)
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                give: one(Resource::Brick, 2),
+                want: one(Resource::Ore, 1)
+            }),
+            Err(Illegal::TradeDisabled),
+            "the restricted menu is one card for one card"
+        );
+    }
+
+    #[test]
+    fn an_open_market_game_stays_consistent() {
+        // The market adds a second way for hands to move; the conservation
+        // invariants must survive it.
+        for seed in 400..440 {
+            let mut s = State::new(4, seed).with_trade_mode(TradeMode::Full);
+            let mut rng = Rng::new(seed ^ 0xBEEF);
+            let mut buf = Vec::new();
+            for _ in 0..3_000 {
+                if matches!(s.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                // Half the time let a non-active seat work the market.
+                let seat = if rng.below(crate::rng::Stream::Dice, 2) == 0 {
+                    s.decider()
+                } else {
+                    (rng.below(crate::rng::Stream::Dice, s.players as u32)) as u8
+                };
+                s.legal_for(seat, &mut buf);
+                if buf.is_empty() {
+                    s.legal_into(&mut buf);
+                }
+                let a = buf[rng.below(crate::rng::Stream::Dice, buf.len() as u32) as usize];
+                let _ = s.apply(a);
+                s.assert_invariants();
+            }
+        }
     }
 
     #[test]

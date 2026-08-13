@@ -94,6 +94,48 @@ pub const ROAD_POOL: u8 = 15;
 pub const SETTLEMENT_POOL: u8 = 5;
 pub const CITY_POOL: u8 = 4;
 
+/// How much player-to-player trading a game allows (§6.5).
+///
+/// A configured dimension, not a rule: the open market is right for human
+/// play, but its action space is unbounded, which is why reinforcement
+/// learning and the LLM player need it narrowed or switched off.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TradeMode {
+    /// No player-to-player trading. Maritime trade is unaffected.
+    ///
+    /// The default, because the generated action space is what search and
+    /// training consume and neither wants an unbounded one.
+    #[default]
+    Disabled,
+    /// Offers are limited to one card for one card, so the generated set stays
+    /// small and enumerable.
+    Restricted,
+    /// The open market of R-7.19: any shape of offer, several live at once.
+    Full,
+}
+
+/// A live trade offer.
+///
+/// `give` and `want` are from the proposer's side. Every offer has the active
+/// player as one party (R-7.3): either they proposed it, in which case any
+/// opponent may take it, or an opponent proposed it to them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Offer {
+    pub from: u8,
+    pub give: [u8; 5],
+    pub want: [u8; 5],
+}
+
+/// Offers that may be live at once.
+///
+/// An engine capacity, distinct from the per-turn cap of R-7.20: that limits
+/// how many offers a seat may *make* in a turn, this limits how many may be
+/// outstanding simultaneously.
+pub const MAX_OFFERS: usize = 8;
+
+/// Offers one seat may make per turn (R-7.20, D-7).
+pub const OFFERS_PER_TURN: u8 = 20;
+
 /// Port kinds. Index 0 is the generic 3:1; 1..=5 are the 2:1 ports, one per
 /// resource, indexed by `Resource as usize + 1`.
 pub const PORT_KINDS: usize = 6;
@@ -164,6 +206,14 @@ pub struct State {
     pub free_roads: u8,
     /// Cards each seat still owes to the discard (R-6.2).
     pub discard_left: [u8; MAX_PLAYERS],
+
+    // ---- Trade market (R-7.19) ----
+    pub trade_mode: TradeMode,
+    pub offers: [Offer; MAX_OFFERS],
+    pub offer_count: u8,
+    /// Offers each seat has made this turn, against the R-7.20 cap.
+    pub offers_made: [u8; MAX_PLAYERS],
+
     pub rng: Rng,
 }
 
@@ -265,8 +315,30 @@ impl State {
             dev_played_this_turn: false,
             free_roads: 0,
             discard_left: [0; MAX_PLAYERS],
+            trade_mode: TradeMode::default(),
+            offers: [Offer::default(); MAX_OFFERS],
+            offer_count: 0,
+            offers_made: [0; MAX_PLAYERS],
             rng,
         }
+    }
+
+    /// Turn player trading on for this game.
+    pub fn with_trade_mode(mut self, mode: TradeMode) -> Self {
+        self.trade_mode = mode;
+        self
+    }
+
+    /// Live offers.
+    #[inline]
+    pub fn live_offers(&self) -> &[Offer] {
+        &self.offers[..self.offer_count as usize]
+    }
+
+    /// Can `seat` hand over everything in `cards`?
+    #[inline]
+    pub fn holds(&self, seat: usize, cards: &[u8; 5]) -> bool {
+        (0..5).all(|r| self.hand[seat][r] >= cards[r])
     }
 
     /// Every building a player owns.

@@ -27,7 +27,7 @@ scheduler noise swamps a sub-microsecond measurement).
 | Whole game, all seats after every move | ≤ 10 µs | **6.8 µs** | met |
 | Apply one action | ≤ 50 ns | **~35 ns** | met |
 | Legal move generation | ≤ 200 ns | **~22 ns** | met |
-| State clone (search node) | ≤ 20 ns | **~6 ns** (384 B) | met |
+| State clone (search node) | ≤ 20 ns | **~14 ns** (480 B) | met |
 | Full random game, setup → win | ≤ 50 µs | **~130 µs** | see below |
 | Self-play throughput, one core | ≥ 20 000 games/s | **~7 700** | see below |
 | Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
@@ -78,6 +78,40 @@ Correctness rests on random playouts: 300 full games with `assert_invariants`
 run after **every** action — resource and piece conservation, one owner per
 edge and intersection, and the Distance Rule holding continuously (§5.5).
 Rule interactions no hand-written case would reach get exercised that way.
+
+## Trade market
+
+The open market (R-7.19) is the only place a **non-active** seat changes the
+state, which breaks the single-agent action stream everything else relies on.
+It is resolved by having two views rather than one:
+
+- `legal_into` answers for the seat whose decision it is — unchanged, single
+  agent, and what search and training consume.
+- `legal_for(seat)` answers for any seat, and is what a live server asks per
+  connected player.
+
+`apply` accepts a trade action from a non-active seat, so the server can feed
+in offers as they arrive.
+
+**Generated proposals are one-card-for-one-card even in `Full` mode.** The space
+of well-formed offers is combinatorial and cannot be enumerated, so the
+generated set stays bounded while `apply` still accepts any shape a human
+composes. That is the seam between a policy's action space and a person's.
+
+**Acceptance races resolve by re-validation, not by locking.** Actions are
+serialised, so first-come is simply whichever `apply` lands first; the loser
+re-validates, fails with `OfferStale`, and the offer is pruned. An offer whose
+proposer has since spent the cards is rejected rather than executed against the
+state it was authored in.
+
+### What it cost
+
+State grew from 384 to **480 bytes** and a clone from ~6 ns to **~14 ns** — the
+market is 8 offer slots plus per-turn counters. Still inside the 20 ns target,
+but it is dead weight in exactly the modes search uses, since `Disabled` and
+`Restricted` are what reinforcement learning and the LLM player run. If search
+throughput ever becomes binding, lifting the market out of `State` and into the
+server layer is the obvious move.
 
 ## Heuristic bot
 
