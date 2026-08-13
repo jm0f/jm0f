@@ -332,20 +332,26 @@ function draw() {
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
     g.appendChild(el('polygon', {
       points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
-      stroke: byHex[h.id] ? '#fff' : '#0008',
-      'stroke-width': byHex[h.id] ? 3 : 1.5,
+      // No outline: with flat committed colour the edge between two hexes is
+      // the colour change itself, and a line over it only muddies them. The
+      // stroke stays for a hex you may click, where it is signal not trim.
+      stroke: byHex[h.id] ? '#0a2540' : 'none',
+      'stroke-width': byHex[h.id] ? 3 : 0,
     }));
     if (h.number > 0) {
-      g.appendChild(el('circle', { cx, cy, r: 17, fill: '#ffffff', stroke: '#00000018' }));
+      // The number sits straight on the terrain. Which of two inks it takes
+      // depends on how dark that terrain is, so it stays readable on the deep
+      // forest and the pale wheat alike.
+      const onDark = h.terrain === 'forest' || h.terrain === 'mountains';
       const hot = h.number === 6 || h.number === 8;
-      const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: hot ? '#c02626' : '#1b1d22' });
+      const ink = hot ? (onDark ? '#ff8a9c' : '#b3132b') : (onDark ? '#ffffff' : '#0a2540');
+      const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: ink });
       t.textContent = h.number;
       g.appendChild(t);
       const n = pips(h.number);
       for (let i = 0; i < n; i++) {
         g.appendChild(el('circle', {
-          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 9, r: 1.6,
-          class: hot ? 'red' : 'pip',
+          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 9, r: 1.6, fill: ink,
         }));
       }
     }
