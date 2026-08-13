@@ -233,29 +233,25 @@ function el(tag, attrs, kids) {
   return n;
 }
 
-// Every terrain is a photograph rather than a colour. One pattern per hex:
-// a single shared one would repeat the same crop on every tile of that
-// terrain and read as wallpaper, so each is offset to show a different part
-// of its picture. The flat palette stays underneath as the fallback, and as
-// what the pieces and the interface are still coloured from.
-function photoFill(svg, id, terrain, cx, cy, seed) {
+// One photograph per hex, clipped to the hexagon.
+//
+// A repeating pattern was the wrong tool: it showed an arbitrary crop of the
+// picture, and pulling back only brought the repeat closer until the tile
+// would have seamed inside a single hex. A clipped image has no repeat to
+// avoid, so the photograph is laid over the hexagon's own box and scaled to
+// cover it — the composition survives, and the hexagon does the cropping.
+function photoHex(svg, id, terrain, cx, cy) {
+  const w = SIZE * Math.sqrt(3), h = SIZE * 2;   // the hexagon's exact box
   const defs = el('defs', {});
-  // The tile has to stay at least as large as the hexagon's bounding box
-  // (107 by 124 at SIZE 62) or the pattern repeats inside a single hex. This
-  // is close to that floor, which is as far out as the photograph can be
-  // pulled while each hex still shows one continuous piece of landscape.
-  const w = SIZE * 1.8, h = w * (2048 / 1536);
-  const pat = el('pattern', {
-    id, patternUnits: 'userSpaceOnUse',
-    x: cx - w / 2, y: cy - h / 2, width: w, height: h,
-  });
-  pat.appendChild(el('image', {
-    href: `/art/${terrain}.jpg`, x: -((seed * 29) % 26), y: -((seed * 53) % 44),
-    width: w * 1.28, height: h * 1.28, preserveAspectRatio: 'xMidYMid slice',
-  }));
-  defs.appendChild(pat);
+  const clip = el('clipPath', { id });
+  clip.appendChild(el('polygon', { points: hexPoints(cx, cy) }));
+  defs.appendChild(clip);
   svg.appendChild(defs);
-  return `url(#${id})`;
+  svg.appendChild(el('image', {
+    href: `/art/${terrain}.jpg`,
+    x: cx - w / 2, y: cy - h / 2, width: w, height: h,
+    preserveAspectRatio: 'xMidYMid slice', 'clip-path': `url(#${id})`,
+  }));
 }
 
 // How many ways there are to roll each number: the dots under a disc.
@@ -363,9 +359,11 @@ function draw() {
   view.hexes.forEach(h => {
     const [cx, cy] = px(h.q, h.r);
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
+    // The photograph goes down first; the polygon above it carries the gap
+    // stroke and nothing else.
+    photoHex(svg, `t-${h.id}`, h.terrain, cx, cy);
     g.appendChild(el('polygon', {
-      points: hexPoints(cx, cy),
-      fill: photoFill(svg, `t-${h.id}`, h.terrain, cx, cy, h.id),
+      points: hexPoints(cx, cy), fill: 'none',
       // The outline is drawn in the panel's own colour, so it reads as a gap
       // between tiles rather than a line around them — the board separates
       // into pieces without anything being added to it. Taken from the
