@@ -223,6 +223,49 @@ function portGroups() {
   return out;
 }
 
+// Player colours as values rather than CSS variables, because a solid piece
+// needs three tones of one colour and they have to be computed.
+const SEAT_HEX = ['#4a9eff', '#e05c5c', '#f0f0f0', '#f0913a'];
+
+// Mix towards white or black. The three tones and their spacing are taken
+// from art/road.svg, which is the specification for how a piece is lit.
+function tone(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c) => Math.round(amount > 0 ? c + (255 - c) * amount : c * (1 + amount));
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(mix);
+  return `rgb(${r},${g},${b})`;
+}
+
+// Draw a solid from its top face: skirts first, then the face itself on top.
+//
+// An edge earns a skirt when its outward normal points down the screen — those
+// are the faces a viewer can see. Sideways-facing skirts take the darker tone,
+// which is what gives the piece a light direction instead of a flat outline.
+function extrude(svg, top, height, seat) {
+  const base = SEAT_HEX[seat];
+  const cx = top.reduce((s, p) => s + p[0], 0) / top.length;
+  const cy = top.reduce((s, p) => s + p[1], 0) / top.length;
+  // A thin dark edge, because a piece and the terrain under it can be close
+  // enough in tone that the silhouette disappears otherwise.
+  const poly = (pts, fill) => svg.appendChild(el('polygon', {
+    points: pts.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' '),
+    fill, stroke: '#0009', 'stroke-width': 1, 'stroke-linejoin': 'round',
+  }));
+
+  for (let i = 0; i < top.length; i++) {
+    const p = top[i], q = top[(i + 1) % top.length];
+    let nx = q[1] - p[1], ny = -(q[0] - p[0]);
+    const k = Math.hypot(nx, ny) || 1;
+    nx /= k; ny /= k;
+    // Point it away from the middle, whichever way the face is wound.
+    if (nx * (p[0] - cx) + ny * (p[1] - cy) < 0) { nx = -nx; ny = -ny; }
+    if (ny <= 0.01) continue;                      // facing away; not visible
+    poly([p, q, [q[0], q[1] + height], [p[0], p[1] + height]],
+         tone(base, Math.abs(nx) > 0.7 ? -0.30 : -0.16));
+  }
+  poly(top, tone(base, 0.22));
+}
+
 function draw() {
   const svg = document.getElementById('board');
   svg.textContent = '';
@@ -286,12 +329,25 @@ function draw() {
     svg.appendChild(t);
   });
 
+  // Pieces are solid: a top face lying in the board's plane, with a skirt
+  // dropped from every edge that faces the viewer. Collected rather than drawn
+  // as we go, because a piece lower on the board has to be painted after the
+  // ones behind it or it will be occluded by them.
+  const solids = [];
   view.roads.forEach(([seat, e]) => {
     const edge = view.edges[e];
     const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
-    svg.appendChild(el('line', {
-      x1, y1, x2, y2, stroke: COLOURS[seat], 'stroke-width': 8, 'stroke-linecap': 'round',
-    }));
+    // Pulled back from both intersections, so a road stops short of the
+    // buildings at its ends rather than growing out of them.
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+    const ux = dx / len, uy = dy / len, inset = 8, half = 5.5;   // roads lie low
+    const ax = x1 + ux * inset, ay = y1 + uy * inset;
+    const bx = x2 - ux * inset, by = y2 - uy * inset;
+    const nx = -uy * half, ny = ux * half;
+    solids.push({
+      seat, height: 4,
+      top: [[ax + nx, ay + ny], [bx + nx, by + ny], [bx - nx, by - ny], [ax - nx, ay - ny]],
+    });
   });
 
   // Clickable edges sit above the drawn roads.
@@ -309,10 +365,20 @@ function draw() {
 
   view.buildings.forEach(([seat, v, city]) => {
     const [x, y] = vxy[v];
-    svg.appendChild(el(city ? 'rect' : 'circle', city
-      ? { x: x - 11, y: y - 11, width: 22, height: 22, rx: 4, fill: COLOURS[seat], stroke: '#0009', 'stroke-width': 2 }
-      : { cx: x, cy: y, r: 9, fill: COLOURS[seat], stroke: '#0009', 'stroke-width': 2 }));
+    // Buildings are told apart from roads by height rather than footprint: a
+    // road lying flat and a settlement standing up read differently at a
+    // glance, where two similar slabs do not. A city is taller again, and
+    // wider, so the two are distinguishable across the board.
+    const r = city ? 11 : 8;
+    solids.push({
+      seat, height: city ? 21 : 13,
+      top: [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]],
+    });
   });
+
+  // Painter's order: whatever sits lowest on the board goes on last.
+  solids.sort((a, b) => Math.max(...a.top.map(p => p[1])) - Math.max(...b.top.map(p => p[1])));
+  solids.forEach(s => extrude(svg, s.top, s.height, s.seat));
 
   for (const v in byVertex) {
     const [x, y] = vxy[v];
