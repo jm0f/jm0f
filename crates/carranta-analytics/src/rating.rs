@@ -567,6 +567,42 @@ mod tests {
     }
 
     #[test]
+    fn pinning_does_not_bias_the_pool() {
+        // Holding one player's μ fixed breaks the conservation that an
+        // ordinary update has, so it is worth checking that the rest of the
+        // pool does not drift away from the pin as a result. Four identical
+        // players, orders drawn uniformly at random: any gap that opens is
+        // bias, not skill.
+        let drift = |pinned: bool| {
+            let mut pool = Pool::new(Model::default());
+            if pinned {
+                pool.pin(0);
+            }
+            let mut rng = carranta_core::rng::Rng::new(1);
+            for _ in 0..20_000 {
+                let mut order: Vec<usize> = (0..4).collect();
+                for i in (1..4).rev() {
+                    let j = rng.below(carranta_core::rng::Stream::Dice, i as u32 + 1) as usize;
+                    order.swap(i, j);
+                }
+                let mut ranks = [0u32; 4];
+                for (place, &p) in order.iter().enumerate() {
+                    ranks[p] = place as u32 + 1;
+                }
+                pool.record_ranked(&[0, 1, 2, 3], &ranks);
+            }
+            (1..4)
+                .map(|p| pool.rating(p).mu - pool.rating(0).mu)
+                .sum::<f64>()
+                / 3.0
+        };
+        // The pinned pool must be no worse than the unpinned one, and both
+        // well inside anything a real effect would show as.
+        assert!(drift(true).abs() < 1.0, "pinned drift {:.3}", drift(true));
+        assert!(drift(true).abs() <= drift(false).abs() + 0.1);
+    }
+
+    #[test]
     fn a_pin_keeps_two_eras_comparable() {
         // The failure this exists to prevent: an early version and a late one
         // that never meet, each rated only against the reference. Without a

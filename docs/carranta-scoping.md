@@ -781,6 +781,7 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-9 | Trade mode | **Restricted.** The cheapest setting a strategy can transfer out of; measured at ~3.5× the cost of trading off |
 | E-10 | Champion rating | **Held-out games.** A champion is never rated on the games that selected it |
 | E-11 | Anchor rating | **μ pinned, σ free.** The reference defines the scale rather than moving on it |
+| E-12 | Rating configuration | **Rate where people play.** An agent trains in `Restricted` and is rated in the human pool, or its rating is not comparable to a person's (§10.8) |
 
 #### What the measurements say
 
@@ -946,7 +947,7 @@ Concretely — regress final VP on total production (or on the §10.2 z-scores) 
 | # | Question | Decision |
 |---|---|---|
 | A-1 | Model and implementation | **OpenSkill (Weng–Lin), Plackett–Luce variant.** TrueSkill-family behaviour, maintained open implementations, no patent exposure |
-| A-2 | Pool segmentation | **One pool per major configuration** — (trade mode × major rules version) |
+| A-2 | Pool segmentation | **One pool per major configuration** — (trade mode × major rules version). An agent is rated in the pool *people play*, whatever it trained in — see §10.8 |
 | A-3 | Guest rating | **Rated provisionally**, high σ, shown as provisional, carried across on account claim |
 | A-4 | Seat position | **Randomise seating** and report per-seat win rates across the corpus |
 | A-5 | Leaderboards | **Account holders only**, above a games-played threshold so σ has converged |
@@ -1004,6 +1005,41 @@ Two things the implementation deviates on, both recorded in code:
 - **Ratings are our implementation of the Weng–Lin update, property-tested rather than cross-validated.** Order monotonicity, σ that only shrinks, symmetry under a full tie, μ conservation under equal uncertainty, and convergence onto a known true ordering all hold. That is the honest limit of the assurance.
 
 **Cost:** a full analysis — dice, production, descriptives, rating — is ~200 µs per game against ~7 600 µs to play one. Recomputing every metric over a million-game corpus is a few minutes on one core, which is what makes H-7's "derived events are a materialized view" a practical stance rather than an aspiration.
+
+### 10.8 Benchmarking agents against people
+
+The rating system is what turns human play into a benchmark, and most of the machinery is already there: versioned agents (E-8), a single pool, and a pinned anchor whose μ cannot drift (E-11). A trained agent and a person land on one scale by construction.
+
+Three things stand between that and a trustworthy number.
+
+**The pools would have kept them apart.** Training runs `Restricted` (E-9) and human play will run `Full` — and A-2 puts each configuration in its own pool, so an agent's rating and a person's would never have been comparable at all. The fix is a separation the design did not previously make: **an agent trains in one configuration and is rated in another.** Nothing stops a weights- or feature-based agent from *playing* the open market; the restriction exists to keep the generated action space enumerable while training, which is a training concern only. Registered as E-12.
+
+**The obvious bridge is the wrong games.** P-2's disconnect takeover will produce human-versus-bot games in quantity — and §10.5's design point 6 excludes substituted games from rated updates, because neither the departed human nor the bot that finished for them played a whole game. So the games that arrive for free are precisely the ones that must be thrown away. The bridge has to be **deliberate**: bots seated in lobbies from the start, under their version identity, marked rated.
+
+**How many bridge games it takes** (`cargo run --release -p carranta-analytics --example bridge`). Simulating the rating model from known skills, with each group playing 2 000 games among themselves and a varying number across:
+
+| Bridge games | Claimed cross-group gap (μ) | Every cross pair ordered right |
+|---|---|---|
+| 0 | −4.7 | 0/12 runs |
+| 100 | 3.6 | 0/12 |
+| 200 | 7.5 | 4/12 |
+| **400** | 10.0 | **12/12** |
+| 800 | 11.8 | 12/12 |
+| 1 600 | 12.0 | 12/12 |
+
+*(True mean gap 6.0. μ sits on the rating's own scale — the update divides by `c ≈ 2β` — so a faithful rating settles near twice the generative gap, ~12 here.)*
+
+**Roughly 400 games get the ordering right; 800–1 600 settle the size of the gap.** The striking part is the first row of the table that is *not* varied: within-group games are held at 2 000 throughout and contribute nothing. An agent that has played ten million games against other agents knows exactly where it stands among agents and nothing whatever about where it stands against people. **Only the crossing games count.**
+
+That is affordable. With one seat in four given to a rated bot, 400 bridge games is about a week at fifty human games a day, and a day or two at a few hundred. It is also a reason to seat bots deliberately rather than hoping for incidental contact.
+
+**Three threats to validity, all measurable from the logs rather than assumed away:**
+
+1. **People play differently against a known bot** — less negotiation, more exploitation. That biases exactly the bridge games. Comparable by segmenting on whether the human knew, which the lobby record can carry.
+2. **Who opts into a bot game is not a random sample of players.** Compare the bridge population's own ratings against the wider human population's.
+3. **Humans are not stationary** — they improve, particularly early. τ exists for this, but a benchmark taken over a long window mixes a player's past and present selves.
+
+None of these is a blocker, and none can be settled before there are human games to look at. What matters now is that the identity, pinning and segmentation decisions are made correctly *before* the first human game is recorded, because they cannot be retrofitted onto immutable logs.
 
 ---
 
@@ -1154,16 +1190,17 @@ Items struck through are **built**; see `engine-performance.md` for what each wa
 21. ~~Evolution strategy over the fifteen existing weights (E-1).~~ Champions land +2 to +4 μ above the anchor and then plateau.
 22. Feature encoder (E-3) — the observation NEAT actually sees. Reuse the heuristic's features as the starting set; this is the piece most likely to decide whether the whole track works.
 23. ~~Pin the heuristic as an immutable rating anchor (E-8, E-11).~~
-24. **Resume from a checkpoint.** The ladder writes plain text but nothing reads it back yet, so a run that dies overnight is lost. Needed before any multi-day run.
-25. Population and mutation tuning. The current settings plateau within a handful of generations, which may be the landscape or may be the settings — the two are not yet distinguished.
+24. **Seat rated bots in human lobbies deliberately** (§10.8), and mark disconnect-takeover games unrated. ~400 bridge games make an agent's standing against people meaningful; games the agent plays against other agents contribute nothing to it.
+25. **Resume from a checkpoint.** The ladder writes plain text but nothing reads it back yet, so a run that dies overnight is lost. Needed before any multi-day run.
+26. Population and mutation tuning. The current settings plateau within a handful of generations, which may be the landscape or may be the settings — the two are not yet distinguished.
 
-**Analytics** — ~~26–28 built~~
+**Analytics** — ~~27–29 built~~
 
-26. ~~Expected-production engine (§10.2).~~ Four-way decomposition, asserted as an identity to 1e-9.
-27. ~~Dice as an empirical percentile, with the pooled audit separate.~~ The engine's own dice clear the audit on 115 595 rolls.
-28. ~~Rating (A-1…A-5).~~ With the caveat in §10.7: not cross-checked against a reference implementation, and its tie handling is counterintuitive and pinned but unresolved.
-29. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters are enforced by `Corpus::accepts`, but explicit per-turn *n* and the no-i.i.d.-pooling rule are documented rather than enforced.
+27. ~~Expected-production engine (§10.2).~~ Four-way decomposition, asserted as an identity to 1e-9.
+28. ~~Dice as an empirical percentile, with the pooled audit separate.~~ The engine's own dice clear the audit on 115 595 rolls.
+29. ~~Rating (A-1…A-5).~~ With the caveat in §10.7: not cross-checked against a reference implementation, and its tie handling is counterintuitive and pinned but unresolved.
+30. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters are enforced by `Corpus::accepts`, but explicit per-turn *n* and the no-i.i.d.-pooling rule are documented rather than enforced.
 
-**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), eleven evolution decisions (§9.5), five rating decisions (§10.5) — 57 in total.
+**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), twelve evolution decisions (§9.5), five rating decisions (§10.5) — 58 in total.
 
 **The critical path is now the platform, not the engine.** Everything from the engine down through analytics is built and measured; nothing in §12–13 blocks the training track, and the training track blocks nothing else.
