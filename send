@@ -1,0 +1,39 @@
+#!/bin/sh
+# Send whatever you have added or changed.
+#
+# Drop files into the project folder — art, notes, anything — and run this.
+# It commits everything and pushes it to the branch, which is how work gets
+# from your machine to mine.
+#
+#   ./send                      commit with a generic message
+#   ./send "the port artwork"   commit with that message
+set -e
+cd "$(dirname "$0")"
+
+[ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
+
+if [ -z "$(git status --porcelain)" ]; then
+  echo "Nothing to send — no files added or changed."
+  exit 0
+fi
+
+echo "Sending:"
+git status --short
+echo
+
+git add -A
+git commit -q -m "${1:-Files from Jose}"
+
+# The game may be running and watching this branch; pushing is what lets it
+# see the change. Retry a couple of times, since a laptop's network comes and
+# goes and a failed push here means the work sits unseen.
+n=0
+until git push -u origin "$(git rev-parse --abbrev-ref HEAD)"; do
+  n=$((n + 1))
+  [ "$n" -ge 3 ] && echo "Push failed three times — check the network." >&2 && exit 1
+  echo "Push failed; trying again in $((n * 4))s."
+  sleep $((n * 4))
+done
+
+echo
+echo "Sent as $(git rev-parse --short HEAD)."
