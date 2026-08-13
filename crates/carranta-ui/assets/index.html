@@ -377,7 +377,10 @@ function draw() {
     const [x, y] = vxy[v];
     solids.push({
       art: city ? 'city' : 'settlement', seat, x, y,
-      k: (city ? 34 : 27) / (city ? 72 : 60),
+      // A city stays larger than a settlement, but only just: the drawing
+      // already says "more building" through its shape, and leaning on size
+      // as well made the two read as different scales rather than an upgrade.
+      k: (city ? 31 : 27) / (city ? 72 : 60),
       // Buildings stand on their intersection: most of the drawing rises
       // above it rather than straddling it.
       anchor: 0.72,
