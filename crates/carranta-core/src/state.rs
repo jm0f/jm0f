@@ -168,7 +168,7 @@ pub enum Phase {
 }
 
 /// Complete game state.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct State {
     // ---- Board, fixed after setup ----
     pub terrain: [Terrain; HEX_COUNT],
@@ -385,6 +385,18 @@ impl State {
             }
         }
         v
+    }
+
+    /// Do two states describe the same position, ignoring the generator?
+    ///
+    /// Replay supplies recorded randomness instead of drawing it (§7.1, H-1),
+    /// so a replayed state's [`Rng`] has not advanced. The generator is engine
+    /// bookkeeping and not part of the position, so it is excluded — while
+    /// every other field, including any added later, is compared.
+    pub fn same_game_as(&self, other: &State) -> bool {
+        let mut a = *self;
+        a.rng = other.rng;
+        a == *other
     }
 
     /// Cards in hand, which is what the discard rule counts (R-6.2).

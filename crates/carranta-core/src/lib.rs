@@ -11,7 +11,7 @@ pub mod rng;
 pub mod state;
 pub mod topology;
 
-pub use action::{Action, Illegal};
+pub use action::{Action, Illegal, Resolved};
 pub use longest_road::{Tracker, longest_road, longest_road_exceeds};
 pub use state::{DevCard, Phase, Resource, State, Terrain};
 pub use topology::{EdgeSet, VertexSet};

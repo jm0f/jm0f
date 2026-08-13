@@ -120,6 +120,37 @@ pub enum Illegal {
 
 type Result = core::result::Result<(), Illegal>;
 
+/// The randomness an action resolved.
+///
+/// Recording the resolved outcome rather than the seed is what decouples a
+/// stored game from any one engine build (§7.1, H-1): replay becomes a fold
+/// over data, and a later rules or RNG change fails loudly against a
+/// checksum instead of silently reinterpreting history.
+///
+/// Only two sources are live during play. The board layout and the
+/// development deck order are drawn once at [`State::new`] and are carried in
+/// the state itself, so a log that stores the opening state needs no events
+/// for them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Resolved {
+    /// The action resolved nothing random.
+    #[default]
+    None,
+    /// Both dice, in the order the engine produced them (R-5.2).
+    Dice(u8, u8),
+    /// A robbery took this card; `None` when the victim held nothing (R-6.4).
+    Steal(Option<Resource>),
+}
+
+/// Where an action's randomness comes from.
+#[derive(Clone, Copy)]
+enum Source {
+    /// Draw from the state's own generator.
+    Live,
+    /// Replay: take the recorded outcome and leave the generator alone.
+    Script(Resolved),
+}
+
 #[inline]
 fn can_pay(hand: &[u8; 5], cost: &[u8; 5]) -> bool {
     (0..5).all(|i| hand[i] >= cost[i])
@@ -284,6 +315,41 @@ impl State {
     ///
     /// The state is left untouched when an action is rejected.
     pub fn apply(&mut self, action: Action) -> Result {
+        let mut out = Resolved::None;
+        self.apply_inner(action, Source::Live, &mut out)
+    }
+
+    /// Apply an action, reporting the randomness it resolved (§7.1, H-1).
+    ///
+    /// The recording counterpart of [`State::apply`]: same behaviour, but the
+    /// dice and the stolen card come back so they can be written to a log.
+    pub fn apply_recorded(&mut self, action: Action) -> core::result::Result<Resolved, Illegal> {
+        let mut out = Resolved::None;
+        self.apply_inner(action, Source::Live, &mut out)?;
+        Ok(out)
+    }
+
+    /// Apply an action with its randomness supplied rather than drawn.
+    ///
+    /// The replay counterpart of [`State::apply_recorded`]. The state's
+    /// generator is not advanced, so a replayed state matches the recorded one
+    /// in every field but [`State::rng`] — which is why replay comparisons go
+    /// through [`State::same_game_as`].
+    ///
+    /// A `scripted` value that does not fit the action is ignored, and the
+    /// action resolves live instead; callers that need this checked should
+    /// compare the returned outcome against what they supplied.
+    pub fn apply_scripted(
+        &mut self,
+        action: Action,
+        scripted: Resolved,
+    ) -> core::result::Result<Resolved, Illegal> {
+        let mut out = Resolved::None;
+        self.apply_inner(action, Source::Script(scripted), &mut out)?;
+        Ok(out)
+    }
+
+    fn apply_inner(&mut self, action: Action, src: Source, out: &mut Resolved) -> Result {
         let p = self.to_act as usize;
         match (self.phase, action) {
             (Phase::GameOver { .. }, _) => Err(Illegal::GameOver),
@@ -324,8 +390,15 @@ impl State {
             }
 
             (Phase::PreRoll, Action::Roll) => {
-                let a = self.rng.die();
-                let b = self.rng.die();
+                let (a, b) = match src {
+                    Source::Script(Resolved::Dice(a, b)) => (a, b),
+                    _ => {
+                        let a = self.rng.die();
+                        let b = self.rng.die();
+                        (a, b)
+                    }
+                };
+                *out = Resolved::Dice(a, b);
                 self.dice = [a, b];
                 if a + b == 7 {
                     self.begin_seven();
@@ -373,7 +446,7 @@ impl State {
                     if self.buildings(q) & hex_vertices(hex) == 0 {
                         return Err(Illegal::BadVictim);
                     }
-                    self.steal(p, q);
+                    *out = Resolved::Steal(self.steal(p, q, src));
                 }
                 // A Militia played before the roll returns to the pre-roll
                 // phase; a rolled 7 has already produced, so play continues.
@@ -798,18 +871,28 @@ impl State {
         }
     }
 
-    fn steal(&mut self, thief: usize, victim: usize) {
+    /// Take one card at random from `victim`, returning what was taken.
+    fn steal(&mut self, thief: usize, victim: usize, src: Source) -> Option<Resource> {
         let n = self.hand_size(victim);
         if n == 0 {
-            return; // nothing to take, and no second choice of victim (R-6.4)
+            return None; // nothing to take, and no second choice of victim (R-6.4)
+        }
+        // A scripted card the victim does not hold would corrupt the hand, so
+        // it falls back to a live draw rather than going through.
+        if let Source::Script(Resolved::Steal(Some(r))) = src
+            && self.hand[victim][r as usize] > 0
+        {
+            self.hand[victim][r as usize] -= 1;
+            self.hand[thief][r as usize] += 1;
+            return Some(r);
         }
         let mut pick = self.rng.below(Stream::Steal, n);
-        for r in 0..5 {
+        for (r, &res) in RESOURCES.iter().enumerate() {
             let have = self.hand[victim][r] as u32;
             if pick < have {
                 self.hand[victim][r] -= 1;
                 self.hand[thief][r] += 1;
-                return;
+                return Some(res);
             }
             pick -= have;
         }

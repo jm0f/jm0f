@@ -33,6 +33,8 @@ scheduler noise swamps a sub-microsecond measurement).
 | Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
 | Bot win rate vs random | ≥ 99% | **99.76%** | met |
 | Bot decision | instant (sub-ms) | **~3.5 µs** | met |
+| Recording overhead | ≤ 5% of play | **within noise** | met |
+| Replay a recorded game | ≤ 200 µs | **31–36 µs** | met |
 
 Engine figures come from `cargo run --release --example bench_engine`. They
 move **±30% between runs** on this machine — the same binary has measured a
@@ -359,6 +361,63 @@ see the remaining ideas below.
    see the rejected list above. The saving is real but small, and it overlaps
    almost entirely with what `Tracker` already achieves.
 
+## Game records
+
+`carranta-record` stores a game as an ordered event log, replays it as a fold,
+and serves it through a per-viewer projection (§7). Measured over 300 recorded
+self-play games per mode:
+
+| | Trading off | Open market |
+|---|---|---|
+| Events per game | 510 | 708 |
+| Snapshots per game | 8.5 | 11.6 |
+| In-memory size | 27.9 KB | 38.6 KB |
+| Play + record | 1 930 µs | 8 254 µs |
+| Play, unrecorded | 1 933 µs | 8 453 µs |
+| Replay | 31 µs | 36 µs |
+| Verify (replay + every snapshot) | 33 µs | 36 µs |
+| Project one seat's whole view | 223 µs | 276 µs |
+
+**Recording is free.** The recorder is an observer: it applies the action the
+engine would have applied and appends 48 bytes. Both measurements above put a
+recorded game marginally *faster* than an unrecorded one, which is measurement
+noise saying the same thing — the cost is below what this harness can see. A
+test asserts the stronger claim directly: same seed, same bots, with and
+without a log, same game.
+
+**Replay is ~55× cheaper than play**, because it skips move generation and
+policy evaluation entirely — a fold over recorded actions, with no search for
+what is legal and no bot deciding. A million games re-fold in well under a
+minute on one core, which is what makes derived analytics regenerable rather
+than something to store carefully (H-7).
+
+**Projection costs ~7× a replay.** It recomputes each seat's longest route for
+every event, since route length is public derived state (§4.3). That is the
+obvious thing to make incremental with [`Tracker`] if serving ever needs it;
+at ~250 µs to project an entire finished game, nothing needs it yet.
+
+### Two design points worth recording
+
+**Randomness is recorded, not re-rolled.** `apply_recorded` reports what an
+action resolved; `apply_scripted` supplies it back on replay without touching
+the generator (H-1). The seam is narrow because only two things resolve
+randomly during play — the dice and the robbery. The board and the deck order
+are drawn once at construction and travel in the opening state.
+
+Because a scripted apply leaves the RNG alone, a replayed state matches the
+recorded one in every field *but* `rng`. Comparison therefore goes through
+`State::same_game_as`, which copies the other side's generator across before
+comparing — so every field, including any added later, is checked, and only
+the generator is exempt. `apply` itself is unchanged at ~31 ns: the source is
+a constant at that call site and folds away.
+
+**`replay()` deliberately refuses the snapshot shortcut.** Seeking from the
+last snapshot makes replaying a whole log fast and almost useless — it steps
+over the events and trusts the index to stand in for them. A tampered event in
+the middle of a log went unnoticed until this was separated: `replay_to(seq)`
+seeks and trusts the index, `replay()` folds every event, and `verify()` folds
+and checks every snapshot on the way past.
+
 ## Correctness
 
 24 tests. ~40 000 differential comparisons against a brute-force reference — an
@@ -388,6 +447,24 @@ hand-written case missed, both in blocking:
   intersection-space traversal still sees the cycle, so the diameter shortcut
   silently under-reported. Those components are now detected and routed to the
   general path.
+
+### Records
+
+16 tests over recorded self-play. Replay fidelity is checked against 40 whole
+games; snapshot seeking is cross-checked against folding from event zero;
+tampering with a recorded die, claiming randomness an action never resolves,
+and substituting an illegal action are each asserted to fail *loudly*, with the
+sequence number, rather than replaying into a different game.
+
+The redaction tests assert **indistinguishability** rather than checking
+fields. Swap two cards between two hands, or reverse the undrawn portion of the
+deck, and every other viewer's projection must be byte-identical. A
+field-by-field check only ever covers the fields someone remembered, and
+silently stops covering a field added later; this formulation covers whatever
+the type contains. It is backed by a served type that has no field for another
+seat's card identities and none for the deck order, so a leak takes a
+deliberate change rather than an oversight — which matters because, per §7.6, a
+redaction leak surfaces only when somebody exploits it.
 
 ## Method notes
 

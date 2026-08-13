@@ -414,14 +414,15 @@ This matters most for the AI-training use case. A single engine step should land
 
 ### 6.2 Crate layout
 
-| Crate | Responsibility | Depends on |
-|---|---|---|
-| `carranta-core` | State, rules, legal-move generation, action application, event emission. Pure, deterministic, no I/O | nothing |
-| `carranta-replay` | Log read/write, replay driver, snapshot & seek, per-seat redaction | core |
-| `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core |
-| `carranta-server` | HTTP/WS service, matchmaking, persistence | core, replay |
-| `carranta-wasm` | Browser bindings for the client | core, replay |
-| `carranta-analytics` | Parquet/Arrow export, derived-event materialization | replay |
+| Crate | Responsibility | Depends on | Status |
+|---|---|---|---|
+| `carranta-core` | State, rules, legal-move generation, action application, recording seam. Pure, deterministic, no I/O | nothing | **built** |
+| `carranta-bot` | Heuristic policy, self-play driver, market settlement | core | **built** |
+| `carranta-record` | Log, replay driver, snapshot & seek, per-viewer redaction | core | **built** |
+| `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
+| `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
+| `carranta-wasm` | Browser bindings for the client | core, record | |
+| `carranta-analytics` | Parquet/Arrow export, derived-event materialization | record | |
 
 The dependency direction is strictly one-way: everything depends on `carranta-core`, and `carranta-core` depends on nothing. If the core ever needs a network or database type, the design has gone wrong.
 
@@ -519,6 +520,13 @@ Categories:
 5. **Negotiation** — `TradeProposed`, `TradeCountered`, `TradeRejected`, `TradeWithdrawn`, `TradeAccepted`. Non-state-changing but recorded in full per H-4; under R-7.19's open market this is most of the player interaction in the game.
 6. **Snapshots** — `StateSnapshot` every *N* events, carrying a state checksum.
 
+**How the built log differs from this sketch, and why** (`carranta-record`):
+
+- **Randomness rides on the decision that resolved it**, as `Decision{action, resolved}`, rather than arriving as its own event. A roll *is* its dice; separating them creates an ordering question a replayer would have to answer, and answering it wrongly is silent. Category 4 survives as the `resolved` field.
+- **Board generation and deck order live in `GameCreated`**, not in play events. Both are drawn once at state construction, so a log that stores the opening state already contains them — and then only two things resolve randomly during play at all, the dice and the robbery. `DevCardDrawn` becomes a *derived* event (H-7): the deck is known, so the card drawn is a fold, not a fact needing storage.
+- **Snapshots are a side index, not an event category.** They are regenerable from the events, so keeping them out of the stream is what makes the stream canonical (H-7). They double as the checksum: `verify()` replays into every one.
+- **Proposals, acceptances and withdrawals are ordinary decisions**, because in this engine they change state (the market is state). Only *declining* needs its own event, since it changes nothing and would otherwise leave no trace.
+
 ### 7.3 Replay and redaction
 
 Replay is `fold(apply, events)` from a snapshot or from the start. Snapshots give seeking without replaying from event zero.
@@ -529,6 +537,12 @@ Two things about redaction are easy to get wrong:
 
 - **It is a function of `(event, viewer, time)`, not a static classification.** A card that is `OWNER` when drawn becomes `PUBLIC` when played; VP cards are hidden until the winning reveal (R-9.11); Monopoly forcibly exposes part of every hand (R-9.9). A redaction layer that classifies by event type alone will either leak or over-hide.
 - **It must run server-side, before serialization.** Never ship a full log to a client and filter in the UI. Live spectating and mid-series replay sharing both depend on this path being correct, which makes it security-critical rather than merely cosmetic.
+
+**The built answer: project the position, do not mask the event.** `carranta-record::fog` replays the log omniscient and emits, per event, the *position* a viewer is entitled to know. That resolves the first hazard by construction rather than by care — the thief's own hand shows the card they took, the table sees only that hand sizes moved, and Monopoly needs no special case at all. It also forces the second, since projecting requires the true state and therefore cannot happen client-side.
+
+The redacted type has **no field** for another seat's card identities and none for the deck order, so a leak is a compile error rather than a missed branch. What cannot be expressed cannot escape: a stolen card's identity has no representation in the served form.
+
+Tests assert *indistinguishability* rather than checking fields — swap two cards between two hands, or reverse the undrawn deck, and every other viewer's projection must be byte-identical. That is the property §7.6.2 actually wants, and unlike a field-by-field check it does not silently stop covering a field added later.
 
 ### 7.4 Analytics scopes
 
@@ -550,12 +564,29 @@ A sketch for the Parquet layer: `dim_game` (rules_version, engine_version, optio
 
 ### 7.5 Sizing
 
-Rough estimates to validate, not measurements. A game runs a few hundred state-changing actions; H-4's negotiation churn could multiply total event count several-fold under an open market. At tens of bytes per binary event, expect **tens of KB per game uncompressed, low single-digit KB compressed**, putting a million games in the order of gigabytes — comfortable for object storage.
+~~Rough estimates to validate, not measurements.~~ **Measured** over 300 recorded self-play games per mode (`cargo run --release -p carranta-record --example bench_record`):
+
+| | Trading off | Open market |
+|---|---|---|
+| Events per game | 510 | 708 |
+| Snapshots per game | 8.5 | 11.6 |
+| In-memory size | 27.9 KB | 38.6 KB |
+| Cost of recording a game | within noise of not recording | within noise |
+| Replay a game | 31 µs | 36 µs |
+| Verify (replay + every snapshot) | 33 µs | 36 µs |
+| Project one seat's whole view | 223 µs | 276 µs |
+
+The original estimate holds. "A few hundred state-changing actions" was right, and the open market multiplies events by 1.4× rather than several-fold — the R-7.20 cap and the bot's per-request toll (§9.3) both bite. In-memory size is dominated by `Event`'s 48 bytes of padded enum, not by content; a packed wire encoding is the H-5 work and should land near the estimated low single-digit KB.
+
+Two results worth carrying forward:
+
+- **Recording is free.** It is an observer: no extra allocation per action beyond the push, and a test asserts a recorded game is the same game as an unrecorded one. So H-3's "off for self-play unless requested" is a storage decision, not a speed one.
+- **Replay is ~55× cheaper than play.** Re-folding a corpus for a changed metric costs ~36 µs per game, so a million games regenerate in well under a minute on one core. That is what makes H-7's "derived events are a materialized view" practical rather than aspirational — nothing derived needs to be stored carefully, because recomputing it is cheap.
 
 ### 7.6 Risks
 
 1. **Trade churn.** R-7.19 lets any player propose at any time during a turn, and H-4 records all of it. Bounded by R-7.20 (D-7): ~20 offers per player per turn plus a minimum interval, enforced in the engine. Without that cap this is a log-bloat and denial-of-service vector, not merely a tidiness concern.
-2. **Redaction leaks are silent.** Add an explicit test asserting that no `OWNER` or `HIDDEN` datum appears in any other seat's serialized view, across a corpus of replayed games. A leak will not otherwise surface until someone exploits it.
+2. **Redaction leaks are silent.** ~~Add an explicit test~~ **Done, and stronger than originally specified.** Rather than asserting that no `OWNER` or `HIDDEN` datum *appears* in another seat's view — which only ever covers the fields someone remembered to check — the tests perturb hidden state and assert the view does not move: swap two cards between two hands, or reverse the undrawn deck, and every other viewer's projection is byte-identical. Combined with a redacted type that has no field for the hidden data, a leak now takes a deliberate change rather than an oversight.
 3. **Replay divergence.** Verify replayed state against the checksum in each `StateSnapshot`. A mismatch means either a corrupted log or an engine change that altered semantics — both need to fail loudly, immediately.
 4. **Rules drift across the corpus.** See the aggregation hazard in §7.4.
 5. **Identity and privacy.** H-6 creates durable cross-game player records. Retention is settled by H-8 — logs indefinite, chat 90 days — which is what makes a deletion request satisfiable without touching immutable game history. Pseudonymisation of the principal table still needs a concrete design.

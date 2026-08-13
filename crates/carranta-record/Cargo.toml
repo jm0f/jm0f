@@ -1,0 +1,15 @@
+[package]
+name = "carranta-record"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Game records for Carranta: an omniscient event log, replay, and per-viewer redaction."
+
+[dependencies]
+carranta-core = { path = "../carranta-core" }
+
+[dev-dependencies]
+carranta-bot = { path = "../carranta-bot" }
+
+[lints.rust]
+unsafe_code = "forbid"
