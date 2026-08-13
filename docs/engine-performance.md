@@ -160,7 +160,7 @@ hand-written case missed, both in blocking:
 - **Batch timing.** Per-call `Instant::now()` cost and scheduler preemption
   produced 30 µs "worst cases" on pure trees, which are algorithmically
   impossible — measurement artefacts, not outliers.
-- **Both shapes reported.** A single mean over random networks hides an ~18×
+- **Both shapes reported.** A single mean over random networks hides an ~16×
   spread between realistic and adversarial cases.
 - **`black_box` on inputs and outputs**, and the accumulated result is asserted
   against the expected value so the optimiser cannot delete the work.
