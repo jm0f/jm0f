@@ -490,6 +490,104 @@ pub fn settle_market(state: &mut State, policies: &mut [&mut dyn Policy]) -> u32
     done_trades
 }
 
+/// Salts that keep a policy's RNG off the game's own stream.
+///
+/// [`Rng::new`] derives every stream from the seed, and both a policy's
+/// tie-breaks and the game's dice are drawn from `Stream::Dice`. Seeding a
+/// policy with the game seed therefore makes its choices track the dice — a
+/// correlation with no place in a strength measurement.
+const BOT_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+const RANDOM_SALT: u64 = 0xBF58_476D_1CE4_E5B9;
+
+/// The outcome of a paired duel between the heuristic and random opponents.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Duel {
+    /// Games played: `boards * seats`.
+    pub games: u32,
+    /// Games the heuristic won.
+    pub wins: u32,
+    /// Games that reached a winner rather than the action cap.
+    pub finished: u32,
+    /// Actions applied across all games.
+    pub steps: usize,
+    /// Wins split by the seat the heuristic occupied.
+    pub wins_by_seat: [u32; MAX_PLAYERS],
+    /// Games played from each seat — equal to `boards` by construction.
+    pub games_by_seat: [u32; MAX_PLAYERS],
+}
+
+impl Duel {
+    /// Share of games won.
+    pub fn rate(&self) -> f64 {
+        self.wins as f64 / self.games.max(1) as f64
+    }
+
+    /// Mean actions per game.
+    pub fn mean_steps(&self) -> f64 {
+        self.steps as f64 / self.games.max(1) as f64
+    }
+
+    /// Win rate from each seat, as whole percent.
+    pub fn by_seat(&self) -> [u32; MAX_PLAYERS] {
+        core::array::from_fn(|i| {
+            if self.games_by_seat[i] == 0 {
+                0
+            } else {
+                self.wins_by_seat[i] * 100 / self.games_by_seat[i]
+            }
+        })
+    }
+}
+
+/// Play the heuristic against random opponents on `boards` distinct boards,
+/// each board once from every seat.
+///
+/// The pairing matters. Rotating the seat with the board — seat `g % seats` on
+/// board `g` — gives each seat a *disjoint* set of boards, so a per-seat
+/// breakdown mixes seat effects with board luck and the seats cannot be
+/// compared to one another. Replaying the same board from every seat holds the
+/// board fixed and leaves the seat as the only difference, which is what the
+/// first-player-advantage check (A-4) is actually asking about.
+pub fn duel_random(boards: u32, seats: u8, cap: usize, trade: TradeMode) -> Duel {
+    let mut out = Duel::default();
+    for board in 0..boards {
+        // Fixed across the seatings of one board, so the pairing is tight.
+        let bot_seed = board as u64 ^ BOT_SALT;
+        for bot_seat in 0..seats as usize {
+            let mut bot = Heuristic::new(bot_seed);
+            let mut randoms: Vec<RandomPolicy> = (0..seats)
+                .map(|i| RandomPolicy::new((board as u64 * 31 + i as u64) ^ RANDOM_SALT))
+                .collect();
+
+            // Seat table with the bot in `bot_seat`; every other seat keeps
+            // the random policy belonging to that seat index.
+            let (lo, hi) = randoms.split_at_mut(bot_seat);
+            let mut policies: Vec<&mut dyn Policy> = Vec::with_capacity(seats as usize);
+            for r in lo.iter_mut() {
+                policies.push(r);
+            }
+            policies.push(&mut bot);
+            for r in hi.iter_mut().skip(1) {
+                policies.push(r);
+            }
+            debug_assert_eq!(policies.len(), seats as usize);
+
+            let (winner, steps) = play_game_with(board as u64, &mut policies, cap, trade);
+            out.games += 1;
+            out.steps += steps;
+            out.games_by_seat[bot_seat] += 1;
+            if let Some(w) = winner {
+                out.finished += 1;
+                if w as usize == bot_seat {
+                    out.wins += 1;
+                    out.wins_by_seat[bot_seat] += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Victory points for every seat, for reporting.
 pub fn final_scores(state: &State) -> [u32; MAX_PLAYERS] {
     let mut out = [0; MAX_PLAYERS];
@@ -503,55 +601,29 @@ pub fn final_scores(state: &State) -> [u32; MAX_PLAYERS] {
 mod tests {
     use super::*;
 
-    /// Win rate for the heuristic against random opponents, with the bot's
-    /// seat rotated so first-player advantage cannot inflate it.
-    fn win_rate(games: u32, seats: u8) -> (u32, u32, f64) {
-        let mut wins = 0;
-        let mut finished = 0;
-        let mut total_steps = 0usize;
-        for g in 0..games {
-            let bot_seat = (g % seats as u32) as usize;
-            let mut bot = Heuristic::new(g as u64);
-            let mut randoms: Vec<RandomPolicy> = (0..seats)
-                .map(|i| RandomPolicy::new(g as u64 * 31 + i as u64))
-                .collect();
-
-            // Build the seat table with the bot in `bot_seat`.
-            let (lo, hi) = randoms.split_at_mut(bot_seat);
-            let mut policies: Vec<&mut dyn Policy> = Vec::new();
-            for r in lo.iter_mut() {
-                policies.push(r);
-            }
-            policies.push(&mut bot);
-            for r in hi.iter_mut().skip(1) {
-                policies.push(r);
-            }
-            debug_assert_eq!(policies.len(), seats as usize);
-
-            let (winner, steps) = play_game(g as u64, &mut policies, 20_000);
-            total_steps += steps;
-            if let Some(w) = winner {
-                finished += 1;
-                if w as usize == bot_seat {
-                    wins += 1;
-                }
-            }
-        }
-        (wins, finished, total_steps as f64 / games as f64)
-    }
-
     #[test]
     fn beats_random_almost_always() {
         // The acceptance bar: random play in this game is genuinely bad, so a
         // merely-functional bot would clear 95%. 99% is the real test.
-        let games = 2_000;
-        let (wins, finished, mean_steps) = win_rate(games, 4);
-        let rate = wins as f64 / games as f64;
-        assert_eq!(finished, games, "every game must reach a winner");
+        let d = duel_random(500, 4, 20_000, TradeMode::default());
+        assert_eq!(d.finished, d.games, "every game must reach a winner");
         assert!(
-            rate >= 0.99,
-            "win rate {rate:.3} over {games} games (mean {mean_steps:.0} actions)"
+            d.rate() >= 0.99,
+            "win rate {:.3} over {} games (mean {:.0} actions)",
+            d.rate(),
+            d.games,
+            d.mean_steps()
         );
+    }
+
+    #[test]
+    fn no_seat_carries_the_win_rate() {
+        // Paired: the same 250 boards played from each seat, so a seat that
+        // trailed the others would be a seat effect and not board luck.
+        let d = duel_random(250, 4, 20_000, TradeMode::default());
+        for (seat, pct) in d.by_seat().iter().enumerate().take(4) {
+            assert!(*pct >= 97, "seat {seat} won only {pct}% of its boards");
+        }
     }
 
     #[test]
@@ -641,28 +713,12 @@ mod tests {
     #[test]
     fn an_open_market_does_not_break_the_win_rate() {
         // Trading must not make the bot worse than it was without it.
-        let games = 800;
-        let mut wins = 0;
-        for g in 0..games {
-            let bot_seat = (g % 4) as usize;
-            let mut bot = Heuristic::new(g as u64);
-            let mut randoms: Vec<RandomPolicy> = (0..4)
-                .map(|i| RandomPolicy::new(g as u64 * 31 + i as u64))
-                .collect();
-            let (lo, hi) = randoms.split_at_mut(bot_seat);
-            let mut ps: Vec<&mut dyn Policy> = Vec::new();
-            for r in lo.iter_mut() {
-                ps.push(r);
-            }
-            ps.push(&mut bot);
-            for r in hi.iter_mut().skip(1) {
-                ps.push(r);
-            }
-            let (winner, _) = play_game_with(g as u64, &mut ps, 20_000, TradeMode::Full);
-            wins += (winner == Some(bot_seat as u8)) as u32;
-        }
-        let rate = wins as f64 / games as f64;
-        assert!(rate >= 0.99, "win rate {rate:.3} with an open market");
+        let d = duel_random(200, 4, 20_000, TradeMode::Full);
+        assert!(
+            d.rate() >= 0.99,
+            "win rate {:.3} with an open market",
+            d.rate()
+        );
     }
 
     #[test]

@@ -31,8 +31,8 @@ scheduler noise swamps a sub-microsecond measurement).
 | Full random game, setup → win | ≤ 50 µs | **~130 µs** | see below |
 | Self-play throughput, one core | ≥ 20 000 games/s | **~7 700** | see below |
 | Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
-| Bot win rate vs random | ≥ 99% | **99.81%** | met |
-| Bot decision | instant (sub-ms) | **~3.3 µs** | met |
+| Bot win rate vs random | ≥ 99% | **99.76%** | met |
+| Bot decision | instant (sub-ms) | **~3.5 µs** | met |
 
 Engine figures come from `cargo run --release --example bench_engine`. They
 move **±30% between runs** on this machine — the same binary has measured a
@@ -190,10 +190,36 @@ rather than wherever is nearest.
 
 | | |
 |---|---|
-| Win rate vs 3 random opponents | **99.81%** over 20 000 games, seat rotated |
-| Win rate by seat | 99% in all four — no positional artefact |
-| Decision cost | ~3.3 µs (~6 candidates) |
-| Four bots, whole game | ~1.5 ms, ~479 actions |
+| Win rate vs 3 random opponents | **99.76%** over 5 000 boards × 4 seats |
+| Win rate by seat | 99.66 / 99.80 / 99.78 / 99.78% — no positional artefact |
+| Decision cost | ~3.5 µs (~6 candidates) |
+| Four bots, whole game | ~1.8 ms, ~499 actions |
+
+### How the win rate is measured
+
+Two seeding mistakes were live in the harness until they were looked for, and
+both flattered the number in ways that are easy to miss:
+
+**Seat rotated with the board.** Putting the bot in seat `g % 4` on board `g`
+gives each seat a *disjoint* quarter of the boards. The overall rate survives
+that, but the per-seat breakdown does not: four seats measured on four
+different sets of boards cannot be compared to each other, so the line that
+was supposed to rule out first-player advantage was measuring board luck
+instead. [`duel_random`] now plays every board once **from each seat**, which
+holds the board fixed and leaves the seat as the only difference.
+
+**Policy seeded from the game seed.** `Heuristic::new(g)` and the game's own
+`State::new(_, g)` both build `Rng::new(g)`, so their streams started
+identical — and a policy breaks ties from `Stream::Dice`, the same stream the
+game rolls dice from. The bot's tie-breaks therefore tracked the dice. The
+effect was small (99.73% → 99.76% after fixing, inside run-to-run noise), but
+a strength measurement is exactly the place where a correlation between a
+player's choices and the game's randomness cannot be waved through. Policy
+seeds are now salted away from the game seed.
+
+The bot's seed is held constant across the four seatings of one board, so the
+pairing is as tight as it can be: same terrain, same numbers, same dev deck,
+same dice, same tie-break stream, seat varied.
 
 ### Two things worth knowing about it
 
@@ -218,8 +244,8 @@ because the win rate was being measured.
 Scoring re-evaluated all four seats for every candidate, but most actions —
 buying, trading, upgrading, road-building — cannot change what an opponent's
 position is worth. Hoisting the opponent term out of the candidate loop cut the
-decision from 4.4 µs to 3.3 µs and left the win rate at exactly 99.81%, which
-is the check that it was behaviour-preserving rather than merely faster.
+decision from 4.4 µs to 3.3 µs and left the win rate unchanged to the digit,
+which is the check that it was behaviour-preserving rather than merely faster.
 
 ## Longest road
 

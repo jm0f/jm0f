@@ -2,79 +2,43 @@
 //!
 //! `cargo run --release --example bench_bot`
 
-use carranta_bot::{Heuristic, Policy, RandomPolicy, play_game, settle_market};
+use carranta_bot::{Heuristic, Policy, duel_random, play_game, settle_market};
 use carranta_core::state::{Phase, State, TradeMode};
 use std::time::Instant;
-
-/// Win rate against random opponents, with the bot's seat rotated so that
-/// first-player advantage cannot inflate the result (A-4).
-fn versus_random(games: u32, seats: u8) -> (f64, f64, [u32; 4]) {
-    let mut wins = 0u32;
-    let mut steps_total = 0usize;
-    let mut wins_by_seat = [0u32; 4];
-    let mut games_by_seat = [0u32; 4];
-
-    for g in 0..games {
-        let bot_seat = (g % seats as u32) as usize;
-        let mut bot = Heuristic::new(g as u64);
-        let mut randoms: Vec<RandomPolicy> = (0..seats)
-            .map(|i| RandomPolicy::new(g as u64 * 31 + i as u64))
-            .collect();
-
-        let (lo, hi) = randoms.split_at_mut(bot_seat);
-        let mut policies: Vec<&mut dyn Policy> = Vec::new();
-        for r in lo.iter_mut() {
-            policies.push(r);
-        }
-        policies.push(&mut bot);
-        for r in hi.iter_mut().skip(1) {
-            policies.push(r);
-        }
-
-        let (winner, steps) = play_game(g as u64, &mut policies, 20_000);
-        steps_total += steps;
-        games_by_seat[bot_seat] += 1;
-        if winner == Some(bot_seat as u8) {
-            wins += 1;
-            wins_by_seat[bot_seat] += 1;
-        }
-    }
-
-    let by_seat = core::array::from_fn(|i| {
-        if games_by_seat[i] == 0 {
-            0
-        } else {
-            wins_by_seat[i] * 100 / games_by_seat[i]
-        }
-    });
-    (
-        wins as f64 / games as f64,
-        steps_total as f64 / games as f64,
-        by_seat,
-    )
-}
 
 fn main() {
     println!("heuristic policy\n");
 
     // ---- Strength ----
-    let games = 20_000;
+    //
+    // Paired: every board is played once from each seat, so the per-seat
+    // split isolates first-player advantage (A-4) instead of measuring four
+    // disjoint sets of boards against each other.
+    let boards = 5_000;
     let t = Instant::now();
-    let (rate, mean_steps, by_seat) = versus_random(games, 4);
+    let d = duel_random(boards, 4, 20_000, TradeMode::default());
     let dt = t.elapsed();
-    println!("versus 3 random opponents, {games} games, seat rotated:");
+    println!(
+        "versus 3 random opponents, {boards} boards x 4 seats = {} games:",
+        d.games
+    );
     println!(
         "  win rate            {:.2}%   (random baseline 25%)",
-        rate * 100.0
+        d.rate() * 100.0
     );
+    let pct =
+        |seat: usize| 100.0 * d.wins_by_seat[seat] as f64 / d.games_by_seat[seat].max(1) as f64;
     println!(
-        "  by seat             {}%  {}%  {}%  {}%",
-        by_seat[0], by_seat[1], by_seat[2], by_seat[3]
+        "  by seat             {:.2}%  {:.2}%  {:.2}%  {:.2}%   (same boards, all four)",
+        pct(0),
+        pct(1),
+        pct(2),
+        pct(3)
     );
-    println!("  mean actions/game   {mean_steps:.0}");
+    println!("  mean actions/game   {:.0}", d.mean_steps());
     println!(
         "  throughput          {:.0} games/s",
-        games as f64 / dt.as_secs_f64()
+        d.games as f64 / dt.as_secs_f64()
     );
 
     // ---- All four seats playing well ----
