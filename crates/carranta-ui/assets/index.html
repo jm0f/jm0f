@@ -233,10 +233,12 @@ function el(tag, attrs, kids) {
   return n;
 }
 
-// The mountains are a photograph rather than a colour. One pattern per hex:
-// a single shared one would repeat the same crop across all three and read as
-// wallpaper, so each is offset to show a different part of the range.
-function mountainFill(svg, id, cx, cy, seed) {
+// Every terrain is a photograph rather than a colour. One pattern per hex:
+// a single shared one would repeat the same crop on every tile of that
+// terrain and read as wallpaper, so each is offset to show a different part
+// of its picture. The flat palette stays underneath as the fallback, and as
+// what the pieces and the interface are still coloured from.
+function photoFill(svg, id, terrain, cx, cy, seed) {
   const defs = el('defs', {});
   const w = SIZE * 3.2, h = w * (2048 / 1536);
   const pat = el('pattern', {
@@ -244,7 +246,7 @@ function mountainFill(svg, id, cx, cy, seed) {
     x: cx - w / 2, y: cy - h / 2, width: w, height: h,
   });
   pat.appendChild(el('image', {
-    href: '/art/mountains.jpg', x: -((seed * 37) % 60), y: -((seed * 61) % 120),
+    href: `/art/${terrain}.jpg`, x: -((seed * 37) % 60), y: -((seed * 61) % 120),
     width: w * 1.4, height: h * 1.4, preserveAspectRatio: 'xMidYMid slice',
   }));
   defs.appendChild(pat);
@@ -359,9 +361,7 @@ function draw() {
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
     g.appendChild(el('polygon', {
       points: hexPoints(cx, cy),
-      fill: h.terrain === 'mountains'
-        ? mountainFill(svg, `m-${h.id}`, cx, cy, h.id)
-        : `var(--${h.terrain})`,
+      fill: photoFill(svg, `t-${h.id}`, h.terrain, cx, cy, h.id),
       // The outline is drawn in the panel's own colour, so it reads as a gap
       // between tiles rather than a line around them — the board separates
       // into pieces without anything being added to it. Taken from the

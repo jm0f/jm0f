@@ -27,8 +27,16 @@ const PAGE: &str = include_str!("../assets/index.html");
 /// than a board with holes in it. The page fetches these once and reuses them;
 /// they are the drawings in `art/`, unmodified, which keeps one copy of each
 /// rather than a second pasted into the page to drift from the first.
-/// The mountain photograph, served as bytes rather than text.
-const MOUNTAINS: &[u8] = include_bytes!("../../../art/mountains.jpg");
+/// The terrain photographs, served as bytes rather than text. Every terrain
+/// has one, so a hex is a picture of the thing it produces.
+const PHOTOS: [(&str, &[u8]); 6] = [
+    ("hills", include_bytes!("../../../art/hills.jpg")),
+    ("forest", include_bytes!("../../../art/forest.jpg")),
+    ("pasture", include_bytes!("../../../art/pasture.jpg")),
+    ("fields", include_bytes!("../../../art/fields.jpg")),
+    ("mountains", include_bytes!("../../../art/mountains.jpg")),
+    ("desert", include_bytes!("../../../art/desert.jpg")),
+];
 
 const ART: [(&str, &str); 5] = [
     ("road-30", include_str!("../../../art/road-30.svg")),
@@ -118,8 +126,12 @@ impl Server {
                 "text/html; charset=utf-8",
                 PAGE.as_bytes(),
             ),
-            ("GET", "/art/mountains.jpg") => {
-                respond(&mut stream, 200, "image/jpeg", MOUNTAINS)
+            ("GET", p) if p.starts_with("/art/") && p.ends_with(".jpg") => {
+                let name = p.trim_start_matches("/art/").trim_end_matches(".jpg");
+                match PHOTOS.iter().find(|(n, _)| *n == name) {
+                    Some((_, bytes)) => respond(&mut stream, 200, "image/jpeg", bytes),
+                    None => respond(&mut stream, 404, "text/plain", b"not found"),
+                }
             }
             ("GET", p) if p.starts_with("/art/") => {
                 let name = p.trim_start_matches("/art/").trim_end_matches(".svg");
