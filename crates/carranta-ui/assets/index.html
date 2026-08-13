@@ -364,7 +364,10 @@ function draw() {
     // a diagonal piece is far bigger than the bar inside it — the mistake that
     // made the roads overshoot their edges.
     const k = Math.hypot(x2 - x1, y2 - y1) * 0.88 / ROAD_LENGTH;
-    solids.push({ art: name, seat, x: (x1 + x2) / 2, y: (y1 + y2) / 2, k, anchor: 0.5 });
+    // Lifted so the piece's underside sits on the edge rather than its middle.
+    // Centring the drawing puts half the thickness below the line, which reads
+    // as the road having slid off it.
+    solids.push({ art: name, seat, x: (x1 + x2) / 2, y: (y1 + y2) / 2, k, anchor: 0.62 });
   });
 
   view.buildings.forEach(([seat, v, city]) => {
