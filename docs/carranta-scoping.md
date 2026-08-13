@@ -423,6 +423,7 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-evolve` | Population loop, parallel evaluation, versioned ladder, checkpoints (§9.5) | core, bot, analytics, record | **built** |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
+| `carranta-ui` | Play locally in a browser: dependency-free HTTP server over the engine | core, bot, record | **built** |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
 | `carranta-analytics` | Parquet/Arrow export, derived-event materialization | record | |
 
@@ -1196,7 +1197,9 @@ Items struck through are **built**; see `engine-performance.md` for what each wa
 10. Own principal table and the guest-claim alias design (§8.2) before any account exists — retrofitting identity onto immutable logs is not possible.
 11. Human-identity retention and deletion policy (§7.6 risk 5) before the first human game is recorded.
 
-**Platform** — none built
+**Platform** — a local board is playable; nothing else built
+
+11a. ~~A local browser interface.~~ `cargo run --release -p carranta-ui`, then open `127.0.0.1:8181`. One process, no dependencies, no build step; loopback only. It is **not** the server of §6.2 — no auth, no persistence, one game in memory — and should not grow into one. Two things it does establish, and both are cheaper to fix now than later: the page is served the §7.3 redaction rather than the state, so the client cannot be handed another seat's cards even by mistake; and the engine now exposes board *geometry* (`hex_axial`, `vertex_axial`), so anything that draws a board reads the lattice instead of re-deriving it.
 
 12. Auth.js with our own principal table (P-15, §8.6) — including the JWT/JWKS seam to the Rust server, which is the part most likely to be underestimated.
 13. Lobby lifecycle and config (§8.3), configurable turn timers (P-17), and seat-actor substitution with reclaim (P-18).

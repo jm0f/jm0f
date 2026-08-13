@@ -150,7 +150,14 @@ pub fn fog(state: &State, viewer: Viewer) -> Fog {
         roads_left: state.roads_left,
         settlements_left: state.settlements_left,
         cities_left: state.cities_left,
-        apparent_vp: per(&|p| state.public_victory_points(p)),
+        // Hidden Victory Point cards stay hidden until somebody wins, and are
+        // then revealed to everyone (R-9.11). Without the second half a
+        // finished game shows a winner on fewer than ten points, which is both
+        // wrong and visibly wrong.
+        apparent_vp: match state.phase {
+            Phase::GameOver { .. } => per(&|p| state.victory_points(p)),
+            _ => per(&|p| state.public_victory_points(p)),
+        },
         road_length: per(&|p| longest_road(state.roads[p], state.blocking(p))),
 
         supply: state.supply,

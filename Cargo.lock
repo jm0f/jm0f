@@ -39,3 +39,12 @@ dependencies = [
  "carranta-bot",
  "carranta-core",
 ]
+
+[[package]]
+name = "carranta-ui"
+version = "0.1.0"
+dependencies = [
+ "carranta-bot",
+ "carranta-core",
+ "carranta-record",
+]

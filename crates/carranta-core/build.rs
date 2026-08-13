@@ -258,6 +258,31 @@ fn main() {
     )
     .unwrap();
 
+    // ---- Geometry, for anything that has to *draw* the board ----
+    //
+    // The lattice positions, not pixels: a renderer picks its own hex size and
+    // orientation. A vertex is where three lattice hexes meet, and those three
+    // may include positions off the board — the meeting point is the same
+    // either way, so the coordinates are emitted rather than hex ids.
+    let axial: Vec<[i8; 2]> = hexes.iter().map(|&(q, r)| [q as i8, r as i8]).collect();
+    write!(s, "pub const HEX_AXIAL: [[i8; 2]; {}] = [", hexes.len()).unwrap();
+    for row in &axial {
+        write!(s, "{row:?},").unwrap();
+    }
+    writeln!(s, "];").unwrap();
+
+    write!(
+        s,
+        "pub const VERTEX_AXIAL: [[[i8; 2]; 3]; {}] = [",
+        verts.len()
+    )
+    .unwrap();
+    for triple in &verts {
+        let t: Vec<[i8; 2]> = triple.iter().map(|&(q, r)| [q as i8, r as i8]).collect();
+        write!(s, "[{:?},{:?},{:?}],", t[0], t[1], t[2]).unwrap();
+    }
+    writeln!(s, "];").unwrap();
+
     let out = Path::new(&env::var("OUT_DIR").unwrap()).join("topology_tables.rs");
     fs::write(out, s).unwrap();
 }

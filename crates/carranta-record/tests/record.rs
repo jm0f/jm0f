@@ -287,10 +287,17 @@ fn projection_agrees_with_replay_at_every_step() {
     assert_eq!(seen.len(), log.events.len());
 
     // The last public position must describe the same game the log ends in.
+    // Points are the true totals there rather than the apparent ones: the game
+    // is over, so held Victory Point cards have been revealed (R-9.11).
     let last = seen.last().unwrap();
-    assert_eq!(last.after.apparent_vp[1], want.public_victory_points(1));
+    assert_eq!(last.after.apparent_vp[1], want.victory_points(1));
     assert_eq!(last.after.hand_size[2], want.hand_size(2) as u8);
     assert_eq!(last.after.own.unwrap().hand, want.hand[0]);
+
+    // Mid-game the same figure is still the apparent one.
+    let mid = &seen[seen.len() / 2];
+    let position = log.replay_to(mid.seq).unwrap();
+    assert_eq!(mid.after.apparent_vp[1], position.public_victory_points(1));
 }
 
 #[test]

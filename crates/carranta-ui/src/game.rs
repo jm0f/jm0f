@@ -1,0 +1,543 @@
+//! One local game: the human at seat 0, heuristic bots elsewhere.
+//!
+//! **The browser is served a redacted view, never the state.** Everything the
+//! page receives goes through [`carranta_record::fog`], the same projection a
+//! real server would use — so the client physically cannot be sent another
+//! seat's cards or the deck order, because the type it is built from has no
+//! field for them. That is worth doing here rather than later: a local UI that
+//! reads the raw state would grow a habit the server then has to unpick.
+
+use carranta_bot::{Heuristic, Policy};
+use carranta_core::action::{Action, Illegal};
+use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Phase, State, TradeMode};
+use carranta_record::fog::{Fog, Viewer, fog};
+
+/// The seat a person plays.
+pub const HUMAN: u8 = 0;
+
+/// Why an action was refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// The page acted on a position that has since moved on.
+    Stale,
+    /// No such choice was offered.
+    NoSuchChoice,
+    /// The engine rejected it. Should not happen — every choice offered comes
+    /// from the engine's own legal set — so it is surfaced rather than hidden.
+    Illegal(Illegal),
+}
+
+/// A live game.
+pub struct Session {
+    state: State,
+    bots: Vec<Heuristic>,
+    /// Bumped on every applied action, so a click made against a stale board is
+    /// refused rather than applied to a different position.
+    version: u64,
+    log: Vec<String>,
+    /// Offers the human has already waved away, so they are asked once.
+    declined: [bool; MAX_OFFERS],
+    seed: u64,
+}
+
+impl Session {
+    pub fn new(seats: u8, seed: u64, mode: TradeMode) -> Self {
+        let seats = seats.clamp(3, MAX_PLAYERS as u8);
+        Session {
+            state: State::new(seats, seed).with_trade_mode(mode),
+            bots: (0..seats)
+                .map(|s| Heuristic::new(seed.wrapping_mul(31).wrapping_add(s as u64 + 1)))
+                .collect(),
+            version: 0,
+            log: vec![format!(
+                "New game — {seats} seats, {mode:?} market, seed {seed}"
+            )],
+            declined: [false; MAX_OFFERS],
+            seed,
+        }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    pub fn log(&self) -> &[String] {
+        &self.log
+    }
+
+    /// What the human is entitled to see.
+    pub fn view(&self) -> Fog {
+        fog(&self.state, Viewer::Seat(HUMAN))
+    }
+
+    /// The choices to put in front of the human, in a stable order.
+    ///
+    /// Empty while it is a bot's turn and nothing is being asked of the human.
+    pub fn choices(&self) -> Vec<Choice> {
+        if matches!(self.state.phase, Phase::GameOver { .. }) {
+            return Vec::new();
+        }
+        if self.state.decider() == HUMAN {
+            let mut buf = Vec::new();
+            self.state.legal_into(&mut buf);
+            return buf.into_iter().map(Choice::Play).collect();
+        }
+        // Not their turn — but an offer may be waiting for them.
+        let mut out: Vec<Choice> = self
+            .open_offers()
+            .into_iter()
+            .map(|i| {
+                Choice::Play(Action::AcceptTrade {
+                    offer: i,
+                    by: HUMAN,
+                })
+            })
+            .collect();
+        if !out.is_empty() {
+            out.push(Choice::Decline);
+        }
+        out
+    }
+
+    /// Offers the human could take and has not already waved away.
+    fn open_offers(&self) -> Vec<u8> {
+        if self.state.trade_mode == TradeMode::Disabled {
+            return Vec::new();
+        }
+        (0..self.state.offer_count)
+            .filter(|&i| !self.declined[i as usize])
+            .filter(|&i| {
+                let mut probe = self.state;
+                probe
+                    .apply(Action::AcceptTrade {
+                        offer: i,
+                        by: HUMAN,
+                    })
+                    .is_ok()
+            })
+            .collect()
+    }
+
+    /// Apply the human's choice, then let the bots run on.
+    pub fn act(&mut self, index: usize, version: u64) -> Result<(), Refused> {
+        if version != self.version {
+            return Err(Refused::Stale);
+        }
+        let choice = self
+            .choices()
+            .into_iter()
+            .nth(index)
+            .ok_or(Refused::NoSuchChoice)?;
+
+        match choice {
+            Choice::Decline => {
+                for i in self.open_offers() {
+                    self.declined[i as usize] = true;
+                }
+                self.log.push("You declined the open offers".to_string());
+            }
+            Choice::Play(action) => {
+                self.state.apply(action).map_err(Refused::Illegal)?;
+                self.version += 1;
+                self.log.push(format!("You: {}", describe(&action)));
+                self.forget_declines();
+            }
+        }
+        self.run_bots();
+        Ok(())
+    }
+
+    /// Advance until the human has something to decide, or the game ends.
+    fn run_bots(&mut self) {
+        let mut buf = Vec::new();
+        for _ in 0..20_000 {
+            if matches!(self.state.phase, Phase::GameOver { .. }) {
+                break;
+            }
+            if self.state.decider() == HUMAN || !self.choices().is_empty() {
+                break;
+            }
+            self.state.legal_into(&mut buf);
+            if buf.is_empty() {
+                break;
+            }
+            let seat = self.state.decider() as usize;
+            let action = self.bots[seat].choose(&self.state, &buf);
+            if self.state.apply(action).is_err() {
+                break;
+            }
+            self.version += 1;
+            if worth_logging(&action) {
+                self.log.push(format!("Seat {seat}: {}", describe(&action)));
+            }
+            self.forget_declines();
+            self.settle_between_bots();
+        }
+        if let Phase::GameOver { winner } = self.state.phase {
+            let who = if winner == HUMAN {
+                "You win".to_string()
+            } else {
+                format!("Seat {winner} wins")
+            };
+            if self.log.last().map(|l| l.as_str()) != Some(who.as_str()) {
+                self.log.push(who);
+            }
+        }
+    }
+
+    /// Let bots take each other's offers. The human is asked separately, by
+    /// being offered the choice rather than answered on their behalf.
+    fn settle_between_bots(&mut self) {
+        if self.state.trade_mode == TradeMode::Disabled || self.state.offer_count == 0 {
+            return;
+        }
+        for _ in 0..16 {
+            let mut acted = false;
+            'outer: for i in 0..self.state.offer_count {
+                for seat in 1..self.state.players {
+                    if self.state.offers[i as usize].from == seat {
+                        continue;
+                    }
+                    let take = Action::AcceptTrade { offer: i, by: seat };
+                    let mut probe = self.state;
+                    if probe.apply(take).is_err() {
+                        continue;
+                    }
+                    if self.bots[seat as usize].accepts(&self.state, seat as usize, i as usize) {
+                        if self.state.apply(take).is_ok() {
+                            self.version += 1;
+                            self.log.push(format!("Seat {seat} took an offer"));
+                            self.forget_declines();
+                        }
+                        acted = true;
+                        break 'outer;
+                    }
+                }
+            }
+            if !acted {
+                break;
+            }
+        }
+    }
+
+    /// A decline applies to the offers that were on the table at the time.
+    /// Once the market has moved, ask again.
+    fn forget_declines(&mut self) {
+        self.declined = [false; MAX_OFFERS];
+    }
+}
+
+/// Something the human can do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Play(Action),
+    /// Wave away the offers currently on the table. Not an engine action —
+    /// declining changes no state, which is exactly why it needs representing
+    /// here rather than there.
+    Decline,
+}
+
+impl Choice {
+    /// Which board feature this choice attaches to, for highlighting.
+    pub fn target(&self) -> Target {
+        match self {
+            Choice::Play(a) => match *a {
+                Action::PlaceRoad(e) | Action::BuildRoad(e) => Target::Edge(e),
+                Action::PlaceSettlement(v) | Action::BuildSettlement(v) | Action::BuildCity(v) => {
+                    Target::Vertex(v)
+                }
+                Action::MoveRobber { hex, .. } => Target::Hex(hex),
+                _ => Target::None,
+            },
+            Choice::Decline => Target::None,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Choice::Play(a) => describe(a),
+            Choice::Decline => "No thanks".to_string(),
+        }
+    }
+
+    /// A coarse grouping, so the page can put builds under buildings and cards
+    /// under cards.
+    pub fn group(&self) -> &'static str {
+        match self {
+            Choice::Play(a) => match *a {
+                Action::PlaceSettlement(_) | Action::PlaceRoad(_) => "setup",
+                Action::Roll => "roll",
+                Action::Discard { .. } => "discard",
+                Action::MoveRobber { .. } => "robber",
+                Action::BuildRoad(_)
+                | Action::BuildSettlement(_)
+                | Action::BuildCity(_)
+                | Action::BuyDev => "build",
+                Action::PlayMilitia
+                | Action::PlayRoadBuilding
+                | Action::PlayInvention(_)
+                | Action::PlayMonopoly(_) => "card",
+                Action::Trade { .. }
+                | Action::ProposeTrade { .. }
+                | Action::AcceptTrade { .. }
+                | Action::WithdrawTrade { .. } => "trade",
+                Action::EndTurn => "turn",
+            },
+            Choice::Decline => "trade",
+        }
+    }
+}
+
+/// What a choice points at on the board.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Vertex(u8),
+    Edge(u8),
+    Hex(u8),
+    None,
+}
+
+const RESOURCE_NAMES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
+
+fn cards(counts: &[u8; 5]) -> String {
+    let parts: Vec<String> = counts
+        .iter()
+        .enumerate()
+        .filter(|&(_, &n)| n > 0)
+        .map(|(r, &n)| format!("{n} {}", RESOURCE_NAMES[r]))
+        .collect();
+    if parts.is_empty() {
+        "nothing".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// A phrase for one action, for buttons and for the log.
+pub fn describe(a: &Action) -> String {
+    match *a {
+        Action::PlaceSettlement(v) => format!("Place settlement at {v}"),
+        Action::PlaceRoad(e) => format!("Place road at {e}"),
+        Action::Roll => "Roll the dice".to_string(),
+        Action::Discard { resource, .. } => {
+            format!("Discard {}", RESOURCE_NAMES[resource as usize])
+        }
+        Action::MoveRobber { hex, victim } => match victim {
+            Some(v) => format!("Move robber to {hex} and rob seat {v}"),
+            None => format!("Move robber to {hex}"),
+        },
+        Action::BuildRoad(e) => format!("Build road at {e}"),
+        Action::BuildSettlement(v) => format!("Build settlement at {v}"),
+        Action::BuildCity(v) => format!("Upgrade to city at {v}"),
+        Action::BuyDev => "Buy a development card".to_string(),
+        Action::PlayMilitia => "Play Militia".to_string(),
+        Action::PlayRoadBuilding => "Play Road Building".to_string(),
+        Action::PlayInvention([a, b]) => format!(
+            "Play Invention — take {} and {}",
+            RESOURCE_NAMES[a as usize], RESOURCE_NAMES[b as usize]
+        ),
+        Action::PlayMonopoly(r) => format!("Play Monopoly on {}", RESOURCE_NAMES[r as usize]),
+        Action::Trade { give, take } => format!(
+            "Trade {} for {} at the port",
+            RESOURCE_NAMES[give as usize], RESOURCE_NAMES[take as usize]
+        ),
+        Action::ProposeTrade { give, want, .. } => {
+            format!("Offer {} for {}", cards(&give), cards(&want))
+        }
+        Action::AcceptTrade { offer, .. } => format!("Accept offer {offer}"),
+        Action::WithdrawTrade { offer, .. } => format!("Withdraw offer {offer}"),
+        Action::EndTurn => "End turn".to_string(),
+    }
+}
+
+/// Keep the log readable: the market is chatty and mostly noise to a reader.
+fn worth_logging(a: &Action) -> bool {
+    !matches!(
+        a,
+        Action::ProposeTrade { .. } | Action::WithdrawTrade { .. } | Action::Discard { .. }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_game_puts_the_human_on_the_clock() {
+        let s = Session::new(4, 7, TradeMode::Full);
+        assert_eq!(s.state().decider(), HUMAN, "seat 0 opens the setup");
+        let choices = s.choices();
+        assert!(!choices.is_empty());
+        // Setup starts with a settlement, and each choice points at a vertex.
+        assert!(
+            choices
+                .iter()
+                .all(|c| matches!(c.target(), Target::Vertex(_)))
+        );
+    }
+
+    #[test]
+    fn the_browser_is_never_handed_another_seat_s_cards() {
+        // The point of serving through the fog: what the page receives has no
+        // field for another player's hand, so it cannot leak by oversight.
+        let mut s = Session::new(4, 3, TradeMode::Full);
+        for _ in 0..40 {
+            if s.choices().is_empty() {
+                break;
+            }
+            s.act(0, s.version()).expect("play");
+        }
+        let view = s.view();
+        let own = view.own.expect("the human sees their own hand");
+        assert_eq!(own.seat, HUMAN);
+        // Others are counts only.
+        assert!(view.hand_size.iter().any(|&n| n > 0));
+        assert_eq!(view.own.map(|o| o.seat), Some(HUMAN));
+    }
+
+    #[test]
+    fn a_click_against_a_stale_board_is_refused() {
+        let mut s = Session::new(4, 11, TradeMode::Disabled);
+        let stale = s.version();
+        s.act(0, stale).expect("first click lands");
+        assert_eq!(s.act(0, stale), Err(Refused::Stale));
+    }
+
+    #[test]
+    fn a_choice_that_was_never_offered_is_refused() {
+        let mut s = Session::new(4, 12, TradeMode::Disabled);
+        let v = s.version();
+        assert_eq!(s.act(9_999, v), Err(Refused::NoSuchChoice));
+    }
+
+    #[test]
+    fn every_offered_choice_is_one_the_engine_accepts() {
+        // The page only ever shows choices the engine generated, so applying
+        // any of them must succeed. A failure here would mean the UI could
+        // offer an illegal move.
+        for seed in 0..12 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..300 {
+                let choices = s.choices();
+                if choices.is_empty() {
+                    break;
+                }
+                let pick = (s.version() as usize) % choices.len();
+                match s.act(pick, s.version()) {
+                    Ok(()) => {}
+                    Err(e) => panic!("seed {seed}: offered choice refused: {e:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_game_can_be_played_to_the_end_through_the_interface() {
+        // End to end: only ever clicking things the interface offers must
+        // reach a finished game, not a stuck one.
+        let mut s = Session::new(4, 5, TradeMode::Full);
+        let mut clicks = 0;
+        while clicks < 4_000 {
+            let choices = s.choices();
+            if choices.is_empty() {
+                break;
+            }
+            // Prefer ending the turn when it is offered, so the game moves on.
+            let pick = choices
+                .iter()
+                .position(|c| matches!(c, Choice::Play(Action::EndTurn)))
+                .unwrap_or(0);
+            s.act(pick, s.version()).expect("play");
+            clicks += 1;
+        }
+        assert!(
+            matches!(s.state().phase, Phase::GameOver { .. }),
+            "did not finish after {clicks} clicks"
+        );
+        assert!(s.log().len() > 20);
+    }
+
+    #[test]
+    fn declining_leaves_the_position_untouched() {
+        let mut s = Session::new(4, 21, TradeMode::Full);
+        // Play until an offer is put to the human.
+        for _ in 0..600 {
+            let choices = s.choices();
+            if choices.contains(&Choice::Decline) {
+                let before = *s.state();
+                let i = choices.iter().position(|c| *c == Choice::Decline).unwrap();
+                let version = s.version();
+                s.act(i, version).expect("decline");
+                // Declining changes nothing itself, though the bots then move
+                // on — so what must hold is that no cards changed hands at the
+                // moment of declining.
+                assert_eq!(before.hand[HUMAN as usize], s.state().hand[HUMAN as usize]);
+                return;
+            }
+            if choices.is_empty() {
+                break;
+            }
+            let pick = choices
+                .iter()
+                .position(|c| matches!(c, Choice::Play(Action::EndTurn)))
+                .unwrap_or(0);
+            s.act(pick, s.version()).expect("play");
+        }
+    }
+
+    #[test]
+    fn every_action_has_a_phrase() {
+        // A button with an empty label is a bug the compiler cannot catch.
+        use carranta_core::state::Resource;
+        let all = [
+            Action::PlaceSettlement(1),
+            Action::PlaceRoad(2),
+            Action::Roll,
+            Action::Discard {
+                player: 0,
+                resource: Resource::Ore,
+            },
+            Action::MoveRobber {
+                hex: 3,
+                victim: Some(1),
+            },
+            Action::MoveRobber {
+                hex: 3,
+                victim: None,
+            },
+            Action::BuildRoad(4),
+            Action::BuildSettlement(5),
+            Action::BuildCity(6),
+            Action::BuyDev,
+            Action::PlayMilitia,
+            Action::PlayRoadBuilding,
+            Action::PlayInvention([Resource::Ore, Resource::Wood]),
+            Action::PlayMonopoly(Resource::Wool),
+            Action::Trade {
+                give: Resource::Ore,
+                take: Resource::Brick,
+            },
+            Action::ProposeTrade {
+                by: 0,
+                give: [1, 0, 0, 0, 0],
+                want: [0, 0, 0, 0, 1],
+            },
+            Action::AcceptTrade { offer: 0, by: 1 },
+            Action::WithdrawTrade { offer: 0, by: 0 },
+            Action::EndTurn,
+        ];
+        for a in all {
+            let phrase = describe(&a);
+            assert!(!phrase.is_empty(), "{a:?} has no phrase");
+            assert!(!Choice::Play(a).group().is_empty());
+        }
+    }
+}

@@ -6,6 +6,25 @@
 
 include!(concat!(env!("OUT_DIR"), "/topology_tables.rs"));
 
+/// Where each hex sits on the lattice, in axial `(q, r)`.
+///
+/// Geometry, deliberately without units: a renderer chooses its own hex size
+/// and orientation. Nothing in the engine reads this — it exists so a board can
+/// be drawn without re-deriving the lattice.
+pub const fn hex_axial(h: u8) -> [i8; 2] {
+    HEX_AXIAL[h as usize]
+}
+
+/// The three lattice positions meeting at an intersection.
+///
+/// A vertex is the unique point where three hexes meet, and one or two of them
+/// may lie off the board at the coast — the meeting point is the same, so the
+/// positions are given rather than hex ids. A renderer places the intersection
+/// at their centroid.
+pub const fn vertex_axial(v: u8) -> [[i8; 2]; 3] {
+    VERTEX_AXIAL[v as usize]
+}
+
 /// Bitset over the 72 edges. One `u128` holds the whole board.
 pub type EdgeSet = u128;
 /// Bitset over the 54 intersections. One `u64` holds the whole board.
@@ -111,6 +130,53 @@ pub fn endpoints_of(edges: EdgeSet) -> VertexSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_places_every_vertex_at_a_distinct_point() {
+        // Three lattice positions meet at a vertex, and the centroid of those
+        // three is what a renderer draws. Two different intersections landing
+        // on the same point would mean the lattice derivation is wrong.
+        let centroid = |v: u8| {
+            let t = vertex_axial(v);
+            let q: i32 = t.iter().map(|p| p[0] as i32).sum();
+            let r: i32 = t.iter().map(|p| p[1] as i32).sum();
+            (q, r)
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for v in 0..VERTEX_COUNT as u8 {
+            assert!(seen.insert(centroid(v)), "vertex {v} shares a point");
+        }
+        assert_eq!(seen.len(), VERTEX_COUNT);
+    }
+
+    #[test]
+    fn every_hex_has_six_corners_around_its_centre() {
+        // The geometric check on the topological one: the six intersections of
+        // a hex must sit around that hex's own lattice position.
+        for h in 0..HEX_COUNT as u8 {
+            let [hq, hr] = hex_axial(h);
+            let corners: Vec<u8> = iter_vertices(hex_vertices(h)).collect();
+            assert_eq!(corners.len(), 6, "hex {h}");
+            for v in corners {
+                assert!(
+                    vertex_axial(v).contains(&[hq, hr]),
+                    "vertex {v} borders hex {h} but is not placed at it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_edge_joins_two_points_that_share_two_hexes() {
+        // Adjacent intersections differ in exactly one of their three lattice
+        // positions, which is what makes an edge one hex-side long.
+        for e in 0..EDGE_COUNT as u8 {
+            let [a, b] = edge_endpoints(e);
+            let (pa, pb) = (vertex_axial(a), vertex_axial(b));
+            let shared = pa.iter().filter(|p| pb.contains(p)).count();
+            assert_eq!(shared, 2, "edge {e} joins {a} and {b}");
+        }
+    }
 
     #[test]
     fn board_dimensions() {

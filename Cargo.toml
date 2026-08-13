@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/carranta-analytics", "crates/carranta-evolve", "crates/carranta-bot", "crates/carranta-core", "crates/carranta-record"]
+members = ["crates/carranta-analytics", "crates/carranta-evolve", "crates/carranta-bot", "crates/carranta-core", "crates/carranta-record", "crates/carranta-ui"]
 resolver = "3"
 
 [workspace.package]

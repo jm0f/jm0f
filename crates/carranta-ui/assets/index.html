@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carranta</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --line: #2f343d;
+    --ink: #e8eaee; --dim: #9aa3b0;
+    --hills: #b4653a; --forest: #2f6b41; --pasture: #7ba85c;
+    --fields: #d4a63c; --mountains: #7d8794; --desert: #c9bda0;
+    --p0: #4a9eff; --p1: #e05c5c; --p2: #f0f0f0; --p3: #f0913a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  header .status { color: var(--dim); }
+  header .spacer { flex: 1; }
+  button, select {
+    font: inherit; color: var(--ink); background: #262b33;
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #313742; }
+  button:disabled { opacity: .45; cursor: default; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+              color: var(--dim); margin: 0 0 8px; font-weight: 600; }
+  svg { width: 100%; height: auto; display: block; }
+  .hexnum { font: 600 13px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
+            dominant-baseline: central; pointer-events: none; }
+  .pip { fill: #1b1d22; }
+  .red { fill: #d13b3b; }
+  .spot { cursor: pointer; }
+  .spot:hover circle, .spot:hover line { filter: brightness(1.5); }
+  .choices { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; }
+  .choices button { text-align: left; }
+  .group { color: var(--dim); font-size: 11px; text-transform: uppercase;
+           letter-spacing: .08em; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: right; padding: 3px 4px; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-weight: 500; font-size: 11px; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+  .cards { display: flex; gap: 6px; flex-wrap: wrap; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: #262b33; }
+  .card b { font-variant-numeric: tabular-nums; }
+  #log { max-height: 200px; overflow-y: auto; color: var(--dim); font-size: 12px; }
+  #log div { padding: 1px 0; }
+  #note { color: #f0913a; }
+  .you { outline: 1px solid var(--p0); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Carranta</h1>
+  <span class="status" id="status">loading…</span>
+  <span class="spacer"></span>
+  <select id="seats"><option value="3">3 seats</option><option value="4" selected>4 seats</option></select>
+  <select id="mode">
+    <option value="full" selected>open market</option>
+    <option value="restricted">1-for-1 trades</option>
+    <option value="disabled">no trading</option>
+  </select>
+  <button id="new">New game</button>
+</header>
+
+<main>
+  <div class="panel">
+    <svg id="board" viewBox="-360 -330 720 660" aria-label="game board"></svg>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:16px; min-width:0">
+    <div class="panel">
+      <h2>Your move <span id="note"></span></h2>
+      <div class="choices" id="choices"></div>
+    </div>
+    <div class="panel">
+      <h2>Your cards</h2>
+      <div class="cards" id="hand"></div>
+      <div class="cards" id="dev" style="margin-top:8px"></div>
+    </div>
+    <div class="panel">
+      <h2>Seats</h2>
+      <table id="seatTable"></table>
+    </div>
+    <div class="panel">
+      <h2>Offers</h2>
+      <div id="offers"></div>
+    </div>
+    <div class="panel">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const COLOURS = ['var(--p0)','var(--p1)','var(--p2)','var(--p3)'];
+const SIZE = 62;                 // hex radius in svg units
+let view = null;
+
+// Pointy-top axial to pixel. A vertex arrives as the *sum* of the three
+// lattice positions meeting there, so dividing by three lands on its centroid.
+function px(q, r) {
+  return [SIZE * Math.sqrt(3) * (q + r / 2), SIZE * 1.5 * r];
+}
+function vertexXY(v) { const [x, y] = px(v.q3 / 3, v.r3 / 3); return [x, y]; }
+
+function hexPoints(cx, cy) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    pts.push(`${(cx + SIZE * Math.cos(a)).toFixed(1)},${(cy + SIZE * Math.sin(a)).toFixed(1)}`);
+  }
+  return pts.join(' ');
+}
+
+function el(tag, attrs, kids) {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  (kids || []).forEach(c => n.appendChild(c));
+  return n;
+}
+
+// How many ways there are to roll each number: the dots under a disc.
+function pips(n) { return n === 0 ? 0 : 6 - Math.abs(7 - n); }
+
+function draw() {
+  const svg = document.getElementById('board');
+  svg.textContent = '';
+  const vxy = {};
+  view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
+
+  // Which board features are clickable this move.
+  const byVertex = {}, byEdge = {}, byHex = {};
+  view.choices.forEach(c => {
+    if (c.vertex !== undefined) (byVertex[c.vertex] = byVertex[c.vertex] || []).push(c);
+    if (c.edge !== undefined) (byEdge[c.edge] = byEdge[c.edge] || []).push(c);
+    if (c.hex !== undefined) (byHex[c.hex] = byHex[c.hex] || []).push(c);
+  });
+
+  view.hexes.forEach(h => {
+    const [cx, cy] = px(h.q, h.r);
+    const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
+    g.appendChild(el('polygon', {
+      points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
+      stroke: byHex[h.id] ? '#fff' : '#0008',
+      'stroke-width': byHex[h.id] ? 3 : 1.5,
+    }));
+    if (h.number > 0) {
+      g.appendChild(el('circle', { cx, cy, r: 17, fill: '#f3ead8', stroke: '#0004' }));
+      const hot = h.number === 6 || h.number === 8;
+      const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: hot ? '#c02626' : '#1b1d22' });
+      t.textContent = h.number;
+      g.appendChild(t);
+      const n = pips(h.number);
+      for (let i = 0; i < n; i++) {
+        g.appendChild(el('circle', {
+          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 9, r: 1.6,
+          class: hot ? 'red' : 'pip',
+        }));
+      }
+    }
+    if (h.robber) {
+      g.appendChild(el('circle', { cx, cy: cy + 26, r: 9, fill: '#111', stroke: '#fff', 'stroke-width': 1.5 }));
+    }
+    if (byHex[h.id]) g.onclick = () => act(byHex[h.id][0].i);
+    svg.appendChild(g);
+  });
+
+  // Ports, as a marker just outside the coast.
+  view.ports.forEach(code => {
+    const v = Math.floor(code / 8), kind = code % 8;
+    const [x, y] = vxy[v];
+    const k = Math.hypot(x, y);
+    const ox = x + (x / k) * 20, oy = y + (y / k) * 20;
+    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 8, fill: '#1d2026', stroke: '#6b7686' }));
+    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: '#9aa3b0', 'font-size': 8.5 });
+    // Two letters, taken from the same names the cards use, so a port and a
+    // card cannot be read as different resources.
+    t.textContent = kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][kind - 1];
+    svg.appendChild(t);
+  });
+
+  view.roads.forEach(([seat, e]) => {
+    const edge = view.edges[e];
+    const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
+    svg.appendChild(el('line', {
+      x1, y1, x2, y2, stroke: COLOURS[seat], 'stroke-width': 8, 'stroke-linecap': 'round',
+    }));
+  });
+
+  // Clickable edges sit above the drawn roads.
+  for (const e in byEdge) {
+    const edge = view.edges[e];
+    const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
+    const g = el('g', { class: 'spot' });
+    g.appendChild(el('line', {
+      x1, y1, x2, y2, stroke: '#ffffff', 'stroke-width': 7,
+      'stroke-linecap': 'round', 'stroke-dasharray': '5 5', opacity: .85,
+    }));
+    g.onclick = () => act(byEdge[e][0].i);
+    svg.appendChild(g);
+  }
+
+  view.buildings.forEach(([seat, v, city]) => {
+    const [x, y] = vxy[v];
+    svg.appendChild(el(city ? 'rect' : 'circle', city
+      ? { x: x - 11, y: y - 11, width: 22, height: 22, rx: 4, fill: COLOURS[seat], stroke: '#0009', 'stroke-width': 2 }
+      : { cx: x, cy: y, r: 9, fill: COLOURS[seat], stroke: '#0009', 'stroke-width': 2 }));
+  });
+
+  for (const v in byVertex) {
+    const [x, y] = vxy[v];
+    const g = el('g', { class: 'spot' });
+    g.appendChild(el('circle', { cx: x, cy: y, r: 11, fill: '#ffffff', opacity: .8 }));
+    g.onclick = () => act(byVertex[v][0].i);
+    svg.appendChild(g);
+  }
+}
+
+function render() {
+  const v = view;
+  const turn = v.winner !== null
+    ? (v.winner === v.you ? 'You won' : `Seat ${v.winner} won`)
+    : (v.yourTurn ? `Your move — ${v.phase}` : `Seat ${v.toAct} is playing`);
+  const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
+  document.getElementById('status').textContent = `${turn}${dice} · seed ${v.seed}`;
+  document.getElementById('note').textContent = v.note || '';
+
+  draw();
+
+  const box = document.getElementById('choices');
+  box.textContent = '';
+  if (!v.choices.length) {
+    const d = document.createElement('div');
+    d.className = 'group';
+    d.textContent = v.winner !== null ? 'the game is over' : 'waiting for the other seats';
+    box.appendChild(d);
+  }
+  let group = null;
+  v.choices.forEach(c => {
+    if (c.group !== group) {
+      group = c.group;
+      const h = document.createElement('div');
+      h.className = 'group';
+      h.textContent = group;
+      box.appendChild(h);
+    }
+    const b = document.createElement('button');
+    b.textContent = c.label;
+    b.onclick = () => act(c.i);
+    box.appendChild(b);
+  });
+
+  const hand = document.getElementById('hand');
+  hand.textContent = '';
+  v.resourceNames.forEach(r => {
+    const d = document.createElement('span');
+    d.className = 'card';
+    d.innerHTML = `${r.name} <b>${v.yourHand[r.i]}</b>`;
+    hand.appendChild(d);
+  });
+  const dev = document.getElementById('dev');
+  dev.textContent = '';
+  v.devNames.forEach(c => {
+    if (!v.yourDev[c.i]) return;
+    const d = document.createElement('span');
+    d.className = 'card';
+    const fresh = v.yourFresh[c.i] ? ' (new)' : '';
+    d.innerHTML = `${c.name}${fresh} <b>${v.yourDev[c.i]}</b>`;
+    dev.appendChild(d);
+  });
+
+  const t = document.getElementById('seatTable');
+  t.innerHTML = '<tr><th>seat</th><th>vp</th><th>cards</th><th>dev</th><th>road</th><th>militia</th></tr>';
+  v.seats.forEach(s => {
+    const row = document.createElement('tr');
+    if (s.seat === v.you) row.className = 'you';
+    const tags = (s.longestRoad ? ' ▸road' : '') + (s.largestMilitia ? ' ▸militia' : '');
+    const vp = s.seat === v.you ? `${v.yourVp}` : `${s.vp}`;
+    row.innerHTML = `<td><span class="swatch" style="background:${COLOURS[s.seat]}"></span>`
+      + `${s.seat === v.you ? 'you' : 'seat ' + s.seat}${tags}</td>`
+      + `<td>${vp}</td><td>${s.hand}</td><td>${s.dev}</td><td>${s.road}</td><td>${s.militia}</td>`;
+    t.appendChild(row);
+  });
+
+  const offers = document.getElementById('offers');
+  offers.textContent = '';
+  if (!v.offers.length) offers.innerHTML = '<div class="group">none on the table</div>';
+  v.offers.forEach(o => {
+    const names = n => v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ') || '—';
+    const d = document.createElement('div');
+    d.innerHTML = `seat ${o.from}: gives ${names(o.give)} for ${names(o.want)}`;
+    offers.appendChild(d);
+  });
+
+  const log = document.getElementById('log');
+  log.textContent = '';
+  v.log.forEach(l => {
+    const d = document.createElement('div');
+    d.textContent = l.t;
+    log.appendChild(d);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+
+async function load(url, opts) {
+  const r = await fetch(url, opts);
+  view = await r.json();
+  render();
+}
+function act(i) {
+  load('/api/act', {
+    method: 'POST',
+    body: JSON.stringify({ action: i, version: view.version }),
+  });
+}
+document.getElementById('new').onclick = () => {
+  const seats = document.getElementById('seats').value;
+  const mode = document.getElementById('mode').value;
+  load(`/api/new?seats=${seats}&mode=${mode}`, { method: 'POST' });
+};
+load('/api/state');
+</script>
+</body>
+</html>
