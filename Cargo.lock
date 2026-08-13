@@ -29,6 +29,7 @@ dependencies = [
  "carranta-analytics",
  "carranta-bot",
  "carranta-core",
+ "carranta-record",
 ]
 
 [[package]]

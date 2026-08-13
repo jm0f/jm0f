@@ -22,6 +22,7 @@ use carranta_core::rng::{Rng, Stream};
 use carranta_core::state::{MAX_PLAYERS, TradeMode};
 
 use crate::arena::{Arena, Job};
+use crate::behaviour::{Behaviour, Sampler};
 use crate::genome::Genome;
 use crate::ladder::{ANCHOR, Ladder};
 
@@ -67,6 +68,12 @@ pub struct Config {
     /// beating its contemporaries and nobody else.
     pub hall_seats: usize,
     pub hall_size: usize,
+    /// Validation games recorded and analysed per generation (§10).
+    ///
+    /// Behavioural markers, not a fitness signal — selection never sees them.
+    /// A handful is enough to show a trend across generations, and recording
+    /// costs nothing measurable per game. Zero switches it off.
+    pub sample: u32,
     pub mode: TradeMode,
     pub threads: usize,
 }
@@ -83,6 +90,7 @@ impl Default for Config {
             mutation: 1.0,
             hall_seats: 1,
             hall_size: 24,
+            sample: 8,
             mode: TradeMode::Restricted,
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
         }
@@ -104,9 +112,17 @@ pub struct Report {
     /// The champion's identity on the ladder.
     pub champion: u64,
     /// The champion's μ above the pinned heuristic.
+    ///
+    /// Meaningless without [`Report::champion_sigma`]: a gap of +2 against a
+    /// σ of 6 is noise, and a run that reads the gap alone will see progress
+    /// in a number that is not moving.
     pub above_anchor: f64,
+    /// Uncertainty in the champion's rating. Shrinks with `Config::validation`.
+    pub champion_sigma: f64,
     /// Largest per-gene spread among survivors, in mutation-scale units.
     pub spread: f64,
+    /// How the champion actually played, from the sampled games.
+    pub behaviour: Behaviour,
     pub seconds: f64,
 }
 
@@ -114,17 +130,33 @@ pub struct Report {
 pub struct Trainer {
     pub config: Config,
     pub ladder: Ladder,
-    population: Vec<Genome>,
-    hall: Vec<u64>,
-    generation: u32,
-    trials: u32,
-    rng: Rng,
+    pub(crate) population: Vec<Genome>,
+    pub(crate) hall: Vec<u64>,
+    pub(crate) generation: u32,
+    pub(crate) trials: u32,
+    /// The seed the whole run derives from.
+    ///
+    /// Each generation draws its own generator from `(run_seed, generation)`
+    /// rather than the run carrying one that evolves. That is what makes a
+    /// checkpoint exact: [`Rng`]'s state is private and cannot be serialised,
+    /// but a generation's randomness can always be re-derived from two numbers
+    /// that can.
+    pub(crate) run_seed: u64,
+}
+
+/// The generator for one generation, derived rather than carried.
+pub(crate) fn generation_rng(run_seed: u64, generation: u32) -> Rng {
+    Rng::new(
+        run_seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(generation as u64),
+    )
 }
 
 impl Trainer {
     /// Start a run from the hand-set weights, spread out by mutation.
     pub fn new(config: Config, seed: u64) -> Self {
-        let mut rng = Rng::new(seed);
+        let mut rng = generation_rng(seed, 0);
         let base = Genome::default();
         let population = (0..config.population)
             .map(|i| {
@@ -145,12 +177,39 @@ impl Trainer {
             hall: Vec::new(),
             generation: 0,
             trials,
-            rng,
+            run_seed: seed,
+        }
+    }
+
+    /// Rebuild a run from a checkpoint. See [`crate::checkpoint`].
+    #[allow(clippy::too_many_arguments)] // a checkpoint is a flat record
+    pub fn restore(
+        config: Config,
+        ladder: Ladder,
+        population: Vec<Genome>,
+        hall: Vec<u64>,
+        generation: u32,
+        trials: u32,
+        run_seed: u64,
+    ) -> Self {
+        Trainer {
+            config,
+            ladder,
+            population,
+            hall,
+            generation,
+            trials,
+            run_seed,
         }
     }
 
     pub fn generation(&self) -> u32 {
         self.generation
+    }
+
+    /// Games each genome plays in the next generation.
+    pub fn trials(&self) -> u32 {
+        self.trials
     }
 
     pub fn best(&self) -> Genome {
@@ -166,6 +225,8 @@ impl Trainer {
             cap: 20_000,
         };
         self.generation += 1;
+        // Derived, not carried: see `Trainer::run_seed`.
+        let mut rng = generation_rng(self.run_seed, self.generation);
 
         // ---- The field, fixed for the whole generation (E-4) ----
         //
@@ -183,15 +244,15 @@ impl Trainer {
                     // population a weak field to optimise against.
                     (0, 0) => Seat::Rated(ANCHOR),
                     (0, 1) if !self.hall.is_empty() => {
-                        let pick = self.rng.below(Stream::Board, self.hall.len() as u32);
+                        let pick = rng.below(Stream::Board, self.hall.len() as u32);
                         Seat::Rated(self.hall[pick as usize])
                     }
                     _ if slot < cfg.hall_seats && !self.hall.is_empty() => {
-                        let pick = self.rng.below(Stream::Board, self.hall.len() as u32);
+                        let pick = rng.below(Stream::Board, self.hall.len() as u32);
                         Seat::Rated(self.hall[pick as usize])
                     }
                     _ => {
-                        let pick = self.rng.below(Stream::Board, cfg.population as u32);
+                        let pick = rng.below(Stream::Board, cfg.population as u32);
                         Seat::Current(pick as usize)
                     }
                 })
@@ -265,11 +326,11 @@ impl Trainer {
             let opponents: [Seat; 3] = core::array::from_fn(|slot| match (slot, t % 3) {
                 (0, 0) => Seat::Rated(ANCHOR),
                 (0, 1) if !self.hall.is_empty() => {
-                    let pick = self.rng.below(Stream::Board, self.hall.len() as u32);
+                    let pick = rng.below(Stream::Board, self.hall.len() as u32);
                     Seat::Rated(self.hall[pick as usize])
                 }
                 _ => {
-                    let pick = self.rng.below(Stream::Board, cfg.population as u32);
+                    let pick = rng.below(Stream::Board, cfg.population as u32);
                     Seat::Current(pick as usize)
                 }
             });
@@ -289,6 +350,25 @@ impl Trainer {
             vseats.push((seat, opponents));
         }
         let voutcomes = arena.play_all(&vjobs, cfg.threads);
+
+        // Behavioural markers, from a sample of the validation games. Replayed
+        // rather than re-played: the same seeds and seats, so what is measured
+        // is exactly what was rated.
+        let mut sampler = Sampler::default();
+        let stride = if cfg.sample == 0 {
+            0
+        } else {
+            (vjobs.len() as u32 / cfg.sample).max(1)
+        };
+        if stride > 0 {
+            for (t, job) in vjobs.iter().enumerate() {
+                if !(t as u32).is_multiple_of(stride) {
+                    continue;
+                }
+                sampler.add(&arena.play_recorded(job).1);
+            }
+        }
+
         for (t, o) in voutcomes.iter().enumerate() {
             let (seat, opponents) = vseats[t];
             let mut ids = [0u64; MAX_PLAYERS];
@@ -310,6 +390,9 @@ impl Trainer {
             }
             self.ladder.record(&ids, &o.position);
         }
+        // The population's placeholders are not players; see
+        // `Ladder::forget_transients`.
+        self.ladder.forget_transients();
 
         // ---- Select and breed ----
         let survivors: Vec<Genome> = order
@@ -331,9 +414,9 @@ impl Trainer {
         let mut next = Vec::with_capacity(cfg.population);
         next.extend_from_slice(&survivors);
         while next.len() < cfg.population {
-            let a = survivors[self.rng.below(Stream::Board, survivors.len() as u32) as usize];
-            let b = survivors[self.rng.below(Stream::Board, survivors.len() as u32) as usize];
-            next.push(Genome::cross(&a, &b, &mut self.rng).mutate(&mut self.rng, cfg.mutation));
+            let a = survivors[rng.below(Stream::Board, survivors.len() as u32) as usize];
+            let b = survivors[rng.below(Stream::Board, survivors.len() as u32) as usize];
+            next.push(Genome::cross(&a, &b, &mut rng).mutate(&mut rng, cfg.mutation));
         }
         self.population = next;
 
@@ -365,7 +448,9 @@ impl Trainer {
             noise,
             champion,
             above_anchor: self.ladder.above_anchor(champion),
+            champion_sigma: self.ladder.rating(champion).sigma,
             spread,
+            behaviour: sampler.finish(),
             seconds: started.elapsed().as_secs_f64(),
         }
     }

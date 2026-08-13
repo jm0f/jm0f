@@ -420,7 +420,7 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-bot` | Heuristic policy, self-play driver, market settlement | core | **built** |
 | `carranta-record` | Log, replay driver, snapshot & seek, per-viewer redaction | core | **built** |
 | `carranta-analytics` | Dice fairness, production decomposition, descriptives, rating | core, record | **built** |
-| `carranta-evolve` | Population loop, parallel evaluation, versioned ladder (§9.5) | core, bot, analytics | **built** |
+| `carranta-evolve` | Population loop, parallel evaluation, versioned ladder, checkpoints (§9.5) | core, bot, analytics, record | **built** |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
@@ -782,6 +782,8 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-10 | Champion rating | **Held-out games.** A champion is never rated on the games that selected it |
 | E-11 | Anchor rating | **μ pinned, σ free.** The reference defines the scale rather than moving on it |
 | E-12 | Rating configuration | **Rate where people play.** An agent trains in `Restricted` and is rated in the human pool, or its rating is not comparable to a person's (§10.8) |
+| E-13 | Checkpointing | **After every generation, atomically, in plain text.** An interruption costs one generation, never a run |
+| E-14 | Behavioural markers | **Sampled games run through §10.** A rating says something improved; only this says what |
 
 #### What the measurements say
 
@@ -830,6 +832,30 @@ Three things the build corrected, each of which would have quietly inflated the 
 - **Anonymous opponents.** Hall-of-fame versions were recorded without their identity, so old champions never accumulated games, their σ stayed wide, and the ladder could not separate an old version from a new one however long the run went. They now keep their identity and go on being rated.
 
 **Ladder ratings are comparable across generations; fitness is not.** A generation's fitness is measured against a field drawn from that generation, which is itself improving — so flat fitness can mean steady progress, and a rise can mean an easier field. The ladder is the only cross-generation measure, which is exactly what E-8 is for.
+
+#### Running it
+
+Built to be started and left alone:
+
+```
+cargo run --release -p carranta-evolve --example train -- --out runs/first
+cargo run --release -p carranta-evolve --example train -- --out runs/first --resume
+```
+
+Portable by construction — the whole workspace is `std` only, with no dependencies and no architecture-specific code, so an Apple-silicon laptop needs nothing added. `--threads` defaults to every core; on a fanless machine it is worth measuring four against six against eight, because sustained throttling can make more workers slower.
+
+**Resume is exact, not approximate** (E-13). A generation's randomness is derived from `(run_seed, generation)` rather than carried in an evolving generator, so a checkpoint holds only numbers that can be written down — and a run resumed at generation 40 produces exactly the games it would have produced had it never stopped. A test asserts precisely that: three generations, save, reload, and three more that match a run which was never interrupted, generation by generation.
+
+The format is plain text on purpose: a run that dies overnight should leave something readable, diffable and salvageable without the program that wrote it. Writes go through a temporary file and a rename, so a crash mid-write leaves the previous checkpoint intact rather than a half-written one. A file named `stop` in the output directory ends the run cleanly after the generation in flight.
+
+`history.csv` gets a row per generation — fitness, noise, whether selection could separate the field, the champion's gap above the anchor **and its σ**, ladder connectivity, and the behavioural markers below.
+
+**Behavioural markers** (E-14) close a gap the rest of the design left open: a rating that climbs says something improved, but not what. A few of each generation's validation games are recorded and run through §10, giving trades, offers, maritime trades, buildings by type, development cards, militia plays and production per generation. Selection never sees them, so they describe play rather than shaping it.
+
+They earn their place immediately. Two findings came out of building them:
+
+- **A negative `offer_discount` does not silence the bot, it inverts it.** The discount scales the *gain* a proposal is credited with; negative, the bot comes to prefer proposals whose gain is negative — deals bad for itself — and those are far more plentiful, so it gets *louder*. A fitness score would have called this "worse" with no hint of why.
+- **`offer_cost` cannot quiet the first ask of a turn**, because the toll is charged per offer already made that turn. Raising it from its default to a punitive value changes nothing measurable. If offers ever need suppressing, `offer_discount` is the lever and this is not.
 
 #### The reservation
 
@@ -1190,8 +1216,8 @@ Items struck through are **built**; see `engine-performance.md` for what each wa
 21. ~~Evolution strategy over the fifteen existing weights (E-1).~~ Champions land +2 to +4 μ above the anchor and then plateau.
 22. Feature encoder (E-3) — the observation NEAT actually sees. Reuse the heuristic's features as the starting set; this is the piece most likely to decide whether the whole track works.
 23. ~~Pin the heuristic as an immutable rating anchor (E-8, E-11).~~
-24. **Seat rated bots in human lobbies deliberately** (§10.8), and mark disconnect-takeover games unrated. ~400 bridge games make an agent's standing against people meaningful; games the agent plays against other agents contribute nothing to it.
-25. **Resume from a checkpoint.** The ladder writes plain text but nothing reads it back yet, so a run that dies overnight is lost. Needed before any multi-day run.
+24. ~~Resume from a checkpoint.~~ Exact, atomic, plain text; a `stop` file ends a run cleanly.
+25. **Seat rated bots in human lobbies deliberately** (§10.8), and mark disconnect-takeover games unrated. ~400 bridge games make an agent's standing against people meaningful; games the agent plays against other agents contribute nothing to it.
 26. Population and mutation tuning. The current settings plateau within a handful of generations, which may be the landscape or may be the settings — the two are not yet distinguished.
 
 **Analytics** — ~~27–29 built~~
@@ -1201,6 +1227,6 @@ Items struck through are **built**; see `engine-performance.md` for what each wa
 29. ~~Rating (A-1…A-5).~~ With the caveat in §10.7: not cross-checked against a reference implementation, and its tie handling is counterintuitive and pinned but unresolved.
 30. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters are enforced by `Corpus::accepts`, but explicit per-turn *n* and the no-i.i.d.-pooling rule are documented rather than enforced.
 
-**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), twelve evolution decisions (§9.5), five rating decisions (§10.5) — 58 in total.
+**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), fourteen evolution decisions (§9.5), five rating decisions (§10.5) — 60 in total.
 
 **The critical path is now the platform, not the engine.** Everything from the engine down through analytics is built and measured; nothing in §12–13 blocks the training track, and the training track blocks nothing else.

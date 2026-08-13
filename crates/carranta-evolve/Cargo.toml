@@ -9,6 +9,7 @@ description = "Population training for Carranta: parallel paired evaluation, ver
 carranta-core = { path = "../carranta-core" }
 carranta-bot = { path = "../carranta-bot" }
 carranta-analytics = { path = "../carranta-analytics" }
+carranta-record = { path = "../carranta-record" }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -244,6 +244,32 @@ impl Pool {
         self.pinned.contains(&player)
     }
 
+    /// Every player the pool has a rating for.
+    pub fn players(&self) -> Vec<u64> {
+        self.ratings.keys().copied().collect()
+    }
+
+    /// Drop a player entirely.
+    ///
+    /// For identities that were never meant to persist — a placeholder that
+    /// stood in for a different opponent each time it appeared. Leaving those
+    /// in place lets one id accumulate a history belonging to nobody.
+    pub fn forget(&mut self, player: u64) {
+        self.ratings.remove(&player);
+        self.games.remove(&player);
+        self.pinned.remove(&player);
+    }
+
+    /// Put a player back at a known rating and game count.
+    ///
+    /// For restoring a saved pool, not for editing a live one: a rating that
+    /// did not come from recorded games is a claim about a player that no
+    /// result supports.
+    pub fn restore(&mut self, player: u64, rating: Rating, games: u32) {
+        self.ratings.insert(player, rating);
+        self.games.insert(player, games);
+    }
+
     /// The current belief about a player. Unseen players start at the prior.
     pub fn rating(&self, player: u64) -> Rating {
         self.ratings.get(&player).copied().unwrap_or_default()
@@ -564,6 +590,31 @@ mod tests {
         assert_eq!(pool.games_played(0), 200);
         // And everyone who beat it has risen above it on a fixed scale.
         assert!(pool.rating(1).mu > start.mu);
+    }
+
+    #[test]
+    fn a_pool_survives_a_round_trip_through_restore() {
+        let mut pool = Pool::new(Model::default());
+        pool.pin(0);
+        for _ in 0..50 {
+            pool.record_ranked(&[0, 1, 2, 3], &[2, 1, 4, 3]);
+        }
+
+        let mut copy = Pool::new(Model::default());
+        copy.pin(0);
+        for p in 0..4 {
+            copy.restore(p, pool.rating(p), pool.games_played(p));
+        }
+        for p in 0..4 {
+            assert_eq!(copy.rating(p), pool.rating(p));
+            assert_eq!(copy.games_played(p), pool.games_played(p));
+        }
+        // And carries on from there identically.
+        pool.record_ranked(&[0, 1, 2, 3], &[1, 2, 3, 4]);
+        copy.record_ranked(&[0, 1, 2, 3], &[1, 2, 3, 4]);
+        for p in 0..4 {
+            assert_eq!(copy.rating(p), pool.rating(p), "player {p} diverged");
+        }
     }
 
     #[test]

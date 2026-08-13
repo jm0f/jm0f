@@ -22,7 +22,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use carranta_bot::{Heuristic, Policy, settle_market};
+use carranta_core::Action;
 use carranta_core::state::{MAX_PLAYERS, Phase, State, TradeMode};
+use carranta_record::{Log, Recorder, SeatId};
 
 use crate::genome::Genome;
 
@@ -153,6 +155,101 @@ impl Arena {
             }
         }
         out
+    }
+
+    /// Play one game and keep a full record of it (§7).
+    ///
+    /// For sampling only. Recording costs nothing measurable per game, but the
+    /// logs themselves would swamp a run that kept every one — so the trainer
+    /// takes a small sample and this stays off the hot path.
+    pub fn play_recorded(&self, job: &Job) -> (Outcome, Log) {
+        let mut a = seat_bot(job, 0);
+        let mut b = seat_bot(job, 1);
+        let mut c = seat_bot(job, 2);
+        let mut d = seat_bot(job, 3);
+        let mut policies: Vec<&mut dyn Policy> = vec![&mut a, &mut b, &mut c, &mut d];
+
+        let mut rec = Recorder::new(
+            job.seed,
+            job.seed,
+            State::new(MAX_PLAYERS as u8, job.seed).with_trade_mode(self.mode),
+            (0..MAX_PLAYERS)
+                .map(|s| SeatId::agent(s as u64, "evolve", 1))
+                .collect(),
+        );
+        let mut buf = Vec::new();
+        let mut actions = 0u32;
+
+        while (actions as usize) < self.cap {
+            if matches!(rec.state().phase, Phase::GameOver { .. }) {
+                break;
+            }
+            rec.state().legal_into(&mut buf);
+            if buf.is_empty() {
+                break;
+            }
+            let seat = rec.state().decider() as usize;
+            let action = policies[seat].choose(rec.state(), &buf);
+            if rec.apply(action).is_err() {
+                break;
+            }
+            actions += 1;
+            settle_recorded(&mut rec, &mut policies);
+        }
+
+        let winner = match rec.state().phase {
+            Phase::GameOver { winner } => Some(winner),
+            _ => None,
+        };
+        let vp: [u32; MAX_PLAYERS] = core::array::from_fn(|p| rec.state().victory_points(p));
+        let outcome = Outcome {
+            position: positions(winner, &vp),
+            vp,
+            winner,
+            actions,
+        };
+        (outcome, rec.finish_into(winner))
+    }
+}
+
+/// Settle the market through the recorder, so completed trades reach the log.
+///
+/// [`settle_market`] writes straight to a `State`, which would leave every
+/// trade out of the record — a busy market with no trades in it.
+fn settle_recorded(rec: &mut Recorder, policies: &mut [&mut dyn Policy]) {
+    if rec.state().trade_mode == TradeMode::Disabled || rec.state().offer_count == 0 {
+        return;
+    }
+    let mut declined = [[false; carranta_core::state::MAX_OFFERS]; MAX_PLAYERS];
+    for _ in 0..16 {
+        let mut acted = false;
+        #[allow(clippy::needless_range_loop)] // `i` indexes both offers and `declined`
+        'outer: for i in 0..rec.state().offer_count as usize {
+            for seat in 0..policies.len() {
+                if rec.state().offers[i].from as usize == seat {
+                    continue;
+                }
+                let take = Action::AcceptTrade {
+                    offer: i as u8,
+                    by: seat as u8,
+                };
+                let mut probe = *rec.state();
+                if probe.apply(take).is_err() {
+                    continue;
+                }
+                if policies[seat].accepts(rec.state(), seat, i) {
+                    let _ = rec.apply(take);
+                    acted = true;
+                    break 'outer;
+                } else if !declined[seat][i] {
+                    declined[seat][i] = true;
+                    rec.decline(i as u8, seat as u8);
+                }
+            }
+        }
+        if !acted {
+            break;
+        }
     }
 }
 

@@ -178,6 +178,49 @@ impl Ladder {
         rows
     }
 
+    /// Every version's id, unordered.
+    pub fn ids(&self) -> Vec<u64> {
+        self.members.keys().copied().collect()
+    }
+
+    /// Games a version has played against the anchor.
+    pub fn anchored_games(&self, id: u64) -> u32 {
+        self.anchored.get(&id).copied().unwrap_or(0)
+    }
+
+    /// Drop every rating that does not belong to a known version.
+    ///
+    /// The population's own members play under throwaway ids, because a genome
+    /// that may not survive the generation has no durable identity. Those ids
+    /// must not persist: "population slot 3" is a different genome every
+    /// generation, so a rating accumulating against that id is a history
+    /// belonging to nobody — and it would quietly influence every champion's
+    /// update thereafter.
+    pub fn forget_transients(&mut self) {
+        for id in self.pool.players() {
+            if !self.members.contains_key(&id) {
+                self.pool.forget(id);
+            }
+        }
+    }
+
+    /// Put a version back with a known rating, for resuming a run.
+    ///
+    /// The anchor stays pinned when restored, or a resumed run would silently
+    /// lose the fixed origin every cross-generation comparison rests on.
+    pub fn restore(&mut self, version: Versioned, rating: Rating, games: u32, anchored: u32) {
+        let id = version.id;
+        self.next_id = self.next_id.max(id + 1);
+        self.members.insert(id, version);
+        self.pool.restore(id, rating, games);
+        if id == ANCHOR {
+            self.pool.pin(ANCHOR);
+        }
+        if anchored > 0 {
+            self.anchored.insert(id, anchored);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.members.len()
     }
@@ -312,6 +355,24 @@ mod tests {
         let rows = ladder.standings(10);
         assert_eq!(rows.len(), 2, "the anchor and the one that played");
         assert!(rows.iter().all(|(v, _, n)| *n >= 10 && v.id != 2));
+    }
+
+    #[test]
+    fn a_throwaway_opponent_does_not_accumulate_a_history() {
+        let mut ladder = Ladder::default();
+        let champion = ladder.enrol(Genome::default(), 1);
+        let transient = 1 << 40;
+        for _ in 0..20 {
+            ladder.record(&[champion, ANCHOR, transient, transient + 1], &[1, 2, 3, 4]);
+        }
+        ladder.forget_transients();
+        // The placeholder is back at the prior, as though it had never played.
+        assert_eq!(ladder.rating(transient), Rating::default());
+        assert_eq!(ladder.games_played(transient), 0);
+        // Real versions are untouched.
+        assert_eq!(ladder.games_played(champion), 20);
+        assert!(ladder.above_anchor(champion) > 0.0);
+        assert_eq!(ladder.rating(ANCHOR).mu, 25.0, "the anchor stays pinned");
     }
 
     #[test]
