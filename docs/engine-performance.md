@@ -128,17 +128,30 @@ ever asked to accept. `Policy::accepts` is a separate question, and the driver
 settles the market after every action.
 
 The first version then papered the table — every extra proposal scored a little
-positive, so offering was always better than getting on with the turn:
+positive, so offering was always better than getting on with the turn. What
+fixed it is a toll on **asking**, cumulative across the turn:
 
-| | Actions/game | Trades/game | Games/s |
-|---|---|---|---|
-| No market | 508 | 0 | 594 |
-| Market, no clutter penalty | 2 941 | 37.4 | 29 |
-| Market, penalty per live own offer | **843** | **27.6** | **114** |
+| | Actions/game | Trades/game | Asks per trade | Games/s |
+|---|---|---|---|---|
+| No market | 508 | 0 | — | 594 |
+| Market, no toll | 2 941 | 37.4 | ~12 | 29 |
+| Toll per *live* own offer | 843 | 27.6 | ~12 | 114 |
+| Toll per *request made* | **643** | **19.2** | **6.7** | **165** |
 
-Trades now happen in 100% of self-play games. `Full` runs ~5× slower than a
+The distinction matters more than it looks. A toll on live offers resets the
+moment one is taken, so the bot could churn — offer, get taken, offer again at
+no cost, indefinitely. A toll on requests made is monotonic within the turn, so
+the bar rises with each ask and only a clearly good trade is worth raising. It
+is also closer to how a person weighs it: the third request of the same turn
+has to be worth more than the first, because people stop listening.
+
+Every candidate proposal carries the same toll, so it never picks *between*
+offers — it only decides whether making any is worth more than getting on with
+the turn.
+
+Trades happen in 100% of self-play games. `Full` runs ~4× slower than a
 market-free game, almost all of it the larger generated action space — fine for
-evaluation and data generation, and the reason `Restricted` (233 games/s) and
+evaluation and data generation, and the reason `Restricted` (328 games/s) and
 `Disabled` exist for training.
 
 ### What it cost

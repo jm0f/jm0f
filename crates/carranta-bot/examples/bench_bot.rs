@@ -158,6 +158,7 @@ fn main() {
         let games = 400u64;
         let t = Instant::now();
         let (mut steps_total, mut trades_total, mut with_trades) = (0usize, 0u32, 0u32);
+        let mut proposals = 0u32;
         for g in 0..games {
             let mut a = Heuristic::new(g);
             let mut b = Heuristic::new(g + 100_000);
@@ -179,6 +180,9 @@ fn main() {
                 }
                 let seat = state.decider() as usize;
                 let act = ps[seat].choose(&state, &buf);
+                if matches!(act, carranta_core::action::Action::ProposeTrade { .. }) {
+                    proposals += 1;
+                }
                 if state.apply(act).is_err() {
                     break;
                 }
@@ -193,10 +197,13 @@ fn main() {
         println!(
             "\n{mode:?} market, {games} self-play games:\n  \
              actions/game {:.0}   trades/game {:.1}   games with a trade {}%\n  \
+             proposals/game {:.1}   asks per trade {:.1}\n  \
              per game {:.0} µs   {:.0} games/s",
             steps_total as f64 / games as f64,
             trades_total as f64 / games as f64,
             with_trades * 100 / games as u32,
+            proposals as f64 / games as f64,
+            proposals as f64 / trades_total.max(1) as f64,
             dt.as_secs_f64() * 1e6 / games as f64,
             games as f64 / dt.as_secs_f64(),
         );

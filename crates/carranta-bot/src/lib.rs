@@ -91,12 +91,17 @@ pub struct Weights {
     /// Percentage of a proposed trade's gain that is credited when deciding to
     /// offer it. A proposal may be refused, so it is worth less than the swap.
     pub offer_discount: i32,
-    /// Penalty per offer this seat already has live.
+    /// Penalty per offer this seat has already *requested* this turn.
     ///
-    /// Without it the bot papers the table: every extra proposal scores a
-    /// little positive, so making one is always better than getting on with
-    /// the turn. This is what keeps a seat to a couple of live offers.
-    pub offer_clutter: i32,
+    /// Cumulative, not a count of live offers: asking costs something whether
+    /// or not the previous ask came to anything, so the bar rises with each
+    /// one and only a clearly good trade is worth raising. That is roughly how
+    /// a person weighs it — the third request of the same turn has to be worth
+    /// more than the first, because people stop listening.
+    ///
+    /// Counting live offers instead lets the bot churn: make an offer, have it
+    /// taken, make another at no cost, indefinitely.
+    pub offer_cost: i32,
 }
 
 impl Default for Weights {
@@ -118,7 +123,7 @@ impl Default for Weights {
             buy_dev: 40,
             steal: 8,
             offer_discount: 55,
-            offer_clutter: 14,
+            offer_cost: 8,
         }
     }
 }
@@ -292,13 +297,12 @@ impl Heuristic {
                     after[r] = after[r] - give[r] + want[r];
                 }
                 let gain = self.hand_value(&after) - self.hand_value(&state.hand[me]);
-                let live = state
-                    .live_offers()
-                    .iter()
-                    .filter(|o| o.from as usize == me)
-                    .count() as i32;
+                // Every candidate proposal carries the same toll, so this does
+                // not pick between offers — it decides whether making *any* is
+                // worth more than getting on with the turn.
+                let asked = state.offers_made[me] as i32;
                 self.value(state, me) - base_other + gain * w.offer_discount / 100
-                    - live * w.offer_clutter
+                    - asked * w.offer_cost
             }
 
             Action::BuyDev => {
