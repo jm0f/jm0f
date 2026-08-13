@@ -23,6 +23,15 @@ name = "carranta-core"
 version = "0.1.0"
 
 [[package]]
+name = "carranta-evolve"
+version = "0.1.0"
+dependencies = [
+ "carranta-analytics",
+ "carranta-bot",
+ "carranta-core",
+]
+
+[[package]]
 name = "carranta-record"
 version = "0.1.0"
 dependencies = [

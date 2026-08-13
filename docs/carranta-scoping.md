@@ -420,7 +420,7 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-bot` | Heuristic policy, self-play driver, market settlement | core | **built** |
 | `carranta-record` | Log, replay driver, snapshot & seek, per-viewer redaction | core | **built** |
 | `carranta-analytics` | Dice fairness, production decomposition, descriptives, rating | core, record | **built** |
-| `carranta-evolve` | Population loop, parallel evaluation, checkpoints (§9.5) | core, bot, analytics | |
+| `carranta-evolve` | Population loop, parallel evaluation, versioned ladder (§9.5) | core, bot, analytics | **built** |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
@@ -778,7 +778,9 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-6 | Fitness | **Mean finishing position**, not win rate — the full order, for the same reason §10.5 uses it |
 | E-7 | Opponents | **Fixed anchor plus a hall of fame.** The current heuristic, pinned, and past champions |
 | E-8 | Progress measure | **The §10.5 rating, with the heuristic's μ frozen** as an absolute reference |
-| E-9 | Trade mode | **Restricted.** Roughly twice the cost of trading off, and the cheapest setting a strategy can transfer out of |
+| E-9 | Trade mode | **Restricted.** The cheapest setting a strategy can transfer out of; measured at ~3.5× the cost of trading off |
+| E-10 | Champion rating | **Held-out games.** A champion is never rated on the games that selected it |
+| E-11 | Anchor rating | **μ pinned, σ free.** The reference defines the scale rather than moving on it |
 
 #### What the measurements say
 
@@ -815,6 +817,18 @@ Two further findings worth carrying:
 
 - **The landscape has flat plateaus.** Quartering the victory-point weight changed almost nothing — it is still dominant at a quarter strength, and the games mostly play out identically. A local search that assumes a smooth response will waste its budget on regions where nothing responds.
 - **A generation is cheap at every plausible budget.** 150 genomes at 1 000 trials each is 300 000 games — about a minute on eight cores. Even 5 000 trials each leaves ~250 generations per day. Generations are not the scarce resource; *resolution within a generation* is.
+
+#### What the first runs showed
+
+`cargo run --release -p carranta-evolve --example train` runs the loop. Over 16 generations on 4 cores — 28 224 games in 47 s, ~600 games/s with the market open — champions settle **+2 to +4 μ above the pinned heuristic**, with σ ≈ 2.7. Real, modest, and reached within a handful of generations before flattening out, which is what the plateau finding predicted.
+
+Three things the build corrected, each of which would have quietly inflated the result:
+
+- **Winner's curse (E-10).** Selecting the best of 48 genomes and then rating it on *those same games* made champions look **+10.8 μ** above the anchor. The best of N noisy estimates is biased upward by roughly the noise itself. Rating the champion on fresh seeds after selection cut it to +4.4 — the honest number, and 2.5× smaller.
+- **A drifting anchor (E-11).** A reference that plays and loses sinks, so "+4 μ above the heuristic" meant something different in generation 40 than in generation 1. The anchor's μ is now pinned, making it an origin rather than a competitor. σ is deliberately left free, since it reflects games genuinely played. `a_pin_keeps_two_eras_comparable` demonstrates the failure and the fix.
+- **Anonymous opponents.** Hall-of-fame versions were recorded without their identity, so old champions never accumulated games, their σ stayed wide, and the ladder could not separate an old version from a new one however long the run went. They now keep their identity and go on being rated.
+
+**Ladder ratings are comparable across generations; fitness is not.** A generation's fitness is measured against a field drawn from that generation, which is itself improving — so flat fitness can mean steady progress, and a rise can mean an easier field. The ladder is the only cross-generation measure, which is exactly what E-8 is for.
 
 #### The reservation
 
@@ -1136,18 +1150,20 @@ Items struck through are **built**; see `engine-performance.md` for what each wa
 
 **Training** (§9.5, new)
 
-20. `carranta-evolve`: population loop, work-stealing evaluation across cores, checkpointing, and resumable runs. The evaluation harness is the substantial part; the population loop is small.
-21. **Evolution strategy over the 14 existing weights first** (E-1). It will produce a better bot with certainty, and it maps the fitness landscape before NEAT commits to a topology search over it.
+20. ~~`carranta-evolve`: population loop, work-stealing evaluation across cores, versioned ladder.~~ Deterministic under any worker count; checkpoints are plain text.
+21. ~~Evolution strategy over the fifteen existing weights (E-1).~~ Champions land +2 to +4 μ above the anchor and then plateau.
 22. Feature encoder (E-3) — the observation NEAT actually sees. Reuse the heuristic's features as the starting set; this is the piece most likely to decide whether the whole track works.
-23. Pin the current heuristic as an immutable rating anchor (E-8) *before* the first run, so progress is measured against something that cannot drift.
+23. ~~Pin the heuristic as an immutable rating anchor (E-8, E-11).~~
+24. **Resume from a checkpoint.** The ladder writes plain text but nothing reads it back yet, so a run that dies overnight is lost. Needed before any multi-day run.
+25. Population and mutation tuning. The current settings plateau within a handful of generations, which may be the landscape or may be the settings — the two are not yet distinguished.
 
-**Analytics** — ~~24–26 built~~
+**Analytics** — ~~26–28 built~~
 
-24. ~~Expected-production engine (§10.2).~~ Four-way decomposition, asserted as an identity to 1e-9.
-25. ~~Dice as an empirical percentile, with the pooled audit separate.~~ The engine's own dice clear the audit on 115 595 rolls.
-26. ~~Rating (A-1…A-5).~~ With the caveat in §10.7: not cross-checked against a reference implementation, and its tie handling is counterintuitive and pinned but unresolved.
-27. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters are enforced by `Corpus::accepts`, but explicit per-turn *n* and the no-i.i.d.-pooling rule are documented rather than enforced.
+26. ~~Expected-production engine (§10.2).~~ Four-way decomposition, asserted as an identity to 1e-9.
+27. ~~Dice as an empirical percentile, with the pooled audit separate.~~ The engine's own dice clear the audit on 115 595 rolls.
+28. ~~Rating (A-1…A-5).~~ With the caveat in §10.7: not cross-checked against a reference implementation, and its tie handling is counterintuitive and pinned but unresolved.
+29. Encode the §10.6 pitfalls as constraints in the analytics layer — mandatory config filters are enforced by `Corpus::accepts`, but explicit per-turn *n* and the no-i.i.d.-pooling rule are documented rather than enforced.
 
-**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), nine evolution decisions (§9.5), five rating decisions (§10.5) — 55 in total.
+**Decision register:** seven rules decisions (§12.1), nine data decisions (§7.1), nineteen platform decisions (§8.1), six bot decisions (§9.1), eleven evolution decisions (§9.5), five rating decisions (§10.5) — 57 in total.
 
 **The critical path is now the platform, not the engine.** Everything from the engine down through analytics is built and measured; nothing in §12–13 blocks the training track, and the training track blocks nothing else.

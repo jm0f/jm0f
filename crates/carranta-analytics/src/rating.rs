@@ -43,7 +43,7 @@
 //! current behaviour so a change is caught. **Worth checking against a
 //! reference implementation before rated play carries any stakes.**
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use carranta_core::state::{MAX_PLAYERS, TradeMode};
 use carranta_record::{Log, Payload};
@@ -210,6 +210,7 @@ pub struct Pool {
     pub model: Model,
     ratings: HashMap<u64, Rating>,
     games: HashMap<u64, u32>,
+    pinned: HashSet<u64>,
 }
 
 impl Pool {
@@ -218,7 +219,29 @@ impl Pool {
             model,
             ratings: HashMap::new(),
             games: HashMap::new(),
+            pinned: HashSet::new(),
         }
+    }
+
+    /// Hold a player's μ fixed, so it defines the scale instead of moving on
+    /// it (§10.5 design point 3).
+    ///
+    /// Without this a "pinned" reference is nothing of the kind: it sinks as
+    /// it loses to a population that keeps improving, and the gap between an
+    /// old version and a new one stops meaning the same thing over the course
+    /// of a run — the drift between eras that afflicts any long-lived ladder.
+    ///
+    /// σ is deliberately left free. It reflects games genuinely played, and
+    /// letting it tighten is what makes each of the anchor's games informative;
+    /// it is μ alone that has to stay still to be an origin.
+    pub fn pin(&mut self, player: u64) {
+        self.ratings.entry(player).or_default();
+        self.pinned.insert(player);
+    }
+
+    /// Whether a player's μ is held fixed.
+    pub fn is_pinned(&self, player: u64) -> bool {
+        self.pinned.contains(&player)
     }
 
     /// The current belief about a player. Unseen players start at the prior.
@@ -234,7 +257,10 @@ impl Pool {
     pub fn record_ranked(&mut self, players: &[u64], ranks: &[u32]) {
         let before: Vec<Rating> = players.iter().map(|&p| self.rating(p)).collect();
         let after = self.model.rate(&before, ranks);
-        for (&p, r) in players.iter().zip(after) {
+        for ((&p, mut r), was) in players.iter().zip(after).zip(&before) {
+            if self.pinned.contains(&p) {
+                r.mu = was.mu;
+            }
             self.ratings.insert(p, r);
             *self.games.entry(p).or_insert(0) += 1;
         }
@@ -517,6 +543,64 @@ mod tests {
             pool.rating(0).sigma
         );
         assert_eq!(pool.games_played(0), 400);
+    }
+
+    #[test]
+    fn a_pinned_player_defines_the_scale_instead_of_moving_on_it() {
+        let mut pool = Pool::new(Model::default());
+        pool.pin(0);
+        assert!(pool.is_pinned(0));
+        let start = pool.rating(0);
+
+        // Lose two hundred games outright. An unpinned player would sink.
+        for _ in 0..200 {
+            pool.record_ranked(&[0, 1, 2, 3], &[4, 1, 2, 3]);
+        }
+        assert_eq!(pool.rating(0).mu, start.mu, "the anchor moved");
+        assert!(
+            pool.rating(0).sigma < start.sigma,
+            "sigma should still learn"
+        );
+        assert_eq!(pool.games_played(0), 200);
+        // And everyone who beat it has risen above it on a fixed scale.
+        assert!(pool.rating(1).mu > start.mu);
+    }
+
+    #[test]
+    fn a_pin_keeps_two_eras_comparable() {
+        // The failure this exists to prevent: an early version and a late one
+        // that never meet, each rated only against the reference. Without a
+        // pin the reference sinks between the two sets of games, and the later
+        // version is measured against a weaker opponent — so the better record
+        // can come out looking worse.
+        let record = |pinned: bool| {
+            let mut pool = Pool::new(Model::default());
+            if pinned {
+                pool.pin(0);
+            }
+            for _ in 0..150 {
+                pool.record_ranked(&[1, 0, 1, 0], &[1, 2, 3, 4]); // early: mean 2 vs 3
+            }
+            for _ in 0..150 {
+                pool.record_ranked(&[2, 0, 2, 0], &[1, 3, 2, 4]); // late: mean 1.5 vs 3.5
+            }
+            (
+                pool.rating(1).mu - pool.rating(0).mu,
+                pool.rating(2).mu - pool.rating(0).mu,
+            )
+        };
+
+        let (early, late) = record(false);
+        assert!(
+            early > late,
+            "the drift this test describes has changed shape"
+        );
+
+        let (early, late) = record(true);
+        assert!(
+            late > early,
+            "pinned: late {late:.2} should beat early {early:.2}"
+        );
     }
 
     #[test]
