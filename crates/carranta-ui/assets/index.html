@@ -105,6 +105,14 @@
   .pip { fill: #1b1d22; }
   .red { fill: #d13b3b; }
   .spot { cursor: pointer; }
+  /* A ghost drifts; a placed piece does not. The movement is what separates
+     "could go here" from "is here" without another colour or outline. Small
+     enough not to pull the eye off the board — it should read at the edge of
+     vision, not demand attention. */
+  @keyframes hover { 50% { transform: translateY(-3px); } }
+  .ghost { animation: hover 2.2s ease-in-out infinite; }
+  .ghost:hover { animation-play-state: paused; }
+  @media (prefers-reduced-motion: reduce) { .ghost { animation: none; } }
   .spot:hover circle, .spot:hover line { filter: brightness(1.5); }
   .choices { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; }
   .choices button { text-align: left; }
@@ -439,7 +447,9 @@ function draw() {
     const node = place(svg, name, x, y, k, HUMAN_SEAT, anchor);
     if (!node) return;
     node.setAttribute('opacity', 0.45);
-    const g = el('g', { class: 'spot' });
+    const g = el('g', { class: 'spot ghost' });
+    // Staggered, so a row of spots breathes rather than pulsing in lockstep.
+    g.style.animationDelay = `${((x * 7 + y * 13) % 20) / 10}s`;
     svg.removeChild(node);
     g.appendChild(node);
     g.onclick = () => act(choice);
