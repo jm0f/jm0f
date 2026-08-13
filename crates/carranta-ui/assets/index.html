@@ -7,11 +7,16 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
 <style>
   :root {
-    --bg: #14161a; --panel: #1d2026; --line: #2f343d;
-    --ink: #e8eaee; --dim: #9aa3b0;
-    --hills: #b4653a; --forest: #2f6b41; --pasture: #7ba85c;
-    --fields: #d4a63c; --mountains: #7d8794; --desert: #c9bda0;
-    --p0: #4a9eff; --p1: #e05c5c; --p2: #f0f0f0; --p3: #f0913a;
+    --bg: #0a0c10; --panel: #14181f; --line: #232936;
+    --ink: #eef1f6; --dim: #8b95a7;
+    /* Terrain pushed well up in saturation. A board is mostly terrain, so
+       this is where vibrance either happens or does not. */
+    --hills: #d4622c; --forest: #10894f; --pasture: #7ed321;
+    --fields: #f5b81b; --mountains: #7c8ba1; --desert: #d8c9a3;
+    /* Player colours at full strength, and far enough apart in hue that four
+       pieces on one intersection are still four colours. */
+    --p0: #2f9bff; --p1: #ff3d68; --p2: #f2f5fa; --p3: #ff8a1f;
+    --accent: #22e07a;
   }
   * { box-sizing: border-box; }
   /* The board should use the window it is given, so the page is a column that
@@ -22,6 +27,12 @@
     font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     height: 100vh; height: 100dvh; overflow: hidden;
     display: flex; flex-direction: column;
+    /* Two wide, faint pools of colour rather than a flat field, so the dark
+       reads as depth instead of as absence. */
+    background:
+      radial-gradient(1100px 700px at 12% -10%, rgba(34, 224, 122, .16), transparent 60%),
+      radial-gradient(900px 600px at 92% 108%, rgba(47, 155, 255, .14), transparent 60%),
+      var(--bg);
   }
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -40,7 +51,13 @@
     font: inherit; color: var(--ink); background: #262b33;
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
   }
-  button:hover:not(:disabled) { background: #313742; }
+  button:hover:not(:disabled) { background: #232a36; border-color: #38445a; }
+  #new, #propose {
+    background: linear-gradient(135deg, var(--accent), #12b6ff);
+    border-color: transparent; color: #06210f; font-weight: 600;
+  }
+  #new:hover, #propose:hover:not(:disabled) { filter: brightness(1.08); }
+  .choices button:hover:not(:disabled) { border-color: var(--accent); }
   button:disabled { opacity: .45; cursor: default; }
   main {
     display: grid; gap: 16px; padding: 16px;
@@ -51,7 +68,10 @@
     grid-template-columns: minmax(0, 1fr) clamp(320px, 24vw, 440px);
     flex: 1; min-height: 0;
   }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .panel {
+    background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)), var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  }
   .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
               color: var(--dim); margin: 0 0 8px; font-weight: 600; }
   /* `min-height: 0` on both is what lets the board shrink: a grid or flex item
@@ -225,7 +245,7 @@ function portGroups() {
 
 // Player colours as values rather than CSS variables, because a piece is
 // drawn in several tones of one colour and they have to be computed.
-const SEAT_HEX = ['#4a9eff', '#e05c5c', '#f0f0f0', '#f0913a'];
+const SEAT_HEX = ['#2f9bff', '#ff3d68', '#f2f5fa', '#ff8a1f'];
 const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
 
 // The palette the drawings are in, and how light each tone is relative to the
