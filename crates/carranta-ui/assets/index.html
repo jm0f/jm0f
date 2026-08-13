@@ -7,16 +7,20 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
 <style>
   :root {
-    --bg: #0a0c10; --panel: #14181f; --line: #232936;
-    --ink: #eef1f6; --dim: #8b95a7;
-    /* Terrain pushed well up in saturation. A board is mostly terrain, so
-       this is where vibrance either happens or does not. */
-    --hills: #d4622c; --forest: #10894f; --pasture: #7ed321;
-    --fields: #f5b81b; --mountains: #7c8ba1; --desert: #d8c9a3;
-    /* Player colours at full strength, and far enough apart in hue that four
-       pieces on one intersection are still four colours. */
-    --p0: #2f9bff; --p1: #ff3d68; --p2: #f2f5fa; --p3: #ff8a1f;
-    --accent: #22e07a;
+    /* Light ground. Everything below is re-picked for it rather than tinted
+       from the dark palette: a colour that reads as vivid against near-black
+       goes garish against white, and the two sets share almost nothing. */
+    --bg: #ffffff; --panel: #ffffff; --line: #e3e8ee;
+    --ink: #0a2540; --dim: #5c6f8a;
+    --accent: #635bff; --accent2: #0aa4f5;
+    /* Terrain deepened rather than brightened. On white the eye reads
+       saturation from depth, so the same hues sit lower in value than they
+       did on black and the numbers stay legible on top of them. */
+    --hills: #d2622b; --forest: #17915a; --pasture: #86c232;
+    --fields: #e9a814; --mountains: #8496ad; --desert: #ddd0ae;
+    /* Player colours darkened for contrast against light terrain — the dark
+       theme's pastels vanished on the pasture and fields. */
+    --p0: #1d6fe0; --p1: #e0244f; --p2: #6b7c93; --p3: #e8720c;
   }
   * { box-sizing: border-box; }
   /* The board should use the window it is given, so the page is a column that
@@ -30,31 +34,35 @@
     /* Two wide, faint pools of colour rather than a flat field, so the dark
        reads as depth instead of as absence. */
     background:
-      radial-gradient(1100px 700px at 12% -10%, rgba(34, 224, 122, .16), transparent 60%),
-      radial-gradient(900px 600px at 92% 108%, rgba(47, 155, 255, .14), transparent 60%),
+      radial-gradient(1200px 620px at 85% -18%, rgba(99, 91, 255, .20), transparent 62%),
+      radial-gradient(900px 520px at 96% 6%, rgba(255, 94, 140, .16), transparent 58%),
+      radial-gradient(700px 520px at 62% -12%, rgba(10, 164, 245, .16), transparent 60%),
       var(--bg);
   }
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.72);
+    backdrop-filter: saturate(150%) blur(10px);
     flex: none;
   }
   h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .02em; }
   header .status { color: var(--dim); }
   header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
   .vid { font: 600 8px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
-         dominant-baseline: central; pointer-events: none; fill: #0b0d10; }
-  .vid.coast { fill: #7fd1ff; }
+         dominant-baseline: central; pointer-events: none; fill: #0a2540; }
+  .vid.coast { fill: #0b6bb8; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
   button, select {
-    font: inherit; color: var(--ink); background: #262b33;
-    border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+    font: inherit; color: var(--ink); background: #fff;
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(10, 37, 64, .06);
   }
-  button:hover:not(:disabled) { background: #232a36; border-color: #38445a; }
+  button:hover:not(:disabled) { background: #f6f9fc; border-color: #cfd8e3; }
   #new, #propose {
-    background: linear-gradient(135deg, var(--accent), #12b6ff);
-    border-color: transparent; color: #06210f; font-weight: 600;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-color: transparent; color: #fff; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(99, 91, 255, .35);
   }
   #new:hover, #propose:hover:not(:disabled) { filter: brightness(1.08); }
   .choices button:hover:not(:disabled) { border-color: var(--accent); }
@@ -69,8 +77,8 @@
     flex: 1; min-height: 0;
   }
   .panel {
-    background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)), var(--panel);
-    border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+    box-shadow: 0 2px 5px rgba(10, 37, 64, .04), 0 12px 28px rgba(10, 37, 64, .06);
   }
   .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
               color: var(--dim); margin: 0 0 8px; font-weight: 600; }
@@ -93,7 +101,7 @@
   }
   .hexnum { font: 600 13px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
             dominant-baseline: central; pointer-events: none; }
-  .pip { fill: #1b1d22; }
+  .pip { fill: #0a2540; }
   .red { fill: #d13b3b; }
   .spot { cursor: pointer; }
   .spot:hover circle, .spot:hover line { filter: brightness(1.5); }
@@ -107,11 +115,11 @@
   th { color: var(--dim); font-weight: 500; font-size: 11px; }
   .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
   .cards { display: flex; gap: 6px; flex-wrap: wrap; }
-  .card { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: #262b33; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: #f6f9fc; }
   .card b { font-variant-numeric: tabular-nums; }
   #log { max-height: 200px; overflow-y: auto; color: var(--dim); font-size: 12px; }
   #log div { padding: 1px 0; }
-  #note { color: #f0913a; }
+  #note { color: #c2410c; }
   .toRow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .toRow select { flex: 1; }
   .compose { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -125,7 +133,7 @@
   .row.off .name { color: var(--dim); }
   .offer { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
   .offer .who { flex: 1; }
-  .offer .addressed { color: var(--p3); }
+  .offer .addressed { color: #b45309; }
   .you { outline: 1px solid var(--p0); }
 </style>
 </head>
@@ -245,7 +253,7 @@ function portGroups() {
 
 // Player colours as values rather than CSS variables, because a piece is
 // drawn in several tones of one colour and they have to be computed.
-const SEAT_HEX = ['#2f9bff', '#ff3d68', '#f2f5fa', '#ff8a1f'];
+const SEAT_HEX = ['#1d6fe0', '#e0244f', '#6b7c93', '#e8720c'];
 const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
 
 // The palette the drawings are in, and how light each tone is relative to the
@@ -327,7 +335,7 @@ function draw() {
       'stroke-width': byHex[h.id] ? 3 : 1.5,
     }));
     if (h.number > 0) {
-      g.appendChild(el('circle', { cx, cy, r: 17, fill: '#f3ead8', stroke: '#0004' }));
+      g.appendChild(el('circle', { cx, cy, r: 17, fill: '#ffffff', stroke: '#00000018' }));
       const hot = h.number === 6 || h.number === 8;
       const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: hot ? '#c02626' : '#1b1d22' });
       t.textContent = h.number;
@@ -357,10 +365,10 @@ function draw() {
     const k = Math.hypot(mx, my) || 1;
     const ox = mx + (mx / k) * 30, oy = my + (my / k) * 30;
     pts.forEach(([x, y]) => svg.appendChild(el('line', {
-      x1: ox, y1: oy, x2: x, y2: y, stroke: '#6b7686', 'stroke-width': 2.5, opacity: .55,
+      x1: ox, y1: oy, x2: x, y2: y, stroke: '#b3c0d1', 'stroke-width': 2.5, opacity: .8,
     })));
-    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: '#1d2026', stroke: '#6b7686' }));
-    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: '#9aa3b0', 'font-size': 9 });
+    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: '#ffffff', stroke: '#c2cddb' }));
+    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: '#5c6f8a', 'font-size': 9 });
     // Two letters, taken from the same names the cards use, so a port and a
     // card cannot be read as different resources.
     t.textContent = port.kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][port.kind - 1];
