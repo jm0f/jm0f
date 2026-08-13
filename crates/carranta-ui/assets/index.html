@@ -332,11 +332,12 @@ function draw() {
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
     g.appendChild(el('polygon', {
       points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
-      // No outline: with flat committed colour the edge between two hexes is
-      // the colour change itself, and a line over it only muddies them. The
-      // stroke stays for a hex you may click, where it is signal not trim.
-      stroke: byHex[h.id] ? '#0a2540' : 'none',
-      'stroke-width': byHex[h.id] ? 3 : 0,
+      // The outline is drawn in the panel's own colour, so it reads as a gap
+      // between tiles rather than a line around them — the board separates
+      // into pieces without anything being added to it. Taken from the
+      // stylesheet rather than written here, so it follows the theme.
+      stroke: byHex[h.id] ? 'var(--accent)' : 'var(--panel)',
+      'stroke-width': byHex[h.id] ? 4 : 3,
     }));
     if (h.number > 0) {
       // A white disc, borderless: the number needs its own ground to sit on,
