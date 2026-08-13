@@ -35,6 +35,7 @@ scheduler noise swamps a sub-microsecond measurement).
 | Bot decision | instant (sub-ms) | **~3.5 µs** | met |
 | Recording overhead | ≤ 5% of play | **within noise** | met |
 | Replay a recorded game | ≤ 200 µs | **31–36 µs** | met |
+| Full analysis per game | ≤ 1 ms | **~200 µs** | met |
 
 Engine figures come from `cargo run --release --example bench_engine`. They
 move **±30% between runs** on this machine — the same binary has measured a
@@ -418,6 +419,59 @@ the middle of a log went unnoticed until this was separated: `replay_to(seq)`
 seeks and trusts the index, `replay()` folds every event, and `verify()` folds
 and checks every snapshot on the way past.
 
+## Analytics
+
+`carranta-analytics` computes §10 over recorded games: dice fairness, the
+production decomposition, per-game descriptives, corpus balance, and ratings.
+It stores nothing. Replaying a game costs ~35 µs, so a changed metric is
+recomputed over the corpus rather than migrated — which is what makes H-7's
+"derived events are a materialized view" a practical stance.
+
+A full analysis is **~200 µs per game against ~7 600 µs to play one**, so
+re-deriving every metric over a million games is a few minutes on one core.
+
+The statistics are written out rather than pulled in — the workspace stays
+dependency-free — and each is tested against values that can be checked
+independently: `normal_cdf` and `chi_squared_p` against standard tables, the
+least-squares fit against a line it must recover exactly, Benjamini–Hochberg
+against a uniform p-value set it must reject entirely.
+
+### Three tests worth naming
+
+**The per-game dice p-value is calibrated.** 400 fair games, and about 5% must
+clear p<0.05 — because under the null a p-value is uniform. If they did not,
+the test would be miscalibrated, and §10.1's entire warning about per-game
+significance would rest on nothing.
+
+**The production identity is asserted, not assumed.**
+`Actual = E_raw − RobberCost − SupplyDenial + DiceLuck` holds to 1e-9 across
+every seat and resource of 30 games. Without it the four terms would be four
+separately-computed numbers that happen to sit near each other.
+
+**A sorted roll sequence must fail the audit.** Perfect marginals, obviously
+not independent. The distribution checks pass it; the lag-1 autocorrelation and
+the runs test catch it. That pair is the reason §10.1 asks for independence
+checks at all, and the test is what proves they work rather than merely exist.
+
+The engine's own dice clear the audit on 115 595 pooled rolls: chi-squared 5.8
+(p = 0.83), KL 0.000037 bits, worst outcome share off by 0.116 percentage
+points, sevens at 0.1661 against 0.1667, lag-1 +0.0012, runs test p = 0.96.
+
+### A harness defect the numbers exposed
+
+The first full report showed a busy market — ~35 offers per seat — and **zero
+completed trades**. The bot crate's `settle_market` writes straight to a
+`State`, bypassing the recorder, so every completed trade was missing from the
+log. The tests passed throughout: none of them asserted that trades appear in a
+Full-market game. Fixed by settling through the recorder, which also lets
+declines be recorded per offer and seat (H-4) rather than once per pass of the
+settle loop.
+
+The same report ranked four *identical* bots, because each agent sat in a fixed
+seat. Rotating the agents around the table collapsed the ranking to 1.3σ —
+not separated, which is the right answer for identical players, and a concrete
+demonstration of why A-4 randomises seating.
+
 ## Correctness
 
 24 tests. ~40 000 differential comparisons against a brute-force reference — an
@@ -447,6 +501,20 @@ hand-written case missed, both in blocking:
   intersection-space traversal still sees the cycle, so the diameter shortcut
   silently under-reported. Those components are now detected and routed to the
   general path.
+
+### Analytics
+
+48 tests. The special functions are checked against published table values, the
+statistical tests against sequences whose answer is known by construction
+(fair dice, a loaded die, a sorted sequence, a line), and the rating update
+against the properties the model is defined by — order monotonicity, σ that
+only shrinks, symmetry under a full tie, μ conservation under equal
+uncertainty, and convergence onto a known true ordering.
+
+Two limits, stated because they are real: the rating update has **not** been
+cross-checked against a reference implementation, and its handling of ties is
+counterintuitive in a way that is pinned by a test but not yet resolved. See
+§10.7 of the scoping document.
 
 ### Records
 

@@ -419,6 +419,7 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-core` | State, rules, legal-move generation, action application, recording seam. Pure, deterministic, no I/O | nothing | **built** |
 | `carranta-bot` | Heuristic policy, self-play driver, market settlement | core | **built** |
 | `carranta-record` | Log, replay driver, snapshot & seek, per-viewer redaction | core | **built** |
+| `carranta-analytics` | Dice fairness, production decomposition, descriptives, rating | core, record | **built** |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
@@ -900,6 +901,34 @@ A-3 rates guests, and guest identity is a device-persistent ID (P-1). That combi
 4. **Configuration heterogeneity.** `rules_version`, trade mode, setup variant, and the R-3.12 option all change gameplay — mandatory filter columns, per §7.4.
 5. **Bot games can swamp human data.** Self-play corpora are orders of magnitude larger; never pool them with human games without explicit segmentation.
 6. **Survivor bias in player stats.** Players who quit early are underrepresented in long-run aggregates.
+
+### 10.7 What was built, and what it measured
+
+`carranta-analytics` implements §10.1–§10.5 over recorded games. `cargo run --release -p carranta-analytics --example report` runs the whole pipeline; the numbers below come from 1 000 self-play games under an open market, with the agents rotated around the table.
+
+**The engine's own dice pass their audit** (§10.1b), on 115 595 pooled rolls:
+
+| | |
+|---|---|
+| chi-squared | 5.8, p = 0.83 (10 df) |
+| KL from theory | 0.000037 bits |
+| Worst outcome gap | 0.116 percentage points |
+| Share of sevens | 0.1661 against 0.1667 expected |
+| Lag-1 autocorrelation | +0.0012 |
+| Wald–Wolfowitz runs test | p = 0.96 |
+
+The independence checks earn their place: a test asserts that a *sorted* roll sequence — perfect marginals, obviously not independent — is caught by the autocorrelation and runs test while the distribution checks wave it through. Marginal frequencies alone would have passed it.
+
+**The per-game p-value is calibrated**, which is what makes §10.1's warning about it true rather than merely cautious. A test draws 400 fair games and asserts that about 5% clear p<0.05 — because they must, and because that is precisely why the number is reported to players as a percentile instead.
+
+**The production decomposition holds exactly.** `Actual = E_raw − RobberCost − SupplyDenial + DiceLuck` is asserted as an identity to 1e-9 across every seat and every resource of 30 games — the check that the four terms are a decomposition rather than four separately-computed numbers that happen to sit near each other. Separately, dice-luck z-scores across a corpus come out centred near 0 with spread near 1, which is the test that the expectation is *right* rather than merely self-consistent: a wrong expectation would show as a systematic offset, not as luck.
+
+Two things the implementation deviates on, both recorded in code:
+
+- **Ties in the rating update behave oddly.** With four equal players a shared second place pays both tied players *less* than the average of second and third, and changes what fourth place loses even though fourth finished fourth either way. Total μ is conserved, so it is a redistribution question rather than a leak, and it appears to follow from the published tie-averaging convention rather than from a transcription error. It matters little today — only the active player can win (R-11.1), so the top position is never shared — but **A-1 should be cross-checked against a reference implementation before rated play carries stakes.**
+- **Ratings are our implementation of the Weng–Lin update, property-tested rather than cross-validated.** Order monotonicity, σ that only shrinks, symmetry under a full tie, μ conservation under equal uncertainty, and convergence onto a known true ordering all hold. That is the honest limit of the assurance.
+
+**Cost:** a full analysis — dice, production, descriptives, rating — is ~200 µs per game against ~7 600 µs to play one. Recomputing every metric over a million-game corpus is a few minutes on one core, which is what makes H-7's "derived events are a materialized view" a practical stance rather than an aspiration.
 
 ---
 

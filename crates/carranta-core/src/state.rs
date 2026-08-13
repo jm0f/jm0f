@@ -99,7 +99,7 @@ pub const CITY_POOL: u8 = 4;
 /// A configured dimension, not a rule: the open market is right for human
 /// play, but its action space is unbounded, which is why reinforcement
 /// learning and the LLM player need it narrowed or switched off.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum TradeMode {
     /// No player-to-player trading. Maritime trade is unaffected.
     ///
