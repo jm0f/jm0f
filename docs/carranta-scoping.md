@@ -462,8 +462,10 @@ Full table, method notes, and the measured baseline live in
 | Apply one action | ≤ 50 ns | **~35 ns** — met |
 | Legal move generation | ≤ 200 ns | **~22 ns** — met |
 | State clone | ≤ 20 ns | **~6 ns** (384 B) — met |
-| Full random game | ≤ 50 µs | **~130 µs** — premise wrong, see notes |
+| Full random game | ≤ 50 µs | **~130 µs** — but see action-count note |
+| Full game, competent play | ≤ 50 µs | **~59 µs** at ~479 actions |
 | Self-play, one core | ≥ 20 000 games/s | **~7 700** |
+| Bot win rate vs random | ≥ 99% | **99.81%** — met |
 
 The full-game target sets everything else: ~300 actions in ≤ 50 µs is ~160 ns
 per action including production, legality and scoring.

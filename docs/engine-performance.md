@@ -31,20 +31,30 @@ scheduler noise swamps a sub-microsecond measurement).
 | Full random game, setup → win | ≤ 50 µs | **~130 µs** | see below |
 | Self-play throughput, one core | ≥ 20 000 games/s | **~7 700** | see below |
 | Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
+| Bot win rate vs random | ≥ 99% | **99.81%** | met |
+| Bot decision | instant (sub-ms) | **~3.3 µs** | met |
 
 Engine figures come from `cargo run --release --example bench_engine`. They
 move ±20% between runs on this machine, so treat them as magnitudes.
 
-**The whole-game target rests on a premise that turned out to be wrong.** It
-was set at ~300 actions per game; random play actually takes **~1 058**. The
-per-action cost is fine — ~134 ns against the ~160 ns the target implies — so
-the engine is not slow, the assumed action count was. A game of 300 actions
-would finish in ~40 µs, inside target.
+**The whole-game target was set against the wrong action count, and the bot
+settles it.** It assumed ~300 actions per game. Measured:
 
-Random play inflates the count because a random policy trades maritime
-constantly and builds badly, dragging games out. Re-baseline this against the
-heuristic bot once it exists rather than against random play, and until then
-read the per-action line as the real measure.
+| Play | Actions per game |
+|---|---|
+| Random | ~1 058 |
+| Heuristic vs random | ~322 |
+| Four heuristics | ~479 |
+
+Random play inflates the count enormously — a random policy trades maritime
+constantly and builds badly, dragging games out. Competent play is roughly
+half that, and the original ~300 estimate was close to right for a game where
+someone is actually trying to win.
+
+At ~123 ns per action, a 479-action game costs **~59 µs** of engine time,
+which is just outside the 50 µs target rather than 2.6× off it. Take the
+per-action line as the real measure; the whole-game row should be read against
+~479 actions, not the ~1 058 that random play produces.
 
 The full-game target is the demanding one: ~300 actions at ≤ 50 µs means an
 average of ~160 ns per action *including* production, legality and scoring.
@@ -68,6 +78,50 @@ Correctness rests on random playouts: 300 full games with `assert_invariants`
 run after **every** action — resource and piece conservation, one owner per
 edge and intersection, and the Distance Rule holding continuously (§5.5).
 Rule interactions no hand-written case would reach get exercised that way.
+
+## Heuristic bot
+
+One ply of greedy search: copy the state, apply each legal action, score the
+result, take the best. Copying is 384 bytes and applying is ~35 ns, so a whole
+decision costs ~3.3 µs over ~6 candidates — instant for every job it has
+(§9.3).
+
+The score is **competitive**, `value(me) − best value(any opponent)`, which is
+what makes blocking fall out for free: the robber goes to whoever is strongest
+rather than wherever is nearest.
+
+| | |
+|---|---|
+| Win rate vs 3 random opponents | **99.81%** over 20 000 games, seat rotated |
+| Win rate by seat | 99% in all four — no positional artefact |
+| Decision cost | ~3.3 µs (~6 candidates) |
+| Four bots, whole game | ~1.5 ms, ~479 actions |
+
+### Two things worth knowing about it
+
+**One ply cannot see a follow-up.** Playing a Militia leads to a robber move a
+ply away, so its value has to come from a feature (progress toward Largest
+Militia) rather than from the search. Likewise a maritime trade is a net loss
+of cards and one ply cannot see the build it enables — without a
+`build_progress` feature scoring partial progress toward each cost, the bot
+never trades at all. That feature is not decoration; it is what makes trading
+happen.
+
+**Three actions must be scored without being applied**, or the bot cheats.
+Applying `BuyDev` draws the real top of the deck, which would tell it whether
+the next card is a Victory Point *before* deciding to buy. Applying a robber
+move takes a real random card, which would let it choose the victim whose card
+it liked best. Rolling has an outcome that has not happened. Each is scored
+from what a player legitimately knows — a fairness bug that only surfaced
+because the win rate was being measured.
+
+### Optimisation
+
+Scoring re-evaluated all four seats for every candidate, but most actions —
+buying, trading, upgrading, road-building — cannot change what an opponent's
+position is worth. Hoisting the opponent term out of the candidate loop cut the
+decision from 4.4 µs to 3.3 µs and left the win rate at exactly 99.81%, which
+is the check that it was behaviour-preserving rather than merely faster.
 
 ## Longest road
 

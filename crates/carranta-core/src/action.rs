@@ -96,6 +96,22 @@ fn pay(state: &mut State, p: usize, cost: &[u8; 5]) {
 }
 
 impl State {
+    /// Which seat's decision the current legal actions belong to.
+    ///
+    /// Normally the player to act, but a 7 interrupts: every seat over the
+    /// limit owes a discard, and they are resolved lowest seat first. Exposing
+    /// this keeps the action stream single-agent at every step, which is what
+    /// both a policy and a search need.
+    #[inline]
+    pub fn decider(&self) -> u8 {
+        match self.phase {
+            Phase::Discard => (0..self.players)
+                .find(|&q| self.discard_left[q as usize] > 0)
+                .unwrap_or(self.to_act),
+            _ => self.to_act,
+        }
+    }
+
     /// Collect every legal action into `out`, which is cleared first.
     ///
     /// `out` is caller-owned so a rollout loop reuses one buffer and allocates
@@ -123,17 +139,14 @@ impl State {
                 self.push_dev_plays(p, out);
             }
             Phase::Discard => {
-                for q in 0..self.players as usize {
-                    if self.discard_left[q] == 0 {
-                        continue;
-                    }
-                    for r in RESOURCES {
-                        if self.hand[q][r as usize] > 0 {
-                            out.push(Action::Discard {
-                                player: q as u8,
-                                resource: r,
-                            });
-                        }
+                // One seat at a time, so the stream stays single-agent.
+                let q = self.decider() as usize;
+                for r in RESOURCES {
+                    if self.hand[q][r as usize] > 0 {
+                        out.push(Action::Discard {
+                            player: q as u8,
+                            resource: r,
+                        });
                     }
                 }
             }
