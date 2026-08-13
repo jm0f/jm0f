@@ -602,6 +602,19 @@ document.getElementById('new').onclick = () => {
   load(`/api/new?seats=${seats}&mode=${mode}`, { method: 'POST' });
 };
 load('/api/state');
+
+// The server is restarted whenever a change is pulled, and a page served by
+// the old one cannot re-render its way up to date. Watch the build stamp and
+// start over when it moves, so a pushed change reaches the board without
+// anyone reloading anything.
+setInterval(async () => {
+  try {
+    const next = await (await fetch('/api/state', { cache: 'no-store' })).json();
+    if (view && next.build !== view.build) { location.reload(); }
+  } catch (e) {
+    // The server is mid-restart. Nothing to do but ask again shortly.
+  }
+}, 3000);
 </script>
 </body>
 </html>

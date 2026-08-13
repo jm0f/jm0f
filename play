@@ -1,14 +1,15 @@
 #!/bin/sh
-# Get the latest and play it.
+# Play the game, and keep it current without being asked.
 #
-# Pull, rebuild, restart, open. The interface is a compiled binary, so a
-# change only reaches the browser after a rebuild — clicking "New game"
-# re-deals the board from the code already running and can never show you a
-# change you have just pulled. This does the whole sequence so that is not
-# something to remember.
+# Starts the board and then watches the branch. When a change is pushed, this
+# pulls it, rebuilds, and restarts the server; the page notices the build
+# stamp move and reloads itself. So the terminal becomes a thing you start
+# once and leave alone, rather than a sequence to repeat every time something
+# changes.
 #
-#   ./play              latest on this branch
-#   ./play --no-pull    rebuild what is already checked out
+#   ./play              start, and follow the branch from then on
+#   ./play --once       start what is checked out, and do not watch
+#   ./play --port 9000  any option the game itself takes still works
 set -e
 cd "$(dirname "$0")"
 
@@ -20,21 +21,11 @@ if ! command -v cargo > /dev/null; then
   exit 1
 fi
 
-if [ "$1" = "--no-pull" ]; then
-  shift                      # not an option the game itself understands
-else
-  git pull --ff-only
+WATCH=yes
+if [ "$1" = "--once" ]; then
+  WATCH=no
+  shift                        # not an option the game itself understands
 fi
-
-# Stop whatever is already serving, so the port is free and the old build
-# cannot be mistaken for the new one.
-pkill -x carranta-play 2>/dev/null || true
-
-cargo build --release -p carranta-ui
-./target/release/carranta-play "$@" &
-GAME=$!
-trap 'kill $GAME 2>/dev/null' INT TERM   # ctrl-c stops the server too
-sleep 1
 
 # Report the port actually asked for, not the default.
 PORT=8181
@@ -44,9 +35,61 @@ for arg in "$@"; do
   prev="$arg"
 done
 URL=http://127.0.0.1:$PORT
-if command -v open > /dev/null; then open "$URL"; fi
+
+GAME=""
+stop() {
+  [ -n "$GAME" ] && kill "$GAME" 2> /dev/null
+  GAME=""
+}
+trap 'stop; exit 0' INT TERM
+
+start() {
+  # Stop anything already serving, so the port is free and an old build cannot
+  # be mistaken for the new one.
+  stop
+  pkill -x carranta-play 2> /dev/null || true
+  cargo build --release -p carranta-ui
+  ./target/release/carranta-play "$@" &
+  GAME=$!
+  sleep 1
+}
+
+git pull --ff-only
+start "$@"
+command -v open > /dev/null && open "$URL"
 echo
-echo "Playing at $URL — the build shown in the page header should match:"
-git rev-parse --short HEAD
+echo "Playing at $URL  ·  build $(git rev-parse --short HEAD)"
+if [ "$WATCH" = yes ]; then
+  echo "Watching for changes — they will appear by themselves."
+else
+  echo "Not watching; run ./play again to pick up changes."
+fi
 echo "Press ctrl-c to stop."
-wait $GAME
+
+if [ "$WATCH" != yes ]; then
+  wait $GAME
+  exit 0
+fi
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+while true; do
+  sleep 30
+  # A laptop loses its network all the time; that is not worth reporting, and
+  # the next pass picks up whatever was missed.
+  if git fetch --quiet origin "$BRANCH" 2> /dev/null \
+    && [ "$(git rev-parse HEAD)" != "$(git rev-parse FETCH_HEAD)" ]; then
+    echo
+    echo "New change — pulling and rebuilding."
+    if git pull --ff-only --quiet; then
+      start "$@"
+      echo "Now on build $(git rev-parse --short HEAD). The page reloads itself."
+    else
+      echo "Could not fast-forward; leaving the running build alone." >&2
+    fi
+  fi
+  # If the server died on its own, put it back.
+  if ! kill -0 "$GAME" 2> /dev/null; then
+    echo "Server stopped — restarting."
+    start "$@"
+  fi
+done

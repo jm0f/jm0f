@@ -29,12 +29,17 @@ compilation — a couple of minutes on an M1, and no network access at all.
 ./play
 ```
 
-That pulls, rebuilds, restarts and opens the board. Use it rather than leaving
-a server running: the interface is a compiled binary, so a change only reaches
-the browser after a rebuild, and clicking **New game** re-deals from the code
-already running — it can never show you something you have just pulled. The
-page header shows the commit it was built from, so a stale process is visible
-rather than mistaken for a change that did not work.
+Start that once and leave it. It pulls, builds, opens the board, and then
+watches the branch: when a change is pushed it pulls, rebuilds and restarts,
+and the page reloads itself. Nothing to repeat and nothing to remember.
+
+This matters because the interface is a compiled binary. A change reaches the
+browser only after a rebuild, and clicking **New game** re-deals from the code
+already running — it can never show you something just pushed. The page header
+carries the commit it was built from, so a stale process is visible rather than
+mistaken for a change that did not work.
+
+`./play --once` starts what is checked out and does not watch.
 
 The long way round, if you would rather see the steps:
 
