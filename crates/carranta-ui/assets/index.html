@@ -339,12 +339,12 @@ function draw() {
       'stroke-width': byHex[h.id] ? 3 : 0,
     }));
     if (h.number > 0) {
-      // The number sits straight on the terrain. Which of two inks it takes
-      // depends on how dark that terrain is, so it stays readable on the deep
-      // forest and the pale wheat alike.
-      const onDark = h.terrain === 'forest' || h.terrain === 'mountains';
+      // A white disc, borderless: the number needs its own ground to sit on,
+      // and with no outline the disc is a shape rather than a badge. One ink
+      // again, since the disc supplies the contrast whatever is under it.
+      g.appendChild(el('circle', { cx, cy, r: 17, fill: '#ffffff' }));
       const hot = h.number === 6 || h.number === 8;
-      const ink = hot ? (onDark ? '#ff8a9c' : '#b3132b') : (onDark ? '#ffffff' : '#0a2540');
+      const ink = hot ? '#b3132b' : '#0a2540';
       const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: ink });
       t.textContent = h.number;
       g.appendChild(t);
