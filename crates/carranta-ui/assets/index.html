@@ -102,7 +102,7 @@
   }
   .hexnum { font: 600 13px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
             dominant-baseline: central; pointer-events: none; }
-  .pip { fill: #0a2540; }
+  .pip { fill: #1b1d22; }
   .red { fill: #d13b3b; }
   .spot { cursor: pointer; }
   .spot:hover circle, .spot:hover line { filter: brightness(1.5); }
@@ -345,14 +345,15 @@ function draw() {
       // again, since the disc supplies the contrast whatever is under it.
       g.appendChild(el('circle', { cx, cy, r: 17, fill: '#ffffff' }));
       const hot = h.number === 6 || h.number === 8;
-      const ink = hot ? '#b3132b' : '#0a2540';
+      const ink = hot ? '#c02626' : '#1b1d22';
       const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: ink });
       t.textContent = h.number;
       g.appendChild(t);
       const n = pips(h.number);
       for (let i = 0; i < n; i++) {
         g.appendChild(el('circle', {
-          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 9, r: 1.6, fill: ink,
+          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 9, r: 1.6,
+          class: hot ? 'red' : 'pip',
         }));
       }
     }
