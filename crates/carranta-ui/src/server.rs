@@ -27,8 +27,9 @@ const PAGE: &str = include_str!("../assets/index.html");
 /// than a board with holes in it. The page fetches these once and reuses them;
 /// they are the drawings in `art/`, unmodified, which keeps one copy of each
 /// rather than a second pasted into the page to drift from the first.
-const ART: [(&str, &str); 4] = [
+const ART: [(&str, &str); 5] = [
     ("road-30", include_str!("../../../art/road-30.svg")),
+    ("road-90", include_str!("../../../art/road-90.svg")),
     ("road-150", include_str!("../../../art/road-150.svg")),
     ("settlement", include_str!("../../../art/settlement.svg")),
     ("city", include_str!("../../../art/city.svg")),

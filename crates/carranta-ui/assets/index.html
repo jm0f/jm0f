@@ -231,6 +231,10 @@ const SEAT_HEX = ['#4a9eff', '#e05c5c', '#f0f0f0', '#f0913a'];
 // piece's base colour. Recolouring by lookup rather than by measuring the
 // pixel keeps the artist's intent: these five values are the lighting, and a
 // blue road should be lit exactly as the pink one was.
+// The bar inside every road drawing is this long, in the drawing's own units.
+// All three orientations are the same prism, so one number serves them all.
+const ROAD_LENGTH = 79;
+
 const ART_TONES = {
   '#FFACD5': 0.26,   // top faces, catching the light
   '#FF87C2': 0.13,
@@ -249,7 +253,7 @@ function tone(hex, amount) {
 // The drawings, fetched once and kept as parsed nodes to clone per piece.
 const art = {};
 async function loadArt() {
-  for (const name of ['road-30', 'road-150', 'settlement', 'city']) {
+  for (const name of ['road-30', 'road-90', 'road-150', 'settlement', 'city']) {
     const text = await (await fetch(`/art/${name}.svg`)).text();
     art[name] = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
   }
@@ -259,12 +263,11 @@ async function loadArt() {
 // units tall, in the seat's colour. `anchor` shifts it down by a fraction of
 // its height, so a building stands on its intersection rather than floating
 // with the point in the middle of it.
-function place(svg, name, x, y, height, seat, anchor = 0.5) {
+function place(svg, name, x, y, k, seat, anchor = 0.5) {
   const src = art[name];
   if (!src) return;
   const w = parseFloat(src.getAttribute('width'));
   const h = parseFloat(src.getAttribute('height'));
-  const k = height / h;
 
   const node = src.cloneNode(true);
   node.querySelectorAll('[fill]').forEach((n) => {
@@ -272,9 +275,9 @@ function place(svg, name, x, y, height, seat, anchor = 0.5) {
     if (f in ART_TONES) n.setAttribute('fill', tone(SEAT_HEX[seat], ART_TONES[f]));
   });
   node.setAttribute('width', w * k);
-  node.setAttribute('height', height);
+  node.setAttribute('height', h * k);
   node.setAttribute('x', x - (w * k) / 2);
-  node.setAttribute('y', y - height * anchor);
+  node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
   svg.appendChild(node);
 }
@@ -354,19 +357,21 @@ function draw() {
     // perspective cannot be rotated to face another way — it would lean the
     // wrong direction — so each orientation needs its own drawing rather than
     // a transform.
-    let deg = Math.abs(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI) % 180;
-    const name = deg < 90 ? 'road-30' : 'road-150';
-    solids.push({
-      art: name, seat, x: (x1 + x2) / 2, y: (y1 + y2) / 2,
-      size: Math.hypot(x2 - x1, y2 - y1) * 0.62, anchor: 0.5,
-    });
+    const deg = ((Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI) % 180 + 180) % 180;
+    // A pointy-top board has three edge angles and there is a drawing for each.
+    const name = deg < 60 ? 'road-30' : (deg < 120 ? 'road-90' : 'road-150');
+    // Scaled by the bar's own length rather than the drawing's box, which for
+    // a diagonal piece is far bigger than the bar inside it — the mistake that
+    // made the roads overshoot their edges.
+    const k = Math.hypot(x2 - x1, y2 - y1) * 0.88 / ROAD_LENGTH;
+    solids.push({ art: name, seat, x: (x1 + x2) / 2, y: (y1 + y2) / 2, k, anchor: 0.5 });
   });
 
   view.buildings.forEach(([seat, v, city]) => {
     const [x, y] = vxy[v];
     solids.push({
       art: city ? 'city' : 'settlement', seat, x, y,
-      size: city ? 52 : 42,
+      k: (city ? 34 : 27) / (city ? 72 : 60),
       // Buildings stand on their intersection: most of the drawing rises
       // above it rather than straddling it.
       anchor: 0.72,
@@ -376,7 +381,7 @@ function draw() {
   // Painter's order: whatever sits lowest on the board goes on last, or a
   // piece in front is covered by the one behind it.
   solids.sort((a, b) => a.y - b.y);
-  solids.forEach((s) => place(svg, s.art, s.x, s.y, s.size, s.seat, s.anchor));
+  solids.forEach((s) => place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor));
 
   // Intersection numbers, for talking about specific places on the board —
   // "the port between 8 and 16" rather than "the one at the top left". The
