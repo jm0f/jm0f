@@ -4,6 +4,9 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
+# `u64::is_multiple_of`, used throughout, landed in 1.87; edition 2024 alone
+# would only need 1.85, so this is the binding constraint.
+rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 
 [profile.release]

@@ -1,11 +1,11 @@
-//! Run an evolution strategy over the heuristic's weights.
+//! `carranta-train` — run an evolution strategy over the heuristic's weights.
 //!
 //! Built to be started and left alone. It checkpoints after every generation,
 //! resumes exactly, and writes a history you can chart afterwards.
 //!
 //! ```text
-//! cargo run --release -p carranta-evolve --example train -- --out runs/first
-//! cargo run --release -p carranta-evolve --example train -- --out runs/first --resume
+//! cargo run --release -p carranta-evolve -- --out runs/first
+//! cargo run --release -p carranta-evolve -- --out runs/first --resume
 //! ```
 //!
 //! To stop it cleanly, create a file called `stop` in the output directory —
@@ -33,6 +33,10 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
+    parse_from(std::env::args().skip(1))
+}
+
+fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
     let mut args = Args {
         out: PathBuf::from("runs/latest"),
         resume: false,
@@ -40,7 +44,6 @@ fn parse_args() -> Result<Args, String> {
         seed: 20_260_813,
         config: Config::default(),
     };
-    let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
@@ -90,7 +93,7 @@ carranta-evolve
 
   --out DIR            where checkpoints and history are written (runs/latest)
   --resume             continue the run in --out rather than starting one
-  --generations N      generations to run this session (20)
+  --generations N      generations to run this session; 0 runs until stopped (20)
   --seed N             run seed; ignored when resuming
   --population N       genomes per generation (48)
   --survivors N        genomes that breed the next generation (12)
@@ -204,11 +207,15 @@ fn main() {
 
     let started = std::time::Instant::now();
     let mut total_games = 0u64;
-    for _ in 0..args.generations {
+    let mut done = 0u32;
+    // Zero means "until told otherwise" — a multi-day run should not need a
+    // generation count guessed in advance.
+    while args.generations == 0 || done < args.generations {
         if stop.exists() {
             println!("\nstop file found — finishing here");
             break;
         }
+        done += 1;
         let r = trainer.step();
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
@@ -292,4 +299,110 @@ fn main() {
     println!("\n  checkpoint  {}", ckpt.display());
     println!("  history     {}", history.display());
     println!("  resume with --out {} --resume", args.out.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(line: &str) -> Result<Args, String> {
+        parse_from(line.split_whitespace().map(str::to_string))
+    }
+
+    #[test]
+    fn an_empty_command_line_is_a_complete_run() {
+        let a = parse("").expect("no flags is valid");
+        let d = Config::default();
+        assert_eq!(a.out.to_str(), Some("runs/latest"));
+        assert!(!a.resume);
+        assert_eq!(a.config.population, d.population);
+        assert_eq!(a.config.mode, d.mode);
+    }
+
+    #[test]
+    fn flags_reach_the_configuration() {
+        let a = parse(
+            "--out runs/x --resume --generations 40 --seed 7 --population 16 \
+             --survivors 4 --trials 200 --validation 64 --sample 3 --threads 6 \
+             --mutation 0.5 --mode full",
+        )
+        .expect("every flag is known");
+        assert_eq!(a.out.to_str(), Some("runs/x"));
+        assert!(a.resume);
+        assert_eq!(a.generations, 40);
+        assert_eq!(a.seed, 7);
+        assert_eq!(a.config.population, 16);
+        assert_eq!(a.config.survivors, 4);
+        assert_eq!(a.config.trials, 200);
+        assert_eq!(a.config.validation, 64);
+        assert_eq!(a.config.sample, 3);
+        assert_eq!(a.config.threads, 6);
+        assert_eq!(a.config.mutation, 0.5);
+        assert_eq!(a.config.mode, TradeMode::Full);
+    }
+
+    #[test]
+    fn a_mistyped_command_line_stops_the_run_rather_than_guessing() {
+        // Silently falling back to a default would spend hours of machine time
+        // on a configuration nobody asked for.
+        assert!(parse("--population twelve").is_err());
+        assert!(parse("--mode barter").is_err());
+        assert!(parse("--populaton 12").is_err(), "typo in the flag itself");
+        assert!(parse("--threads").is_err(), "flag with no value");
+        assert!(
+            parse("--survivors 48 --population 48").is_err(),
+            "a population that all survives never selects"
+        );
+    }
+
+    #[test]
+    fn zero_generations_means_until_stopped() {
+        // Not "do nothing": a run left alone for days should not need its
+        // length guessed up front. The loop reads it as unbounded.
+        let a = parse("--generations 0").expect("zero is allowed");
+        assert_eq!(a.generations, 0);
+    }
+
+    #[test]
+    fn a_csv_row_matches_its_header() {
+        let cfg = Config {
+            population: 6,
+            survivors: 2,
+            trials: 8,
+            trials_min: 4,
+            validation: 8,
+            sample: 0,
+            threads: 2,
+            ..Config::default()
+        };
+        let report = Trainer::new(cfg, 3).step();
+        let row = csv_row(&report, 1.0);
+        assert_eq!(
+            row.matches(',').count(),
+            CSV_HEADER.matches(',').count(),
+            "history.csv would be unreadable if the row drifted from its header"
+        );
+        assert!(row.ends_with('\n'));
+    }
+
+    #[test]
+    fn workers_buy_time_not_a_different_answer() {
+        // The claim the help text makes, checked rather than asserted.
+        let mut cfg = Config {
+            population: 6,
+            survivors: 2,
+            trials: 8,
+            trials_min: 4,
+            validation: 8,
+            sample: 0,
+            threads: 1,
+            ..Config::default()
+        };
+        let one = Trainer::new(cfg, 11).step();
+        cfg.threads = 4;
+        let many = Trainer::new(cfg, 11).step();
+        assert_eq!(one.best_fitness, many.best_fitness);
+        assert_eq!(one.above_anchor, many.above_anchor);
+        assert_eq!(one.games, many.games);
+    }
 }

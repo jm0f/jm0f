@@ -2,8 +2,13 @@
 name = "carranta-evolve"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Population training for Carranta: parallel paired evaluation, versioned agents, ratings across generations."
+
+[[bin]]
+name = "carranta-train"
+path = "src/main.rs"
 
 [dependencies]
 carranta-core = { path = "../carranta-core" }

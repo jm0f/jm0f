@@ -421,10 +421,10 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-bot` | Heuristic policy, self-play driver, market settlement | core | **built** |
 | `carranta-record` | Log, replay driver, snapshot & seek, per-viewer redaction | core | **built** |
 | `carranta-analytics` | Dice fairness, production decomposition, descriptives, rating | core, record | **built** |
-| `carranta-evolve` | Population loop, parallel evaluation, versioned ladder, checkpoints (§9.5) | core, bot, analytics, record | **built** |
+| `carranta-evolve` | Population loop, parallel evaluation, versioned ladder, checkpoints (§9.5); ships `carranta-train` | core, bot, analytics, record | **built** |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
-| `carranta-ui` | Play locally in a browser: dependency-free HTTP server over the engine | core, bot, record | **built** |
+| `carranta-ui` | Play locally in a browser: dependency-free HTTP server over the engine; ships `carranta-play` | core, bot, record | **built** |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
 | `carranta-analytics` | Parquet/Arrow export, derived-event materialization | record | |
 
@@ -825,7 +825,7 @@ Two further findings worth carrying:
 
 #### What the first runs showed
 
-`cargo run --release -p carranta-evolve --example train` runs the loop. Over 16 generations on 4 cores — 28 224 games in 47 s, ~600 games/s with the market open — champions settle **+2 to +4 μ above the pinned heuristic**, with σ ≈ 2.7. Real, modest, and reached within a handful of generations before flattening out, which is what the plateau finding predicted.
+`cargo run --release -p carranta-evolve` runs the loop. Over 16 generations on 4 cores — 28 224 games in 47 s, ~600 games/s with the market open — champions settle **+2 to +4 μ above the pinned heuristic**, with σ ≈ 2.7. Real, modest, and reached within a handful of generations before flattening out, which is what the plateau finding predicted.
 
 Three things the build corrected, each of which would have quietly inflated the result:
 
@@ -840,8 +840,8 @@ Three things the build corrected, each of which would have quietly inflated the 
 Built to be started and left alone:
 
 ```
-cargo run --release -p carranta-evolve --example train -- --out runs/first
-cargo run --release -p carranta-evolve --example train -- --out runs/first --resume
+cargo run --release -p carranta-evolve -- --out runs/first
+cargo run --release -p carranta-evolve -- --out runs/first --resume
 ```
 
 Portable by construction — the whole workspace is `std` only, with no dependencies and no architecture-specific code, so an Apple-silicon laptop needs nothing added. `--threads` defaults to every core; on a fanless machine it is worth measuring four against six against eight, because sustained throttling can make more workers slower.
