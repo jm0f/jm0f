@@ -93,16 +93,53 @@ It is resolved by having two views rather than one:
 `apply` accepts a trade action from a non-active seat, so the server can feed
 in offers as they arrive.
 
-**Generated proposals are one-card-for-one-card even in `Full` mode.** The space
-of well-formed offers is combinatorial and cannot be enumerated, so the
-generated set stays bounded while `apply` still accepts any shape a human
-composes. That is the seam between a policy's action space and a person's.
+**Generated proposals put a single resource type on each side**, up to three
+cards, and `apply` accepts any shape. That split is forced by arithmetic:
+multisets of size 1–3 drawn from five resources give 55 possibilities a side,
+so full mixed-type enumeration is ~3 000 candidates per decision — 2-for-2 is
+still ~400. Single-type sides give at most 180 before affordability prunes
+them, and cover the offers real play makes. Mixed-type deals remain legal and
+acceptable; they simply are not enumerated.
+
+**Every market action names its actor.** `AcceptTrade { offer, by }` rather than
+`AcceptTrade(offer)`, because the market is the one place where the actor is
+not implied by whose turn it is — an offer from the active player is open to
+*several* opponents, and inferring the taker picks the wrong one.
 
 **Acceptance races resolve by re-validation, not by locking.** Actions are
 serialised, so first-come is simply whichever `apply` lands first; the loser
 re-validates, fails with `OfferStale`, and the offer is pruned. An offer whose
 proposer has since spent the cards is rejected rather than executed against the
 state it was authored in.
+
+### Trading in self-play
+
+The market is not decoration: a bot tuned in a game where nobody trades learns
+strategies that will not transfer. Two changes were needed to make it happen.
+
+**One ply cannot value a proposal.** Making an offer changes nothing until it
+is taken, so a brilliant offer and an absurd one score identically. The bot
+values a proposal by the swap it *would* produce, discounted because it may be
+refused — and computes it from the hand alone, since a trade leaves
+production, ports, routes and points untouched.
+
+**Opponents never reach `choose` during another seat's turn**, so nobody was
+ever asked to accept. `Policy::accepts` is a separate question, and the driver
+settles the market after every action.
+
+The first version then papered the table — every extra proposal scored a little
+positive, so offering was always better than getting on with the turn:
+
+| | Actions/game | Trades/game | Games/s |
+|---|---|---|---|
+| No market | 508 | 0 | 594 |
+| Market, no clutter penalty | 2 941 | 37.4 | 29 |
+| Market, penalty per live own offer | **843** | **27.6** | **114** |
+
+Trades now happen in 100% of self-play games. `Full` runs ~5× slower than a
+market-free game, almost all of it the larger generated action space — fine for
+evaluation and data generation, and the reason `Restricted` (233 games/s) and
+`Disabled` exist for training.
 
 ### What it cost
 

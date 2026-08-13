@@ -30,7 +30,7 @@
 
 use carranta_core::action::{Action, CITY_COST, DEV_COST, ROAD_COST, SETTLEMENT_COST};
 use carranta_core::rng::{Rng, Stream};
-use carranta_core::state::{MAX_PLAYERS, Phase, State};
+use carranta_core::state::{MAX_PLAYERS, Phase, State, TradeMode};
 use carranta_core::topology::hex_vertices;
 
 /// Anything that can take a seat: human, heuristic, LLM, trained agent.
@@ -40,6 +40,17 @@ use carranta_core::topology::hex_vertices;
 /// return one of the offered actions.
 pub trait Policy {
     fn choose(&mut self, state: &State, legal: &[Action]) -> Action;
+
+    /// Whether `seat` takes live offer `offer`.
+    ///
+    /// Separate from [`Policy::choose`] because responding to the market is
+    /// not a turn: an opponent is asked whenever an offer is on the table, and
+    /// declining has to be possible without picking some other action. The
+    /// default is to refuse everything.
+    fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
+        let _ = (state, seat, offer);
+        false
+    }
 }
 
 /// Feature weights. Integers, not floats: this bot is a measuring stick, and
@@ -77,6 +88,15 @@ pub struct Weights {
     pub buy_dev: i32,
     /// Value of robbing a card, per card in the victim's hand.
     pub steal: i32,
+    /// Percentage of a proposed trade's gain that is credited when deciding to
+    /// offer it. A proposal may be refused, so it is worth less than the swap.
+    pub offer_discount: i32,
+    /// Penalty per offer this seat already has live.
+    ///
+    /// Without it the bot papers the table: every extra proposal scores a
+    /// little positive, so making one is always better than getting on with
+    /// the turn. This is what keeps a seat to a couple of live offers.
+    pub offer_clutter: i32,
 }
 
 impl Default for Weights {
@@ -97,6 +117,8 @@ impl Default for Weights {
             build_progress: 6,
             buy_dev: 40,
             steal: 8,
+            offer_discount: 55,
+            offer_clutter: 14,
         }
     }
 }
@@ -190,6 +212,21 @@ impl Heuristic {
             v += (hand - 7) * w.over_limit;
         }
 
+        v + self.hand_value(&state.hand[p])
+    }
+
+    /// The part of a position's value that depends only on the cards held.
+    ///
+    /// Split out because a trade changes nothing else: production, ports,
+    /// routes and points are all untouched, so a candidate swap can be valued
+    /// from this alone instead of re-walking the board.
+    fn hand_value(&self, hand: &[u8; 5]) -> i32 {
+        let w = &self.weights;
+        let total: i32 = hand.iter().map(|&n| n as i32).sum();
+        let mut v = total.min(7) * w.hand;
+        if total > 7 {
+            v += (total - 7) * w.over_limit;
+        }
         // How close the hand is to each purchase, scaled so a complete set is
         // worth `build_progress` and a half-set half of it.
         for cost in [&ROAD_COST, &SETTLEMENT_COST, &CITY_COST, &DEV_COST] {
@@ -197,7 +234,7 @@ impl Heuristic {
             let have: i32 = cost
                 .iter()
                 .enumerate()
-                .map(|(r, &c)| (state.hand[p][r] as i32).min(c as i32))
+                .map(|(r, &c)| (hand[r] as i32).min(c as i32))
                 .sum();
             v += have * w.build_progress / need;
         }
@@ -245,6 +282,25 @@ impl Heuristic {
         match action {
             Action::Roll => self.value(state, me) - base_other,
 
+            Action::ProposeTrade { give, want, .. } => {
+                // One ply cannot value a proposal: making it changes nothing
+                // until someone takes it, so a brilliant offer and an absurd
+                // one score identically. Value it by the swap it would produce
+                // instead, discounted because it may simply be refused.
+                let mut after = state.hand[me];
+                for r in 0..5 {
+                    after[r] = after[r] - give[r] + want[r];
+                }
+                let gain = self.hand_value(&after) - self.hand_value(&state.hand[me]);
+                let live = state
+                    .live_offers()
+                    .iter()
+                    .filter(|o| o.from as usize == me)
+                    .count() as i32;
+                self.value(state, me) - base_other + gain * w.offer_discount / 100
+                    - live * w.offer_clutter
+            }
+
             Action::BuyDev => {
                 // Pay the cost, but do not look at the card.
                 let mut next = *state;
@@ -280,6 +336,23 @@ impl Heuristic {
 }
 
 impl Policy for Heuristic {
+    fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
+        let before = self.score(state, seat);
+        let mut next = *state;
+        if next
+            .apply(Action::AcceptTrade {
+                offer: offer as u8,
+                by: seat as u8,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        // Take it only if it genuinely improves the position — a trade that
+        // merely moves cards around helps whoever offered it.
+        self.score(&next, seat) > before
+    }
+
     fn choose(&mut self, state: &State, legal: &[Action]) -> Action {
         debug_assert!(!legal.is_empty());
         // A discard is decided by the seat that owes it, not the seat to act.
@@ -333,8 +406,22 @@ impl Policy for RandomPolicy {
 /// `policies` is indexed by seat. Every decision is routed to the seat that
 /// owns it, which during a discard is not the seat to act.
 pub fn play_game(seed: u64, policies: &mut [&mut dyn Policy], cap: usize) -> (Option<u8>, usize) {
+    play_game_with(seed, policies, cap, TradeMode::default())
+}
+
+/// Play one game with a chosen trade mode.
+///
+/// After every action the market is settled: an offer is only worth making if
+/// somebody is asked whether to take it, and opponents never reach
+/// [`Policy::choose`] during another seat's turn.
+pub fn play_game_with(
+    seed: u64,
+    policies: &mut [&mut dyn Policy],
+    cap: usize,
+    trade: TradeMode,
+) -> (Option<u8>, usize) {
     let players = policies.len() as u8;
-    let mut state = State::new(players, seed);
+    let mut state = State::new(players, seed).with_trade_mode(trade);
     let mut buf = Vec::new();
     let mut steps = 0;
 
@@ -352,8 +439,51 @@ pub fn play_game(seed: u64, policies: &mut [&mut dyn Policy], cap: usize) -> (Op
             break;
         }
         steps += 1;
+        settle_market(&mut state, policies);
     }
     (None, steps)
+}
+
+/// Offer everyone entitled to take a live offer the chance to do so.
+///
+/// Resolves lowest seat first, which is this driver's stand-in for arrival
+/// order. The engine re-validates on every acceptance either way, so a seat
+/// that loses the race fails cleanly rather than trading against stale state.
+pub fn settle_market(state: &mut State, policies: &mut [&mut dyn Policy]) -> u32 {
+    if state.trade_mode == TradeMode::Disabled || state.offer_count == 0 {
+        return 0;
+    }
+    let mut done_trades = 0;
+    // Bounded so a pathological policy cannot spin here.
+    for _ in 0..16 {
+        let mut acted = false;
+        'outer: for i in 0..state.offer_count as usize {
+            for (seat, policy) in policies.iter_mut().enumerate() {
+                if state.offers[i].from as usize == seat {
+                    continue;
+                }
+                let take = Action::AcceptTrade {
+                    offer: i as u8,
+                    by: seat as u8,
+                };
+                let mut probe = *state;
+                if probe.apply(take).is_err() {
+                    continue; // not a party to it, or cannot pay
+                }
+                if policy.accepts(state, seat, i) {
+                    if state.apply(take).is_ok() {
+                        done_trades += 1;
+                    }
+                    acted = true;
+                    break 'outer;
+                }
+            }
+        }
+        if !acted {
+            break;
+        }
+    }
+    done_trades
 }
 
 /// Victory points for every seat, for reporting.
@@ -454,6 +584,81 @@ mod tests {
         }
         let mean = total as f64 / games as f64;
         assert!(mean < 700.0, "bot games average {mean:.0} actions");
+    }
+
+    /// Trades actually executed in a self-play game with an open market.
+    fn trades_in_selfplay(seed: u64, trade: TradeMode) -> (u32, Option<u8>) {
+        let mut a = Heuristic::new(seed);
+        let mut b = Heuristic::new(seed + 1000);
+        let mut c = Heuristic::new(seed + 2000);
+        let mut d = Heuristic::new(seed + 3000);
+        let mut ps: Vec<&mut dyn Policy> = vec![&mut a, &mut b, &mut c, &mut d];
+
+        let mut state = State::new(4, seed).with_trade_mode(trade);
+        let mut buf = Vec::new();
+        let mut trades = 0;
+        for _ in 0..20_000 {
+            if let Phase::GameOver { winner } = state.phase {
+                return (trades, Some(winner));
+            }
+            state.legal_into(&mut buf);
+            if buf.is_empty() {
+                break;
+            }
+            let seat = state.decider() as usize;
+            let a = ps[seat].choose(&state, &buf);
+            if state.apply(a).is_err() {
+                break;
+            }
+            trades += settle_market(&mut state, &mut ps);
+            state.assert_invariants();
+        }
+        (trades, None)
+    }
+
+    #[test]
+    fn bots_actually_trade_with_each_other() {
+        // Without this the market is decoration: strategies tuned in a game
+        // where nobody trades would not transfer to real play.
+        let mut games_with_trades = 0;
+        let mut total = 0;
+        for seed in 0..60 {
+            let (trades, winner) = trades_in_selfplay(seed, TradeMode::Full);
+            assert!(winner.is_some(), "seed {seed} did not finish");
+            total += trades;
+            games_with_trades += (trades > 0) as u32;
+        }
+        assert!(
+            games_with_trades >= 50,
+            "only {games_with_trades}/60 games saw a trade ({total} total)"
+        );
+    }
+
+    #[test]
+    fn an_open_market_does_not_break_the_win_rate() {
+        // Trading must not make the bot worse than it was without it.
+        let games = 800;
+        let mut wins = 0;
+        for g in 0..games {
+            let bot_seat = (g % 4) as usize;
+            let mut bot = Heuristic::new(g as u64);
+            let mut randoms: Vec<RandomPolicy> = (0..4)
+                .map(|i| RandomPolicy::new(g as u64 * 31 + i as u64))
+                .collect();
+            let (lo, hi) = randoms.split_at_mut(bot_seat);
+            let mut ps: Vec<&mut dyn Policy> = Vec::new();
+            for r in lo.iter_mut() {
+                ps.push(r);
+            }
+            ps.push(&mut bot);
+            for r in hi.iter_mut().skip(1) {
+                ps.push(r);
+            }
+            let (winner, _) = play_game_with(g as u64, &mut ps, 20_000, TradeMode::Full);
+            wins += (winner == Some(bot_seat as u8)) as u32;
+        }
+        let rate = wins as f64 / games as f64;
+        assert!(rate >= 0.99, "win rate {rate:.3} with an open market");
     }
 
     #[test]

@@ -9,8 +9,8 @@
 use crate::longest_road::longest_road;
 use crate::rng::Stream;
 use crate::state::{
-    CITY_POOL, DevCard, MAX_OFFERS, MAX_PLAYERS, OFFERS_PER_TURN, Offer, Phase, RESOURCES,
-    ROAD_POOL, Resource, SETTLEMENT_POOL, State, TradeMode, WINNING_VP,
+    CITY_POOL, DevCard, MAX_GENERATED_OFFER, MAX_OFFERS, MAX_PLAYERS, OFFERS_PER_TURN, Offer,
+    Phase, RESOURCES, ROAD_POOL, Resource, SETTLEMENT_POOL, State, TradeMode, WINNING_VP,
 };
 use crate::topology::{
     HEX_COUNT, edge_bit, edge_endpoint_mask, hex_vertices, iter_edges, iter_vertices, vertex_bit,
@@ -60,17 +60,26 @@ pub enum Action {
     },
     /// Put an offer on the market (R-7.4, R-7.19).
     ///
-    /// Both sides are from the proposer's point of view. Any seat may propose,
-    /// but every offer has the active player as one party (R-7.3): either they
-    /// made it, or it is addressed to them.
+    /// Both sides are from the proposer's point of view. Every market action
+    /// names its actor, because the market is the one place where that is not
+    /// implied by whose turn it is: any seat may propose, and an offer may be
+    /// open to several. Every offer still has the active player as one party
+    /// (R-7.3) — either they made it, or it is addressed to them.
     ProposeTrade {
+        by: u8,
         give: [u8; 5],
         want: [u8; 5],
     },
-    /// Take a live offer, by its index in the market.
-    AcceptTrade(u8),
+    /// Take a live offer.
+    AcceptTrade {
+        offer: u8,
+        by: u8,
+    },
     /// Pull one's own offer back off the market (R-7.14).
-    WithdrawTrade(u8),
+    WithdrawTrade {
+        offer: u8,
+        by: u8,
+    },
     EndTurn,
 }
 
@@ -514,10 +523,11 @@ impl State {
                 Ok(())
             }
 
-            (Phase::Action, Action::ProposeTrade { give, want }) => {
-                // Any seat may propose, so this is the one action not routed
-                // through `decider`. Attribute it to whoever can pay.
-                let from = self.proposer(&give);
+            (Phase::Action, Action::ProposeTrade { by, give, want }) => {
+                let from = by as usize;
+                if from >= self.players as usize {
+                    return Err(Illegal::NotAParty);
+                }
                 self.check_offer(from, &give, &want)?;
                 let i = self.offer_count as usize;
                 self.offers[i] = Offer {
@@ -530,14 +540,14 @@ impl State {
                 Ok(())
             }
 
-            (Phase::Action, Action::AcceptTrade(i)) => {
+            (Phase::Action, Action::AcceptTrade { offer: i, by }) => {
                 let idx = i as usize;
                 if idx >= self.offer_count as usize {
                     return Err(Illegal::NoSuchOffer);
                 }
                 let offer = self.offers[idx];
-                let taker = self.taker(&offer);
-                if !self.may_accept(taker, &offer) {
+                let taker = by as usize;
+                if taker >= self.players as usize || !self.may_accept(taker, &offer) {
                     return Err(Illegal::NotAParty);
                 }
                 // Re-validate both sides at execution, never at proposal
@@ -558,10 +568,13 @@ impl State {
                 Ok(())
             }
 
-            (Phase::Action, Action::WithdrawTrade(i)) => {
+            (Phase::Action, Action::WithdrawTrade { offer: i, by }) => {
                 let idx = i as usize;
                 if idx >= self.offer_count as usize {
                     return Err(Illegal::NoSuchOffer);
+                }
+                if self.offers[idx].from != by {
+                    return Err(Illegal::NotYourOffer);
                 }
                 self.drop_offer(idx);
                 Ok(())
@@ -600,37 +613,57 @@ impl State {
 
     /// Offers and responses available to `p`.
     ///
-    /// Proposals are generated one-card-for-one-card only, even in `Full`
-    /// mode. The full space of offers is combinatorial and cannot be
-    /// enumerated, so the *generated* set stays bounded while `apply` still
-    /// accepts any well-formed offer a human composes.
+    /// Generated proposals put a **single resource type on each side**, up to
+    /// [`MAX_GENERATED_OFFER`] cards. Mixed-type offers are legal and can be
+    /// accepted, but they cannot be enumerated: multisets of size 1..=3 drawn
+    /// from five resources give 55 possibilities a side, so the cross product
+    /// is about 3 000 candidates per decision. Single-type sides reduce that to
+    /// at most 180 before affordability prunes it, and cover the offers real
+    /// play actually makes.
     fn push_market(&self, p: usize, out: &mut Vec<Action>) {
         if self.trade_mode == TradeMode::Disabled {
             return;
         }
         for (i, o) in self.live_offers().iter().enumerate() {
             if o.from as usize == p {
-                out.push(Action::WithdrawTrade(i as u8));
+                out.push(Action::WithdrawTrade {
+                    offer: i as u8,
+                    by: p as u8,
+                });
             } else if self.may_accept(p, o) && self.holds(p, &o.want) {
-                out.push(Action::AcceptTrade(i as u8));
+                out.push(Action::AcceptTrade {
+                    offer: i as u8,
+                    by: p as u8,
+                });
             }
         }
         if self.offers_made[p] >= OFFERS_PER_TURN || self.offer_count as usize >= MAX_OFFERS {
             return;
         }
+        let max = if self.trade_mode == TradeMode::Restricted {
+            1
+        } else {
+            MAX_GENERATED_OFFER
+        };
         for give in RESOURCES {
-            if self.hand[p][give as usize] == 0 {
-                continue;
-            }
-            for want in RESOURCES {
-                if want == give {
-                    continue; // R-7.18
+            let held = self.hand[p][give as usize].min(max);
+            for gn in 1..=held {
+                for want in RESOURCES {
+                    if want == give {
+                        continue; // R-7.18
+                    }
+                    for wn in 1..=max {
+                        let mut g = [0u8; 5];
+                        let mut w = [0u8; 5];
+                        g[give as usize] = gn;
+                        w[want as usize] = wn;
+                        out.push(Action::ProposeTrade {
+                            by: p as u8,
+                            give: g,
+                            want: w,
+                        });
+                    }
                 }
-                let mut g = [0u8; 5];
-                let mut w = [0u8; 5];
-                g[give as usize] = 1;
-                w[want as usize] = 1;
-                out.push(Action::ProposeTrade { give: g, want: w });
             }
         }
     }
@@ -843,41 +876,6 @@ impl State {
         if self.victory_points(p) >= WINNING_VP {
             self.phase = Phase::GameOver { winner: p as u8 };
         }
-    }
-
-    /// Which seat a proposed offer belongs to.
-    ///
-    /// The decider by default; if they cannot pay but a single opponent can,
-    /// it is that opponent's offer — which is how a non-active seat proposes
-    /// through the same action.
-    fn proposer(&self, give: &[u8; 5]) -> usize {
-        let d = self.decider() as usize;
-        if self.holds(d, give) {
-            return d;
-        }
-        let mut only = None;
-        for q in 0..self.players as usize {
-            if q != d && self.holds(q, give) {
-                if only.is_some() {
-                    return d; // ambiguous, so blame the decider and let it fail
-                }
-                only = Some(q);
-            }
-        }
-        only.unwrap_or(d)
-    }
-
-    /// Which seat is taking an offer: the active player, unless they made it.
-    fn taker(&self, offer: &Offer) -> usize {
-        let active = self.to_act as usize;
-        if offer.from as usize != active {
-            return active;
-        }
-        // The active player's offer is open to any opponent; take the first
-        // that can actually pay.
-        (0..self.players as usize)
-            .find(|&q| q != active && self.holds(q, &offer.want))
-            .unwrap_or(active)
     }
 
     fn drop_offer(&mut self, idx: usize) {
@@ -1336,13 +1334,14 @@ mod tests {
         deal(&mut s, 0, one(Resource::Ore, 2));
         deal(&mut s, 1, one(Resource::Wood, 3));
         s.apply(Action::ProposeTrade {
+            by: 0,
             give: one(Resource::Ore, 2),
             want: one(Resource::Wood, 3),
         })
         .unwrap();
         assert_eq!(s.offer_count, 1);
 
-        s.apply(Action::AcceptTrade(0)).unwrap();
+        s.apply(Action::AcceptTrade { offer: 0, by: 1 }).unwrap();
         assert_eq!(s.hand[0][Resource::Wood as usize], 3);
         assert_eq!(s.hand[1][Resource::Ore as usize], 2);
         assert_eq!(s.offer_count, 0, "a taken offer leaves the market");
@@ -1355,6 +1354,7 @@ mod tests {
         s.hand[0] = one(Resource::Ore, 2);
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Ore, 1),
                 want: [0; 5]
             }),
@@ -1363,6 +1363,7 @@ mod tests {
         );
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: [0; 5],
                 want: one(Resource::Wood, 1)
             }),
@@ -1378,6 +1379,7 @@ mod tests {
         want[Resource::Ore as usize] = 1;
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Ore, 3),
                 want
             }),
@@ -1394,6 +1396,7 @@ mod tests {
         s.hand[2] = one(Resource::Wood, 1);
         // Seat 1 proposes; seat 0 is active, so the offer is addressed to it.
         s.apply(Action::ProposeTrade {
+            by: 1,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 1),
         })
@@ -1404,7 +1407,7 @@ mod tests {
         let mut buf = Vec::new();
         s.legal_for(2, &mut buf);
         assert!(
-            !buf.iter().any(|a| matches!(a, Action::AcceptTrade(_))),
+            !buf.iter().any(|a| matches!(a, Action::AcceptTrade { .. })),
             "seat 2 is not a party to this offer"
         );
     }
@@ -1417,13 +1420,14 @@ mod tests {
         s.hand[0] = one(Resource::Ore, 1);
         s.hand[1] = one(Resource::Wood, 1);
         s.apply(Action::ProposeTrade {
+            by: 0,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 1),
         })
         .unwrap();
-        s.apply(Action::AcceptTrade(0)).unwrap();
+        s.apply(Action::AcceptTrade { offer: 0, by: 1 }).unwrap();
         assert_eq!(
-            s.apply(Action::AcceptTrade(0)),
+            s.apply(Action::AcceptTrade { offer: 0, by: 1 }),
             Err(Illegal::NoSuchOffer),
             "the offer is gone once taken"
         );
@@ -1437,6 +1441,7 @@ mod tests {
         deal(&mut s, 0, [1, 1, 1, 1, 0]);
         deal(&mut s, 1, one(Resource::Ore, 1));
         s.apply(Action::ProposeTrade {
+            by: 0,
             give: one(Resource::Brick, 1),
             want: one(Resource::Ore, 1),
         })
@@ -1449,7 +1454,7 @@ mod tests {
         pay(&mut s, 0, &SETTLEMENT_COST);
 
         assert_eq!(
-            s.apply(Action::AcceptTrade(0)),
+            s.apply(Action::AcceptTrade { offer: 0, by: 1 }),
             Err(Illegal::OfferStale),
             "the offer went stale and must not execute"
         );
@@ -1465,6 +1470,7 @@ mod tests {
         // The market fills before the per-turn cap bites (R-7.20, D-7).
         for _ in 0..MAX_OFFERS {
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1),
             })
@@ -1472,6 +1478,7 @@ mod tests {
         }
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1)
             }),
@@ -1491,6 +1498,7 @@ mod tests {
         s.offers_made[0] = OFFERS_PER_TURN;
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1)
             }),
@@ -1504,6 +1512,7 @@ mod tests {
         let mut s = trading_game(28);
         s.hand[0] = one(Resource::Ore, 1);
         s.apply(Action::ProposeTrade {
+            by: 0,
             give: one(Resource::Ore, 1),
             want: one(Resource::Wood, 1),
         })
@@ -1511,12 +1520,13 @@ mod tests {
         let mut buf = Vec::new();
         s.legal_for(1, &mut buf);
         assert!(
-            !buf.iter().any(|a| matches!(a, Action::WithdrawTrade(_))),
+            !buf.iter()
+                .any(|a| matches!(a, Action::WithdrawTrade { .. })),
             "an opponent cannot withdraw someone else's offer"
         );
         s.legal_into(&mut buf);
-        assert!(buf.contains(&Action::WithdrawTrade(0)));
-        s.apply(Action::WithdrawTrade(0)).unwrap();
+        assert!(buf.contains(&Action::WithdrawTrade { offer: 0, by: 0 }));
+        s.apply(Action::WithdrawTrade { offer: 0, by: 0 }).unwrap();
         assert_eq!(s.offer_count, 0);
     }
 
@@ -1527,6 +1537,7 @@ mod tests {
         s.hand[0] = one(Resource::Ore, 1);
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Ore, 1),
                 want: one(Resource::Wood, 1)
             }),
@@ -1544,6 +1555,7 @@ mod tests {
         s.hand[0] = [3, 0, 0, 0, 0];
         assert!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Brick, 1),
                 want: one(Resource::Ore, 1)
             })
@@ -1551,6 +1563,7 @@ mod tests {
         );
         assert_eq!(
             s.apply(Action::ProposeTrade {
+                by: 0,
                 give: one(Resource::Brick, 2),
                 want: one(Resource::Ore, 1)
             }),

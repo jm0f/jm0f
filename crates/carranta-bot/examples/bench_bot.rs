@@ -2,8 +2,8 @@
 //!
 //! `cargo run --release --example bench_bot`
 
-use carranta_bot::{Heuristic, Policy, RandomPolicy, play_game};
-use carranta_core::state::{Phase, State};
+use carranta_bot::{Heuristic, Policy, RandomPolicy, play_game, settle_market};
+use carranta_core::state::{Phase, State, TradeMode};
 use std::time::Instant;
 
 /// Win rate against random opponents, with the bot's seat rotated so that
@@ -149,4 +149,56 @@ fn main() {
         "\ndecision cost         {:.0} ns   ({mean_legal:.0} candidates on average)",
         t.elapsed().as_nanos() as f64 / (reps * positions.len()) as f64
     );
+
+    // ---- Open market ----
+    //
+    // Trading has to happen in self-play or strategies tuned there will not
+    // transfer: a game where nobody trades is not the game.
+    for mode in [TradeMode::Disabled, TradeMode::Restricted, TradeMode::Full] {
+        let games = 400u64;
+        let t = Instant::now();
+        let (mut steps_total, mut trades_total, mut with_trades) = (0usize, 0u32, 0u32);
+        for g in 0..games {
+            let mut a = Heuristic::new(g);
+            let mut b = Heuristic::new(g + 100_000);
+            let mut c = Heuristic::new(g + 200_000);
+            let mut d = Heuristic::new(g + 300_000);
+            let mut ps: Vec<&mut dyn Policy> = vec![&mut a, &mut b, &mut c, &mut d];
+
+            let mut state = State::new(4, g).with_trade_mode(mode);
+            let mut buf = Vec::new();
+            let mut trades = 0;
+            let mut steps = 0;
+            while steps < 20_000 {
+                if matches!(state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                state.legal_into(&mut buf);
+                if buf.is_empty() {
+                    break;
+                }
+                let seat = state.decider() as usize;
+                let act = ps[seat].choose(&state, &buf);
+                if state.apply(act).is_err() {
+                    break;
+                }
+                steps += 1;
+                trades += settle_market(&mut state, &mut ps);
+            }
+            steps_total += steps;
+            trades_total += trades;
+            with_trades += (trades > 0) as u32;
+        }
+        let dt = t.elapsed();
+        println!(
+            "\n{mode:?} market, {games} self-play games:\n  \
+             actions/game {:.0}   trades/game {:.1}   games with a trade {}%\n  \
+             per game {:.0} µs   {:.0} games/s",
+            steps_total as f64 / games as f64,
+            trades_total as f64 / games as f64,
+            with_trades * 100 / games as u32,
+            dt.as_secs_f64() * 1e6 / games as f64,
+            games as f64 / dt.as_secs_f64(),
+        );
+    }
 }

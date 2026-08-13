@@ -136,6 +136,13 @@ pub const MAX_OFFERS: usize = 8;
 /// Offers one seat may make per turn (R-7.20, D-7).
 pub const OFFERS_PER_TURN: u8 = 20;
 
+/// Largest side of a *generated* proposal, in cards.
+///
+/// A bound on enumeration, not on legality: `apply` accepts any well-formed
+/// offer, so a human client may compose whatever it likes and a bot may accept
+/// it. Three covers essentially every offer real play produces.
+pub const MAX_GENERATED_OFFER: u8 = 3;
+
 /// Port kinds. Index 0 is the generic 3:1; 1..=5 are the 2:1 ports, one per
 /// resource, indexed by `Resource as usize + 1`.
 pub const PORT_KINDS: usize = 6;
