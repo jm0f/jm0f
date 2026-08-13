@@ -27,7 +27,7 @@ scheduler noise swamps a sub-microsecond measurement).
 | Whole game, all seats after every move | ≤ 10 µs | **6.8 µs** | met |
 | Apply one action | ≤ 50 ns | **~35 ns** | met |
 | Legal move generation | ≤ 200 ns | **~22 ns** | met |
-| State clone (search node) | ≤ 20 ns | **~14 ns** (480 B) | met |
+| State clone (search node) | ≤ 20 ns | **~9 ns** (480 B) | met |
 | Full random game, setup → win | ≤ 50 µs | **~130 µs** | see below |
 | Self-play throughput, one core | ≥ 20 000 games/s | **~7 700** | see below |
 | Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
@@ -35,7 +35,10 @@ scheduler noise swamps a sub-microsecond measurement).
 | Bot decision | instant (sub-ms) | **~3.3 µs** | met |
 
 Engine figures come from `cargo run --release --example bench_engine`. They
-move ±20% between runs on this machine, so treat them as magnitudes.
+move **±30% between runs** on this machine — the same binary has measured a
+full random game at both 102 µs and 141 µs. Treat every figure here as a
+magnitude, and do not read a 20% change between two runs as a regression.
+Anything smaller than about 1.5× needs repeat runs before it means anything.
 
 **The whole-game target was set against the wrong action count, and the bot
 settles it.** It assumed ~300 actions per game. Measured:
@@ -156,12 +159,23 @@ evaluation and data generation, and the reason `Restricted` (328 games/s) and
 
 ### What it cost
 
-State grew from 384 to **480 bytes** and a clone from ~6 ns to **~14 ns** — the
-market is 8 offer slots plus per-turn counters. Still inside the 20 ns target,
-but it is dead weight in exactly the modes search uses, since `Disabled` and
-`Restricted` are what reinforcement learning and the LLM player run. If search
-throughput ever becomes binding, lifting the market out of `State` and into the
-server layer is the obvious move.
+State grew from 384 to **480 bytes**, and a clone from ~6 ns to **~9 ns** — the
+market is 8 offer slots plus per-turn counters.
+
+*(An earlier revision of this document put the clone at ~14 ns and called it a
+2× regression. That was a single unlucky sample: repeated runs put it at
+8.5–9.8 ns, in line with 25% more bytes. It is a caution about this machine's
+variance, not about the market.)*
+
+Still well inside the 20 ns target, but it is dead weight in exactly the modes
+search uses, since `Disabled` and `Restricted` are what reinforcement learning
+and the LLM player run. If search throughput ever becomes binding, lifting the
+market out of `State` into the server layer is the obvious move.
+
+**Per-action engine cost is untouched by the market**, because generation
+short-circuits when trading is off: apply ~30 ns, legal generation ~16 ns,
+~97 ns per action over a whole random game. The market's cost is paid in the
+size of the generated action space, and only in the modes that generate it.
 
 ## Heuristic bot
 
