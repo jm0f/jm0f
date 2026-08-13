@@ -386,6 +386,28 @@ function draw() {
   solids.sort((a, b) => a.y - b.y);
   solids.forEach((s) => place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor));
 
+  // Where you may build, drawn over the pieces so a spot is never buried
+  // under one. These went missing when the pieces were rewritten; without
+  // them the board is a picture rather than something you can play on.
+  for (const e in byEdge) {
+    const edge = view.edges[e];
+    const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
+    const g = el('g', { class: 'spot' });
+    g.appendChild(el('line', {
+      x1, y1, x2, y2, stroke: '#ffffff', 'stroke-width': 7,
+      'stroke-linecap': 'round', 'stroke-dasharray': '5 5', opacity: .85,
+    }));
+    g.onclick = () => act(byEdge[e][0].i);
+    svg.appendChild(g);
+  }
+  for (const v in byVertex) {
+    const [x, y] = vxy[v];
+    const g = el('g', { class: 'spot' });
+    g.appendChild(el('circle', { cx: x, cy: y, r: 11, fill: '#ffffff', opacity: .8 }));
+    g.onclick = () => act(byVertex[v][0].i);
+    svg.appendChild(g);
+  }
+
   // Intersection numbers, for talking about specific places on the board —
   // "the port between 8 and 16" rather than "the one at the top left". The
   // coastal ones are picked out, since those are the only ones a port can sit
