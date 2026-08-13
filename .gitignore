@@ -1,1 +1,8 @@
+# macOS Finder leaves these in every folder it opens.
+.DS_Store
+
+# Build output.
 /target
+
+# Training runs.
+/runs
