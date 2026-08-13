@@ -27,6 +27,9 @@ const PAGE: &str = include_str!("../assets/index.html");
 /// than a board with holes in it. The page fetches these once and reuses them;
 /// they are the drawings in `art/`, unmodified, which keeps one copy of each
 /// rather than a second pasted into the page to drift from the first.
+/// The mountain photograph, served as bytes rather than text.
+const MOUNTAINS: &[u8] = include_bytes!("../../../art/mountains.jpg");
+
 const ART: [(&str, &str); 5] = [
     ("road-30", include_str!("../../../art/road-30.svg")),
     ("road-90", include_str!("../../../art/road-90.svg")),
@@ -115,6 +118,9 @@ impl Server {
                 "text/html; charset=utf-8",
                 PAGE.as_bytes(),
             ),
+            ("GET", "/art/mountains.jpg") => {
+                respond(&mut stream, 200, "image/jpeg", MOUNTAINS)
+            }
             ("GET", p) if p.starts_with("/art/") => {
                 let name = p.trim_start_matches("/art/").trim_end_matches(".svg");
                 match ART.iter().find(|(n, _)| *n == name) {

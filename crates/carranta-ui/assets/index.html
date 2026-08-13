@@ -233,6 +233,25 @@ function el(tag, attrs, kids) {
   return n;
 }
 
+// The mountains are a photograph rather than a colour. One pattern per hex:
+// a single shared one would repeat the same crop across all three and read as
+// wallpaper, so each is offset to show a different part of the range.
+function mountainFill(svg, id, cx, cy, seed) {
+  const defs = el('defs', {});
+  const w = SIZE * 3.2, h = w * (2048 / 1536);
+  const pat = el('pattern', {
+    id, patternUnits: 'userSpaceOnUse',
+    x: cx - w / 2, y: cy - h / 2, width: w, height: h,
+  });
+  pat.appendChild(el('image', {
+    href: '/art/mountains.jpg', x: -((seed * 37) % 60), y: -((seed * 61) % 120),
+    width: w * 1.4, height: h * 1.4, preserveAspectRatio: 'xMidYMid slice',
+  }));
+  defs.appendChild(pat);
+  svg.appendChild(defs);
+  return `url(#${id})`;
+}
+
 // How many ways there are to roll each number: the dots under a disc.
 function pips(n) { return n === 0 ? 0 : 6 - Math.abs(7 - n); }
 
@@ -339,7 +358,10 @@ function draw() {
     const [cx, cy] = px(h.q, h.r);
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
     g.appendChild(el('polygon', {
-      points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
+      points: hexPoints(cx, cy),
+      fill: h.terrain === 'mountains'
+        ? mountainFill(svg, `m-${h.id}`, cx, cy, h.id)
+        : `var(--${h.terrain})`,
       // The outline is drawn in the panel's own colour, so it reads as a gap
       // between tiles rather than a line around them — the board separates
       // into pieces without anything being added to it. Taken from the
