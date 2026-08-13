@@ -448,8 +448,6 @@ function draw() {
     if (!node) return;
     node.setAttribute('opacity', 0.45);
     const g = el('g', { class: 'spot ghost' });
-    // Staggered, so a row of spots breathes rather than pulsing in lockstep.
-    g.style.animationDelay = `${((x * 7 + y * 13) % 20) / 10}s`;
     svg.removeChild(node);
     g.appendChild(node);
     g.onclick = () => act(choice);
