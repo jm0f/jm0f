@@ -233,27 +233,6 @@ function el(tag, attrs, kids) {
   return n;
 }
 
-// One photograph per hex, clipped to the hexagon.
-//
-// A repeating pattern was the wrong tool: it showed an arbitrary crop of the
-// picture, and pulling back only brought the repeat closer until the tile
-// would have seamed inside a single hex. A clipped image has no repeat to
-// avoid, so the photograph is laid over the hexagon's own box and scaled to
-// cover it — the composition survives, and the hexagon does the cropping.
-function photoHex(svg, id, terrain, cx, cy) {
-  const w = SIZE * Math.sqrt(3), h = SIZE * 2;   // the hexagon's exact box
-  const defs = el('defs', {});
-  const clip = el('clipPath', { id });
-  clip.appendChild(el('polygon', { points: hexPoints(cx, cy) }));
-  defs.appendChild(clip);
-  svg.appendChild(defs);
-  svg.appendChild(el('image', {
-    href: `/art/${terrain}.jpg`,
-    x: cx - w / 2, y: cy - h / 2, width: w, height: h,
-    preserveAspectRatio: 'xMidYMid slice', 'clip-path': `url(#${id})`,
-  }));
-}
-
 // How many ways there are to roll each number: the dots under a disc.
 function pips(n) { return n === 0 ? 0 : 6 - Math.abs(7 - n); }
 
@@ -359,11 +338,8 @@ function draw() {
   view.hexes.forEach(h => {
     const [cx, cy] = px(h.q, h.r);
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
-    // The photograph goes down first; the polygon above it carries the gap
-    // stroke and nothing else.
-    photoHex(svg, `t-${h.id}`, h.terrain, cx, cy);
     g.appendChild(el('polygon', {
-      points: hexPoints(cx, cy), fill: 'none',
+      points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
       // The outline is drawn in the panel's own colour, so it reads as a gap
       // between tiles rather than a line around them — the board separates
       // into pieces without anything being added to it. Taken from the
