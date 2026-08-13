@@ -53,7 +53,7 @@ pub enum Action {
     PlayRoadBuilding,
     PlayInvention([Resource; 2]),
     PlayMonopoly(Resource),
-    /// Maritime trade at whatever rate the player's ports allow (R-7.6–R-7.9).
+    /// Supply trade at whatever rate the player's ports allow (R-7.6–R-7.9).
     Trade {
         give: Resource,
         take: Resource,
@@ -1946,7 +1946,7 @@ mod tests {
     }
 
     #[test]
-    fn maritime_trade_uses_the_best_available_rate() {
+    fn supply_trade_uses_the_best_available_rate() {
         let mut s = State::new(3, 14);
         s.phase = Phase::Action;
         s.hand[0] = [4, 0, 0, 0, 0];

@@ -80,7 +80,7 @@ pub struct Weights {
     pub pieces: i32,
     /// Progress toward affording the next purchase, per build type.
     ///
-    /// Without this the bot never trades: a maritime trade is a net loss of
+    /// Without this the bot never trades: a supply trade is a net loss of
     /// cards, and one ply cannot see the build it enables. Scoring partial
     /// progress toward a cost makes the enabling trade pay for itself.
     pub build_progress: i32,

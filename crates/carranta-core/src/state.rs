@@ -101,7 +101,7 @@ pub const CITY_POOL: u8 = 4;
 /// learning and the LLM player need it narrowed or switched off.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum TradeMode {
-    /// No player-to-player trading. Maritime trade is unaffected.
+    /// No player-to-player trading. Supply trade is unaffected.
     ///
     /// The default, because the generated action space is what search and
     /// training consume and neither wants an unbounded one.
@@ -539,25 +539,65 @@ impl State {
     }
 }
 
+/// The coastline, in order, as a closed walk.
+///
+/// A coastal intersection is one that does not touch three hexes — the sea
+/// takes the place of the missing one. There are 30 of them and they form a
+/// simple cycle, so the walk is unambiguous: every coastal vertex has exactly
+/// two coastal neighbours, and taking the unvisited one each step goes round
+/// the island once.
+pub fn coast_ring() -> Vec<u8> {
+    let mut touches = [0u8; VERTEX_COUNT];
+    for h in 0..HEX_COUNT as u8 {
+        for v in crate::topology::iter_vertices(hex_vertices(h)) {
+            touches[v as usize] += 1;
+        }
+    }
+    let coastal: VertexSet = (0..VERTEX_COUNT as u8)
+        .filter(|&v| touches[v as usize] < 3)
+        .fold(0, |m, v| m | vertex_bit(v));
+
+    let start = coastal.trailing_zeros() as u8;
+    let mut ring = vec![start];
+    let mut seen = vertex_bit(start);
+    while let Some(next) =
+        crate::topology::iter_vertices(neighbors(*ring.last().unwrap()) & coastal & !seen).next()
+    {
+        ring.push(next);
+        seen |= vertex_bit(next);
+    }
+    ring
+}
+
 /// The default port layout (ART-1).
 ///
-/// A placeholder, not a designed one: nine ports spaced evenly around the
-/// coast, four generic and one per resource. Port distribution shapes the
-/// whole trading economy and wants playtesting — see §11.
+/// Nine ports — four generic and one per resource — each occupying **two
+/// adjacent coastal intersections**, which is what a port is: a stretch of
+/// coast with two landing points, either of which a building can claim
+/// (R-7.9). A port on a single intersection would be half a port, and would
+/// make port access rarer than the rules intend.
+///
+/// That accounts for 18 of the 30 coastal intersections. The remaining 12 are
+/// spread as six single gaps and three double ones, so the ports go round the
+/// whole island rather than crowding one shore. A generic port sits between
+/// every pair of specific ones, so no two 2:1 ports are neighbours.
+///
+/// The *arrangement* is settled; which resource each 2:1 port serves relative
+/// to the terrain under it is a content question that wants playtesting (§11).
 fn default_ports() -> [VertexSet; PORT_KINDS] {
-    // Coastal intersections are those with only two roads at them; walking
-    // them in index order and taking pairs at a regular stride gives a
-    // reproducible spread without hand-transcribing anything.
-    let coastal: Vec<u8> = (0..VERTEX_COUNT as u8)
-        .filter(|&v| edges_at(v).count_ones() == 2)
-        .collect();
+    let ring = coast_ring();
+    // Coastal intersections skipped after each port. Six ones and three twos:
+    // 9 ports × 2 intersections + 12 skipped = the 30 the coast has, so the
+    // pattern closes exactly on itself.
+    const GAPS: [usize; 9] = [1, 1, 2, 1, 1, 2, 1, 1, 2];
+    // Index 0 is the generic 3:1; 1..=5 are the 2:1 ports, one per resource.
+    const KINDS: [usize; 9] = [1, 0, 2, 0, 3, 0, 4, 0, 5];
+
     let mut ports = [0u64; PORT_KINDS];
-    // 9 ports: 3:1, 2:1 brick, 3:1, 2:1 wood, 3:1, 2:1 wool, 3:1, 2:1 wheat,
-    // 2:1 ore — alternating so no two of a kind sit together.
-    let kinds = [0usize, 1, 0, 2, 0, 3, 0, 4, 5];
-    for (i, &kind) in kinds.iter().enumerate() {
-        let a = coastal[(i * 2) % coastal.len()];
-        ports[kind] |= vertex_bit(a);
+    let mut at = 0;
+    for (i, &kind) in KINDS.iter().enumerate() {
+        ports[kind] |= vertex_bit(ring[at % ring.len()]) | vertex_bit(ring[(at + 1) % ring.len()]);
+        at += 2 + GAPS[i];
     }
     ports
 }
@@ -682,6 +722,87 @@ mod tests {
         assert!(s.production(roll)[0][res] >= 1);
         s.robber = h as u8;
         assert_eq!(s.production(roll)[0][res], 0);
+    }
+
+    #[test]
+    fn the_coast_is_one_closed_walk_of_thirty_intersections() {
+        let ring = coast_ring();
+        assert_eq!(ring.len(), 30, "the island has 30 coastal intersections");
+        let mut seen = 0u64;
+        for (i, &v) in ring.iter().enumerate() {
+            assert_eq!(seen & vertex_bit(v), 0, "vertex {v} appears twice");
+            seen |= vertex_bit(v);
+            let next = ring[(i + 1) % ring.len()];
+            assert!(
+                neighbors(v) & vertex_bit(next) != 0,
+                "{v} and {next} are consecutive in the ring but not adjacent",
+            );
+        }
+    }
+
+    #[test]
+    fn every_port_covers_two_adjacent_intersections() {
+        // A port is a stretch of coast, not a point: a building on either of
+        // its two landing places can use it (R-7.9).
+        let s = State::new(4, 1);
+        for kind in 0..PORT_KINDS {
+            let vs: Vec<u8> = crate::topology::iter_vertices(s.ports[kind]).collect();
+            let expected = if kind == 0 { 8 } else { 2 };
+            assert_eq!(vs.len(), expected, "kind {kind} covers the wrong count");
+        }
+        // Each 2:1 port's two intersections are adjacent to each other.
+        for kind in 1..PORT_KINDS {
+            let vs: Vec<u8> = crate::topology::iter_vertices(s.ports[kind]).collect();
+            assert!(
+                neighbors(vs[0]) & vertex_bit(vs[1]) != 0,
+                "kind {kind} is split across the coast rather than being one port",
+            );
+        }
+    }
+
+    #[test]
+    fn ports_go_round_the_whole_island_without_touching() {
+        let ring = coast_ring();
+        let s = State::new(4, 1);
+        let all: u64 = s.ports.iter().fold(0, |m, p| m | p);
+        assert_eq!(
+            all.count_ones(),
+            18,
+            "9 ports on two intersections each, none shared",
+        );
+
+        // Walk the coast and read off the runs: every port must be two long,
+        // and every gap between ports one or two. A layout that clusters —
+        // as the first one did — shows up here as a long portless stretch.
+        let flags: Vec<bool> = ring.iter().map(|&v| all & vertex_bit(v) != 0).collect();
+        let start = flags.iter().position(|&f| !f).expect("gaps exist");
+        let mut runs: Vec<(bool, usize)> = Vec::new();
+        for i in 0..flags.len() {
+            let f = flags[(start + i) % flags.len()];
+            match runs.last_mut() {
+                Some((kind, n)) if *kind == f => *n += 1,
+                _ => runs.push((f, 1)),
+            }
+        }
+        let ports: Vec<usize> = runs.iter().filter(|(f, _)| *f).map(|(_, n)| *n).collect();
+        let gaps: Vec<usize> = runs.iter().filter(|(f, _)| !*f).map(|(_, n)| *n).collect();
+        assert_eq!(ports, vec![2; 9], "every port is two intersections wide");
+        assert_eq!(gaps.len(), 9, "one gap between each pair of ports");
+        assert!(
+            gaps.iter().all(|&g| (1..=2).contains(&g)),
+            "no stretch of coast is left without a port: {gaps:?}",
+        );
+    }
+
+    #[test]
+    fn no_intersection_serves_two_ports() {
+        // Overlapping ports would hand one settlement two rates at once.
+        let s = State::new(4, 1);
+        let mut seen = 0u64;
+        for p in s.ports {
+            assert_eq!(seen & p, 0, "two ports share an intersection");
+            seen |= p;
+        }
     }
 
     #[test]

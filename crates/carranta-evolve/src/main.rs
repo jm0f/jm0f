@@ -126,7 +126,7 @@ fn csv_row(r: &Report, connectivity: f64) -> String {
         b.turns,
         b.trades,
         b.offers_made,
-        b.maritime_trades,
+        b.supply_trades,
         b.settlements_built,
         b.cities_built,
         b.roads_built,
@@ -137,7 +137,7 @@ fn csv_row(r: &Report, connectivity: f64) -> String {
 }
 
 const CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,spread,\
-above_anchor,champion_sigma,connectivity,seconds,sampled,turns,trades,offers,maritime,settlements,cities,roads,\
+above_anchor,champion_sigma,connectivity,seconds,sampled,turns,trades,offers,supply_trades,settlements,cities,roads,\
 dev_bought,militia,production\n";
 
 fn main() {

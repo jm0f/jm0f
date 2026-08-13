@@ -192,6 +192,30 @@ function el(tag, attrs, kids) {
 // How many ways there are to roll each number: the dots under a disc.
 function pips(n) { return n === 0 ? 0 : 6 - Math.abs(7 - n); }
 
+// Rebuild whole ports from the per-intersection list. A port covers two
+// adjacent coastal intersections, so its two entries are joined by an edge;
+// anything left unpaired is drawn on its own rather than dropped.
+function portGroups() {
+  const byKind = {};
+  view.ports.forEach(code => {
+    const kind = code % 8;
+    (byKind[kind] = byKind[kind] || []).push(Math.floor(code / 8));
+  });
+  const joined = new Set();
+  view.edges.forEach(e => { joined.add(e.a + ':' + e.b); joined.add(e.b + ':' + e.a); });
+
+  const out = [];
+  for (const kind in byKind) {
+    const left = byKind[kind].slice();
+    while (left.length) {
+      const v = left.shift();
+      const i = left.findIndex(w => joined.has(v + ':' + w));
+      out.push({ kind: +kind, at: i < 0 ? [v] : [v, left.splice(i, 1)[0]] });
+    }
+  }
+  return out;
+}
+
 function draw() {
   const svg = document.getElementById('board');
   svg.textContent = '';
@@ -235,17 +259,23 @@ function draw() {
     svg.appendChild(g);
   });
 
-  // Ports, as a marker just outside the coast.
-  view.ports.forEach(code => {
-    const v = Math.floor(code / 8), kind = code % 8;
-    const [x, y] = vxy[v];
-    const k = Math.hypot(x, y);
-    const ox = x + (x / k) * 20, oy = y + (y / k) * 20;
-    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 8, fill: '#1d2026', stroke: '#6b7686' }));
-    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: '#9aa3b0', 'font-size': 8.5 });
+  // Ports sit just off the coast, each joined to the two intersections it
+  // serves. They arrive per-intersection, so put each port back together
+  // first — drawing them apart would show eighteen ports where there are nine.
+  portGroups().forEach(port => {
+    const pts = port.at.map(v => vxy[v]);
+    const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+    const my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    const k = Math.hypot(mx, my) || 1;
+    const ox = mx + (mx / k) * 30, oy = my + (my / k) * 30;
+    pts.forEach(([x, y]) => svg.appendChild(el('line', {
+      x1: ox, y1: oy, x2: x, y2: y, stroke: '#6b7686', 'stroke-width': 2.5, opacity: .55,
+    })));
+    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: '#1d2026', stroke: '#6b7686' }));
+    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: '#9aa3b0', 'font-size': 9 });
     // Two letters, taken from the same names the cards use, so a port and a
     // card cannot be read as different resources.
-    t.textContent = kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][kind - 1];
+    t.textContent = port.kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][port.kind - 1];
     svg.appendChild(t);
   });
 

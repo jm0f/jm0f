@@ -25,7 +25,7 @@ pub struct Behaviour {
     /// Trades completed, counted once per party.
     pub trades: f64,
     pub offers_made: f64,
-    pub maritime_trades: f64,
+    pub supply_trades: f64,
     pub settlements_built: f64,
     pub cities_built: f64,
     pub roads_built: f64,
@@ -71,10 +71,7 @@ impl Sampler {
             .sum::<f64>()
             / 2.0;
         t.offers_made += (0..4).map(|p| summary.offers_made[p] as f64).sum::<f64>() / seats;
-        t.maritime_trades += (0..4)
-            .map(|p| summary.maritime_trades[p] as f64)
-            .sum::<f64>()
-            / seats;
+        t.supply_trades += (0..4).map(|p| summary.supply_trades[p] as f64).sum::<f64>() / seats;
         t.settlements_built += (0..4)
             .map(|p| summary.builds[p].settlements as f64)
             .sum::<f64>()
@@ -113,7 +110,7 @@ impl Sampler {
             turns: t.turns / d,
             trades: t.trades / d,
             offers_made: t.offers_made / d,
-            maritime_trades: t.maritime_trades / d,
+            supply_trades: t.supply_trades / d,
             settlements_built: t.settlements_built / d,
             cities_built: t.cities_built / d,
             roads_built: t.roads_built / d,

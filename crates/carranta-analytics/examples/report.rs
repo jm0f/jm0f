@@ -220,7 +220,7 @@ fn main() {
         let o = summary.opening[p];
         println!(
             "  seat {p}  opening {:2} pips, {} resources, {} ports  |  built {}r {}s {}c  |  \
-             offers {:2}, trades {:2}, maritime {:2}  |  robbed of {}",
+             offers {:2}, trades {:2}, supply {:2}  |  robbed of {}",
             o.pips,
             o.diversity,
             o.ports,
@@ -229,7 +229,7 @@ fn main() {
             summary.builds[p].cities,
             summary.offers_made[p],
             summary.trades_completed[p],
-            summary.maritime_trades[p],
+            summary.supply_trades[p],
             summary.robbed_of(p),
         );
     }

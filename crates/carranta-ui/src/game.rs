@@ -183,9 +183,12 @@ impl Session {
                 self.log.push("You declined the open offers".to_string());
             }
             Choice::Play(action) => {
+                // Named before it is applied: a phrase describes the position
+                // the action was taken in, not the one it produced.
+                let phrase = describe(&action, &self.state, HUMAN as usize);
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.version += 1;
-                self.log.push(format!("You: {}", describe(&action)));
+                self.log.push(format!("You: {phrase}"));
                 self.forget_declines();
             }
         }
@@ -219,9 +222,10 @@ impl Session {
             give,
             want,
         };
+        let phrase = describe(&action, &self.state, HUMAN as usize);
         self.state.apply(action).map_err(Refused::Illegal)?;
         self.version += 1;
-        self.log.push(format!("You: {}", describe(&action)));
+        self.log.push(format!("You: {phrase}"));
         self.forget_declines();
         self.finish_move();
         Ok(())
@@ -253,12 +257,13 @@ impl Session {
             }
             let seat = self.state.decider() as usize;
             let action = self.bots[seat].choose(&self.state, &buf);
+            let phrase = describe(&action, &self.state, seat);
             if self.state.apply(action).is_err() {
                 break;
             }
             self.version += 1;
             if worth_logging(&action) {
-                self.log.push(format!("Seat {seat}: {}", describe(&action)));
+                self.log.push(format!("Seat {seat}: {phrase}"));
             }
             self.forget_declines();
             self.settle_between_bots();
@@ -343,9 +348,9 @@ impl Choice {
         }
     }
 
-    pub fn label(&self) -> String {
+    pub fn label(&self, state: &State) -> String {
         match self {
-            Choice::Play(a) => describe(a),
+            Choice::Play(a) => describe(a, state, state.decider() as usize),
             Choice::Decline => "No thanks".to_string(),
         }
     }
@@ -404,7 +409,11 @@ fn cards(counts: &[u8; 5]) -> String {
 }
 
 /// A phrase for one action, for buttons and for the log.
-pub fn describe(a: &Action) -> String {
+///
+/// `state` is the position the action is taken in and `actor` the seat taking
+/// it, because a supply trade cannot be named without them: the rate depends
+/// on which ports that seat holds.
+pub fn describe(a: &Action, state: &State, actor: usize) -> String {
     match *a {
         Action::PlaceSettlement(v) => format!("Place settlement at {v}"),
         Action::PlaceRoad(e) => format!("Place road at {e}"),
@@ -427,10 +436,22 @@ pub fn describe(a: &Action) -> String {
             RESOURCE_NAMES[a as usize], RESOURCE_NAMES[b as usize]
         ),
         Action::PlayMonopoly(r) => format!("Play Monopoly on {}", RESOURCE_NAMES[r as usize]),
-        Action::Trade { give, take } => format!(
-            "Trade {} for {} at the port",
-            RESOURCE_NAMES[give as usize], RESOURCE_NAMES[take as usize]
-        ),
+        Action::Trade { give, take } => {
+            // Four-for-one needs no port — it is the bank, open to everyone
+            // always (R-7.6). Calling that "at the port" misnames the trade a
+            // player makes most often, and does it while standing nowhere near
+            // a port. Only the improved rates are a port's doing (R-7.7, R-7.8).
+            let rate = state.trade_rate(actor, give);
+            let with = if rate == 4 {
+                "with the bank"
+            } else {
+                "at the port"
+            };
+            format!(
+                "Trade {rate} {} for 1 {} {with}",
+                RESOURCE_NAMES[give as usize], RESOURCE_NAMES[take as usize]
+            )
+        }
         Action::ProposeTrade { to, give, want, .. } => match to {
             Some(seat) => format!("Offer seat {seat} {} for {}", cards(&give), cards(&want)),
             None => format!("Offer {} for {}", cards(&give), cards(&want)),
@@ -453,6 +474,31 @@ fn worth_logging(a: &Action) -> bool {
 mod tests {
     use super::*;
     use carranta_core::action::Illegal;
+    use carranta_core::state::Resource;
+    use carranta_core::topology::{iter_vertices, vertex_bit};
+
+    #[test]
+    fn a_four_for_one_is_a_bank_trade_and_says_the_rate() {
+        let mut s = State::new(4, 11);
+        let a = Action::Trade {
+            give: Resource::Ore,
+            take: Resource::Wheat,
+        };
+        assert_eq!(
+            describe(&a, &s, 0),
+            "Trade 4 ore for 1 wheat with the bank",
+            "no port is involved in a four-for-one, and none is needed"
+        );
+
+        // A building on a generic port is what buys the better rate, and only
+        // then does a port have anything to do with it.
+        let generic = iter_vertices(s.ports[0]).next().expect("a 3:1 port exists");
+        s.settlements[0] |= vertex_bit(generic);
+        assert_eq!(describe(&a, &s, 0), "Trade 3 ore for 1 wheat at the port");
+
+        // The same trade from a seat without that building is still the bank's.
+        assert_eq!(describe(&a, &s, 1), "Trade 4 ore for 1 wheat with the bank");
+    }
 
     /// Play on until the human is building and trading.
     fn reach_action_phase(s: &mut Session) {
@@ -723,7 +769,7 @@ mod tests {
     #[test]
     fn every_action_has_a_phrase() {
         // A button with an empty label is a bug the compiler cannot catch.
-        use carranta_core::state::Resource;
+        let state = State::new(4, 7);
         let all = [
             Action::PlaceSettlement(1),
             Action::PlaceRoad(2),
@@ -769,7 +815,7 @@ mod tests {
             Action::EndTurn,
         ];
         for a in all {
-            let phrase = describe(&a);
+            let phrase = describe(&a, &state, 0);
             assert!(!phrase.is_empty(), "{a:?} has no phrase");
             assert!(!Choice::Play(a).group().is_empty());
         }

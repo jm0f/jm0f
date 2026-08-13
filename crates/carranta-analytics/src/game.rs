@@ -60,8 +60,8 @@ pub struct Report {
     /// Cards each seat discarded to a 7 (R-6.2).
     pub discards: [u32; MAX_PLAYERS],
 
-    /// Maritime trades, at whatever rate the ports allowed (R-7.6–R-7.9).
-    pub maritime_trades: [u32; MAX_PLAYERS],
+    /// Supply trades, at whatever rate the ports allowed (R-7.6–R-7.9).
+    pub supply_trades: [u32; MAX_PLAYERS],
     pub offers_made: [u32; MAX_PLAYERS],
     pub offers_withdrawn: [u32; MAX_PLAYERS],
     pub offers_declined: [u32; MAX_PLAYERS],
@@ -132,7 +132,7 @@ pub fn analyse(log: &Log) -> Result<Report, ReplayError> {
         steals: [[0; MAX_PLAYERS]; MAX_PLAYERS],
         empty_robberies: 0,
         discards: [0; MAX_PLAYERS],
-        maritime_trades: [0; MAX_PLAYERS],
+        supply_trades: [0; MAX_PLAYERS],
         offers_made: [0; MAX_PLAYERS],
         offers_withdrawn: [0; MAX_PLAYERS],
         offers_declined: [0; MAX_PLAYERS],
@@ -232,7 +232,7 @@ pub fn analyse(log: &Log) -> Result<Report, ReplayError> {
                     r.discards[player as usize] += 1;
                 }
             }
-            Action::Trade { .. } => r.maritime_trades[actor] += 1,
+            Action::Trade { .. } => r.supply_trades[actor] += 1,
             Action::ProposeTrade { by, .. } => {
                 if (by as usize) < seats {
                     r.offers_made[by as usize] += 1;
@@ -441,7 +441,7 @@ mod tests {
         let r = analyse(&self_play(8, TradeMode::Disabled)).unwrap();
         assert_eq!(r.offers_made, [0; MAX_PLAYERS]);
         assert_eq!(r.trades_completed, [0; MAX_PLAYERS]);
-        // Maritime trade is unaffected by the mode.
-        assert!(r.maritime_trades.iter().sum::<u32>() > 0);
+        // Supply trade is unaffected by the mode.
+        assert!(r.supply_trades.iter().sum::<u32>() > 0);
     }
 }

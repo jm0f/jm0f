@@ -168,7 +168,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     let choices = session.choices();
     j.array("choices", choices.iter().enumerate(), |o, (i, c)| {
         o.int("i", i as i64)
-            .str("label", &c.label())
+            .str("label", &c.label(session.state()))
             .str("group", c.group());
         match c.target() {
             Target::Vertex(x) => o.int("vertex", x as i64),

@@ -115,18 +115,18 @@ A hex-tile resource-trading and settlement-building game for 3–4 players — a
 | R-7.3 | During a player's turn, other players may only trade **with the active player** — not with each other and not with the supply. Triangular (three-way) trades are forbidden. |
 | R-7.4 | **Player trade.** The active player announces which resource(s) they want and which they offer. Other players may accept, counteroffer, or make their own proposals. |
 | R-7.5 | **No gifting.** Cards may not be given away in any form. This includes trading matching resource types (e.g., 3 ore for 1 ore is not allowed). A trade must involve giving *and* taking resources — nothing may be traded for nothing, for a service, or for a promise (no credit or deferred trades). |
-| R-7.6 | **General supply trade (4:1).** Put 4 identical resource cards into the supply and take 1 card of a **different** resource. |
+| R-7.6 | **Bank trade (4:1).** Put 4 identical resource cards into the supply and take 1 card of a **different** resource. No port is involved, and none is needed. |
 | R-7.7 | **3:1 port trade.** With a building on a 3:1 port, put 3 identical resource cards into the supply and take 1 card of a **different** resource. |
 | R-7.8 | **2:1 port trade.** With a building on a 2:1 port, put 2 cards of the resource shown on that port into the supply and take 1 card of a **different** resource. |
-| R-7.9 | Port access requires the player's own building (settlement or city) on that port's intersection. A player may never use an opponent's port. |
+| R-7.9 | Port access requires the player's own building (settlement or city) on **either** of that port's two intersections — a port covers an adjacent pair of coastal intersections, not a single point. A player may never use an opponent's port. |
 | R-7.10 | Development cards may not be traded or given away. Bonus tiles are likewise never transferable by trade — they move only by meeting their own conditions (R-10). |
 | R-7.11 | Trades must be public: no secret trades, and no player may be required to reveal their hand. |
 | R-7.12 | The robber never blocks trading, including port trades. |
 | R-7.13 | **Player trades have no ratio restriction.** Any number of cards and any mix of types may be exchanged for any other, subject only to R-7.5. There is no requirement that the counts match or that either side be a single type. |
 | R-7.14 | No player is ever obliged to trade or to accept an offer, and the active player is not bound by an announced offer until the exchange is made. |
 | R-7.15 | Trading is confined to the Action phase. No trade may occur before the dice roll, nor during discard/robber resolution (R-6.6). |
-| R-7.16 | Maritime trades (4:1, 3:1, 2:1) may be performed as often as the player can pay for them, and are always available regardless of ports — only the improved ratios require a port. |
-| R-7.17 | **Empty supply stack.** A maritime trade is illegal unless the target stack can supply the full amount taken. An Invention card takes as many of the requested cards as remain (possibly 1 or 0). |
+| R-7.16 | Supply trades (4:1, 3:1, 2:1) may be performed as often as the player can pay for them, and are always available regardless of ports — only the improved ratios require a port. |
+| R-7.17 | **Empty supply stack.** A supply trade is illegal unless the target stack can supply the full amount taken. An Invention card takes as many of the requested cards as remain (possibly 1 or 0). |
 | R-7.18 | **No type overlap.** No resource type may appear on both the give and take side of a single trade — a generalization of R-7.5 covering multi-type offers. |
 | R-7.19 | **Open-market offers.** Multiple trade offers may be live simultaneously, and any player may accept any live offer during the active player's turn. Every offer must still have the active player as one party (R-7.3). Acceptances resolve atomically, first-come, re-validating both parties' holdings at execution; offers invalidated by an intervening state change are rejected with a reason, never executed against stale state. |
 | R-7.21 | **Addressed offers** (HOUSE). An offer may name one seat, and then only that seat may take it; unaddressed offers stay open to everyone entitled under R-7.19. Nothing in the rules mentions addressing — this is a protocol decision, made because "I'll trade you, and only you" is ordinary at a table. R-7.3 still binds: an addressed offer must have the active player as one of its two parties, so it cannot become a route to the triangular trade R-7.3 forbids. Generated offers are never addressed, since enumerating recipients multiplies a search's action space for no gain. |
@@ -852,7 +852,7 @@ The format is plain text on purpose: a run that dies overnight should leave some
 
 `history.csv` gets a row per generation — fitness, noise, whether selection could separate the field, the champion's gap above the anchor **and its σ**, ladder connectivity, and the behavioural markers below.
 
-**Behavioural markers** (E-14) close a gap the rest of the design left open: a rating that climbs says something improved, but not what. A few of each generation's validation games are recorded and run through §10, giving trades, offers, maritime trades, buildings by type, development cards, militia plays and production per generation. Selection never sees them, so they describe play rather than shaping it.
+**Behavioural markers** (E-14) close a gap the rest of the design left open: a rating that climbs says something improved, but not what. A few of each generation's validation games are recorded and run through §10, giving trades, offers, supply trades, buildings by type, development cards, militia plays and production per generation. Selection never sees them, so they describe play rather than shaping it.
 
 They earn their place immediately. Two findings came out of building them:
 
@@ -949,7 +949,7 @@ This matters because the four have completely different meanings. `DiceLuck` is 
 ### 10.3 Descriptive statistics
 
 **Per game**
-Length in turns and wall time · winner and final VP breakdown · roll histogram with §10.1(a) percentile · 7-count · total production by resource · robber moves and target hexes · steal matrix (who robbed whom) · trade counts by type (player, 4:1, 3:1, 2:1) · offers made/accepted/rejected · development cards bought and played by type · VP progression curve per player · Longest Road and Largest Militia holders over time and number of transfers · discards forced by 7s.
+Length in turns and wall time · winner and final VP breakdown · roll histogram with §10.1(a) percentile · 7-count · total production by resource · robber moves and target hexes · steal matrix (who robbed whom) · trade counts by type (player, bank 4:1, port 3:1, port 2:1) · offers made/accepted/rejected · development cards bought and played by type · VP progression curve per player · Longest Road and Largest Militia holders over time and number of transfers · discards forced by 7s.
 
 **Per player, within a game**
 Expected vs actual production with the §10.2 decomposition · income by source (production, trade, Invention, Monopoly, steals) · outflow by sink (builds, trades, discards, robbed, Monopoly losses) · resources spent per VP earned · average and peak hand size · cards lost to discards · opening placement quality (pip count, resource diversity, port access) · trade profile (proposal rate, acceptance rate as proposer and as accepter, net resource balance per counterparty) · robber exposure (times targeted, cards lost) · think time by decision type.
@@ -1077,7 +1077,7 @@ Four design assets are referenced by the rules but not yet specified. They are *
 
 | ID | Asset | Needed for | Default if undesigned |
 |---|---|---|---|
-| ART-1 | **Port distribution and placement**: how many 3:1 and 2:1 ports, which resource each 2:1 serves, and which intersection pairs carry them | Both setup modes | 4× 3:1 and 5× 2:1 (one per resource), spaced evenly around the coast |
+| ART-1 | **Port distribution and placement**: how many 3:1 and 2:1 ports, which resource each 2:1 serves, and which intersection pairs carry them | Both setup modes | **Arrangement built**: 4× 3:1 and 5× 2:1 (one per resource), each on an adjacent pair of coastal intersections, spread round the whole coast with a generic between every two specific ports. Which resource each 2:1 serves relative to the terrain under it is still open |
 | ART-2 | **Number-disc placement order** for Random Setup — the traversal that R-3.3 walks | Random Setup | Spiral inward from a corner, skipping the desert, with the D-6 red-number check |
 | ART-3 | **Beginner Setup board layout**: terrain and number for each of the 19 positions | Beginner Setup | — (mode unavailable until designed) |
 | ART-4 | **Beginner Setup starting pieces**: the 8 settlement and 8 road positions, and which settlement is each player's "second" | Beginner Setup | — (mode unavailable until designed) |
@@ -1125,7 +1125,7 @@ Seven questions where more than one rule would have worked and we chose. These a
 |---|---|---|---|
 | D-1 | Road Building with fewer than 2 legal placements (blocked board or short road pool) | **Place as many as are legal** (1 or 0). The card is discarded and the turn's development-card allowance is consumed. | R-9.10a |
 | D-2 | Discard resolution order on a 7 | **Simultaneous.** All affected players discard at once; play resumes when the last confirms. | R-6.2a |
-| D-3 | Taking a resource whose supply stack is empty (4:1/port trade, or Invention) | **Must pay in full.** The trade is illegal unless the stack can supply the whole amount; Invention takes as many as remain (possibly 1 or 0). | R-7.17 |
+| D-3 | Taking a resource whose supply stack is empty (bank or port trade, or Invention) | **Must pay in full.** The trade is illegal unless the stack can supply the whole amount; Invention takes as many as remain (possibly 1 or 0). | R-7.17 |
 | D-4 | Same resource type on both sides of a multi-type player trade | **Forbid any overlap.** No resource type may appear on both sides of a trade. | R-7.18 |
 | D-5 | Trade offer lifecycle | **Open market** — see D-5 notes below. | R-7.19 |
 | D-6 | Red numbers (6/8) adjacent on a randomly generated board | **Game option**, defaulting to the constraint enabled. | R-3.12 |
