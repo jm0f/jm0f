@@ -30,6 +30,7 @@
   }
   h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .02em; }
   header .status { color: var(--dim); }
+  header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
   button, select {
     font: inherit; color: var(--ink); background: #262b33;
@@ -108,6 +109,7 @@
 <header>
   <h1>Carranta</h1>
   <span class="status" id="status">loading…</span>
+  <span class="build" id="build"></span>
   <span class="spacer"></span>
   <select id="seats"><option value="3">3 seats</option><option value="4" selected>4 seats</option></select>
   <select id="mode">
@@ -342,6 +344,7 @@ function render() {
     : (v.yourTurn ? `Your move — ${v.phase}` : `Seat ${v.toAct} is playing`);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.getElementById('status').textContent = `${turn}${dice} · seed ${v.seed}`;
+  document.getElementById('build').textContent = `build ${v.build}`;
   document.getElementById('note').textContent = v.note || '';
 
   draw();

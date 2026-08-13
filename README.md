@@ -26,11 +26,24 @@ compilation — a couple of minutes on an M1, and no network access at all.
 ## Playing in the browser
 
 ```sh
+./play
+```
+
+That pulls, rebuilds, restarts and opens the board. Use it rather than leaving
+a server running: the interface is a compiled binary, so a change only reaches
+the browser after a rebuild, and clicking **New game** re-deals from the code
+already running — it can never show you something you have just pulled. The
+page header shows the commit it was built from, so a stale process is visible
+rather than mistaken for a change that did not work.
+
+The long way round, if you would rather see the steps:
+
+```sh
 cargo run --release -p carranta-ui
 ```
 
-Then open <http://127.0.0.1:8181>. The server binds loopback only: the game is
-local and stays local.
+Either way, open <http://127.0.0.1:8181>. The server binds loopback only: the
+game is local and stays local.
 
 ```sh
 cargo run --release -p carranta-ui -- --port 9000 --seats 3 --mode restricted

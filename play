@@ -1,0 +1,52 @@
+#!/bin/sh
+# Get the latest and play it.
+#
+# Pull, rebuild, restart, open. The interface is a compiled binary, so a
+# change only reaches the browser after a rebuild — clicking "New game"
+# re-deals the board from the code already running and can never show you a
+# change you have just pulled. This does the whole sequence so that is not
+# something to remember.
+#
+#   ./play              latest on this branch
+#   ./play --no-pull    rebuild what is already checked out
+set -e
+cd "$(dirname "$0")"
+
+# cargo lives in ~/.cargo/bin, which a fresh shell may not have on PATH.
+[ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
+if ! command -v cargo > /dev/null; then
+  echo "cargo not found — install Rust with:" >&2
+  echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" >&2
+  exit 1
+fi
+
+if [ "$1" = "--no-pull" ]; then
+  shift                      # not an option the game itself understands
+else
+  git pull --ff-only
+fi
+
+# Stop whatever is already serving, so the port is free and the old build
+# cannot be mistaken for the new one.
+pkill -x carranta-play 2>/dev/null || true
+
+cargo build --release -p carranta-ui
+./target/release/carranta-play "$@" &
+GAME=$!
+trap 'kill $GAME 2>/dev/null' INT TERM   # ctrl-c stops the server too
+sleep 1
+
+# Report the port actually asked for, not the default.
+PORT=8181
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "--port" ] && PORT="$arg"
+  prev="$arg"
+done
+URL=http://127.0.0.1:$PORT
+if command -v open > /dev/null; then open "$URL"; fi
+echo
+echo "Playing at $URL — the build shown in the page header should match:"
+git rev-parse --short HEAD
+echo "Press ctrl-c to stop."
+wait $GAME

@@ -58,6 +58,9 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
 
     j.int("version", session.version() as i64);
     j.int("seed", session.seed() as i64);
+    // Which build is serving this, so a stale process is visible rather than
+    // mistaken for a change that did not work.
+    j.str("build", env!("CARRANTA_BUILD"));
     j.int("you", HUMAN as i64);
     j.int("players", seats as i64);
     j.int("toAct", v.to_act as i64);

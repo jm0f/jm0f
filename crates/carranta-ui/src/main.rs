@@ -61,7 +61,10 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("Carranta — open http://127.0.0.1:{port}");
+    println!(
+        "Carranta {} — open http://127.0.0.1:{port}",
+        env!("CARRANTA_BUILD")
+    );
     println!("  {seats} seats, {mode:?} market, seed {seed}");
     Server::new(seats, seed, mode).serve(listener);
 }
