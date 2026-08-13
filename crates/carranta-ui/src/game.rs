@@ -107,6 +107,43 @@ impl Session {
         out
     }
 
+    /// Whether the human could put an offer on the table at all.
+    ///
+    /// Composing one is pointless if the market is closed, full, or the
+    /// per-turn allowance is spent, and a form that cannot succeed is worse
+    /// than one that is not shown.
+    pub fn can_propose(&self) -> bool {
+        if self.state.trade_mode == TradeMode::Disabled {
+            return false;
+        }
+        if !matches!(self.state.phase, Phase::Action) {
+            return false;
+        }
+        // A probe rather than a second copy of the rules: whatever the engine
+        // would accept is what the form should allow.
+        for r in 0..5 {
+            if self.state.hand[HUMAN as usize][r] == 0 {
+                continue;
+            }
+            let mut give = [0u8; 5];
+            give[r] = 1;
+            let mut want = [0u8; 5];
+            want[(r + 1) % 5] = 1;
+            let mut probe = self.state;
+            if probe
+                .apply(Action::ProposeTrade {
+                    by: HUMAN,
+                    give,
+                    want,
+                })
+                .is_ok()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Offers the human could take and has not already waved away.
     fn open_offers(&self) -> Vec<u8> {
         if self.state.trade_mode == TradeMode::Disabled {
@@ -151,8 +188,42 @@ impl Session {
                 self.forget_declines();
             }
         }
-        self.run_bots();
+        self.finish_move();
         Ok(())
+    }
+
+    /// Compose and make an offer of any shape (R-7.19).
+    ///
+    /// Separate from [`Session::act`] because the engine *generates* only
+    /// single-type offers — a bound on enumeration, not on legality. A person
+    /// composing "two wood and a brick for an ore" is making a perfectly legal
+    /// offer that simply was not in the generated set, so it is built here and
+    /// handed to the engine, which validates it exactly as it would any other.
+    pub fn propose(&mut self, give: [u8; 5], want: [u8; 5], version: u64) -> Result<(), Refused> {
+        if version != self.version {
+            return Err(Refused::Stale);
+        }
+        let action = Action::ProposeTrade {
+            by: HUMAN,
+            give,
+            want,
+        };
+        self.state.apply(action).map_err(Refused::Illegal)?;
+        self.version += 1;
+        self.log.push(format!("You: {}", describe(&action)));
+        self.forget_declines();
+        self.finish_move();
+        Ok(())
+    }
+
+    /// Put the market to the other seats, then let them play on.
+    ///
+    /// The settle has to happen even when it is still the human's turn: an
+    /// offer nobody is asked about is not an offer, and before this the bots
+    /// only ever saw one after the human had ended their turn.
+    fn finish_move(&mut self) {
+        self.settle_between_bots();
+        self.run_bots();
     }
 
     /// Advance until the human has something to decide, or the game ends.
@@ -369,6 +440,43 @@ fn worth_logging(a: &Action) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use carranta_core::action::Illegal;
+
+    /// Play on until the human is building and trading.
+    fn reach_action_phase(s: &mut Session) {
+        for _ in 0..400 {
+            if matches!(s.state.phase, Phase::Action) && s.state.decider() == HUMAN {
+                return;
+            }
+            let choices = s.choices();
+            if choices.is_empty() {
+                return;
+            }
+            let pick = choices
+                .iter()
+                .position(|c| matches!(c, Choice::Play(Action::Roll)))
+                .unwrap_or(0);
+            let v = s.version();
+            let _ = s.act(pick, v);
+        }
+    }
+
+    impl Session {
+        /// Put cards in the human's hand, keeping the supply consistent.
+        fn set_hand(&mut self, cards: [u8; 5]) {
+            for (r, &wanted) in cards.iter().enumerate() {
+                let held = self.state.hand[HUMAN as usize][r];
+                self.state.supply[r] += held;
+                let give = wanted.min(self.state.supply[r]);
+                self.state.hand[HUMAN as usize][r] = give;
+                self.state.supply[r] -= give;
+            }
+        }
+    }
+
+    fn deal(s: &mut Session, cards: [u8; 5]) {
+        s.set_hand(cards);
+    }
 
     #[test]
     fn a_new_game_puts_the_human_on_the_clock() {
@@ -491,6 +599,113 @@ mod tests {
                 .unwrap_or(0);
             s.act(pick, s.version()).expect("play");
         }
+    }
+
+    #[test]
+    fn a_composed_offer_may_take_a_shape_the_engine_never_generates() {
+        // The point of the composer. Generation is capped at one resource type
+        // a side; legality is not. A person offering two of one thing and one
+        // of another is making an ordinary offer that simply was not enumerated.
+        let mut s = Session::new(4, 31, TradeMode::Full);
+        reach_action_phase(&mut s);
+        deal(&mut s, [2, 2, 0, 0, 0]);
+
+        let v = s.version();
+        s.propose([2, 1, 0, 0, 0], [0, 0, 0, 0, 1], v)
+            .expect("a mixed offer is legal");
+        let mine = s.state().offers[..s.state().offer_count as usize]
+            .iter()
+            .find(|o| o.from == HUMAN)
+            .expect("the offer reached the market");
+        assert_eq!(mine.give, [2, 1, 0, 0, 0]);
+        assert_eq!(mine.want, [0, 0, 0, 0, 1]);
+        // And it is a shape `legal_into` would never have produced.
+        let mut buf = Vec::new();
+        s.state().legal_into(&mut buf);
+        assert!(
+            !buf.iter().any(|a| matches!(
+                a,
+                Action::ProposeTrade { give, .. } if *give == [2, 1, 0, 0, 0]
+            )),
+            "generation should not enumerate mixed sides"
+        );
+    }
+
+    #[test]
+    fn a_composed_offer_is_still_judged_by_the_rules() {
+        let mut s = Session::new(4, 32, TradeMode::Full);
+        reach_action_phase(&mut s);
+        deal(&mut s, [1, 0, 0, 0, 0]);
+        let v = s.version();
+
+        // A gift, a self-trade, and cards not held are all refused (R-7.5,
+        // R-7.18) — the composer does not get its own rulebook.
+        assert!(matches!(
+            s.propose([1, 0, 0, 0, 0], [0; 5], v),
+            Err(Refused::Illegal(Illegal::EmptySide))
+        ));
+        assert!(matches!(
+            s.propose([1, 0, 0, 0, 0], [1, 0, 0, 0, 0], v),
+            Err(Refused::Illegal(Illegal::TypeOverlap))
+        ));
+        assert!(matches!(
+            s.propose([9, 0, 0, 0, 0], [0, 1, 0, 0, 0], v),
+            Err(Refused::Illegal(Illegal::CannotAfford))
+        ));
+        assert_eq!(s.version(), v, "a refused offer changes nothing");
+    }
+
+    #[test]
+    fn a_composed_offer_against_a_stale_board_is_refused() {
+        let mut s = Session::new(4, 33, TradeMode::Full);
+        reach_action_phase(&mut s);
+        deal(&mut s, [1, 0, 0, 0, 0]);
+        assert_eq!(
+            s.propose([1, 0, 0, 0, 0], [0, 1, 0, 0, 0], s.version() + 5),
+            Err(Refused::Stale)
+        );
+    }
+
+    #[test]
+    fn an_offer_is_put_to_the_other_seats_at_once() {
+        // Before this, a human's offer sat untouched until they ended their
+        // turn: `run_bots` returns immediately while it is still the human's
+        // move, and the settle lived inside that loop. An offer nobody is
+        // asked about is not an offer.
+        let mut s = Session::new(4, 34, TradeMode::Full);
+        reach_action_phase(&mut s);
+        deal(&mut s, [3, 3, 3, 3, 3]);
+
+        // Something generous enough that a bot should take it.
+        let v = s.version();
+        s.propose([3, 0, 0, 0, 0], [0, 0, 0, 0, 1], v)
+            .expect("offer");
+        let settled = !s.state().offers[..s.state().offer_count as usize]
+            .iter()
+            .any(|o| o.from == HUMAN);
+        let asked = s.log().iter().any(|l| l.contains("took an offer"));
+        assert!(
+            settled || asked || s.state().decider() != HUMAN,
+            "the offer was never put to anyone"
+        );
+    }
+
+    #[test]
+    fn composing_is_offered_only_when_it_could_succeed() {
+        let mut off = Session::new(4, 35, TradeMode::Disabled);
+        reach_action_phase(&mut off);
+        assert!(!off.can_propose(), "no market, no form");
+
+        let mut open = Session::new(4, 35, TradeMode::Full);
+        reach_action_phase(&mut open);
+        deal(&mut open, [1, 1, 0, 0, 0]);
+        assert!(open.can_propose());
+
+        // With nothing to give there is nothing to offer.
+        let mut broke = Session::new(4, 35, TradeMode::Full);
+        reach_action_phase(&mut broke);
+        broke.set_hand([0; 5]);
+        assert!(!broke.can_propose());
     }
 
     #[test]

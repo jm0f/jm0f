@@ -148,6 +148,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.ints("yourDev", own.dev_held.iter().map(|&n| n as i64));
     j.ints("yourFresh", own.dev_fresh.iter().map(|&n| n as i64));
     j.int("yourVp", own.victory_points as i64);
+    j.bool("canPropose", session.can_propose());
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);
     j.ints("dice", v.dice.iter().map(|&n| n as i64));
@@ -157,6 +158,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
         let offer = v.offers[i];
         o.int("i", i as i64)
             .int("from", offer.from as i64)
+            .bool("mine", offer.from == HUMAN)
             .ints("give", offer.give.iter().map(|&n| n as i64))
             .ints("want", offer.want.iter().map(|&n| n as i64));
     });

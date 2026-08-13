@@ -184,6 +184,26 @@ pub fn read_u64(body: &str, key: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
+/// Read a five-number array field, as the trade composer sends it.
+///
+/// Same posture as [`read_u64`]: it recognises exactly the shape the page
+/// sends, `"give":[1,0,2,0,0]`, and refuses anything else rather than
+/// salvaging part of it. Quantities above 255 are refused too — the engine
+/// counts cards in `u8`, and silently truncating would turn a nonsense offer
+/// into a plausible one.
+pub fn read_u8_array(body: &str, key: &str, n: usize) -> Option<Vec<u8>> {
+    let needle = format!("\"{key}\"");
+    let start = body.find(&needle)? + needle.len();
+    let rest = body[start..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('[')?;
+    let end = rest.find(']')?;
+    let mut out = Vec::with_capacity(n);
+    for field in rest[..end].split(',') {
+        out.push(field.trim().parse::<u8>().ok()?);
+    }
+    (out.len() == n).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +280,25 @@ mod tests {
         );
         assert_eq!(read_u64(r#"{ "action" : 42 }"#, "action"), Some(42));
         assert_eq!(read_u64(r#"{"action":0}"#, "action"), Some(0));
+    }
+
+    #[test]
+    fn an_array_field_is_read_whole_or_not_at_all() {
+        let body = r#"{"give":[1,0,2,0,0],"want":[0,3,0,0,0],"version":7}"#;
+        assert_eq!(read_u8_array(body, "give", 5), Some(vec![1, 0, 2, 0, 0]));
+        assert_eq!(read_u8_array(body, "want", 5), Some(vec![0, 3, 0, 0, 0]));
+        assert_eq!(read_u64(body, "version"), Some(7));
+
+        // Wrong length, missing, malformed, or out of range: refused whole.
+        assert_eq!(read_u8_array(r#"{"give":[1,2]}"#, "give", 5), None);
+        assert_eq!(read_u8_array(r#"{"give":[]}"#, "give", 5), None);
+        assert_eq!(read_u8_array("{}", "give", 5), None);
+        assert_eq!(read_u8_array(r#"{"give":[1,0,0,0,x]}"#, "give", 5), None);
+        assert_eq!(read_u8_array(r#"{"give":[1,0,0,0,-1]}"#, "give", 5), None);
+        // 256 cards is not 0 cards: truncation would turn nonsense into a
+        // plausible offer.
+        assert_eq!(read_u8_array(r#"{"give":[256,0,0,0,0]}"#, "give", 5), None);
+        assert_eq!(read_u8_array(r#"{"give":[1,0,0,0,0"#, "give", 5), None);
     }
 
     #[test]

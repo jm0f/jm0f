@@ -12,7 +12,9 @@ use std::sync::Mutex;
 
 use carranta_core::state::TradeMode;
 
-use crate::game::Session;
+use carranta_core::action::Illegal;
+
+use crate::game::{Refused, Session};
 use crate::json;
 use crate::view;
 
@@ -110,8 +112,26 @@ impl Server {
                 let payload = match (action, version) {
                     (Some(a), Some(v)) => match session.act(a as usize, v) {
                         Ok(()) => view::render(&session),
-                        Err(e) => view::render_with_note(&session, &format!("{e:?}")),
+                        Err(e) => view::render_with_note(&session, &refusal(&e)),
                     },
+                    _ => view::render_with_note(&session, "malformed request"),
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
+            ("POST", "/api/propose") => {
+                let mut session = self.session.lock().unwrap();
+                let give = json::read_u8_array(&body, "give", 5);
+                let want = json::read_u8_array(&body, "want", 5);
+                let version = json::read_u64(&body, "version");
+                let payload = match (give, want, version) {
+                    (Some(g), Some(w), Some(v)) => {
+                        let g = [g[0], g[1], g[2], g[3], g[4]];
+                        let w = [w[0], w[1], w[2], w[3], w[4]];
+                        match session.propose(g, w, v) {
+                            Ok(()) => view::render(&session),
+                            Err(e) => view::render_with_note(&session, &refusal(&e)),
+                        }
+                    }
                     _ => view::render_with_note(&session, "malformed request"),
                 };
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
@@ -136,6 +156,29 @@ impl Server {
             }
             _ => respond(&mut stream, 404, "text/plain", b"not found"),
         }
+    }
+}
+
+/// A refusal in words a player can act on.
+///
+/// The engine's reasons are precise but terse; "a trade must give and take"
+/// tells someone what to change, where `EmptySide` does not.
+fn refusal(e: &Refused) -> String {
+    match e {
+        Refused::Stale => "the board moved on — try again".to_string(),
+        Refused::NoSuchChoice => "that choice is no longer offered".to_string(),
+        Refused::Illegal(why) => match why {
+            Illegal::EmptySide => "a trade must give and take".to_string(),
+            Illegal::TypeOverlap => "the same resource cannot be on both sides".to_string(),
+            Illegal::CannotAfford => "you do not hold what you are offering".to_string(),
+            Illegal::OfferLimit => "you have made enough offers this turn".to_string(),
+            Illegal::MarketFull => "the market is full".to_string(),
+            Illegal::TradeDisabled => "that offer is not allowed in this game".to_string(),
+            Illegal::NotAParty => "you are not a party to that trade".to_string(),
+            Illegal::OfferStale => "that offer can no longer be paid".to_string(),
+            Illegal::WrongPhase => "not now".to_string(),
+            other => format!("{other:?}"),
+        },
     }
 }
 

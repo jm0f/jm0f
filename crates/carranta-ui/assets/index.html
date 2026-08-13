@@ -58,6 +58,17 @@
   #log { max-height: 200px; overflow-y: auto; color: var(--dim); font-size: 12px; }
   #log div { padding: 1px 0; }
   #note { color: #f0913a; }
+  .compose { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .sideLabel { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .row { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
+  .row .name { flex: 1; font-size: 12px; }
+  .row .have { color: var(--dim); font-size: 11px; min-width: 14px; text-align: right; }
+  .row button { padding: 0 7px; line-height: 1.5; }
+  .row .n { min-width: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+  .row.on .name { color: var(--ink); font-weight: 600; }
+  .row.off .name { color: var(--dim); }
+  .offer { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .offer .who { flex: 1; }
   .you { outline: 1px solid var(--p0); }
 </style>
 </head>
@@ -97,6 +108,14 @@
     <div class="panel">
       <h2>Offers</h2>
       <div id="offers"></div>
+    </div>
+    <div class="panel" id="proposePanel">
+      <h2>Offer a trade</h2>
+      <div class="compose">
+        <div class="side"><span class="sideLabel">you give</span><div id="give"></div></div>
+        <div class="side"><span class="sideLabel">you want</span><div id="want"></div></div>
+      </div>
+      <button id="propose" style="margin-top:8px; width:100%">Put it on the table</button>
     </div>
     <div class="panel">
       <h2>Log</h2>
@@ -241,16 +260,27 @@ function render() {
 
   draw();
 
+  // The engine enumerates every single-type offer it could generate — up to
+  // ~180 of them. That is the right action space for a search and the wrong
+  // one for a person, so they are folded away and the composer replaces them:
+  // it can express those and the mixed offers generation never enumerates.
+  // Two kinds of choice are shown elsewhere: the enumerated proposals, which
+  // the composer replaces, and accepting or withdrawing, which belong beside
+  // the offer itself where its contents are visible — "Accept offer 0" says
+  // considerably less than the offer does.
+  const shown = v.choices.filter(c =>
+    !/^(Offer |Accept offer |Withdraw offer )/.test(c.label));
+
   const box = document.getElementById('choices');
   box.textContent = '';
-  if (!v.choices.length) {
+  if (!shown.length) {
     const d = document.createElement('div');
     d.className = 'group';
     d.textContent = v.winner !== null ? 'the game is over' : 'waiting for the other seats';
     box.appendChild(d);
   }
   let group = null;
-  v.choices.forEach(c => {
+  shown.forEach(c => {
     if (c.group !== group) {
       group = c.group;
       const h = document.createElement('div');
@@ -302,9 +332,24 @@ function render() {
   v.offers.forEach(o => {
     const names = n => v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ') || '—';
     const d = document.createElement('div');
-    d.innerHTML = `seat ${o.from}: gives ${names(o.give)} for ${names(o.want)}`;
+    d.className = 'offer';
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = `${o.mine ? 'you' : 'seat ' + o.from}: ${names(o.give)} for ${names(o.want)}`;
+    d.appendChild(who);
+    // Taking or pulling an offer is an ordinary choice, so the button is
+    // whichever one the engine is offering for it.
+    const c = v.choices.find(c => c.label === `Accept offer ${o.i}` || c.label === `Withdraw offer ${o.i}`);
+    if (c) {
+      const b = document.createElement('button');
+      b.textContent = o.mine ? 'withdraw' : 'accept';
+      b.onclick = () => act(c.i);
+      d.appendChild(b);
+    }
     offers.appendChild(d);
   });
+
+  renderCompose();
 
   const log = document.getElementById('log');
   log.textContent = '';
@@ -316,9 +361,65 @@ function render() {
   log.scrollTop = log.scrollHeight;
 }
 
+// --- the trade composer ---
+let give = [0, 0, 0, 0, 0], want = [0, 0, 0, 0, 0];
+
+function renderCompose() {
+  const panel = document.getElementById('proposePanel');
+  panel.style.display = view.canPropose ? '' : 'none';
+  if (!view.canPropose) return;
+
+  [['give', give], ['want', want]].forEach(([which, counts]) => {
+    const host = document.getElementById(which);
+    host.textContent = '';
+    view.resourceNames.forEach(r => {
+      // A resource may not sit on both sides of one trade (R-7.18), so
+      // claiming it for one side closes it on the other.
+      const blocked = which === 'give' ? want[r.i] > 0 : give[r.i] > 0;
+      const row = document.createElement('div');
+      row.className = 'row ' + (counts[r.i] ? 'on' : 'off');
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = r.name;
+      const have = document.createElement('span');
+      have.className = 'have';
+      have.textContent = which === 'give' ? view.yourHand[r.i] : '';
+      const minus = document.createElement('button');
+      minus.textContent = '−';
+      minus.disabled = counts[r.i] === 0;
+      minus.onclick = () => { counts[r.i]--; renderCompose(); };
+      const n = document.createElement('span');
+      n.className = 'n';
+      n.textContent = counts[r.i];
+      const plus = document.createElement('button');
+      plus.textContent = '+';
+      // You can only offer what you hold; what you ask for is bounded by the
+      // supply, and refused at acceptance if nobody can pay.
+      plus.disabled = blocked || (which === 'give' && counts[r.i] >= view.yourHand[r.i]);
+      plus.onclick = () => { counts[r.i]++; renderCompose(); };
+      row.append(name, have, minus, n, plus);
+      host.appendChild(row);
+    });
+  });
+
+  const sum = a => a.reduce((x, y) => x + y, 0);
+  document.getElementById('propose').disabled = !sum(give) || !sum(want);
+}
+
+document.getElementById('propose').onclick = async () => {
+  await load('/api/propose', {
+    method: 'POST',
+    body: JSON.stringify({ give, want, version: view.version }),
+  });
+};
+
 async function load(url, opts) {
   const r = await fetch(url, opts);
-  view = await r.json();
+  const next = await r.json();
+  // A composed offer is about a position; when that moves, start it over
+  // rather than carrying a half-built offer into a hand that has changed.
+  if (!view || next.version !== view.version) { give = [0, 0, 0, 0, 0]; want = [0, 0, 0, 0, 0]; }
+  view = next;
   render();
 }
 function act(i) {
