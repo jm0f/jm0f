@@ -240,14 +240,18 @@ function el(tag, attrs, kids) {
 // what the pieces and the interface are still coloured from.
 function photoFill(svg, id, terrain, cx, cy, seed) {
   const defs = el('defs', {});
-  const w = SIZE * 3.2, h = w * (2048 / 1536);
+  // The tile has to stay at least as large as the hexagon's bounding box
+  // (107 by 124 at SIZE 62) or the pattern repeats inside a single hex. This
+  // is close to that floor, which is as far out as the photograph can be
+  // pulled while each hex still shows one continuous piece of landscape.
+  const w = SIZE * 2.0, h = w * (2048 / 1536);
   const pat = el('pattern', {
     id, patternUnits: 'userSpaceOnUse',
     x: cx - w / 2, y: cy - h / 2, width: w, height: h,
   });
   pat.appendChild(el('image', {
-    href: `/art/${terrain}.jpg`, x: -((seed * 37) % 60), y: -((seed * 61) % 120),
-    width: w * 1.4, height: h * 1.4, preserveAspectRatio: 'xMidYMid slice',
+    href: `/art/${terrain}.jpg`, x: -((seed * 29) % 26), y: -((seed * 53) % 44),
+    width: w * 1.28, height: h * 1.28, preserveAspectRatio: 'xMidYMid slice',
   }));
   defs.appendChild(pat);
   svg.appendChild(defs);
