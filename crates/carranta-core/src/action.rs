@@ -1546,6 +1546,103 @@ mod tests {
     }
 
     #[test]
+    fn an_offer_the_taker_cannot_pay_is_rejected_not_executed() {
+        // The other half of R-7.19's re-validation. Nothing bounds how much an
+        // offer may *ask* for: under an open market the taker is not known
+        // when the offer is made, so affordability cannot be checked at
+        // proposal. It is checked here instead, and a taker who cannot pay
+        // must be refused rather than driven negative.
+        let mut s = trading_game(27);
+        deal(&mut s, 0, one(Resource::Ore, 1));
+        deal(&mut s, 1, one(Resource::Wood, 1));
+
+        // Legal to propose: the proposer holds what it offers, and both sides
+        // are non-empty and disjoint. It simply asks for more wood than seat 1
+        // has — or than anyone could have.
+        s.apply(Action::ProposeTrade {
+            by: 0,
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 200),
+        })
+        .expect("an unaffordable ask is still a well-formed offer");
+
+        let before = s.hand;
+        assert_eq!(
+            s.apply(Action::AcceptTrade { offer: 0, by: 1 }),
+            Err(Illegal::OfferStale),
+            "the taker cannot pay and the trade must not execute"
+        );
+        assert_eq!(s.hand, before, "no cards moved");
+        assert_eq!(s.offer_count, 0, "and the offer is pruned");
+        s.assert_invariants();
+    }
+
+    #[test]
+    fn a_taker_short_by_a_single_card_is_still_refused() {
+        // The boundary, since an off-by-one here would silently underflow a
+        // hand rather than fail.
+        let mut s = trading_game(28);
+        deal(&mut s, 0, one(Resource::Ore, 1));
+        deal(&mut s, 1, one(Resource::Wood, 2));
+        s.apply(Action::ProposeTrade {
+            by: 0,
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 3),
+        })
+        .unwrap();
+        assert_eq!(
+            s.apply(Action::AcceptTrade { offer: 0, by: 1 }),
+            Err(Illegal::OfferStale)
+        );
+        assert_eq!(s.hand[1][Resource::Wood as usize], 2, "untouched");
+
+        // Exactly enough goes through.
+        deal(&mut s, 1, one(Resource::Wood, 1));
+        s.apply(Action::ProposeTrade {
+            by: 0,
+            give: one(Resource::Ore, 1),
+            want: one(Resource::Wood, 3),
+        })
+        .unwrap();
+        s.apply(Action::AcceptTrade { offer: 0, by: 1 }).unwrap();
+        assert_eq!(s.hand[0][Resource::Wood as usize], 3);
+        assert_eq!(s.hand[1][Resource::Ore as usize], 1);
+        s.assert_invariants();
+    }
+
+    #[test]
+    fn quantities_are_unsigned_so_a_negative_side_cannot_be_expressed() {
+        // Recorded because it is a question worth being able to answer: there
+        // is no rule rejecting negative quantities, because `give` and `want`
+        // are `[u8; 5]` and no negative value exists to reject. A side that
+        // would be "negative" is simply the same trade the other way round.
+        let mut s = trading_game(29);
+        deal(&mut s, 0, one(Resource::Ore, 1));
+        deal(&mut s, 1, one(Resource::Wood, 1));
+
+        // The only degenerate quantity expressible is zero, and both sides are
+        // required to carry something (R-7.5).
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                by: 0,
+                give: [0; 5],
+                want: [0; 5],
+            }),
+            Err(Illegal::EmptySide)
+        );
+        // Trading a resource for itself is the other degenerate case (R-7.18).
+        assert_eq!(
+            s.apply(Action::ProposeTrade {
+                by: 0,
+                give: one(Resource::Ore, 1),
+                want: one(Resource::Ore, 1),
+            }),
+            Err(Illegal::TypeOverlap)
+        );
+        assert_eq!(s.offer_count, 0);
+    }
+
+    #[test]
     fn offers_are_capped_per_turn_and_cleared_at_its_end() {
         let mut s = trading_game(26);
         s.hand[0] = [9, 9, 9, 9, 9];
