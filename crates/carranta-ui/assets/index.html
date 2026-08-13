@@ -244,7 +244,7 @@ function photoFill(svg, id, terrain, cx, cy, seed) {
   // (107 by 124 at SIZE 62) or the pattern repeats inside a single hex. This
   // is close to that floor, which is as far out as the photograph can be
   // pulled while each hex still shows one continuous piece of landscape.
-  const w = SIZE * 2.0, h = w * (2048 / 1536);
+  const w = SIZE * 1.8, h = w * (2048 / 1536);
   const pat = el('pattern', {
     id, patternUnits: 'userSpaceOnUse',
     x: cx - w / 2, y: cy - h / 2, width: w, height: h,
