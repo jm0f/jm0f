@@ -178,7 +178,8 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.str("clock", session.clock().name());
     j.int("clockSecs", session.clock().secs() as i64);
     j.str("youName", session.name());
-    j.int("turns", session.turns() as i64);
+    j.int("turns", session.turn_no() as i64);
+    j.bool("inSetup", session.in_setup());
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {
@@ -229,6 +230,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
         |o, line| {
             o.str("t", &line.text)
                 .int("turn", line.turn as i64)
+                .bool("setup", line.setup)
                 .opt_int("seat", line.seat.map(|x| x as i64));
         },
     );

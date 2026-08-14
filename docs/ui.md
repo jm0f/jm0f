@@ -106,14 +106,38 @@ Pieces remaining is on the row because it is a real signal. A player down to
 their last settlements is close to winning, and it is the one the raw numbers
 hide.
 
-### History is grouped by turn
+### The log is grouped by turn
 
 Each line carries the turn it happened in and the seat that caused it, so the
 page groups and colours rather than parsing sentences back apart. A turn is a
-sticky heading with a rule under it; a line is a colour dot and what happened,
-with the actor's name dropped because the dot already says it. Things the table
-did rather than a player, the deal and the result, carry no dot and are set
-apart.
+sticky heading with the seat's name at one end and a rule in that seat's colour
+under it; its lines hang off a bar in the same colour, so a run of moves by one
+player reads as one block. Things the table did rather than a player, the deal
+and the result, carry no colour and sit apart.
+
+**No board indices.** A button has to tell two otherwise identical choices
+apart and so carries the vertex or edge; the log does not. The board already
+shows where the road went, and "Build road at 68" asks the reader to hold a
+number that means nothing to them.
+
+**Scrolling up stays up.** The log followed its own tail on every poll, so
+reading anything older than three seconds was impossible. It only follows the
+tail if you were already at it.
+
+### The deal is made of turns too
+
+Each player takes a turn placing, and treating those as something other than
+turns collapsed eight of them into one undifferentiated block with no way to
+say whose placement was whose.
+
+They are counted, and numbered **separately from play**: the deal runs `setup
+1` to `setup 8`, then play starts again at `turn 1`. One run would have called
+the first real turn turn nine.
+
+**A new turn is not only a new decider.** The player who places last in the
+deal is the player who moves first, so the turn changes with the decider
+unchanged. Entering `PreRoll` is the other boundary, and it happens exactly
+once per turn.
 
 Opponents are bots with **names and colour dots**, not seat numbers. A row that
 says who did something is easier to hold in your head than one that says which

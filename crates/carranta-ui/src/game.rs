@@ -97,10 +97,33 @@ impl Clock {
 /// colour rather than parsing sentences back apart.
 pub struct LogLine {
     pub turn: u32,
+    /// Whether this happened while the board was still being dealt.
+    pub setup: bool,
     /// The seat responsible. `None` for things the table did rather than a
     /// player: the deal, the result.
     pub seat: Option<u8>,
     pub text: String,
+}
+
+/// The same action, phrased for the history rather than for a button.
+///
+/// A button has to tell two otherwise identical choices apart, so it carries
+/// the vertex or edge. The history does not: the board already shows where the
+/// road went, and "Build road at 68" asks the reader to hold a number that
+/// means nothing to them.
+fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
+    match *a {
+        Action::PlaceSettlement(_) => "Place a settlement".to_string(),
+        Action::PlaceRoad(_) => "Place a road".to_string(),
+        Action::BuildRoad(_) => "Build a road".to_string(),
+        Action::BuildSettlement(_) => "Build a settlement".to_string(),
+        Action::BuildCity(_) => "Upgrade to a city".to_string(),
+        Action::MoveRobber { victim, .. } => match victim {
+            Some(v) => format!("Move the robber and rob seat {v}"),
+            None => "Move the robber".to_string(),
+        },
+        ref other => describe(other, state, seat),
+    }
 }
 
 /// Why an action was refused.
@@ -146,9 +169,16 @@ pub struct Session {
     /// What this player calls themselves. Editable while nobody is signed in;
     /// an account would supply it instead.
     name: String,
-    /// How many turns have been taken. Counted here because the engine has no
-    /// notion of one: it tracks whose move it is, not how many have gone by.
-    turns: u32,
+    /// Turns taken, counted separately for the deal and for play because they
+    /// are different things and numbering them in one run would have the first
+    /// real turn called turn nine. Counted here at all because the engine has
+    /// no notion of a turn: it tracks whose move it is, not how many have gone.
+    setup_turns: u32,
+    play_turns: u32,
+    /// Whether the phase was `PreRoll` at the last handover. Entering it is a
+    /// turn boundary in its own right: the last player to place in the deal is
+    /// the first to play, so the turn changes without the decider changing.
+    was_preroll: bool,
     /// Picks a move when the clock runs out in a phase that cannot be passed.
     /// Its own generator rather than the game's, so forfeits never disturb the
     /// dice or the deck.
@@ -166,6 +196,7 @@ impl Session {
             version: 0,
             log: vec![LogLine {
                 turn: 0,
+                setup: true,
                 seat: None,
                 text: format!(
                     "{seats} players, {mode:?} market, seed {}",
@@ -181,7 +212,9 @@ impl Session {
             charged_to: HUMAN,
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
-            turns: 0,
+            setup_turns: 1,
+            play_turns: 0,
+            was_preroll: false,
             forfeit: Rng::new(seed ^ 0x5EED_C10C_C0FF_EE01),
         }
     }
@@ -219,9 +252,21 @@ impl Session {
         self.clock
     }
 
-    /// Turns taken since the board was dealt, setup aside.
-    pub fn turns(&self) -> u32 {
-        self.turns
+    /// The turn number to show, which counts the deal and play separately.
+    pub fn turn_no(&self) -> u32 {
+        if self.in_setup() {
+            self.setup_turns
+        } else {
+            self.play_turns
+        }
+    }
+
+    /// Whether the board is still being dealt.
+    pub fn in_setup(&self) -> bool {
+        matches!(
+            self.state.phase,
+            Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+        )
     }
 
     /// Whose clock should be running.
@@ -243,8 +288,14 @@ impl Session {
 
     /// Add a line of history, stamped with the turn and whoever caused it.
     fn note(&mut self, seat: Option<u8>, text: String) {
-        let turn = self.turns;
-        self.log.push(LogLine { turn, seat, text });
+        let setup = self.in_setup();
+        let turn = self.turn_no();
+        self.log.push(LogLine {
+            turn,
+            setup,
+            text,
+            seat,
+        });
     }
 
     /// Wave away every offer currently open, as declining does.
@@ -263,17 +314,26 @@ impl Session {
             self.spent[owner] += now - self.last_settle;
         }
         self.last_settle = now;
-        // The turn's own clock restarts only when the turn changes hands.
+        // A new turn is not only a new decider. The player who places last in
+        // the deal is the player who moves first, so the turn changes with the
+        // decider unchanged, and their first real turn used to inherit whatever
+        // was left of their setup allowance. Entering PreRoll is the other
+        // boundary, and it happens exactly once per turn.
         let deciding = self.on_clock();
-        if deciding != self.charged_to {
+        let preroll = matches!(self.state.phase, Phase::PreRoll);
+        let starting_a_turn = preroll && !self.was_preroll;
+        self.was_preroll = preroll;
+        if deciding != self.charged_to || starting_a_turn {
             self.turn_began = now;
             self.charged_to = deciding;
-            // Setup is dealt rather than played, so it is not counted.
-            if !matches!(
-                self.state.phase,
-                Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
-            ) {
-                self.turns += 1;
+            // The deal counts too. Each player takes a turn in it, and treating
+            // those as something else collapsed eight real turns into one
+            // undifferentiated block with no way to say whose placement was
+            // whose.
+            if self.in_setup() {
+                self.setup_turns += 1;
+            } else {
+                self.play_turns += 1;
             }
         }
     }
@@ -372,7 +432,7 @@ impl Session {
             let what = match forced {
                 Action::EndTurn => "turn ended".to_string(),
                 Action::Roll => "rolled for you".to_string(),
-                other => format!("{} for you", describe(&other, &self.state, HUMAN as usize)),
+                other => format!("{} for you", log_phrase(&other, &self.state, HUMAN as usize)),
             };
             self.note(Some(HUMAN), format!("Time ran out, {what}"));
             self.forget_declines();
@@ -515,7 +575,7 @@ impl Session {
             Choice::Play(action) => {
                 // Named before it is applied: a phrase describes the position
                 // the action was taken in, not the one it produced.
-                let phrase = describe(&action, &self.state, HUMAN as usize);
+                let phrase = log_phrase(&action, &self.state, HUMAN as usize);
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.version += 1;
                 self.note(Some(HUMAN), phrase);
@@ -552,7 +612,7 @@ impl Session {
             give,
             want,
         };
-        let phrase = describe(&action, &self.state, HUMAN as usize);
+        let phrase = log_phrase(&action, &self.state, HUMAN as usize);
         self.state.apply(action).map_err(Refused::Illegal)?;
         self.version += 1;
         self.note(Some(HUMAN), phrase);
@@ -597,7 +657,7 @@ impl Session {
             }
             let seat = self.state.decider() as usize;
             let action = self.bots[seat].choose(&self.state, &buf);
-            let phrase = describe(&action, &self.state, seat);
+            let phrase = log_phrase(&action, &self.state, seat);
             if self.state.apply(action).is_err() {
                 break;
             }
@@ -1379,6 +1439,47 @@ mod tests {
             s.time_left(HUMAN),
             Some(4),
             "round two starts full, not with round one's remainder"
+        );
+    }
+
+    #[test]
+    fn the_first_real_turn_is_not_the_last_setup_turn() {
+        // The player who places last in the deal is the player who moves first,
+        // so the turn changes without the decider changing. That boundary was
+        // invisible to the clock, and the first real turn ran on whatever the
+        // setup turn had left.
+        let mut s = Session::new(4, 5, TradeMode::Full).with_clock(Clock::PerTurn(4));
+        // Play the deal out, pausing so an allowance is visibly spent.
+        while s.in_setup() {
+            if s.state.decider() == HUMAN {
+                std::thread::sleep(std::time::Duration::from_millis(1_100));
+            }
+            let v = s.version();
+            s.act(0, v).expect("a legal placement");
+        }
+        assert!(matches!(s.state.phase, Phase::PreRoll), "the deal is done");
+        assert_eq!(s.state.decider(), HUMAN, "and the first mover is the human");
+        assert_eq!(
+            s.time_left(HUMAN),
+            Some(4),
+            "the first real turn starts full, not on what setup left"
+        );
+    }
+
+    #[test]
+    fn the_deal_and_play_are_numbered_separately() {
+        let mut s = Session::new(4, 5, TradeMode::Full);
+        assert!(s.in_setup());
+        assert_eq!(s.turn_no(), 1, "the deal starts at one");
+        while s.in_setup() {
+            let v = s.version();
+            s.act(0, v).expect("a legal placement");
+        }
+        assert!(!s.in_setup());
+        assert_eq!(
+            s.turn_no(),
+            1,
+            "and so does play, rather than carrying on from the deal"
         );
     }
 

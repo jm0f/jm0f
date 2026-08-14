@@ -311,8 +311,29 @@
   .seatRow .counts .left { flex-basis: 100%; }
   .seatRow .counts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
   .logPanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-  #log { overflow-y: auto; color: var(--dim); font-size: .95em; min-height: 0; flex: 1; }
-  #log div { padding: 1px 0; }
+  #log { overflow-y: auto; color: var(--muted-foreground); font-size: .95em;
+         min-height: 0; flex: 1; }
+  /* A turn is a heading with a rule in that seat's colour, so a boundary is
+     findable without reading a word. Sticky, because the turn you are looking
+     at should still say which it is after you have scrolled past its top. */
+  .logTurn {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; justify-content: space-between; align-items: baseline; gap: .6em;
+    margin: 1em 0 .35em; padding: .2em 0 .25em;
+    background: var(--card);
+    font-size: .8em; text-transform: uppercase; letter-spacing: .09em;
+    font-weight: 600; color: var(--muted-foreground);
+    border-bottom: 2px solid var(--rule, var(--border));
+  }
+  .logTurn:first-child { margin-top: 0; }
+  .logWho { color: var(--foreground); letter-spacing: .04em; }
+  /* The actor is the bar the line hangs off rather than a dot beside it: a run
+     of moves by one player reads as one block that way. */
+  .logLine { padding: 2px 0 2px .7em;
+             box-shadow: inset 2px 0 0 var(--rule, var(--border)); }
+  /* Things the table did rather than a player: no colour, and set apart. */
+  .logTable { color: var(--foreground); font-weight: 500;
+              box-shadow: none; padding-left: 0; }
   #note { color: #E8542F; }
 
   /* ---- the dock -------------------------------------------------------- */
@@ -573,14 +594,14 @@
   <aside class="col left">
     <div class="panel clockPanel">
       <div class="bigClock" id="clock">0:00</div>
-      <div class="clockUnder"><span id="clockWho"></span><span id="turnCount"></span></div>
+      <div class="clockUnder"><span id="turnCount"></span></div>
     </div>
     <div class="panel">
       <h2>Players</h2>
       <div id="seatRows"></div>
     </div>
     <div class="panel logPanel">
-      <h2>History</h2>
+      <h2>Log</h2>
       <div id="log"></div>
     </div>
   </aside>
@@ -973,39 +994,49 @@ function render() {
   renderDice(v);
   renderPrompt(v);
 
-  // History, grouped by turn. It was a flat run of sentences each repeating
-  // whose they were; the turn is a heading now and the actor is a colour, so
-  // the eye can find a turn boundary without reading a word of it.
+  // History, grouped by turn. Each heading carries whose turn it was in that
+  // seat's colour, so a boundary is findable without reading a word.
   const log = document.getElementById('log');
+  // Only follow the tail if you were already at it. Snapping to the bottom on
+  // every poll made the history unreadable: scroll up and it yanked you back
+  // three seconds later.
+  const atTail = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
   log.textContent = '';
   let shownTurn = null;
-  v.log.forEach(l => {
+  v.log.forEach((l, i) => {
     if (l.turn !== shownTurn) {
       shownTurn = l.turn;
+      // Whose turn it is, taken from the first line in the group that has an
+      // actor. A turn belongs to whoever moved in it.
+      const owner = v.log.slice(i).find(x => x.turn === l.turn && x.seat !== null
+        && x.seat !== undefined);
       const h = document.createElement('div');
       h.className = 'logTurn';
-      h.textContent = shownTurn === 0 ? 'setup' : `turn ${shownTurn}`;
+      if (owner) h.style.setProperty('--rule', COLOURS[owner.seat]);
+      const n = document.createElement('span');
+      n.textContent = l.turn === 0 ? 'the deal' : (l.setup ? `setup ${l.turn}` : `turn ${l.turn}`);
+      h.appendChild(n);
+      if (owner) {
+        const who = document.createElement('span');
+        who.className = 'logWho';
+        who.textContent = seatName(v, owner.seat);
+        h.appendChild(who);
+      }
       log.appendChild(h);
     }
     const d = document.createElement('div');
     d.className = 'logLine';
     if (l.seat !== null && l.seat !== undefined) {
-      const dot = document.createElement('span');
-      dot.className = 'logDot';
-      dot.style.background = COLOURS[l.seat];
-      dot.title = seatName(v, l.seat);
-      d.appendChild(dot);
+      d.style.setProperty('--rule', COLOURS[l.seat]);
     } else {
       d.classList.add('logTable');
     }
-    const t = document.createElement('span');
     // The engine writes seat numbers because that is what it knows. Naming
     // happens here, so the history calls people what the rows call them.
-    t.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, n) => seatName(v, +n));
-    d.appendChild(t);
+    d.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, n) => seatName(v, +n));
     log.appendChild(d);
   });
-  log.scrollTop = log.scrollHeight;
+  if (atTail) log.scrollTop = log.scrollHeight;
 }
 
 // --- the trade composer ---
@@ -1097,7 +1128,6 @@ function renderSeats(v) {
         ? `your real total. The table can only see ${s.vp}. The rest is in victory-point cards nobody else can count`
         : 'your total, all of it public')
       : 'public points only. Victory-point cards in hand are not counted until the game ends');
-    if (mine && v.yourVp > s.vp) vp.innerHTML += ` <small>(${s.vp} shown)</small>`;
 
     const counts = document.createElement('span');
     counts.className = 'counts';
@@ -1240,11 +1270,13 @@ function renderActions(v) {
 //
 // A timed game counts down; an untimed one counts up. Past zero it keeps going
 // and shows the overrun, because a clock frozen at 0:00 reads as broken.
-let clockBase = 0, clockAt = 0, clockDown = false, clockWho = null, clockTurns = 0;
+let clockBase = 0, clockAt = 0, clockDown = false, clockWho = null;
+let clockTurns = 0, clockSetup = true;
 function clockFrom(v) {
   clockDown = v.clock !== 'off';
   clockAt = Date.now();
   clockTurns = v.turns || 0;
+  clockSetup = !!v.inSetup;
   const seats = v.seats.map(s => ({
     seat: s.seat, left: s.timeLeft, running: !!s.onClock, name: seatName(v, s.seat),
   }));
@@ -1284,14 +1316,13 @@ function tickClock() {
   el.classList.toggle('over', clockDown && t <= 0);
   setDigits(el, clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t)));
 
-  const who = document.getElementById('clockWho');
-  if (who) {
-    who.textContent = !clockDown ? 'elapsed'
-      : !clockWho ? ''
-      : clockWho.name === 'you' ? 'your turn' : `${clockWho.name}'s turn`;
-  }
   const turns = document.getElementById('turnCount');
-  if (turns) turns.textContent = clockTurns ? `turn ${clockTurns}` : 'setting up';
+  // Not whose turn it is: the boxed row in the players list already says that,
+  // and saying it twice made the line read as two facts when it is one.
+  if (turns) {
+    turns.textContent = !clockDown ? 'elapsed'
+      : clockSetup ? `setup ${clockTurns}` : `turn ${clockTurns}`;
+  }
 }
 setInterval(tickClock, 1000);
 
