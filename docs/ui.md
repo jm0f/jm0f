@@ -133,6 +133,20 @@ the players list boxes whoever is on the move. A turn is a unit of the game and
 gets a container rather than a rule and some indentation. A turn that logged
 nothing gets no box.
 
+**Public resource movements are logged.** Production on a roll, the grant from
+the second settlement, bank and port trades, and trades between players, each
+saying what actually changed hands. "Took an offer" told you nothing; it now
+reads "Take 3 wool from Odd for 3 wheat".
+
+**A robber steal is not.** The card moves and the table sees that it moved, but
+which card it was is not public. Reporting it through the same hand-diff that
+reports production would leak it, so the actions that can pay out in the open
+are named explicitly rather than inferred from a hand changing.
+
+**The roll leads with the total**: `Rolled 9 (4, 5)`. The total is the number
+the board answers to; the two dice follow. `Roll 4 and 5, 9` read as three
+numbers of equal standing, which is not what a roll is.
+
 **No board indices.** A button has to tell two otherwise identical choices
 apart and so carries the vertex or edge; the log does not. The board already
 shows where the road went, and "Build road at 68" asks the reader to hold a

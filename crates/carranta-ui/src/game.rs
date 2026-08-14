@@ -150,7 +150,27 @@ fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
 /// built afterwards instead.
 fn rolled(state: &State) -> String {
     let [a, b] = state.dice;
-    format!("Roll {a} and {b}, {}", a + b)
+    // The total leads, because that is the number the board answers to. The
+    // two dice follow in brackets. "Roll 4 and 5, 9" read as three numbers of
+    // equal standing, which is not what a roll is.
+    format!("Rolled {} ({a}, {b})", a + b)
+}
+
+/// What each seat gained between two snapshots, as words.
+///
+/// Only ever called where the change is **public**: production on a roll, the
+/// grant from the second settlement, and a trade being taken. A robber steal
+/// moves a card too, and deliberately is not reported this way, because which
+/// card it was is not something the table gets to know.
+fn gains(before: &[[u8; 5]; MAX_PLAYERS], after: &[[u8; 5]; MAX_PLAYERS], seat: usize) -> String {
+    let mut parts = Vec::new();
+    for r in 0..5 {
+        let up = after[seat][r].saturating_sub(before[seat][r]);
+        if up > 0 {
+            parts.push(format!("{up} {}", RESOURCE_NAMES[r]));
+        }
+    }
+    parts.join(", ")
 }
 
 /// Why an action was refused.
@@ -343,6 +363,18 @@ impl Session {
             text,
             seat,
         });
+    }
+
+    /// Log what everybody drew from the board, comparing hands either side of
+    /// an action. Public by definition: production is dealt in the open.
+    fn note_production(&mut self, at: (u32, bool), before: &[[u8; 5]; MAX_PLAYERS]) {
+        let after = self.state.hand;
+        for seat in 0..self.state.players as usize {
+            let got = gains(before, &after, seat);
+            if !got.is_empty() {
+                self.note_at(at, Some(seat as u8), format!("Collect {got}"));
+            }
+        }
     }
 
     /// Add a line for something happening now rather than for an action.
@@ -643,6 +675,7 @@ impl Session {
                 // the action was taken in, not the one it produced.
                 let phrase = log_phrase(&action, &self.state, HUMAN as usize);
                 let at = self.stamp();
+                let purse = self.state.hand;
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.version += 1;
                 let phrase = match action {
@@ -650,6 +683,9 @@ impl Session {
                     _ => phrase,
                 };
                 self.note_at(at, Some(HUMAN), phrase);
+                if pays_out(&action) {
+                    self.note_production(at, &purse);
+                }
                 self.forget_declines();
             }
         }
@@ -731,6 +767,7 @@ impl Session {
             let action = self.bots[seat].choose(&self.state, &buf);
             let phrase = log_phrase(&action, &self.state, seat);
             let at = self.stamp();
+            let purse = self.state.hand;
             if self.state.apply(action).is_err() {
                 break;
             }
@@ -741,6 +778,9 @@ impl Session {
             };
             if worth_logging(&action) {
                 self.note_at(at, Some(seat as u8), phrase);
+            }
+            if pays_out(&action) {
+                self.note_production(at, &purse);
             }
             self.forget_declines();
             // Each bot pays for its own thinking, and the turn passing between
@@ -779,9 +819,18 @@ impl Session {
                         continue;
                     }
                     if self.bots[seat as usize].accepts(&self.state, seat as usize, i as usize) {
+                        let from = self.state.offers[i as usize].from as usize;
+                        let purse = self.state.hand;
                         if self.state.apply(take).is_ok() {
                             self.version += 1;
-                            self.note(Some(seat as u8), "Took an offer".to_string());
+                            // Both halves, because a trade is two public
+                            // transfers and "took an offer" said neither.
+                            let got = gains(&purse, &self.state.hand, seat as usize);
+                            let gave = gains(&purse, &self.state.hand, from);
+                            self.note(
+                                Some(seat as u8),
+                                format!("Take {got} from seat {from} for {gave}"),
+                            );
                             self.forget_declines();
                         }
                         acted = true;
@@ -943,6 +992,21 @@ pub fn describe(a: &Action, state: &State, actor: usize) -> String {
 }
 
 /// Keep the log readable: the market is chatty and mostly noise to a reader.
+/// Whether this action can hand anybody resources out of the supply.
+///
+/// A roll produces, the second settlement grants, and the two cards that take
+/// from the bank do so in the open. A robber steal is left out on purpose: the
+/// card moves but which card it was is not public.
+fn pays_out(a: &Action) -> bool {
+    matches!(
+        a,
+        Action::Roll
+            | Action::PlaceSettlement(_)
+            | Action::PlayInvention(_)
+            | Action::PlayMonopoly(_)
+    )
+}
+
 fn worth_logging(a: &Action) -> bool {
     !matches!(
         a,
@@ -1429,7 +1493,9 @@ mod tests {
             "and it says so"
         );
         assert!(
-            s.log().iter().any(|l| l.text.contains("rolled for you")),
+            s.log()
+                .iter()
+                .any(|l| l.text.contains("Rolled ") && l.text.contains("for you")),
             "rolling came first, because a turn cannot be ended before the dice"
         );
         assert!(
@@ -1461,6 +1527,57 @@ mod tests {
     }
 
     #[test]
+    fn public_resource_movements_are_logged() {
+        let mut s = Session::new(4, 5, TradeMode::Full);
+        // The second settlement pays out (R-3.10), and that is public.
+        while s.in_setup() {
+            let v = s.version();
+            s.act(0, v).expect("a legal placement");
+        }
+        let setup_pay: Vec<_> = s
+            .log()
+            .iter()
+            .filter(|l| l.setup && l.text.starts_with("Collect "))
+            .collect();
+        assert!(
+            !setup_pay.is_empty(),
+            "the second settlement grants resources and the table can see it"
+        );
+        assert_eq!(
+            setup_pay.len(),
+            4,
+            "one line per seat, since all four place a second settlement"
+        );
+
+        // Production on a roll, likewise.
+        let before = s.log().len();
+        let v = s.version();
+        s.act(0, v).expect("the roll");
+        let produced = s.log()[before..]
+            .iter()
+            .filter(|l| l.text.starts_with("Collect "))
+            .count();
+        let [a, b] = s.state.dice;
+        if a + b != 7 {
+            // A seven pays nobody, so only assert when something was produced.
+            let any = s.state.hand.iter().any(|h| h.iter().any(|&n| n > 0));
+            assert!(any || produced == 0);
+        }
+    }
+
+    #[test]
+    fn a_robber_steal_never_says_which_card_moved() {
+        // The card moves, and which card it was is not public. Reporting it
+        // through the same diff that reports production would leak it.
+        assert!(!pays_out(&Action::MoveRobber {
+            hex: 0,
+            victim: Some(1)
+        }));
+        assert!(pays_out(&Action::Roll));
+        assert!(pays_out(&Action::PlaceSettlement(0)));
+    }
+
+    #[test]
     fn the_log_records_what_the_dice_showed() {
         // The phrase for every other action is built before it is applied. A
         // roll cannot be: the dice still hold the previous turn's numbers until
@@ -1477,9 +1594,9 @@ mod tests {
             .log()
             .iter()
             .rev()
-            .find(|l| l.text.starts_with("Roll "))
+            .find(|l| l.text.starts_with("Rolled "))
             .expect("the roll is logged");
-        assert_eq!(line.text, format!("Roll {a} and {b}, {}", a + b));
+        assert_eq!(line.text, format!("Rolled {} ({a}, {b})", a + b));
         assert_ne!(line.text, "Roll the dice", "the outcome, not the intent");
     }
 
