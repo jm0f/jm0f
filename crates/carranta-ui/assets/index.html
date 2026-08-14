@@ -400,9 +400,39 @@
   .seatSlot { display: flex; align-items: center; gap: 10px; }
   .seatSlot .dot { width: 1.05em; height: 1.05em; border-radius: 50%; flex: none; }
   .seatSlot .slotName { flex: 1; font-weight: 500; }
-  .seatSlot .slotName.empty { color: var(--muted-foreground); font-weight: 400; font-style: italic; }
-  .seatBtn { border-color: transparent; font-weight: 600; }
-  .seatBtn:hover { border-color: transparent; filter: brightness(1.08); }
+  .seatSlot .slotName.empty { color: var(--muted-foreground); font-weight: 400; }
+
+  /* ---- waiting -----------------------------------------------------------
+     Ported from the pixel-grid loader at beautifului.dev, in plain CSS.
+
+     Nine cells on a three by three grid. Each cell's delay is
+     (column + distance from the middle row) x 90ms, which drives a chevron
+     wavefront rightwards. The 650ms cycle is shorter than the sweep takes to
+     cross, so two fronts are always in flight and the motion never resolves.
+     That is what makes it read as waiting rather than as progress: nothing
+     about it suggests a proportion of something finished. */
+  .waiting { display: inline-flex; align-items: center; gap: 10px; }
+  .loader { display: inline-grid; grid-template-columns: repeat(3, 4px); gap: 1.5px; }
+  .loader i {
+    width: 4px; height: 4px; border-radius: 1px; background: var(--foreground);
+    opacity: .15; animation: pixel-on 650ms ease-in-out infinite;
+  }
+  @keyframes pixel-on { 0%, 100% { opacity: .15 } 50% { opacity: 1 } }
+  /* The label is the gradient; the text is only a mask over it. */
+  .shimmer {
+    background-image: linear-gradient(90deg,
+      var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: shimmer-text 1.4s linear infinite;
+  }
+  @keyframes shimmer-text { from { background-position: 200% 0 } to { background-position: 0 0 } }
+  /* Reduced motion freezes the grid at its dim state rather than removing it:
+     the row still has to say that the seat is empty. */
+  @media (prefers-reduced-motion: reduce) {
+    .loader i { animation: none; }
+    .shimmer { animation: none; background: none; color: var(--muted-foreground); }
+  }
   .seed {
     font: inherit; width: 100%; color: var(--foreground); background: var(--card);
     border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px;
@@ -1236,15 +1266,28 @@ const CLOCK_NOTE = {
 // millionth of the space and would have collided across a few thousand games;
 // this draws the whole range from the platform's cryptographic source, which
 // is also the only one here that is not a weak PRNG in its own right.
-// Whichever of ink or paper reads better on a given seat colour. The four
-// seats span L* 30 to 63, so one fixed choice would fail at one end.
-function onColour(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  const lin = (c) => { c /= 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; };
-  const l = .2126 * lin((n >> 16) & 255) + .7152 * lin((n >> 8) & 255) + .0722 * lin(n & 255);
-  const onLight = (l + .05) / (.0323 + .05);   // against #33261B
-  const onDark = (1.05) / (l + .05);           // against #FFF7EE, near enough
-  return onDark >= onLight ? '#FFF7EE' : '#33261B';
+// The waiting loader, built once per row.
+//
+// Delay per cell is (column + distance from the middle row) x 90ms. Written
+// out rather than hard-coded so the shape of the wavefront is legible: it is a
+// chevron, and it drives to the right.
+function pixelLoader() {
+  const grid = document.createElement('span');
+  grid.className = 'loader';
+  grid.setAttribute('aria-hidden', 'true');
+  for (let k = 0; k < 9; k++) {
+    const cell = document.createElement('i');
+    const row = Math.floor(k / 3), col = k % 3;
+    cell.style.animationDelay = `${(col + Math.abs(row - 1)) * 90}ms`;
+    grid.appendChild(cell);
+  }
+  return grid;
+}
+function shimmer(text) {
+  const el = document.createElement('span');
+  el.className = 'shimmer';
+  el.textContent = text;
+  return el;
 }
 
 function freshSeed() {
@@ -1316,8 +1359,12 @@ function renderLobby() {
       // bot only gets called Bram once you have decided to put one there.
       name = document.createElement('span');
       const bot = lobby.roles[i] === 'bot';
-      name.className = 'slotName' + (bot ? '' : ' empty');
-      name.textContent = bot ? BOT_NAMES[i] : 'waiting';
+      name.className = 'slotName' + (bot ? '' : ' empty waiting');
+      if (bot) {
+        name.textContent = BOT_NAMES[i];
+      } else {
+        name.append(pixelLoader(), shimmer('waiting'));
+      }
     }
 
     // Waiting is a state, not a control, so it is written rather than offered.
@@ -1337,10 +1384,8 @@ function renderLobby() {
     } else {
       control = document.createElement('button');
       control.type = 'button';
-      control.className = 'btn-sm seatBtn';
+      control.className = 'btn-primary btn-sm';
       control.textContent = 'Add bot';
-      control.style.background = COLOURS[i];
-      control.style.color = onColour(SEAT_HEX[i]);
       control.onclick = () => { lobby.roles[i] = 'bot'; renderLobby(); };
     }
     row.append(dot, name, control);
