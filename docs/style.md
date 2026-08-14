@@ -62,19 +62,43 @@ ladder is wrong.
 
 ### 2.3 Player colours
 
-Chosen against the terrain ladder, not in isolation. Each must be legible on
-all six terrains and distinguishable from the other three at a glance.
+**The seats own the half of the wheel the land does not.**
 
-| Seat | Hex | Why |
-|---|---|---|
-| 1 | `#0B72E8` | Saturated blue. No terrain is saturated blue — mountains are deliberately low-chroma slate to leave this space free. |
-| 2 | `#E01B4C` | Crimson. 30° from hills and far higher chroma, so the two never merge. |
-| 3 | `#F7F2E7` | Bone white. Reads on the four darker terrains; the surround carries it on the two lightest. |
-| 4 | `#6B3FA0` | Violet. The one hue nothing else on the board occupies. |
+Every chromatic terrain sits in one arc: hills 12°, fields 38°, desert 41°,
+pasture 75°, forest 148°. That leaves **183°–337°** — cyan, blue, violet,
+magenta — with nothing on the board in it. The four seats are spaced across it.
 
-**Mountains being low-chroma is load-bearing.** It is the concession that buys
-a saturated blue player colour. Do not "improve" it by making the mountains
-more blue.
+| Seat | Hex | Hue | L\* | Nearest terrain hue |
+|---|---|---|---|---|
+| 1 | `#2CA7BA` | 188° teal | 63 | 40° |
+| 2 | `#3C2EB8` | 246° indigo | 30 | 98° |
+| 3 | `#C065D2` | 290° purple | 57 | 82° |
+| 4 | `#C1256B` | 333° rose | 44 | 39° |
+
+**Hue is not enough on its own.** 154° of arc split four ways leaves
+neighbours only ~45° apart, so the seats also stagger in lightness —
+63 / 30 / 57 / 44 — and the pairs that are closest in value are the ones
+furthest apart in hue. Teal and purple are the weakest value pair at 1.22:1,
+and they are 104° apart. Nothing is close on both axes at once.
+
+**Judge a seat colour against paper, not against terrain.** Every piece wears
+a surround in `--bg` (§3.4), so the colour a piece is actually seen against is
+`#F3EDE1` — the terrain never touches it. All four clear **2.45:1** there.
+
+Mountains at 215° sits inside the seats' arc; only its very low chroma keeps
+it out of their way. Do not make it bluer.
+
+**What this replaced, and why.** The previous set was blue `#0B72E8`, crimson
+`#E01B4C`, bone `#F7F2E7`, violet `#6B3FA0`. Bone was 1° from desert in hue
+and **1.04:1 against the paper of its own surround** — its silhouette
+dissolved into the halo meant to protect it. Crimson was 27° from hills, and
+1.04:1 against blue in value. The new set's worst figures are 39° and 1.22:1.
+
+**No colour is legible on all six terrains, and that is fine.** The ladder
+spans luminance 0.07 to 0.66; clearing 2:1 against every rung at once needs a
+colour darker than `#0B0B0B` or brighter than white. The surround is not a
+refinement, it is what makes pieces work at all — do not remove it in the
+belief that a better colour would do the job.
 
 ### 2.4 Accent and interface
 
@@ -224,10 +248,12 @@ In order, because the early ones are cheap:
 
 ---
 
-## 9. What this replaces
+## 9. Status
 
-The flat terrain palette currently in `crates/carranta-ui/assets/index.html`
-was picked by eye from a screenshot and has two known faults: desert and fields
-are close in both hue and lightness, and the mountains slate is saturated
-enough to crowd a blue player colour. The ladder in §2.2 fixes both. It is a
-proposal until applied — the code has not been changed.
+§2.2 and §2.3 are applied — `crates/carranta-ui/assets/index.html` carries the
+terrain ladder and the seat arc, and the comments there restate the reasoning
+so it survives being read without this file to hand.
+
+Sections 4–7 are the standard for new work rather than a description of what
+exists. Texture (§5) in particular is not implemented anywhere yet: the board
+is flat colour with no paper grain, no halftone and no contours.

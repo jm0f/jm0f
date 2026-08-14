@@ -20,19 +20,33 @@
        The test: desaturate the board and check no two adjacent tiles merge. */
     --forest: #1B5637;      /* L 32 */
     --mountains: #566373;   /* L 42 — deliberately the least saturated thing on
-                               the board, which is what leaves the blue part of
-                               the wheel free for a player colour. Making these
-                               bluer would cost seat 1 its legibility. */
+                               the board. Its hue sits at 215, inside the arc the
+                               seats now use, so it is chroma alone that keeps it
+                               out of their way. Making these bluer would put a
+                               terrain back in the seats' half of the wheel. */
     --hills: #C2492A;       /* L 50 */
     --fields: #E8A020;      /* L 70 */
     --pasture: #A8C64A;     /* L 78 */
     --desert: #E6D2A8;      /* L 86 */
     --water: #31AFC9;
 
-    /* Placed against that ladder rather than chosen alone: each has to read on
-       all six terrains and be told from the other three at a glance. Violet is
-       the one hue nothing else on the board occupies. */
-    --p0: #0B72E8; --p1: #E01B4C; --p2: #F7F2E7; --p3: #6B3FA0;
+    /* The seats live on the half of the wheel the land does not use. Every
+       chromatic terrain sits between 12 and 148 degrees (hills, fields, desert,
+       pasture, forest), so 183-337 is free: cyan through blue and violet to
+       magenta. All four are at least 39 degrees off the nearest terrain hue,
+       where the old set had a bone white one degree from desert and a crimson
+       27 from hills.
+
+       They stagger in lightness as well as hue, because neighbours on the wheel
+       need a second axis: teal L 63, indigo L 30, purple L 57, rose L 44. The
+       closest pair in value (teal and purple, 1.22:1) is 104 degrees apart in
+       hue, so nothing is close on both axes at once.
+
+       Each also clears 2.45:1 against the paper, which matters more than
+       contrast against terrain: every piece wears a halo in --bg, so paper is
+       what a piece is actually seen against. The old bone seat managed 1.04
+       there — its silhouette dissolved into its own halo. */
+    --p0: #2CA7BA; --p1: #3C2EB8; --p2: #C065D2; --p3: #C1256B;
   }
   * { box-sizing: border-box; }
   /* The board should use the window it is given, so the page is a column that
@@ -273,7 +287,7 @@ function portGroups() {
 
 // Player colours as values rather than CSS variables, because a piece is
 // drawn in several tones of one colour and they have to be computed.
-const SEAT_HEX = ['#0B72E8', '#E01B4C', '#F7F2E7', '#6B3FA0'];
+const SEAT_HEX = ['#2CA7BA', '#3C2EB8', '#C065D2', '#C1256B'];
 const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
 
 // The palette the drawings are in, and how light each tone is relative to the
@@ -454,11 +468,14 @@ function draw() {
     const my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
     const k = Math.hypot(mx, my) || 1;
     const ox = mx + (mx / k) * 30, oy = my + (my / k) * 30;
+    // Port furniture is paper and ink, not colour. It used to be a cool
+    // blue-grey, which put it at hue 214 — inside the arc the seats occupy,
+    // competing with seat 1 for the only blue on the board.
     pts.forEach(([x, y]) => svg.appendChild(el('line', {
-      x1: ox, y1: oy, x2: x, y2: y, stroke: '#b3c0d1', 'stroke-width': 2.5, opacity: .8,
+      x1: ox, y1: oy, x2: x, y2: y, stroke: '#C8B79E', 'stroke-width': 2.5, opacity: .9,
     })));
-    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: '#ffffff', stroke: '#c2cddb' }));
-    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: '#5c6f8a', 'font-size': 9 });
+    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: 'var(--panel)', stroke: 'var(--line)' }));
+    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: 'var(--dim)', 'font-size': 9 });
     // Two letters, taken from the same names the cards use, so a port and a
     // card cannot be read as different resources.
     t.textContent = port.kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][port.kind - 1];
