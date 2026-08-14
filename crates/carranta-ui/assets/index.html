@@ -401,7 +401,7 @@
   .bigClock {
     display: flex; justify-content: center; align-items: baseline;
     font-family: var(--display); font-size: 2.6em; line-height: 1;
-    font-weight: 600; color: var(--foreground);
+    font-weight: 600; color: var(--accent);
   }
   .bigClock i { font-style: normal; width: 1ch; text-align: center; }
   .bigClock i.sep { width: .42ch; }
@@ -409,10 +409,9 @@
                 margin-top: .35em; color: var(--muted-foreground);
                 font-size: .88em; }
   .clockUnder span:empty { display: none; }
-  /* The last stretch, then past the end. Colour rather than a blink: a clock
-     should be readable at a glance, not competing with the board for notice. */
-  .bigClock.low { color: var(--accent); }
-  .bigClock.over { color: var(--accent); }
+  /* The last stretch, and past the end. The clock is always the accent, so
+     running short is weight rather than a colour it did not have before. */
+  .bigClock.low, .bigClock.over { font-weight: 700; }
 
   /* ---- lobby ------------------------------------------------------------ */
   .lobby[hidden] { display: none; }
@@ -494,6 +493,9 @@
   .copyRow { display: flex; gap: 6px; align-items: center; }
   .copyRow .unit { color: var(--muted-foreground); font-size: 12px; }
   .copyRow.spent { opacity: .45; }
+  /* Two numbers that belong to one setting, so they sit on one line. */
+  .clockFields { display: flex; gap: 10px; margin-top: 6px; }
+  .clockFields .copyRow { flex: 1; min-width: 0; }
   .seed:disabled { cursor: default; }
   .seatSlot input.slotName { flex: 1; min-width: 0; }
   .fieldLabel[data-tip] { cursor: help; text-decoration: underline dotted;
@@ -576,13 +578,15 @@
     <div class="field">
       <span class="fieldLabel" id="clockLabel" tabindex="0">Turn clock</span>
       <div class="segmented" id="lobbyClockKind"></div>
-      <div class="copyRow" id="lobbyClockSecsRow" style="margin-top:6px">
-        <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
-        <span class="unit" id="lobbyClockSecsUnit">seconds</span>
-      </div>
-      <div class="copyRow" id="lobbyClockIncRow" style="margin-top:6px">
-        <input id="lobbyClockInc" class="seed" type="number" min="0" max="600" step="1">
-        <span class="unit">seconds back per turn</span>
+      <div class="clockFields">
+        <div class="copyRow" id="lobbyClockSecsRow">
+          <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
+          <span class="unit" id="lobbyClockSecsUnit">seconds</span>
+        </div>
+        <div class="copyRow" id="lobbyClockIncRow">
+          <input id="lobbyClockInc" class="seed" type="number" min="0" max="600" step="1">
+          <span class="unit">back per turn</span>
+        </div>
       </div>
     </div>
 
@@ -781,6 +785,12 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
 function draw() {
   const svg = document.getElementById('board');
   svg.textContent = '';
+  // The land and the ports go in one group, and that group alone decides the
+  // frame. Measuring everything drawn meant the board shifted and rescaled
+  // every time a piece appeared outside the previous extent, which is the one
+  // thing a board must never do.
+  const base = el('g', {});
+  svg.appendChild(base);
   const vxy = {};
   view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
 
@@ -834,7 +844,7 @@ function draw() {
       if (cs.length === 1) act(cs[0].i);
       else openPrompt('pick', { title: 'Rob which seat?', choices: cs });
     };
-    svg.appendChild(g);
+    base.appendChild(g);
   });
 
   // Ports sit just off the coast, each joined to the two intersections it
@@ -849,15 +859,15 @@ function draw() {
     // Port furniture is paper and ink, not colour. It used to be a cool
     // blue-grey, which put it at hue 214, inside the arc the seats occupy,
     // competing with seat 1 for the only blue on the board.
-    pts.forEach(([x, y]) => svg.appendChild(el('line', {
+    pts.forEach(([x, y]) => base.appendChild(el('line', {
       x1: ox, y1: oy, x2: x, y2: y, stroke: '#C8B79E', 'stroke-width': 2.5, opacity: .9,
     })));
-    svg.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: 'var(--panel)', stroke: 'var(--line)' }));
+    base.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: 'var(--panel)', stroke: 'var(--line)' }));
     const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: 'var(--dim)', 'font-size': 9 });
     // Two letters, taken from the same names the cards use, so a port and a
     // card cannot be read as different resources.
     t.textContent = port.kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][port.kind - 1];
-    svg.appendChild(t);
+    base.appendChild(t);
   });
 
   // Pieces are solid: a top face lying in the board's plane, with a skirt
@@ -959,18 +969,24 @@ function draw() {
     });
   }
 
-  fit(svg);
+  fit(svg, base);
 }
 
-// Frame what was actually drawn, rather than a rectangle guessed in advance.
+// Frame the land and the ports, rather than a rectangle guessed in advance.
 //
 // The board's extent is not a constant: three seats deal a different spread
 // than four, and port labels hang outside the coast. Measuring it means the
 // board is never clipped and never floats inside slack it does not need,
 // `preserveAspectRatio` then scales that box to whatever room the layout has.
-function fit(svg) {
+//
+// It measures the land alone, though, not everything drawn. Pieces sit on the
+// coast and ghosts drift above it, so including them moved and rescaled the
+// whole board every time one appeared past the previous extent. The land and
+// the ports do not change for the life of a game, so the frame does not
+// either, and the only thing that resizes the board is the window.
+function fit(svg, frame) {
   let box;
-  try { box = svg.getBBox(); } catch (e) { return; }   // not laid out yet
+  try { box = frame.getBBox(); } catch (e) { return; } // not laid out yet
   if (!box || box.width === 0 || box.height === 0) return;
   const pad = 14;                                       // room for strokes
   svg.setAttribute(
@@ -1351,22 +1367,13 @@ setInterval(tickClock, 1000);
 // Seats wait for people unless told otherwise, and the market is always open:
 // a table of humans that cannot trade freely is not the game anyone came for,
 // so it is not offered as a setting.
-const lobby = {
-  seats: 4,
-  roles: ['you', 'open', 'open', 'open'],
-  clockKind: 'turn',
-  clockInc: 10,
-  log: true,
-  clockSecs: 60,
-  seed: '',
-  name: '',
-};
 const CLOCK_KINDS = [
   ['turn', 'per turn'],
   ['chess', 'chess clock'],
   ['off', 'no clock'],
 ];
-const CLOCK_DEFAULT = { turn: 60, chess: 600 };
+const CLOCK_DEFAULT = { turn: 60, chess: 120 };
+const INCREMENT_DEFAULT = 45;
 const CLOCK_NOTE = {
   turn: 'A fresh allowance every turn. Run it out and your turn is ended for '
       + 'you, rolling first if the dice have not been thrown, since a turn '
@@ -1375,6 +1382,17 @@ const CLOCK_NOTE = {
        + 'move, with an increment credited back for every turn you finish. '
        + 'Spend the bank and your turns end as soon as they begin.',
   off: 'Nobody is hurried.',
+};
+
+const lobby = {
+  seats: 4,
+  roles: ['you', 'open', 'open', 'open'],
+  clockKind: 'turn',
+  clockInc: INCREMENT_DEFAULT,
+  log: true,
+  clockSecs: 60,
+  seed: '',
+  name: '',
 };
 
 // The engine seeds from a u64, so the seed should span one. Six digits was a
@@ -1520,6 +1538,7 @@ function renderLobby() {
       // Each kind measures a different thing, so carrying the number across
       // would turn "60 seconds a turn" into a one-minute chess bank.
       if (v !== 'off') lobby.clockSecs = CLOCK_DEFAULT[v];
+      if (v === 'chess') lobby.clockInc = INCREMENT_DEFAULT;
     });
   // Greyed rather than removed when there is no clock: a field that vanishes
   // takes the layout with it, and the number is still worth seeing.

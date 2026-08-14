@@ -47,7 +47,13 @@ them, comparing yourself to the table only works if everyone is measured the
 same way in the same place. History runs beneath them, because a log and a
 seat row answer the same question: who did what.
 
-**Centre: the board.** Unchanged. It is also an input device, see §5.
+**Centre: the board.** It is also an input device, see §5.
+
+**The board never moves.** Its frame is measured from the land and the ports
+alone, which do not change for the life of a game. Measuring everything drawn
+meant that a piece placed past the previous extent shifted and rescaled the
+whole board, which is the one thing a board must never do. The only thing that
+resizes it is the window.
 
 **Right: reserved, empty for now.** It is where chat goes when there are real
 players. Held open deliberately rather than reclaimed and re-cut later.

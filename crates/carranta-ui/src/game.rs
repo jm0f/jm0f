@@ -127,6 +127,8 @@ pub struct LogLine {
 /// road went, and "Build road at 68" asks the reader to hold a number that
 /// means nothing to them.
 fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
+    // The dice are read after the roll, so the caller rewrites that one; see
+    // `rolled`.
     match *a {
         Action::PlaceSettlement(_) => "Place a settlement".to_string(),
         Action::PlaceRoad(_) => "Place a road".to_string(),
@@ -139,6 +141,16 @@ fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
         },
         ref other => describe(other, state, seat),
     }
+}
+
+/// The roll, once it has happened.
+///
+/// `log_phrase` runs before the action is applied, when the dice still hold the
+/// previous turn's numbers, so the one phrase that depends on the outcome is
+/// built afterwards instead.
+fn rolled(state: &State) -> String {
+    let [a, b] = state.dice;
+    format!("Roll {a} and {b}, {}", a + b)
 }
 
 /// Why an action was refused.
@@ -485,7 +497,7 @@ impl Session {
             self.version += 1;
             let what = match forced {
                 Action::EndTurn => "turn ended".to_string(),
-                Action::Roll => "rolled for you".to_string(),
+                Action::Roll => format!("{} for you", rolled(&self.state)),
                 other => format!("{} for you", log_phrase(&other, &self.state, HUMAN as usize)),
             };
             self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
@@ -633,6 +645,10 @@ impl Session {
                 let at = self.stamp();
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.version += 1;
+                let phrase = match action {
+                    Action::Roll => rolled(&self.state),
+                    _ => phrase,
+                };
                 self.note_at(at, Some(HUMAN), phrase);
                 self.forget_declines();
             }
@@ -719,6 +735,10 @@ impl Session {
                 break;
             }
             self.version += 1;
+            let phrase = match action {
+                Action::Roll => rolled(&self.state),
+                _ => phrase,
+            };
             if worth_logging(&action) {
                 self.note_at(at, Some(seat as u8), phrase);
             }
@@ -1438,6 +1458,29 @@ mod tests {
             s.log().iter().any(|l| l.text.contains("ran out")),
             "and it says the clock did it, not the player"
         );
+    }
+
+    #[test]
+    fn the_log_records_what_the_dice_showed() {
+        // The phrase for every other action is built before it is applied. A
+        // roll cannot be: the dice still hold the previous turn's numbers until
+        // the engine has thrown them.
+        let mut s = Session::new(4, 5, TradeMode::Full);
+        while s.in_setup() {
+            let v = s.version();
+            s.act(0, v).expect("a legal placement");
+        }
+        let v = s.version();
+        s.act(0, v).expect("the roll");
+        let [a, b] = s.state.dice;
+        let line = s
+            .log()
+            .iter()
+            .rev()
+            .find(|l| l.text.starts_with("Roll "))
+            .expect("the roll is logged");
+        assert_eq!(line.text, format!("Roll {a} and {b}, {}", a + b));
+        assert_ne!(line.text, "Roll the dice", "the outcome, not the intent");
     }
 
     #[test]
