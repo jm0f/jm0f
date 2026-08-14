@@ -1,6 +1,6 @@
 # Carranta visual style
 
-A reference for everything we draw — board, pieces, cards, interface, print.
+A reference for everything we draw, board, pieces, cards, interface, print.
 Modelled on the mid-century national-park-poster idiom: bold flat colour,
 printed rather than rendered, warm rather than neutral.
 
@@ -15,7 +15,7 @@ sessions) should produce assets that sit together without coordination.
 
 Everything follows from that. Nothing is pure white because paper isn't.
 Nothing is pure black because ink isn't. Shading is a second flat colour, not a
-gradient — a printer lays down another plate, it doesn't fade. Texture is the
+gradient, a printer lays down another plate, it doesn't fade. Texture is the
 tooth of the stock and the dot of the screen, never photographic noise.
 
 ---
@@ -36,14 +36,14 @@ small hard-edged shape needs to punch through terrain. Nowhere else.
 
 ### 2.2 The terrain ladder
 
-Six hues, but the contrast does **not** come from hue — it comes from
+Six hues, but the contrast does **not** come from hue, it comes from
 **lightness**. Each terrain sits on its own rung, spaced roughly twelve points
 of L\* apart, so the board reads as six distinct fields even in greyscale.
 
 | Terrain | Hex | L\* | Hue | Role |
 |---|---|---|---|---|
 | Forest | `#1B5637` | ~32 | 150° | Darkest. Anchors the board. |
-| Mountains | `#566373` | ~42 | 215°, low chroma | Neutral slate — deliberately the least saturated thing on the board. |
+| Mountains | `#566373` | ~42 | 215°, low chroma | Neutral slate, deliberately the least saturated thing on the board. |
 | Hills | `#C2492A` | ~50 | 15° | Burnt vermillion. The warm anchor. |
 | Fields | `#E8A020` | ~70 | 38° | Saturated gold. |
 | Pasture | `#A8C64A` | ~78 | 75° | Yellow-green. |
@@ -52,7 +52,7 @@ of L\* apart, so the board reads as six distinct fields even in greyscale.
 **Why this works, and why the previous set didn't.**
 
 Forest and pasture are both green; fields and desert are both warm sand. Those
-pairs cannot be separated by hue — the subject matter forbids it. They are
+pairs cannot be separated by hue, the subject matter forbids it. They are
 separated instead by **lightness and chroma**: forest is dark and saturated
 where pasture is light and saturated; fields is mid and saturated where desert
 is light and washed. Two axes doing the work that one axis couldn't.
@@ -65,8 +65,8 @@ ladder is wrong.
 **The seats own the half of the wheel the land does not.**
 
 Every chromatic terrain sits in one arc: hills 12°, fields 38°, desert 41°,
-pasture 75°, forest 148°. That leaves **183°–337°** — cyan, blue, violet,
-magenta — with nothing on the board in it. The four seats are spaced across it.
+pasture 75°, forest 148°. That leaves **183°–337°**, cyan, blue, violet,
+magenta, with nothing on the board in it. The four seats are spaced across it.
 
 | Seat | Hex | Hue | L\* | Nearest terrain hue |
 |---|---|---|---|---|
@@ -76,16 +76,15 @@ magenta — with nothing on the board in it. The four seats are spaced across it
 | 4 | `#C1256B` | 333° rose | 44 | 39° |
 
 **Hue is not enough on its own.** 154° of arc split four ways leaves
-neighbours only ~45° apart, so the seats also stagger in lightness —
-63 / 30 / 57 / 44 — and the pairs that are closest in value are the ones
+neighbours only ~45° apart, so the seats also stagger in lightness, 63 / 30 / 57 / 44, and the pairs that are closest in value are the ones
 furthest apart in hue. Teal and purple are the weakest value pair at 1.22:1,
 and they are 104° apart. Nothing is close on both axes at once.
 
 **The arc is what lets pieces go bare.** Pieces carry no surround (§3.4), so
 the only thing dividing a piece from the tile under it is the colour. That
 only works because the seats and the land share no hue. Value contrast is no
-help at all — every seat has some tile it is within 1.06:1 of, teal on fields
-being the worst — so hue is carrying the whole separation.
+help at all, every seat has some tile it is within 1.06:1 of, teal on fields
+being the worst, so hue is carrying the whole separation.
 
 Mountains at 215° sits inside the seats' arc; only its very low chroma keeps
 it out of their way. Do not make it bluer.
@@ -105,8 +104,8 @@ forest and dark against desert. Hue separation is the only move available.
 
 | Role | Hex |
 |---|---|
-| Primary action | `#E8542F` — vermillion, the one call-to-action colour |
-| Highlight / selection | `#31AFC9` — teal |
+| Primary action | `#E8542F`, vermillion, the one call-to-action colour |
+| Highlight / selection | `#31AFC9`, teal |
 | Positive | `#5C9E31` |
 | Warning | `#F5A81C` |
 
@@ -115,7 +114,7 @@ One accent per screen. If two things are vermillion, neither is the action.
 ### 2.5 Rules that hold everywhere
 
 - **No pure black, no pure white** (one exception, §2.1).
-- **Every hue exists as three flat steps** — a tint, the identity value, a
+- **Every hue exists as three flat steps**, a tint, the identity value, a
   shade. Shading picks a step; it never interpolates.
 - **Five to seven colours in any single illustration.** Restraint is the style.
 - Adjacent things differ in **lightness**, not only hue.
@@ -135,7 +134,7 @@ true circles.
 
 ### 3.2 The badge
 
-The recurring container is a **lozenge** — a rectangle with fully rounded ends,
+The recurring container is a **lozenge**. A rectangle with fully rounded ends,
 in paper white, holding one or two icons. It floats on the board with no border
 and no shadow. It is how the interface speaks over the artwork without becoming
 part of it.
@@ -145,8 +144,8 @@ part of it.
 **Isometric objects, in the same idiom as the pieces** (§3.4): three flat
 faces, light from the upper left, no gradient within a face, no outline.
 
-A resource is drawn as the thing itself seen as a small solid — a log, a
-brick, a fleece, a sheaf, a cut stone — not as a symbol standing for it. One
+A resource is drawn as the thing itself seen as a small solid. A log, a
+brick, a fleece, a sheaf, a cut stone, not as a symbol standing for it. One
 hue each, taken from the terrain that produces it, in three flat steps.
 
 - Readable at **20 px**. Below that an isometric solid loses its faces; use a
@@ -161,7 +160,7 @@ they are the larger commitment.
 ### 3.4 Pieces
 
 Chunky, solid, physically plausible. They should look like objects **placed on**
-the board rather than printed into it — that separation is what lets flat
+the board rather than printed into it. That separation is what lets flat
 artwork and dimensional pieces share a surface.
 
 Each piece is drawn as three flat faces: a lit top, a mid side, a shadowed end.
@@ -169,7 +168,7 @@ No gradients within a face. Light always from the upper left.
 
 **No outline, no surround, no shadow.** A piece is separated from the board by
 hue, which is what §2.3's arc buys. Two surrounds were built and both were
-wrong — a box dilation left the diagonal edges thin, and an even offset union
+wrong. A box dilation left the diagonal edges thin, and an even offset union
 read as a pale collar sitting between the piece and the board rather than as
 part of either. If a piece is hard to see, the colour is wrong; do not put a
 ring around it.
@@ -201,13 +200,13 @@ as printing rather than as rendering.
 
 Two textures, both subtle, both everywhere:
 
-**Paper grain** — a fine uniform tooth over the whole surface. It is what makes
+**Paper grain**, a fine uniform tooth over the whole surface. It is what makes
 flat colour look printed rather than digital. Applied at 3–5% opacity.
 
-**Halftone** — a visible dot screen in gradients and in large flat areas of
+**Halftone**. A visible dot screen in gradients and in large flat areas of
 illustration. Dot size scales with the artwork, not the screen.
 
-**Topographic contours** — fine concentric lines, in ink at 4% opacity, as a
+**Topographic contours**, fine concentric lines, in ink at 4% opacity, as a
 background texture on bare paper areas. It is the style's signature and costs
 nothing.
 
@@ -225,7 +224,7 @@ live in the repository. Anything we cannot ship in the repo, we cannot use.
 
 | Face | Role |
 |---|---|
-| **Fraunces** | Display. A variable serif with an optical-size axis and a `WONK` axis that flares its terminals — the retro park-poster quality, available as a switch rather than as a redraw. |
+| **Fraunces** | Display. A variable serif with an optical-size axis and a `WONK` axis that flares its terminals. The retro park-poster quality, available as a switch rather than as a redraw. |
 | **Figtree** | Everything else. Geometric-humanist, large x-height, level colour at small sizes. |
 
 | Role | Treatment |
@@ -233,12 +232,12 @@ live in the repository. Anything we cannot ship in the repo, we cannot use.
 | Wordmark | Fraunces 700, `opsz 120`, `SOFT 20`, `WONK 1`, in vermillion on paper |
 | Headings | Figtree 600, uppercase, 0.08em tracking, ink-soft |
 | Body | Figtree 400, ink |
-| Numerals | Tabular, always — quantities line up in columns |
+| Numerals | Tabular, always, quantities line up in columns |
 | Labels | Figtree 600, uppercase, 0.08em tracking, ink-soft |
 
 **Use the optical-size axis for what it is.** Fraunces at `opsz 144` is drawn
 for a headline; the same glyphs at 14px come out as hairlines. Board numerals
-were set that way once and the discs went weak — they are back in Figtree 700,
+were set that way once and the discs went weak. They are back in Figtree 700,
 which is the right answer for the mark you read on every roll. Display faces
 go on things that are looked at, not on things that are read at speed.
 
@@ -251,7 +250,7 @@ surface.
 
 Motion is used for **state**, never for decoration.
 
-- A thing that is not yet placed **drifts** — 3 units, 2.2 seconds, all such
+- A thing that is not yet placed **drifts**, 3 units, 2.2 seconds, all such
   things in step so they read as one condition of the board rather than as
   separate events.
 - A thing being pointed at **holds still**, so it can be clicked.
@@ -271,14 +270,14 @@ In order, because the early ones are cheap:
 4. **Does light fall from the upper left everywhere?**
 5. **More than seven colours?** Cut.
 6. **Does an icon survive at 16 px?**
-7. **Does it look rendered?** Soft volume, specular, ambient occlusion — all
+7. **Does it look rendered?** Soft volume, specular, ambient occlusion, all
    mean it has drifted out of the idiom.
 
 ---
 
 ## 9. Status
 
-§2.2 and §2.3 are applied — `crates/carranta-ui/assets/index.html` carries the
+§2.2 and §2.3 are applied, `crates/carranta-ui/assets/index.html` carries the
 terrain ladder and the seat arc, and the comments there restate the reasoning
 so it survives being read without this file to hand.
 

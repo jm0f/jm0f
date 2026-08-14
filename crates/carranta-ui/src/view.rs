@@ -1,6 +1,6 @@
 //! The redacted position, as the page receives it.
 //!
-//! Everything here is read off a [`Fog`] — the projection of §7.3 — plus the
+//! Everything here is read off a [`Fog`], the projection of §7.3, plus the
 //! board geometry the engine now exposes. Nothing reads the raw `State` except
 //! the geometry, which is public information by definition.
 
@@ -34,7 +34,7 @@ pub fn render(session: &Session) -> String {
     render_inner(session, None)
 }
 
-/// The same, with something to tell the player — a refused click, usually.
+/// The same, with something to tell the player, a refused click, usually.
 pub fn render_with_note(session: &Session, note: &str) -> String {
     render_inner(session, Some(note))
 }
@@ -57,7 +57,11 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     let mut j = Json::object();
 
     j.int("version", session.version() as i64);
-    j.int("seed", session.seed() as i64);
+    // As a string, not a number: a u64 seed does not survive JSON.parse, which
+    // turns it into a double and quietly rounds the last few digits. The page
+    // shows the seed for copying, so a rounded one would deal a different board
+    // than the one it claims to name.
+    j.str("seed", &session.seed().to_string());
     // Which build is serving this, so a stale process is visible rather than
     // mistaken for a change that did not work.
     j.str("build", env!("CARRANTA_BUILD"));
@@ -93,7 +97,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
             .int("r3", t.iter().map(|p| p[1] as i64).sum::<i64>());
     });
     // The coastline in order, so the page can pick out the intersections a
-    // port could sit on — and so a person can name one precisely.
+    // port could sit on, and so a person can name one precisely.
     j.ints(
         "coast",
         carranta_core::state::coast_ring()

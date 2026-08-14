@@ -1,4 +1,4 @@
-# Carranta engine — performance targets
+# Carranta engine, performance targets
 
 Targets are deliberately aggressive. Each row carries a **measured baseline**
 where one exists, so the gap is visible rather than aspirational. Nothing here
@@ -19,18 +19,18 @@ scheduler noise swamps a sub-microsecond measurement).
 
 | Operation | Target | Measured | Status |
 |---|---|---|---|
-| Longest road — realistic network, 15 roads | ≤ 100 ns | **91 ns** | met |
-| Longest road — realistic, 5 roads | ≤ 40 ns | **32 ns** | met |
-| Longest road — realistic, 15 roads, blocked | ≤ 150 ns | **111 ns** | met |
-| Longest road — four-player sweep | ≤ 400 ns | **293 ns** | met |
-| Longest road — dense/adversarial, 15 roads | ≤ 500 ns | **1 455 ns** | 2.9× off |
+| Longest road, realistic network, 15 roads | ≤ 100 ns | **91 ns** | met |
+| Longest road, realistic, 5 roads | ≤ 40 ns | **32 ns** | met |
+| Longest road, realistic, 15 roads, blocked | ≤ 150 ns | **111 ns** | met |
+| Longest road, four-player sweep | ≤ 400 ns | **293 ns** | met |
+| Longest road, dense/adversarial, 15 roads | ≤ 500 ns | **1 455 ns** | 2.9× off |
 | Whole game, all seats after every move | ≤ 10 µs | **6.8 µs** | met |
 | Apply one action | ≤ 50 ns | **~35 ns** | met |
 | Legal move generation | ≤ 200 ns | **~22 ns** | met |
 | State clone (search node) | ≤ 20 ns | **~9 ns** (480 B) | met |
 | Full random game, setup → win | ≤ 50 µs | **~130 µs** | see below |
 | Self-play throughput, one core | ≥ 20 000 games/s | **~7 700** | see below |
-| Batched env step, N=1024 | FFI overhead < per-step cost | — | not built |
+| Batched env step, N=1024 | FFI overhead < per-step cost |, | not built |
 | Bot win rate vs random | ≥ 99% | **99.76%** | met |
 | Bot decision | instant (sub-ms) | **~3.5 µs** | met |
 | Recording overhead | ≤ 5% of play | **within noise** | met |
@@ -38,7 +38,7 @@ scheduler noise swamps a sub-microsecond measurement).
 | Full analysis per game | ≤ 1 ms | **~200 µs** | met |
 
 Engine figures come from `cargo run --release --example bench_engine`. They
-move **±30% between runs** on this machine — the same binary has measured a
+move **±30% between runs** on this machine. The same binary has measured a
 full random game at both 102 µs and 141 µs. Treat every figure here as a
 magnitude, and do not read a 20% change between two runs as a regression.
 Anything smaller than about 1.5× needs repeat runs before it means anything.
@@ -52,7 +52,7 @@ settles it.** It assumed ~300 actions per game. Measured:
 | Heuristic vs random | ~322 |
 | Four heuristics | ~479 |
 
-Random play inflates the count enormously — a random policy trades maritime
+Random play inflates the count enormously. A random policy trades maritime
 constantly and builds badly, dragging games out. Competent play is roughly
 half that, and the original ~300 estimate was close to right for a game where
 someone is actually trying to win.
@@ -68,7 +68,7 @@ That is the number every other line has to serve.
 
 ## Engine
 
-State is one fixed-size `Copy` struct of **384 bytes** — a few cache lines, so
+State is one fixed-size `Copy` struct of **384 bytes**. A few cache lines, so
 cloning a node for search is a `memcpy` and measures ~6 ns. Occupancy lives in
 bitboards (one `u128` per player over the 72 edges, one `u64` each for
 settlements and cities over the 54 intersections), which is what makes "do I
@@ -81,7 +81,7 @@ rejecting. The two are kept honest by a test asserting that every generated
 action is accepted by `apply`.
 
 Correctness rests on random playouts: 300 full games with `assert_invariants`
-run after **every** action — resource and piece conservation, one owner per
+run after **every** action, resource and piece conservation, one owner per
 edge and intersection, and the Distance Rule holding continuously (§5.5).
 Rule interactions no hand-written case would reach get exercised that way.
 
@@ -91,7 +91,7 @@ The open market (R-7.19) is the only place a **non-active** seat changes the
 state, which breaks the single-agent action stream everything else relies on.
 It is resolved by having two views rather than one:
 
-- `legal_into` answers for the seat whose decision it is — unchanged, single
+- `legal_into` answers for the seat whose decision it is, unchanged, single
   agent, and what search and training consume.
 - `legal_for(seat)` answers for any seat, and is what a live server asks per
   connected player.
@@ -102,14 +102,14 @@ in offers as they arrive.
 **Generated proposals put a single resource type on each side**, up to three
 cards, and `apply` accepts any shape. That split is forced by arithmetic:
 multisets of size 1–3 drawn from five resources give 55 possibilities a side,
-so full mixed-type enumeration is ~3 000 candidates per decision — 2-for-2 is
+so full mixed-type enumeration is ~3 000 candidates per decision, 2-for-2 is
 still ~400. Single-type sides give at most 180 before affordability prunes
 them, and cover the offers real play makes. Mixed-type deals remain legal and
 acceptable; they simply are not enumerated.
 
 **Every market action names its actor.** `AcceptTrade { offer, by }` rather than
 `AcceptTrade(offer)`, because the market is the one place where the actor is
-not implied by whose turn it is — an offer from the active player is open to
+not implied by whose turn it is. An offer from the active player is open to
 *several* opponents, and inferring the taker picks the wrong one.
 
 **Acceptance races resolve by re-validation, not by locking.** Actions are
@@ -126,43 +126,43 @@ strategies that will not transfer. Two changes were needed to make it happen.
 **One ply cannot value a proposal.** Making an offer changes nothing until it
 is taken, so a brilliant offer and an absurd one score identically. The bot
 values a proposal by the swap it *would* produce, discounted because it may be
-refused — and computes it from the hand alone, since a trade leaves
+refused, and computes it from the hand alone, since a trade leaves
 production, ports, routes and points untouched.
 
 **Opponents never reach `choose` during another seat's turn**, so nobody was
 ever asked to accept. `Policy::accepts` is a separate question, and the driver
 settles the market after every action.
 
-The first version then papered the table — every extra proposal scored a little
+The first version then papered the table. Every extra proposal scored a little
 positive, so offering was always better than getting on with the turn. What
 fixed it is a toll on **asking**, cumulative across the turn:
 
 | | Actions/game | Trades/game | Asks per trade | Games/s |
 |---|---|---|---|---|
-| No market | 508 | 0 | — | 594 |
+| No market | 508 | 0 |, | 594 |
 | Market, no toll | 2 941 | 37.4 | ~12 | 29 |
 | Toll per *live* own offer | 843 | 27.6 | ~12 | 114 |
 | Toll per *request made* | **643** | **19.2** | **6.7** | **165** |
 
 The distinction matters more than it looks. A toll on live offers resets the
-moment one is taken, so the bot could churn — offer, get taken, offer again at
+moment one is taken, so the bot could churn, offer, get taken, offer again at
 no cost, indefinitely. A toll on requests made is monotonic within the turn, so
 the bar rises with each ask and only a clearly good trade is worth raising. It
 is also closer to how a person weighs it: the third request of the same turn
 has to be worth more than the first, because people stop listening.
 
 Every candidate proposal carries the same toll, so it never picks *between*
-offers — it only decides whether making any is worth more than getting on with
+offers. It only decides whether making any is worth more than getting on with
 the turn.
 
 Trades happen in 100% of self-play games. `Full` runs ~4× slower than a
-market-free game, almost all of it the larger generated action space — fine for
+market-free game, almost all of it the larger generated action space, fine for
 evaluation and data generation, and the reason `Restricted` (328 games/s) and
 `Disabled` exist for training.
 
 ### What it cost
 
-State grew from 384 to **480 bytes**, and a clone from ~6 ns to **~9 ns** — the
+State grew from 384 to **480 bytes**, and a clone from ~6 ns to **~9 ns**, the
 market is 8 offer slots plus per-turn counters.
 
 *(An earlier revision of this document put the clone at ~14 ns and called it a
@@ -184,7 +184,7 @@ size of the generated action space, and only in the modes that generate it.
 
 One ply of greedy search: copy the state, apply each legal action, score the
 result, take the best. Copying is 384 bytes and applying is ~35 ns, so a whole
-decision costs ~3.3 µs over ~6 candidates — instant for every job it has
+decision costs ~3.3 µs over ~6 candidates, instant for every job it has
 (§9.3).
 
 The score is **competitive**, `value(me) − best value(any opponent)`, which is
@@ -194,7 +194,7 @@ rather than wherever is nearest.
 | | |
 |---|---|
 | Win rate vs 3 random opponents | **99.76%** over 5 000 boards × 4 seats |
-| Win rate by seat | 99.66 / 99.80 / 99.78 / 99.78% — no positional artefact |
+| Win rate by seat | 99.66 / 99.80 / 99.78 / 99.78%, no positional artefact |
 | Decision cost | ~3.5 µs (~6 candidates) |
 | Four bots, whole game | ~1.8 ms, ~499 actions |
 
@@ -213,7 +213,7 @@ holds the board fixed and leaves the seat as the only difference.
 
 **Policy seeded from the game seed.** `Heuristic::new(g)` and the game's own
 `State::new(_, g)` both build `Rng::new(g)`, so their streams started
-identical — and a policy breaks ties from `Stream::Dice`, the same stream the
+identical, and a policy breaks ties from `Stream::Dice`, the same stream the
 game rolls dice from. The bot's tie-breaks therefore tracked the dice. The
 effect was small (99.73% → 99.76% after fixing, inside run-to-run noise), but
 a strength measurement is exactly the place where a correlation between a
@@ -229,7 +229,7 @@ same dice, same tie-break stream, seat varied.
 **One ply cannot see a follow-up.** Playing a Militia leads to a robber move a
 ply away, so its value has to come from a feature (progress toward Largest
 Militia) rather than from the search. Likewise a maritime trade is a net loss
-of cards and one ply cannot see the build it enables — without a
+of cards and one ply cannot see the build it enables, without a
 `build_progress` feature scoring partial progress toward each cost, the bot
 never trades at all. That feature is not decoration; it is what makes trading
 happen.
@@ -239,13 +239,12 @@ Applying `BuyDev` draws the real top of the deck, which would tell it whether
 the next card is a Victory Point *before* deciding to buy. Applying a robber
 move takes a real random card, which would let it choose the victim whose card
 it liked best. Rolling has an outcome that has not happened. Each is scored
-from what a player legitimately knows — a fairness bug that only surfaced
+from what a player legitimately knows. A fairness bug that only surfaced
 because the win rate was being measured.
 
 ### Optimisation
 
-Scoring re-evaluated all four seats for every candidate, but most actions —
-buying, trading, upgrading, road-building — cannot change what an opponent's
+Scoring re-evaluated all four seats for every candidate, but most actions, buying, trading, upgrading, road-building, cannot change what an opponent's
 position is worth. Hoisting the opponent term out of the candidate loop cut the
 decision from 4.4 µs to 3.3 µs and left the win rate unchanged to the digit,
 which is the check that it was behaviour-preserving rather than merely faster.
@@ -259,7 +258,7 @@ test runs first.
 
 | Tier | Condition | Cost | Covers |
 |---|---|---|---|
-| Euler | ≤2 odd-degree intersections | free — parity is a by-product of the flood | straight chains, bare loops |
+| Euler | ≤2 odd-degree intersections | free, parity is a by-product of the flood | straight chains, bare loops |
 | Diameter | acyclic, no split cycle | two linear sweeps | branching trees |
 | Search | cycle **and** ≥4 odd junctions | contraction, then bounded DFS | rare |
 
@@ -267,7 +266,7 @@ test runs first.
 
 [`Tracker`] keeps every seat's length current and recomputes only what can have
 changed: a seat whose own roads moved, or one whose network an opponent has
-just built across — the latter detected with a single mask test against the
+just built across. The latter detected with a single mask test against the
 intersection's roads, and usually true for nobody. That is a 3.6× saving on the
 whole-game figure above, and it compounds with every per-call improvement
 below rather than competing with them.
@@ -287,14 +286,14 @@ seat's road length current across 80 building moves:
 | Change | Whole game |
 |---|---|
 | Recompute all four seats after every move | 24.0 µs |
-| [`Tracker`] — recompute only what can have changed | **6.8 µs** |
+| [`Tracker`], recompute only what can have changed | **6.8 µs** |
 
 The last step is the one that mattered, and it is worth stating why. The
 earlier versions built an explicit adjacency graph before deciding anything.
 But the adjacency is already implicit in the board: `edge_adj(e)` is a
 precomputed mask of the roads sharing an intersection with `e`, so flooding a
 component is one table load and one OR per road, in registers. Degree parity
-falls out of the same pass by XORing each road's two-intersection mask — bit
+falls out of the same pass by XORing each road's two-intersection mask, bit
 `v` of the accumulator ends up as `degree(v) & 1`, which is the entire input to
 the Euler test. So the common case now answers without building, traversing, or
 allocating anything.
@@ -314,8 +313,7 @@ needs them.
 Real play grows roads outward from existing ends, which is overwhelmingly
 tree-shaped; loops are rare and small. Benchmarking against uniformly random
 networks overstates the cost by ~16×, which is why the benchmark reports both.
-The dense case is the one still short of target, and it is search-dominated —
-see the remaining ideas below.
+The dense case is the one still short of target, and it is search-dominated, see the remaining ideas below.
 
 ### What was tried and rejected
 
@@ -325,7 +323,7 @@ see the remaining ideas below.
   than the subtrees it prunes.
 - **Odd-degree-first start ordering in the search.** A maximum trail nearly
   always starts at an odd junction, so trying those first should hit the bound
-  and exit early. Measured slightly **worse** (1 629 → 1 747 ns) — the second
+  and exit early. Measured slightly **worse** (1 629 → 1 747 ns), the second
   pass costs more than the early exits save.
 - **Flooring the search with the incumbent's length.** The Longest Road tile
   moves only on a strict lead (R-10.6), so the holder's length looked like a
@@ -340,8 +338,8 @@ see the remaining ideas below.
 
   Even the *best* case is only ~15% faster, because the component flood runs
   either way and a floor skips only the tier work, which is already cheap. Wire
-  it into `Tracker::leader` and it is a straight loss — 0.6× in the early game,
-  1.0× on a cold position, 0.8× over a whole game — because `Tracker` had
+  it into `Tracker::leader` and it is a straight loss, 0.6× in the early game,
+  1.0× on a cold position, 0.8× over a whole game, because `Tracker` had
   already removed the same redundancy by caching. The two ideas were competing
   for one saving and caching got there first. `leader` computes exact lengths;
   the primitive is kept, documented, and not used by default.
@@ -353,7 +351,7 @@ see the remaining ideas below.
 1. **Minimum T-join bound** for the dense case. The current cap takes the
    better of two cheap relaxations; the exact minimum parity repair is a
    T-join, via shortest paths between odd junctions plus a subset-DP matching.
-   It is the only remaining idea likely to close the adversarial gap — but note
+   It is the only remaining idea likely to close the adversarial gap, but note
    the arithmetic before starting: a subset DP over 8–10 odd junctions is on
    the order of 10–20k operations, which at this graph size is comparable to
    the search it would replace. It should be gated on a small odd-junction
@@ -382,12 +380,12 @@ self-play games per mode:
 **Recording is free.** The recorder is an observer: it applies the action the
 engine would have applied and appends 48 bytes. Both measurements above put a
 recorded game marginally *faster* than an unrecorded one, which is measurement
-noise saying the same thing — the cost is below what this harness can see. A
+noise saying the same thing, the cost is below what this harness can see. A
 test asserts the stronger claim directly: same seed, same bots, with and
 without a log, same game.
 
 **Replay is ~55× cheaper than play**, because it skips move generation and
-policy evaluation entirely — a fold over recorded actions, with no search for
+policy evaluation entirely. A fold over recorded actions, with no search for
 what is legal and no bot deciding. A million games re-fold in well under a
 minute on one core, which is what makes derived analytics regenerable rather
 than something to store carefully (H-7).
@@ -402,18 +400,18 @@ at ~250 µs to project an entire finished game, nothing needs it yet.
 **Randomness is recorded, not re-rolled.** `apply_recorded` reports what an
 action resolved; `apply_scripted` supplies it back on replay without touching
 the generator (H-1). The seam is narrow because only two things resolve
-randomly during play — the dice and the robbery. The board and the deck order
+randomly during play, the dice and the robbery. The board and the deck order
 are drawn once at construction and travel in the opening state.
 
 Because a scripted apply leaves the RNG alone, a replayed state matches the
 recorded one in every field *but* `rng`. Comparison therefore goes through
 `State::same_game_as`, which copies the other side's generator across before
-comparing — so every field, including any added later, is checked, and only
+comparing, so every field, including any added later, is checked, and only
 the generator is exempt. `apply` itself is unchanged at ~31 ns: the source is
 a constant at that call site and folds away.
 
 **`replay()` deliberately refuses the snapshot shortcut.** Seeking from the
-last snapshot makes replaying a whole log fast and almost useless — it steps
+last snapshot makes replaying a whole log fast and almost useless. It steps
 over the events and trusts the index to stand in for them. A tampered event in
 the middle of a log went unnoticed until this was separated: `replay_to(seq)`
 seeks and trusts the index, `replay()` folds every event, and `verify()` folds
@@ -424,14 +422,14 @@ and checks every snapshot on the way past.
 `carranta-analytics` computes §10 over recorded games: dice fairness, the
 production decomposition, per-game descriptives, corpus balance, and ratings.
 It stores nothing. Replaying a game costs ~35 µs, so a changed metric is
-recomputed over the corpus rather than migrated — which is what makes H-7's
+recomputed over the corpus rather than migrated, which is what makes H-7's
 "derived events are a materialized view" a practical stance.
 
 A full analysis is **~200 µs per game against ~7 600 µs to play one**, so
 re-deriving every metric over a million games is a few minutes on one core.
 
-The statistics are written out rather than pulled in — the workspace stays
-dependency-free — and each is tested against values that can be checked
+The statistics are written out rather than pulled in. The workspace stays
+dependency-free, and each is tested against values that can be checked
 independently: `normal_cdf` and `chi_squared_p` against standard tables, the
 least-squares fit against a line it must recover exactly, Benjamini–Hochberg
 against a uniform p-value set it must reject entirely.
@@ -439,7 +437,7 @@ against a uniform p-value set it must reject entirely.
 ### Three tests worth naming
 
 **The per-game dice p-value is calibrated.** 400 fair games, and about 5% must
-clear p<0.05 — because under the null a p-value is uniform. If they did not,
+clear p<0.05, because under the null a p-value is uniform. If they did not,
 the test would be miscalibrated, and §10.1's entire warning about per-game
 significance would rest on nothing.
 
@@ -459,7 +457,7 @@ points, sevens at 0.1661 against 0.1667, lag-1 +0.0012, runs test p = 0.96.
 
 ### A harness defect the numbers exposed
 
-The first full report showed a busy market — ~35 offers per seat — and **zero
+The first full report showed a busy market, ~35 offers per seat, and **zero
 completed trades**. The bot crate's `settle_market` writes straight to a
 `State`, bypassing the recorder, so every completed trade was missing from the
 log. The tests passed throughout: none of them asserted that trades appear in a
@@ -468,20 +466,18 @@ declines be recorded per offer and seat (H-4) rather than once per pass of the
 settle loop.
 
 The same report ranked four *identical* bots, because each agent sat in a fixed
-seat. Rotating the agents around the table collapsed the ranking to 1.3σ —
-not separated, which is the right answer for identical players, and a concrete
+seat. Rotating the agents around the table collapsed the ranking to 1.3σ, not separated, which is the right answer for identical players, and a concrete
 demonstration of why A-4 randomises seating.
 
 ## Correctness
 
-24 tests. ~40 000 differential comparisons against a brute-force reference — an
-obviously-correct exhaustive trail search with no contraction, tiers or bounds
-— half of them with opponent buildings scattered over the network, and running
+24 tests. ~40 000 differential comparisons against a brute-force reference, an
+obviously-correct exhaustive trail search with no contraction, tiers or bounds, half of them with opponent buildings scattered over the network, and running
 up to the full 15-road piece limit so that the search tier and its bounds are
 actually exercised. A further ~48 000 checks confirm [`Tracker`]'s cached
 answers against full recomputation after every move of simulated games, and
 ~12 000 more check `longest_road_exceeds` against the exact length at *every*
-floor from zero past the true answer — the floored path prunes hardest, so it
+floor from zero past the true answer. The floored path prunes hardest, so it
 is where a bound set too tight would surface as a short answer. `Tracker::leader`
 is checked against a naive compute-everything-then-compare implementation across
 16 000 simulated positions, ties and the five-road threshold included.
@@ -507,7 +503,7 @@ hand-written case missed, both in blocking:
 48 tests. The special functions are checked against published table values, the
 statistical tests against sequences whose answer is known by construction
 (fair dice, a loaded die, a sorted sequence, a line), and the rating update
-against the properties the model is defined by — order monotonicity, σ that
+against the properties the model is defined by, order monotonicity, σ that
 only shrinks, symmetry under a full tie, μ conservation under equal
 uncertainty, and convergence onto a known true ordering.
 
@@ -531,14 +527,14 @@ field-by-field check only ever covers the fields someone remembered, and
 silently stops covering a field added later; this formulation covers whatever
 the type contains. It is backed by a served type that has no field for another
 seat's card identities and none for the deck order, so a leak takes a
-deliberate change rather than an oversight — which matters because, per §7.6, a
+deliberate change rather than an oversight, which matters because, per §7.6, a
 redaction leak surfaces only when somebody exploits it.
 
 ## Method notes
 
 - **Batch timing.** Per-call `Instant::now()` cost and scheduler preemption
   produced 30 µs "worst cases" on pure trees, which are algorithmically
-  impossible — measurement artefacts, not outliers.
+  impossible, measurement artefacts, not outliers.
 - **Both shapes reported.** A single mean over random networks hides an ~16×
   spread between realistic and adversarial cases.
 - **`black_box` on inputs and outputs**, and the accumulated result is asserted

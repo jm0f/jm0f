@@ -1,4 +1,4 @@
-# Terrain surface prompt — ORE (mountains)
+# Terrain surface prompt. ORE (mountains)
 
 Companion to `TERRAIN-PROMPT.md`. Same output rules; this one is **illustrated,
 not rendered**, and that is the whole difficulty.
@@ -6,16 +6,16 @@ not rendered**, and that is the whole difficulty.
 The reference is a printed board: flat areas of colour with hand-drawn linework
 over them, in the manner of hachure on an antique topographic map. It is not a
 photograph of rock, not a 3D render, not a texture map. Ask for "mountains from
-above" and you will get photorealistic scree every time — the words that matter
+above" and you will get photorealistic scree every time. The words that matter
 here are *illustration*, *linework* and *flat colour*.
 
 ---
 
-**Generate a terrain surface: MOUNTAINS — the terrain that produces ore — as
+**Generate a terrain surface: MOUNTAINS. The terrain that produces ore, as
 source artwork for a digital board game. Hand-illustrated topographic map art,
 seen from directly overhead.**
 
-### Style — read this first, it overrides any default
+### Style, read this first, it overrides any default
 
 - **Flat illustration.** Areas of solid colour with drawn linework on top.
   Think mid-century screen-printed national-park poster, or the hachured relief
@@ -50,10 +50,8 @@ seen from directly overhead.**
   from it at arbitrary positions and used as game tiles.
 - Therefore: **no composition.** No summit, no peak, no single dominant ridge,
   no valley through the middle. **No point in the image may be more important
-  than any other.** A viewer should not be able to say where the mountain is —
-  the whole square is mountain.
-- Vary the terrain — branching ridgelines, broad scree fans, gravel benches —
-  but nothing stands out as *the* subject.
+  than any other.** A viewer should not be able to say where the mountain is, the whole square is mountain.
+- Vary the terrain, branching ridgelines, broad scree fans, gravel benches, but nothing stands out as *the* subject.
 
 ### Colour
 
@@ -67,11 +65,11 @@ seen from directly overhead.**
   photograph.
 - **No pure white and no black.** Bone is the lightest value, indigo the
   darkest. Nothing brighter or darker than those two.
-- Lights should be **broad and soft-edged**, never small bright specks — a
+- Lights should be **broad and soft-edged**, never small bright specks, a
   scatter of tiny high-contrast marks reads as noise under a game piece.
 - **No snow, no ice, no glacier.** Bone-coloured high ground is fine; a white
   snowfield is not.
-- **No saturated foreign accents** — nothing green, red, orange or turquoise
+- **No saturated foreign accents**. Nothing green, red, orange or turquoise
   that could be mistaken for a game piece. No lichen, no meltwater.
 
 ### Projection
@@ -80,8 +78,8 @@ seen from directly overhead.**
   point, no convergence, no tilt, no horizon.
 - A ridge shows its **top**, never its face. A visible cliff face means the
   camera has tilted and the artwork is unusable.
-- Light direction is implied by hatching density alone — heavier strokes on the
-  lower-right flank of every ridge — not by rendered shadow.
+- Light direction is implied by hatching density alone, heavier strokes on the
+  lower-right flank of every ridge, not by rendered shadow.
 - The image has no "up" beyond that convention; crops are taken at any position.
 
 ### Scale
@@ -89,7 +87,7 @@ seen from directly overhead.**
 - The repeating element is the **ridge-to-ridge spacing**: **45–60 px** on the
   2048 px image, roughly **2.5% of its width**.
 - Expect **30–45 distinct ridge or fan structures** across the square.
-- Individual hatch strokes are fine — one to two pixels — and read as texture
+- Individual hatch strokes are fine. One to two pixels, and read as texture
   rather than as separate marks.
 - If the generator will not go this fine and structures come out two or three
   times larger, send it anyway: the renderer compensates by cropping a larger
@@ -116,7 +114,7 @@ In the order things actually go wrong:
    hatched, it has drifted back to rendering. Reject.
 3. **Any white or black?** Snow, ice or a blown highlight; a black fold. Reject.
 4. **Can you see the side of anything?** The camera tilted. Reject.
-5. **Is there a peak?** Something the eye lands on. Reject — every crop must
+5. **Is there a peak?** Something the eye lands on. Reject. Every crop must
    work equally well, and a summit only works if the crop happens to contain it.
 6. **Structures the right size?** If 2–3× too large, keep it; that is fixable
    in code.
@@ -124,7 +122,7 @@ In the order things actually go wrong:
 ## A consistency decision to make
 
 The forest surface currently in the repo is **painterly and near-photographic**.
-This one is **flat illustration**. They cannot share a board — one will look
+This one is **flat illustration**. They cannot share a board, one will look
 like a mistake next to the other.
 
 So this prompt is a fork, not an addition. If the illustrated look is the

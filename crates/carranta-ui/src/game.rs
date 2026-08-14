@@ -2,7 +2,7 @@
 //!
 //! **The browser is served a redacted view, never the state.** Everything the
 //! page receives goes through [`carranta_record::fog`], the same projection a
-//! real server would use — so the client physically cannot be sent another
+//! real server would use, so the client physically cannot be sent another
 //! seat's cards or the deck order, because the type it is built from has no
 //! field for them. That is worth doing here rather than later: a local UI that
 //! reads the raw state would grow a habit the server then has to unpick.
@@ -26,7 +26,7 @@ pub enum Clock {
     Off,
     /// A fresh allowance every turn. Run it out and your turn is ended for you.
     PerTurn(u64),
-    /// One bank each for the whole game, draining only while it is your move —
+    /// One bank each for the whole game, draining only while it is your move,
     /// a chess clock. Empty it and your turns end the moment they begin.
     Chess(u64),
 }
@@ -65,8 +65,8 @@ pub enum Refused {
     Stale,
     /// No such choice was offered.
     NoSuchChoice,
-    /// The engine rejected it. Should not happen — every choice offered comes
-    /// from the engine's own legal set — so it is surfaced rather than hidden.
+    /// The engine rejected it. Should not happen. Every choice offered comes
+    /// from the engine's own legal set, so it is surfaced rather than hidden.
     Illegal(Illegal),
 }
 
@@ -86,7 +86,7 @@ pub struct Session {
     started: std::time::Instant,
     clock: Clock,
     /// When the running seat's *turn* began. Reset only when the turn actually
-    /// changes hands — a per-turn allowance must not refill because something
+    /// changes hands. A per-turn allowance must not refill because something
     /// happened mid-turn, or a clock that rolled for you would hand you a fresh
     /// allowance for doing nothing.
     turn_began: std::time::Instant,
@@ -113,7 +113,7 @@ impl Session {
                 .collect(),
             version: 0,
             log: vec![format!(
-                "New game — {seats} seats, {mode:?} market, seed {seed}"
+                "New game, {seats} seats, {mode:?} market, seed {seed}"
             )],
             declined: [false; MAX_OFFERS],
             seed,
@@ -212,7 +212,7 @@ impl Session {
     ///
     /// Enforced lazily, on the way in to a request, because a server that only
     /// wakes when asked cannot end a turn at the exact second. Only ever ends a
-    /// turn that could legally be ended — a clock should not be able to skip a
+    /// turn that could legally be ended. A clock should not be able to skip a
     /// setup placement or a discard, which would leave the position illegal.
     pub fn enforce_clock(&mut self) {
         if self.clock == Clock::Off {
@@ -228,7 +228,7 @@ impl Session {
             let mut buf = Vec::new();
             self.state.legal_into(&mut buf);
             // Ending is the forfeit. Rolling comes first when it has to,
-            // because the turn cannot be ended before the dice — without this
+            // because the turn cannot be ended before the dice, without this
             // a clock that expired before the roll would stall the game
             // rather than pass it on.
             //
@@ -248,10 +248,10 @@ impl Session {
             }
             self.version += 1;
             if ending {
-                self.log.push("Your time ran out — turn ended".to_string());
+                self.log.push("Your time ran out, turn ended".to_string());
             } else {
                 self.log
-                    .push("Your time ran out — rolled for you".to_string());
+                    .push("Your time ran out, rolled for you".to_string());
             }
             self.forget_declines();
             self.finish_move();
@@ -298,7 +298,7 @@ impl Session {
             self.state.legal_into(&mut buf);
             return buf.into_iter().map(Choice::Play).collect();
         }
-        // Not their turn — but an offer may be waiting for them.
+        // Not their turn, but an offer may be waiting for them.
         let mut out: Vec<Choice> = self
             .open_offers()
             .into_iter()
@@ -407,7 +407,7 @@ impl Session {
     /// Compose and make an offer of any shape, to anyone (R-7.19).
     ///
     /// Separate from [`Session::act`] because the engine *generates* only open,
-    /// single-type offers — a bound on enumeration, not on legality. A person
+    /// single-type offers, a bound on enumeration, not on legality. A person
     /// composing "two wood and a brick for an ore, and only to seat 2" is
     /// making a perfectly legal offer that simply was not in the generated set,
     /// so it is built here and handed to the engine, which validates it exactly
@@ -538,7 +538,7 @@ impl Session {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
     Play(Action),
-    /// Wave away the offers currently on the table. Not an engine action —
+    /// Wave away the offers currently on the table. Not an engine action,
     /// declining changes no state, which is exactly why it needs representing
     /// here rather than there.
     Decline,
@@ -644,12 +644,12 @@ pub fn describe(a: &Action, state: &State, actor: usize) -> String {
         Action::PlayMilitia => "Play Militia".to_string(),
         Action::PlayRoadBuilding => "Play Road Building".to_string(),
         Action::PlayInvention([a, b]) => format!(
-            "Play Invention — take {} and {}",
+            "Play Invention, take {} and {}",
             RESOURCE_NAMES[a as usize], RESOURCE_NAMES[b as usize]
         ),
         Action::PlayMonopoly(r) => format!("Play Monopoly on {}", RESOURCE_NAMES[r as usize]),
         Action::Trade { give, take } => {
-            // Four-for-one needs no port — it is the bank, open to everyone
+            // Four-for-one needs no port. It is the bank, open to everyone
             // always (R-7.6). Calling that "at the port" misnames the trade a
             // player makes most often, and does it while standing nowhere near
             // a port. Only the improved rates are a port's doing (R-7.7, R-7.8).
@@ -855,7 +855,7 @@ mod tests {
                 let version = s.version();
                 s.act(i, version).expect("decline");
                 // Declining changes nothing itself, though the bots then move
-                // on — so what must hold is that no cards changed hands at the
+                // on, so what must hold is that no cards changed hands at the
                 // moment of declining.
                 assert_eq!(before.hand[HUMAN as usize], s.state().hand[HUMAN as usize]);
                 return;
@@ -882,7 +882,7 @@ mod tests {
 
         // What reaches the market is checked on a copy of the position rather
         // than after the fact, because `propose` lets the bots run and one of
-        // them may take the offer — a fine outcome for a game, and a poor one
+        // them may take the offer. A fine outcome for a game, and a poor one
         // for a test of what was offered, which would then depend on how the
         // seat to the left happens to value ore.
         let before = *s.state();
@@ -927,7 +927,7 @@ mod tests {
         let v = s.version();
 
         // A gift, a self-trade, and cards not held are all refused (R-7.5,
-        // R-7.18) — the composer does not get its own rulebook.
+        // R-7.18), the composer does not get its own rulebook.
         assert!(matches!(
             s.propose(None, [1, 0, 0, 0, 0], [0; 5], v),
             Err(Refused::Illegal(Illegal::EmptySide))
@@ -1104,7 +1104,7 @@ mod tests {
             s.act(i, v).expect("a legal placement");
         }
         // Setup leaves the human before the roll, where ending a turn is not
-        // legal yet — the clock has to roll first or the game would stall.
+        // legal yet, the clock has to roll first or the game would stall.
         assert!(matches!(s.state.phase, Phase::PreRoll));
         let before = s.version();
         std::thread::sleep(std::time::Duration::from_millis(1_100));
@@ -1122,7 +1122,7 @@ mod tests {
         );
         assert!(
             s.log().iter().any(|l| l.contains("turn ended")),
-            "and the turn ended in the same sweep — rolling must not refill the \
+            "and the turn ended in the same sweep, rolling must not refill the \
              allowance, or a clock could roll for you forever"
         );
     }

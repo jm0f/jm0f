@@ -4,7 +4,7 @@
 //!
 //! A route is a **trail**: a walk that never reuses a road, but *may* revisit
 //! an intersection. This is forced by our own rule that a closed loop counts
-//! as all of its segments — a 6-road ring must score 6, and no walk over 6
+//! as all of its segments. A 6-road ring must score 6, and no walk over 6
 //! distinct edges can avoid returning to where it started. So this is the
 //! longest trail, not the longest simple path.
 //!
@@ -19,18 +19,18 @@
 //!    cycle running through a blocked intersection is correctly broken.
 //!
 //! 2. **Degree-2 chains contract.** An optimal trail never starts or ends
-//!    strictly inside a chain of degree-2 intersections — it could always
+//!    strictly inside a chain of degree-2 intersections. It could always
 //!    extend to the chain's end and pick up more roads. So a trail traverses
 //!    each chain whole or not at all, and every chain collapses to a single
 //!    weighted edge. This is the decisive optimisation: a 15-road network with
 //!    three junctions searches ~4 weighted edges rather than 15.
 //!
 //! 3. **Trees are diameters.** With no cycle, trail equals simple path, so the
-//!    answer is the weighted diameter — two linear sweeps, no search.
+//!    answer is the weighted diameter, two linear sweeps, no search.
 //!
 //! 4. **Euler's theorem.** A connected component with 0 or 2 odd-degree
 //!    vertices has an Eulerian trail, so its answer is exactly its total
-//!    weight — again no search.
+//!    weight, again no search.
 //!
 //! Only a component with both a cycle and four or more odd-degree junctions
 //! reaches the search tier, and there it is capped: a component with `2k` odd
@@ -53,7 +53,7 @@ const NO_NODE: u8 = u8::MAX;
 
 /// Working memory for the search tier.
 ///
-/// The common tiers need none of this — they run in registers on bitmasks.
+/// The common tiers need none of this, they run in registers on bitmasks.
 /// It exists so the rare component with both a cycle and four odd junctions
 /// can build a contracted graph without allocating.
 pub struct Scratch {
@@ -128,7 +128,7 @@ impl Scratch {
     /// Blocked intersections need no special handling beyond being treated as
     /// chain terminators. Because each chain is discovered exactly once and
     /// takes a **fresh** node at a blocked end, two chains meeting at one
-    /// blocked intersection get distinct nodes — which is precisely the split
+    /// blocked intersection get distinct nodes, which is precisely the split
     /// that stops a route passing through it.
     fn contract(&mut self, comp: EdgeSet, verts: VertexSet, blocked: VertexSet) -> u128 {
         self.tick += 1;
@@ -216,7 +216,7 @@ impl Scratch {
     /// Two independent relaxations, both admissible; the stronger wins.
     ///
     /// A component with `2k` odd-degree junctions decomposes into `k`
-    /// edge-disjoint trails, so at least `k-1` whole chains go unused — worth
+    /// edge-disjoint trails, so at least `k-1` whole chains go unused, worth
     /// at least the `k-1` lightest.
     ///
     /// That ignores *where* the odd junctions are, which is usually the
@@ -315,7 +315,7 @@ pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u
 /// Length for this network **only if it exceeds `floor`**.
 ///
 /// Returns `Some(len)` with the exact length when the network beats `floor`,
-/// and `None` when it does not — without ever proving how much shorter it is.
+/// and `None` when it does not, without ever proving how much shorter it is.
 ///
 /// Every prune in the search is keyed on the best length found so far, so
 /// starting that at `floor` rather than zero lets whole components, whole
@@ -323,7 +323,7 @@ pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u
 ///
 /// **This did not pay off for the Longest Road tile, which is what it was
 /// built for.** The tile moves only on a strict lead (R-10.6), so the
-/// incumbent's length looks like a floor every rival must clear — but
+/// incumbent's length looks like a floor every rival must clear, but
 /// [`Tracker`] had already removed the same redundancy by caching, and once
 /// only the seat that actually changed is recomputed there is very little
 /// left for a floor to skip. Measured against exact lengths it was slower in
@@ -331,8 +331,8 @@ pub fn longest_road_in(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet) -> u
 /// a whole game. `Tracker::leader` therefore computes exact lengths.
 ///
 /// It is kept because it is a sound and well-tested primitive, and because a
-/// caller with a genuinely lopsided comparison — a high floor against a small
-/// network — still benefits. Measure before adopting it; the intuition that it
+/// caller with a genuinely lopsided comparison. A high floor against a small
+/// network, still benefits. Measure before adopting it; the intuition that it
 /// must be cheaper is exactly what the numbers above contradict.
 pub fn longest_road_exceeds(
     s: &mut Scratch,
@@ -350,7 +350,7 @@ pub fn longest_road_exceeds(
 /// possibilities that provably cannot beat `best`: a component whose entire
 /// road count is at most `best`, a search whose upper bound is at most `best`,
 /// or a walk that has already reached its component's bound. None of them can
-/// hide a longer route — they can only decline to prove a shorter one.
+/// hide a longer route, they can only decline to prove a shorter one.
 fn run(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet, floor: u32) -> u32 {
     let n_roads = roads.count_ones();
     if n_roads <= 1 {
@@ -431,7 +431,7 @@ fn run(s: &mut Scratch, roads: EdgeSet, blocked: VertexSet, floor: u32) -> u32 {
 
         // Tier order puts the cheapest test first. Euler costs one parity
         // counter the flood already gathered, and it answers every straight
-        // chain and every bare loop — which is nearly all real road networks —
+        // chain and every bare loop, which is nearly all real road networks,
         // without any traversal at all.
         let len = if odd <= 2 {
             // An Eulerian trail exists and uses every road.
@@ -486,7 +486,7 @@ fn farthest(s: &mut Scratch, comp_edges: EdgeSet, blocked: VertexSet, from: u8) 
             best_node = v;
         }
         // A route may not pass *through* an opponent's building, but it may
-        // start at one — the second sweep legitimately begins at a blocked
+        // start at one. The second sweep legitimately begins at a blocked
         // leaf, and refusing to expand it there would report a length of 0.
         if v != from && blocked & (1u64 << v) != 0 {
             continue;
@@ -601,7 +601,7 @@ impl Tracker {
     /// Record a settlement or city built by `player` at `vertex`.
     ///
     /// This can only shorten an **opponent's** route, and only one whose roads
-    /// actually meet that intersection — so at most a couple of seats are
+    /// actually meet that intersection, so at most a couple of seats are
     /// invalidated, usually none.
     #[inline]
     pub fn add_building(&mut self, player: usize, vertex: u8) {
@@ -639,7 +639,7 @@ impl Tracker {
     ///
     /// This computes every seat's exact length rather than asking each only
     /// whether it clears the running best. The comparison-only version was
-    /// built and measured slower in every scenario — see the note on
+    /// built and measured slower in every scenario, see the note on
     /// [`longest_road_exceeds`].
     pub fn leader(&mut self) -> Option<usize> {
         let lens = self.all();
@@ -691,7 +691,7 @@ mod tests {
 
     /// Naive reference: exhaustive trail search over the raw board, with no
     /// contraction, no tiers and no bounds. Obviously correct, hopelessly slow
-    /// — exactly what a differential test wants.
+    ///, exactly what a differential test wants.
     fn brute(roads: EdgeSet, blocked: VertexSet) -> u32 {
         fn go(
             roads: EdgeSet,

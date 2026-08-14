@@ -4,7 +4,7 @@
 //! The question behind benchmarking a trained agent against people. Agents
 //! play each other constantly and will be tightly rated among themselves;
 //! humans play each other and will be tightly rated among themselves. Neither
-//! fact says anything about how the two compare — that rests entirely on the
+//! fact says anything about how the two compare. That rests entirely on the
 //! games that *cross* between them.
 //!
 //! This simulates the rating model directly from known skills, so the answer is
@@ -88,8 +88,8 @@ fn scenario(within: u32, bridge: u32, seed: u64) -> (f64, bool) {
     // faithful rating lands at roughly *twice* the skill gap that produced it.
     // Inventing an error metric against the wrong scale would just hide that.
     //
-    // What is genuinely scale-free — and what actually matters for
-    // benchmarking — is whether the ordering across the two groups is right.
+    // What is genuinely scale-free, and what actually matters for
+    // benchmarking, is whether the ordering across the two groups is right.
     let mut claimed_total = 0.0;
     let mut pairs = 0.0;
     let mut ordering_right = true;

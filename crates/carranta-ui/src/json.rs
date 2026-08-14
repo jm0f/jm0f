@@ -2,8 +2,7 @@
 //!
 //! Written out rather than pulled in, like the statistics in
 //! `carranta-analytics`: the workspace is dependency-free, and what a read-only
-//! API needs is a writer, not a schema system. There is no parser here at all —
-//! the one thing the client sends back is a pair of integers, and a full parser
+//! API needs is a writer, not a schema system. There is no parser here at all, //! the one thing the client sends back is a pair of integers, and a full parser
 //! for that would be a liability rather than a convenience.
 
 use std::fmt::Write as _;
@@ -171,7 +170,7 @@ fn escape(out: &mut String, s: &str) {
 /// The client sends `{"action":3,"version":12}` and nothing else, so this looks
 /// for `"key"` followed by digits rather than parsing a document. Anything it
 /// does not understand is `None`, which the caller turns into a rejected
-/// request — a malformed body must never be guessed at.
+/// request, a malformed body must never be guessed at.
 pub fn read_u64(body: &str, key: &str) -> Option<u64> {
     let needle = format!("\"{key}\"");
     let start = body.find(&needle)? + needle.len();
@@ -188,7 +187,7 @@ pub fn read_u64(body: &str, key: &str) -> Option<u64> {
 ///
 /// Same posture as [`read_u64`]: it recognises exactly the shape the page
 /// sends, `"give":[1,0,2,0,0]`, and refuses anything else rather than
-/// salvaging part of it. Quantities above 255 are refused too — the engine
+/// salvaging part of it. Quantities above 255 are refused too. The engine
 /// counts cards in `u8`, and silently truncating would turn a nonsense offer
 /// into a plausible one.
 pub fn read_u8_array(body: &str, key: &str, n: usize) -> Option<Vec<u8>> {

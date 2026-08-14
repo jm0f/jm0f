@@ -2,8 +2,8 @@
 //!
 //! Deliberately small and deliberately local. It binds the loopback address
 //! only, serves one page and three endpoints, and holds one game in memory.
-//! It is not the server of §6.2 — there is no auth, no persistence, no
-//! concurrency beyond a mutex — and it should not grow into it. What it is for
+//! It is not the server of §6.2. There is no auth, no persistence, no
+//! concurrency beyond a mutex, and it should not grow into it. What it is for
 //! is putting the engine in front of a person.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -55,7 +55,7 @@ const ART: [(&str, &str); 5] = [
 /// OFL requires.
 ///
 /// Figtree is Google's latin subset as served. Fraunces is cut down to the
-/// printable latin range — it is a display face used for a wordmark and a
+/// printable latin range. It is a display face used for a wordmark and a
 /// dozen headings, and the full build is six times the size for glyphs no
 /// heading will ever contain. All four of its axes survive the cut, including
 /// the optical size and the wonk that give it its character.
@@ -244,7 +244,7 @@ impl Server {
 /// tells someone what to change, where `EmptySide` does not.
 fn refusal(e: &Refused) -> String {
     match e {
-        Refused::Stale => "the board moved on — try again".to_string(),
+        Refused::Stale => "the board moved on, try again".to_string(),
         Refused::NoSuchChoice => "that choice is no longer offered".to_string(),
         Refused::Illegal(why) => match why {
             Illegal::EmptySide => "a trade must give and take".to_string(),

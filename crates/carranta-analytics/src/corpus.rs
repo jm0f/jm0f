@@ -162,7 +162,7 @@ impl Corpus {
         true
     }
 
-    /// Win rate by seat — the first-player-advantage question (A-4).
+    /// Win rate by seat, the first-player-advantage question (A-4).
     ///
     /// A corpus with randomised seating makes this the honest measure; one
     /// where a strong player always sat first does not, and no calculation
@@ -212,7 +212,7 @@ impl Corpus {
     }
 
     /// How far above the production curve each player sits, averaged over
-    /// their games — the "were you good or lucky" number.
+    /// their games, the "were you good or lucky" number.
     pub fn conversion_residuals(&self) -> Vec<(u64, f64, u32)> {
         let Some(fit) = self.luck_adjustment() else {
             return Vec::new();

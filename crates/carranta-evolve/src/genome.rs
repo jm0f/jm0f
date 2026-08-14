@@ -2,7 +2,7 @@
 //!
 //! Phase one of E-1: the fifteen weights the heuristic already has. They are
 //! hand-set, never tuned, and an evolution strategy over them is certain to
-//! produce a better bot — which is the point of doing it before topology
+//! produce a better bot, which is the point of doing it before topology
 //! search. A NEAT genome slots in behind the same [`Arena`] interface later.
 //!
 //! [`Arena`]: crate::arena::Arena
@@ -15,7 +15,7 @@ pub const GENES: usize = 15;
 
 /// Per-gene mutation scale.
 ///
-/// Weights span three orders of magnitude — points at 1000, pieces at 2 — so a
+/// Weights span three orders of magnitude, points at 1000, pieces at 2, so a
 /// single additive step is either meaningless at the top or catastrophic at the
 /// bottom. Each gene mutates on its own scale, taken from the hand-set value it
 /// starts at.

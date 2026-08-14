@@ -4,7 +4,7 @@
 //!
 //! No criterion: the core crate stays dependency-free, and what matters here
 //! is the spread across network *shapes*, not confidence intervals on one
-//! number. Timing is batched — per-call `Instant::now()` costs tens of ns and
+//! number. Timing is batched, per-call `Instant::now()` costs tens of ns and
 //! its scheduler noise swamps a sub-microsecond measurement.
 
 use carranta_core::longest_road::{
@@ -17,7 +17,7 @@ use std::time::Instant;
 ///
 /// `dense` picks uniformly from the frontier, which closes loops readily.
 /// Otherwise growth prefers extending an existing road end, which is what
-/// actual play produces — and the difference turns out to matter enormously.
+/// actual play produces, and the difference turns out to matter enormously.
 fn grow(n: usize, seed: &mut u64, dense: bool) -> EdgeSet {
     let mut next = || {
         *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -196,8 +196,8 @@ fn main() {
     // `longest_road_exceeds` starts the search at a floor instead of zero, so
     // it can stop as soon as a network clears the bar rather than proving its
     // exact length. Measured against the exact call at three floors: none, the
-    // network's own length (the worst case — it must still prove it), and a
-    // floor no network can reach (the best case — every one is dismissed).
+    // network's own length (the worst case. It must still prove it), and a
+    // floor no network can reach (the best case, every one is dismissed).
     let nets = mk(15, false, &mut seed);
     let exact: Vec<u32> = {
         let mut s = Scratch::new();
@@ -231,8 +231,8 @@ fn main() {
     // ---- Whole game, tile holder only. ----
     //
     // `Tracker::leader` uses exact lengths. The floored version was built and
-    // measured slower in every scenario tried — early game 0.6x, cold position
-    // 1.0x, whole game 0.8x — because the tracker's caching had already removed
+    // measured slower in every scenario tried, early game 0.6x, cold position
+    // 1.0x, whole game 0.8x, because the tracker's caching had already removed
     // the redundancy the floor was meant to prune. Kept here as the shape of
     // the query a rollout actually issues.
     let t = Instant::now();

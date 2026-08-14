@@ -1,4 +1,4 @@
-//! `carranta-play` — a local board in a browser.
+//! `carranta-play`, a local board in a browser.
 //!
 //! ```text
 //! cargo run --release -p carranta-ui
@@ -11,7 +11,7 @@ use carranta_core::state::TradeMode;
 use carranta_ui::Server;
 
 const USAGE: &str = "\
-carranta-play — play Carranta locally in a browser
+carranta-play, play Carranta locally in a browser
 
   --port N       port to listen on (8181)
   --seats N      3 or 4 (4)
@@ -62,7 +62,7 @@ fn main() {
         }
     };
     println!(
-        "Carranta {} — open http://127.0.0.1:{port}",
+        "Carranta {}, open http://127.0.0.1:{port}",
         env!("CARRANTA_BUILD")
     );
     println!("  {seats} seats, {mode:?} market, seed {seed}");

@@ -15,7 +15,7 @@ them. Useful names, though nothing depends on them yet:
 Two things that save a round trip:
 
 - **Pointy-top hexes**, matching the board as drawn. If yours are flat-top, say
-  so rather than redrawing — a rotation is one line.
+  so rather than redrawing, a rotation is one line.
 - **No external references.** Fonts, images and stylesheets pulled from
   elsewhere will not survive being inlined into the page, which is served by a
   process with no network access of its own.
@@ -38,7 +38,7 @@ happens to close exactly for this piece. Worth re-checking when the dimensions
 change rather than assumed.
 
 The board stays flat top-down, so a piece like this does not sit on it
-directly — see the note below.
+directly, see the note below.
 
 ## Pieces on a flat board
 
@@ -46,8 +46,8 @@ A flat board and a fully isometric piece cannot share a scene. What works is
 extrusion: the piece's top face is drawn in the board's own plane, aligned to
 the edge or intersection it occupies, with a short skirt below it for
 thickness. That reads as a solid object on a flat board, and it follows the
-piece to every orientation the board needs — three for roads, and any
-rotation for buildings — because the top face is computed from the board's
+piece to every orientation the board needs, three for roads, and any
+rotation for buildings, because the top face is computed from the board's
 geometry rather than drawn once and reused.
 
 So `road.svg` is the specification: proportions, colours, and how the three

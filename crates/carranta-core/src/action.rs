@@ -64,7 +64,7 @@ pub enum Action {
     /// names its actor, because the market is the one place where that is not
     /// implied by whose turn it is: any seat may propose, and an offer may be
     /// open to several. Every offer still has the active player as one party
-    /// (R-7.3) — either they made it, or it is addressed to them.
+    /// (R-7.3), either they made it, or it is addressed to them.
     ProposeTrade {
         by: u8,
         /// Addressed to one seat, or `None` for the open market (R-7.19).
@@ -340,7 +340,7 @@ impl State {
     ///
     /// The replay counterpart of [`State::apply_recorded`]. The state's
     /// generator is not advanced, so a replayed state matches the recorded one
-    /// in every field but [`State::rng`] — which is why replay comparisons go
+    /// in every field but [`State::rng`], which is why replay comparisons go
     /// through [`State::same_game_as`].
     ///
     /// A `scripted` value that does not fit the action is ignored, and the
@@ -677,8 +677,8 @@ impl State {
     ///
     /// [`Self::legal_into`] answers for the seat whose decision it is, which is
     /// what a search or a policy consumes. The open market breaks that
-    /// single-agent shape — an opponent may propose or accept at any point in
-    /// the active player's turn — so the live game asks this per connected
+    /// single-agent shape. An opponent may propose or accept at any point in
+    /// the active player's turn, so the live game asks this per connected
     /// seat instead.
     pub fn legal_for(&self, seat: u8, out: &mut Vec<Action>) {
         if seat == self.decider() {
@@ -886,7 +886,7 @@ impl State {
                 }
                 continue;
             }
-            // Not enough to go round: nobody gets any — unless exactly one
+            // Not enough to go round: nobody gets any, unless exactly one
             // player is owed, who takes what is left.
             let mut claimants = owed[..seats].iter().enumerate().filter(|(_, o)| o[r] > 0);
             if let (Some((p, _)), None) = (claimants.next(), claimants.next()) {
@@ -1591,7 +1591,7 @@ mod tests {
 
         // Legal to propose: the proposer holds what it offers, and both sides
         // are non-empty and disjoint. It simply asks for more wood than seat 1
-        // has — or than anyone could have.
+        // has, or than anyone could have.
         s.apply(Action::ProposeTrade {
             by: 0,
             to: None,
@@ -1733,7 +1733,7 @@ mod tests {
     #[test]
     fn an_addressed_offer_still_obeys_the_turn_rule() {
         // R-7.3: whoever the parties are, one of them is the active player.
-        // Addressing must not become a way around that — seat 1 offering seat 2
+        // Addressing must not become a way around that, seat 1 offering seat 2
         // during seat 0's turn is the triangular trade the rule forbids.
         let mut s = trading_game(43);
         deal(&mut s, 1, one(Resource::Ore, 1));

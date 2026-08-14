@@ -7,7 +7,7 @@
 //!
 //! It also projects *state*, not events. §7.3 warns that visibility is a
 //! function of `(event, viewer, time)` and not a static classification of event
-//! types — a card that is `OWNER` when drawn is `PUBLIC` when played, and
+//! types. A card that is `OWNER` when drawn is `PUBLIC` when played, and
 //! Monopoly forcibly exposes part of every hand (R-9.9). Masking events one at
 //! a time gets those wrong. Projecting the position after each event gets them
 //! right by construction: the thief's own hand shows the card they took, the
@@ -29,7 +29,7 @@ use crate::{Actor, Event, Log, Payload, ReplayError, Stamp};
 pub enum Viewer {
     /// A player, who additionally sees their own hand.
     Seat(u8),
-    /// Someone watching the table (P-6). Public information only — the same
+    /// Someone watching the table (P-6). Public information only. The same
     /// view as a person standing behind the players.
     Spectator,
 }
@@ -66,7 +66,7 @@ pub struct Fog {
 
     // ---- Per seat: counts, never identities (§4.1's key asymmetry) ----
     /// Hand size, which must be public because the discard rule depends on it
-    /// (R-6.2) — players answer honestly.
+    /// (R-6.2), players answer honestly.
     pub hand_size: [u8; MAX_PLAYERS],
     /// Development cards held. Public as a count, excluded from the discard
     /// count (R-9.2).
@@ -78,7 +78,7 @@ pub struct Fog {
     pub cities_left: [u8; MAX_PLAYERS],
     /// Victory points an onlooker can count: hidden cards excluded (R-9.11).
     ///
-    /// Tracked apart from the true total on purpose (§4.3) — serving the real
+    /// Tracked apart from the true total on purpose (§4.3), serving the real
     /// number would leak every held Victory Point card.
     pub apparent_vp: [u32; MAX_PLAYERS],
     /// Longest continuous route per seat: computed from public roads and
@@ -198,7 +198,7 @@ pub fn fog(state: &State, viewer: Viewer) -> Fog {
 ///
 /// Note what is *absent*: a stolen card has no identity here. The thief learns
 /// what they took from their own hand in the accompanying [`Fog`], and nobody
-/// else ever learns it — which is exactly R-6.4, and is unrepresentable rather
+/// else ever learns it, which is exactly R-6.4, and is unrepresentable rather
 /// than merely unset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeenResolved {
@@ -296,7 +296,7 @@ fn seen_what(event: &Event) -> SeenWhat {
     }
 }
 
-/// Victory point cards a seat holds — the one thing `apparent_vp` deliberately
+/// Victory point cards a seat holds, the one thing `apparent_vp` deliberately
 /// omits. Exposed so tests can assert it never reaches the wrong viewer.
 #[doc(hidden)]
 pub fn hidden_vp(state: &State, p: usize) -> u8 {

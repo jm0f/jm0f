@@ -2,7 +2,7 @@
 //!
 //! One pass over a replayed game, accumulating everything the game summary
 //! and the per-player breakdown need. Production and dice have their own
-//! modules — [`crate::production`] and [`crate::dice`] — because both are
+//! modules, [`crate::production`] and [`crate::dice`], because both are
 //! analyses rather than tallies; what is here is counting.
 
 use carranta_core::state::{DevCard, MAX_PLAYERS, State};
@@ -317,7 +317,7 @@ mod tests {
             let total_rolls: u32 = r.rolls.iter().sum();
             assert!(total_rolls > 10, "seed {seed}: only {total_rolls} rolls");
             // Every 7 forces a robber move, and every Militia forces one
-            // more — except that playing a Militia can award Largest Militia
+            // more, except that playing a Militia can award Largest Militia
             // and reach 10 points on the spot, ending the game before the
             // robber ever moves (R-10.8, R-11.1). Only the final action can
             // leave such a move outstanding, so the shortfall is at most one.
@@ -382,7 +382,7 @@ mod tests {
         let log = self_play(2, TradeMode::Full);
         let r = analyse(&log).unwrap();
         assert_eq!(r.vp_curve.len(), r.turns as usize);
-        // Points are never lost — but the bonus tiles do transfer, so this is
+        // Points are never lost, but the bonus tiles do transfer, so this is
         // only true of the building component. Check the total is monotone
         // apart from tile moves.
         let tile_moves = r.longest_road_transfers + r.largest_militia_transfers;

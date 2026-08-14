@@ -1,7 +1,7 @@
 //! Versioned agents on one rating scale (E-8).
 //!
-//! Every genome that is kept gets a durable identity — H-6 already requires
-//! this of recorded games — and all versions share a single §10.5 rating pool.
+//! Every genome that is kept gets a durable identity. H-6 already requires
+//! this of recorded games, and all versions share a single §10.5 rating pool.
 //! Progress is then not a separate metric at all: it is generation 50's μ read
 //! against generation 1's, on the same scale, in the same units as a human
 //! player's rating will eventually be.
@@ -12,7 +12,7 @@
 //! only comparable if the games that produced them *connect*. If generation 50
 //! played only generations 49 and 50, and generation 1 played only 1 and 2,
 //! then comparing them means chaining forty-odd pairwise comparisons, and the
-//! error compounds along the chain — the classic drift between eras of a
+//! error compounds along the chain. The classic drift between eras of a
 //! long-running ladder.
 //!
 //! The fix here is deliberately blunt: **every version plays the anchor
@@ -72,7 +72,7 @@ impl Ladder {
             },
         );
         let mut pool = Pool::new(model);
-        // The anchor's μ is the origin of the scale, so it must not move —
+        // The anchor's μ is the origin of the scale, so it must not move,
         // otherwise it sinks against a population that keeps improving, and a
         // gap of "+4 μ" stops meaning the same thing in generation 40 as it
         // did in generation 1. σ is left free: it reflects games genuinely
@@ -194,7 +194,7 @@ impl Ladder {
     /// that may not survive the generation has no durable identity. Those ids
     /// must not persist: "population slot 3" is a different genome every
     /// generation, so a rating accumulating against that id is a history
-    /// belonging to nobody — and it would quietly influence every champion's
+    /// belonging to nobody, and it would quietly influence every champion's
     /// update thereafter.
     pub fn forget_transients(&mut self) {
         for id in self.pool.players() {
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn versions_are_comparable_across_generations_through_the_anchor() {
         // Generation 1 beats the anchor moderately; generation 40 beats it
-        // decisively. They never play each other — which is exactly the case
+        // decisively. They never play each other, which is exactly the case
         // the anchor exists to handle.
         let mut ladder = Ladder::default();
         let early = ladder.enrol(Genome::default(), 1);

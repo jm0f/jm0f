@@ -1,8 +1,8 @@
 //! How the population *plays*, not just how well.
 //!
 //! A rating that climbs says something improved; it does not say what. These
-//! are the markers that answer the second question — did the champion start
-//! trading more, building cities earlier, picking different openings — and they
+//! are the markers that answer the second question, did the champion start
+//! trading more, building cities earlier, picking different openings, and they
 //! come from running the existing §10 analysis over a small sample of the games
 //! a generation already played.
 //!
@@ -15,8 +15,8 @@ use carranta_record::Log;
 
 /// Behavioural markers averaged over the sampled games of one generation.
 ///
-/// All per game unless noted. Nothing here is a fitness signal — selection
-/// never sees it — so it can be read as an honest description of play rather
+/// All per game unless noted. Nothing here is a fitness signal, selection
+/// never sees it, so it can be read as an honest description of play rather
 /// than as something the population is being pushed toward.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Behaviour {
@@ -40,7 +40,7 @@ pub struct Behaviour {
     pub opening_diversity: f64,
     /// Cards actually produced, per seat.
     pub production: f64,
-    /// Production lost to the robber, per seat — a social cost, not a random
+    /// Production lost to the robber, per seat, a social cost, not a random
     /// one (§10.2).
     pub robber_cost: f64,
     /// Winner's victory points.
@@ -55,7 +55,7 @@ pub struct Sampler {
 
 impl Sampler {
     /// Fold one recorded game in. Games that fail to analyse are skipped
-    /// rather than aborting a run — a training run should not die because one
+    /// rather than aborting a run. A training run should not die because one
     /// sampled game was odd.
     pub fn add(&mut self, log: &Log) {
         let (Ok(summary), Ok(prod)) = (game::analyse(log), production::analyse(log)) else {
@@ -162,7 +162,7 @@ mod tests {
     fn markers_show_a_strategy_shift_and_not_just_a_number() {
         // The whole point: a change a rating alone would describe only as
         // "worse". Suppressing development-card purchases does not just move
-        // one marker — it cascades. No cards bought means no Militia to play,
+        // one marker, it cascades. No cards bought means no Militia to play,
         // and the resources go into cities instead.
         let arena = Arena::default();
         let base = Genome::default();
@@ -206,7 +206,7 @@ mod tests {
         // nothing, because the bot is already down to about one offer a turn.
         //
         // If offers ever need to be suppressed outright, this is not the lever
-        // — `offer_discount`, which scales the credit a proposal earns, is.
+        //, `offer_discount`, which scales the credit a proposal earns, is.
         let arena = Arena::default();
         let base = Genome::default();
         let mut punitive = base;
@@ -236,7 +236,7 @@ mod tests {
         // counterintuitive and evolution can wander into it.
         //
         // The discount multiplies the *gain* a proposal would bring. Negative,
-        // it does not make offers unattractive — it makes the bot prefer
+        // it does not make offers unattractive. It makes the bot prefer
         // proposals whose gain is negative, which is to say deals that are bad
         // for itself. Those are far more plentiful than good ones, so the bot
         // gets *louder*, not quieter.

@@ -100,7 +100,7 @@ fn main() {
     let games = 1_000u64;
     let mode = TradeMode::Full;
 
-    println!("carranta analytics — {games} self-play games, {mode:?} market\n");
+    println!("carranta analytics, {games} self-play games, {mode:?} market\n");
 
     let t = Instant::now();
     let logs: Vec<Log> = (0..games).map(|g| self_play(g, mode)).collect();
@@ -172,7 +172,7 @@ fn main() {
         reference.deviation_percentile(one.kl_bits) * 100.0
     );
     println!(
-        "  (p = {:.3}, deliberately not shown to players — across {} games ~5% clear 0.05)",
+        "  (p = {:.3}, deliberately not shown to players, across {} games ~5% clear 0.05)",
         one.p_value, games
     );
 
@@ -252,7 +252,7 @@ fn main() {
 
     // ---- §10.5 ratings ----
     println!("\n== ratings (§10.5, Plackett–Luce) ==");
-    println!("  (same policy in every seat, seats rotated — a spread here is tie-break");
+    println!("  (same policy in every seat, seats rotated. A spread here is tie-break");
     println!("   luck plus noise, so read it against sigma rather than as a ranking)");
     let pool = corpus
         .ratings

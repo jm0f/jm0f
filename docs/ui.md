@@ -28,7 +28,7 @@ Four, fixed. Nothing moves between them as the position changes.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  header — name · whose turn · new game                       │
+│  header, name · whose turn · new game                       │
 ├────────────┬────────────────────────────────┬────────────────┤
 │  seats     │                                │   reserved     │
 │   you      │                                │                │
@@ -38,16 +38,16 @@ Four, fixed. Nothing moves between them as the position changes.
 │  ────────  │                                │    chat with)  │
 │  log       │                                │                │
 ├────────────┴────────────────────────────────┴────────────────┤
-│  dock — your hand · actions · dice                           │
+│  dock, your hand · actions · dice                           │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Left: seats, then log.** All four players in identical rows, yours among
-them — comparing yourself to the table only works if everyone is measured the
+them, comparing yourself to the table only works if everyone is measured the
 same way in the same place. History runs beneath them, because a log and a
 seat row answer the same question: who did what.
 
-**Centre: the board.** Unchanged. It is also an input device — see §5.
+**Centre: the board.** Unchanged. It is also an input device, see §5.
 
 **Right: reserved, empty for now.** It is where chat goes when there are real
 players. Held open deliberately rather than reclaimed and re-cut later.
@@ -57,7 +57,7 @@ on the screen during your own turn.
 
 ### Scaling
 
-One layout, scaled — desktop, laptop and tablet all get the same arrangement
+One layout, scaled, desktop, laptop and tablet all get the same arrangement
 at different sizes. Regions size in relative units so the whole thing shrinks
 in proportion rather than reflowing at breakpoints. No separate small layout;
 phones are out of scope.
@@ -86,7 +86,7 @@ with the bank, end turn.**
 **Building is not here.** You build by clicking a ghost piece on the board.
 The grid is for actions with no place; the board is for actions with one.
 
-A button that is unavailable **stays put and greys** — the layout is learnable
+A button that is unavailable **stays put and greys**, the layout is learnable
 only if it never changes. **The reason appears on hover**, so a quiet dock
 does not cost you the explanation.
 
@@ -102,21 +102,21 @@ Every row carries, in this order: colour, name, public victory points, cards
 in hand, development cards held, settlements / cities / roads remaining, and a
 badge when that seat holds the longest road or the largest militia.
 
-Pieces remaining is on the row because it is a real signal — a player down to
-their last settlements is close to winning — and it is the one the raw numbers
+Pieces remaining is on the row because it is a real signal. A player down to
+their last settlements is close to winning, and it is the one the raw numbers
 hide.
 
 Opponents are bots with **names and colour dots**, not seat numbers. A row that
 says who did something is easier to hold in your head than one that says which
 index did it, and an offer from a name reads as coming from someone. The names
-are applied in the page, not the engine — the log arrives saying "Seat 2" and
+are applied in the page, not the engine. The log arrives saying "Seat 2" and
 is rewritten, so the history and the rows never disagree.
 
 ### The two victory-point numbers are not the same measurement
 
 **An opponent's score is public points only.** A victory-point card sitting in
 a hand counts for nothing anyone else can see, and the engine withholds it
-until the game ends — `apparent_vp` is `public_victory_points` during play and
+until the game ends, `apparent_vp` is `public_victory_points` during play and
 the true total only at game over. **Your own row shows your real total**,
 hidden cards included, because you are allowed to know your own hand.
 
@@ -134,10 +134,10 @@ without one happens in a card that waits for you.**
 
 | Moment | Where |
 |---|---|
-| Build a road, settlement, city | Board — click the ghost |
-| Setup placement | Board — click the ghost |
-| Move the robber | Board — hexes light, click one |
-| Choose whom to rob | Board — the seats you may rob light up |
+| Build a road, settlement, city | Board, click the ghost |
+| Setup placement | Board, click the ghost |
+| Move the robber | Board, hexes light, click one |
+| Choose whom to rob | Board. The seats you may rob light up |
 | Discard down to seven | Card |
 | Monopoly / invention resource pick | Card |
 | Incoming trade offer | Card |
@@ -156,7 +156,7 @@ click it in the tray to take it back. Wanting is the same gesture against the
 five resources. The offer is built out of the cards you are already looking
 at, rather than in a disconnected panel of steppers.
 
-**Receiving:** an offer arrives as a card that waits for an answer — accept,
+**Receiving:** an offer arrives as a card that waits for an answer, accept,
 decline, or counter. It does not sit quietly in a panel to be missed.
 
 ---
@@ -165,7 +165,7 @@ decline, or counter. It does not sit quietly in a panel to be missed.
 
 A roll is shown, not reported. The dice settle on the number, the hexes that
 match light up, and **resource cards travel from those hexes to the hands that
-earned them** — into your stacks, into the opponents' rows. You see who got
+earned them**, into your stacks, into the opponents' rows. You see who got
 paid and from where without reading anything.
 
 Bot turns play out at whatever pace the lobby was set to (§8).
@@ -178,8 +178,7 @@ A **setup screen before the game**, not a row of dropdowns above it. The board
 does not exist yet when you are on it.
 
 It carries: your name, the size of the table, who holds each seat, an invite
-link, the turn clock, and a seed. It stays configurable **while people join** —
-which is what makes it a lobby rather than a settings dialog.
+link, the turn clock, and a seed. It stays configurable **while people join**, which is what makes it a lobby rather than a settings dialog.
 
 A fresh server opens on the lobby. A reload part-way through a game does not:
 the board comes back instead, because the clock is running and dealing again
@@ -188,7 +187,7 @@ would be the wrong default.
 **Seats wait for people by default.** A seat can be set to a bot, but the
 default is open, because the reason a lobby exists is that someone else is
 coming. The server cannot seat a person yet, so an open seat is played by a bot
-until it can — said plainly on the screen rather than implied.
+until it can, said plainly on the screen rather than implied.
 
 **Your name is editable because nobody is signed in.** It is kept in the
 browser between games, which is the closest thing to being remembered without
@@ -205,7 +204,7 @@ are not something to put in front of a table of humans.
 
 ### The clock is per turn
 
-Not a countdown on the whole game — an allowance for **thinking**, which is the
+Not a countdown on the whole game. An allowance for **thinking**, which is the
 thing that actually runs long.
 
 - **Per turn**, default **60 seconds**: a fresh allowance every turn.
@@ -228,8 +227,8 @@ yours.
   move are real choices; a clock picking one would be inventing a move rather
   than declining to make one. There the clock sits at zero and waits.
 
-Enforcement is lazy — a server that only wakes when asked cannot act on the
-second — so it happens on the next request, and the page's existing poll is
+Enforcement is lazy. A server that only wakes when asked cannot act on the
+second, so it happens on the next request, and the page's existing poll is
 what makes that arrive.
 
 **A per-turn allowance must not refill mid-turn.** Time is settled against a
@@ -242,8 +241,8 @@ then hand them a fresh minute for it.
 ## 9. Components
 
 The interface is built on **shadcn/ui's token vocabulary and component
-anatomy**, ported as plain CSS. shadcn is not a package — it is source you copy
-and own — so what is borrowed is the naming and the structure, not React,
+anatomy**, ported as plain CSS. shadcn is not a package. It is source you copy
+and own, so what is borrowed is the naming and the structure, not React,
 Tailwind or Radix, none of which this page can run.
 
 Tokens: `--background`, `--foreground`, `--card`, `--popover`, `--primary`,
@@ -268,7 +267,7 @@ look different, it needs a variant, not a rule keyed to its id.
 
 **Unavailable is `aria-disabled`, never the `disabled` attribute.** A disabled
 button leaves the tab order and stops emitting pointer events, so its
-explanation becomes unreachable by keyboard and by touch — precisely the
+explanation becomes unreachable by keyboard and by touch, precisely the
 audience that most needs it. The click handler guards instead.
 
 **Explanations use a real tooltip, not `title`.** `title` never appears on
@@ -286,7 +285,7 @@ reachable.
 ## 10. Art
 
 Icons are **isometric objects**, not flat silhouettes: three flat faces, light
-from the upper left, one hue each — the same idiom as the road, settlement and
+from the upper left, one hue each. The same idiom as the road, settlement and
 city pieces already in `art/`. This is a deliberate reversal of `style.md`
 §3.3, made so that the pieces and the interface finally speak one language.
 §3.3 has been rewritten to match.

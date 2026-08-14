@@ -6,7 +6,7 @@
 //!
 //! The page is served **the redacted view**, never the state. Everything it
 //! receives goes through the §7.3 projection, so it cannot be sent another
-//! seat's cards or the deck order — the type it is built from has no field for
+//! seat's cards or the deck order, the type it is built from has no field for
 //! them. Doing that here rather than later matters: a local UI that read the
 //! raw state would teach the codebase a habit the real server then has to
 //! unpick.

@@ -1,6 +1,6 @@
 //! Heuristic policy.
 //!
-//! Instant, in-process and free — which is what its four jobs demand (§9.3):
+//! Instant, in-process and free, which is what its four jobs demand (§9.3):
 //! taking over a disconnected seat, filling a lobby, standing in when the LLM
 //! player fails, and being the fixed yardstick every trained agent is measured
 //! against.
@@ -13,8 +13,7 @@
 //! costs microseconds.
 //!
 //! The score is **competitive**, not absolute: `value(me) − best value(any
-//! opponent)`. That one choice is what makes blocking play fall out for free —
-//! the robber lands on whoever is strongest rather than wherever is nearest,
+//! opponent)`. That one choice is what makes blocking play fall out for free, //! the robber lands on whoever is strongest rather than wherever is nearest,
 //! and a settlement that cuts a rival's route scores its damage.
 //!
 //! # Where one ply is blind
@@ -22,7 +21,7 @@
 //! Some moves pay off only after a follow-up the search never sees. Playing a
 //! Militia leads to a robber move whose benefit is a ply away, and rolling the
 //! dice has an outcome that has not happened yet. Both are handled by scoring
-//! the *position* rather than the outcome — progress toward Largest Militia is
+//! the *position* rather than the outcome, progress toward Largest Militia is
 //! a feature in its own right, and rolling is scored as the status quo rather
 //! than by sampling a roll the bot cannot choose. This is a real limitation,
 //! not an oversight: a bot that needs to see two plies wants the search tier,
@@ -58,7 +57,7 @@ pub trait Policy {
 /// invalidate a benchmark.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Weights {
-    /// Victory points. Dominant — everything else is a means to these.
+    /// Victory points. Dominant, everything else is a means to these.
     pub vp: i32,
     /// Expected production, in dice-pips weighted by building size.
     pub pips: i32,
@@ -96,7 +95,7 @@ pub struct Weights {
     /// Cumulative, not a count of live offers: asking costs something whether
     /// or not the previous ask came to anything, so the bar rises with each
     /// one and only a clearly good trade is worth raising. That is roughly how
-    /// a person weighs it — the third request of the same turn has to be worth
+    /// a person weighs it. The third request of the same turn has to be worth
     /// more than the first, because people stop listening.
     ///
     /// Counting live offers instead lets the bot churn: make an offer, have it
@@ -251,7 +250,7 @@ impl Heuristic {
     /// Most cannot: buying, trading, upgrading and road-building all touch
     /// only the mover. Knowing that lets the opponent half of the score be
     /// evaluated once per decision instead of once per candidate, which is
-    /// most of the work — each evaluation walks 19 hexes and computes a
+    /// most of the work. Each evaluation walks 19 hexes and computes a
     /// longest route.
     fn affects_opponents(action: Action) -> bool {
         matches!(
@@ -303,7 +302,7 @@ impl Heuristic {
                 }
                 let gain = self.hand_value(&after) - self.hand_value(&state.hand[me]);
                 // Every candidate proposal carries the same toll, so this does
-                // not pick between offers — it decides whether making *any* is
+                // not pick between offers. It decides whether making *any* is
                 // worth more than getting on with the turn.
                 let asked = state.offers_made[me] as i32;
                 self.value(state, me) - base_other + gain * w.offer_discount / 100
@@ -357,7 +356,7 @@ impl Policy for Heuristic {
         {
             return false;
         }
-        // Take it only if it genuinely improves the position — a trade that
+        // Take it only if it genuinely improves the position. A trade that
         // merely moves cards around helps whoever offered it.
         self.score(&next, seat) > before
     }
@@ -390,7 +389,7 @@ impl Policy for Heuristic {
     }
 }
 
-/// A uniformly random policy — the baseline the heuristic is measured against.
+/// A uniformly random policy, the baseline the heuristic is measured against.
 pub struct RandomPolicy {
     rng: Rng,
 }
@@ -499,7 +498,7 @@ pub fn settle_market(state: &mut State, policies: &mut [&mut dyn Policy]) -> u32
 ///
 /// [`Rng::new`] derives every stream from the seed, and both a policy's
 /// tie-breaks and the game's dice are drawn from `Stream::Dice`. Seeding a
-/// policy with the game seed therefore makes its choices track the dice — a
+/// policy with the game seed therefore makes its choices track the dice, a
 /// correlation with no place in a strength measurement.
 const BOT_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 const RANDOM_SALT: u64 = 0xBF58_476D_1CE4_E5B9;
@@ -517,7 +516,7 @@ pub struct Duel {
     pub steps: usize,
     /// Wins split by the seat the heuristic occupied.
     pub wins_by_seat: [u32; MAX_PLAYERS],
-    /// Games played from each seat — equal to `boards` by construction.
+    /// Games played from each seat, equal to `boards` by construction.
     pub games_by_seat: [u32; MAX_PLAYERS],
 }
 
@@ -547,8 +546,8 @@ impl Duel {
 /// Play the heuristic against random opponents on `boards` distinct boards,
 /// each board once from every seat.
 ///
-/// The pairing matters. Rotating the seat with the board — seat `g % seats` on
-/// board `g` — gives each seat a *disjoint* set of boards, so a per-seat
+/// The pairing matters. Rotating the seat with the board, seat `g % seats` on
+/// board `g`, gives each seat a *disjoint* set of boards, so a per-seat
 /// breakdown mixes seat effects with board luck and the seats cannot be
 /// compared to one another. Replaying the same board from every seat holds the
 /// board fixed and leaves the seat as the only difference, which is what the
@@ -633,7 +632,7 @@ mod tests {
 
     #[test]
     fn is_deterministic() {
-        // Same seed, same game — which is what makes it usable as a fixed
+        // Same seed, same game, which is what makes it usable as a fixed
         // measuring stick.
         for seed in 0..40 {
             let run = || {

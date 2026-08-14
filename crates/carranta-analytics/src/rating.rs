@@ -7,7 +7,7 @@
 //! outcomes natively and keeps a Gaussian belief `(μ, σ)` per player instead
 //! of a point estimate.
 //!
-//! Implemented here is the **Weng–Lin Plackett–Luce** update (A-1) — the
+//! Implemented here is the **Weng–Lin Plackett–Luce** update (A-1), the
 //! OpenSkill family: TrueSkill-family behaviour, no patent exposure. Two
 //! consequences worth stating:
 //!
@@ -21,7 +21,7 @@
 //!   same scale.
 //!
 //! This is our implementation of the published update, checked against the
-//! properties the model is supposed to have — order monotonicity, σ that only
+//! properties the model is supposed to have, order monotonicity, σ that only
 //! shrinks, symmetry under a full tie, conservation under equal uncertainty,
 //! and convergence on a known true ordering. It has *not* been cross-checked
 //! against a reference implementation, which is the honest limit of the
@@ -30,7 +30,7 @@
 //! # Ties behave oddly, and that is not yet resolved
 //!
 //! With four equal players, a shared second place pays both tied players
-//! *less* than the average of finishing second and third — and it changes what
+//! *less* than the average of finishing second and third, and it changes what
 //! fourth place loses, even though fourth finished fourth either way. Total μ
 //! is still conserved, so this is a redistribution question rather than a
 //! leak, and it follows from the tie-averaging convention in the published
@@ -187,7 +187,7 @@ pub fn finishing_order(winner: Option<u8>, vp: &[u32; MAX_PLAYERS], players: usi
 ///
 /// Deliberately coarse. Every extra pool fragments ratings and slows
 /// convergence, so a configuration earns its own pool only when it genuinely
-/// changes how the game is played — trade mode does, a cosmetic option does
+/// changes how the game is played, trade mode does, a cosmetic option does
 /// not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PoolKey {
@@ -229,7 +229,7 @@ impl Pool {
     /// Without this a "pinned" reference is nothing of the kind: it sinks as
     /// it loses to a population that keeps improving, and the gap between an
     /// old version and a new one stops meaning the same thing over the course
-    /// of a run — the drift between eras that afflicts any long-lived ladder.
+    /// of a run. The drift between eras that afflicts any long-lived ladder.
     ///
     /// σ is deliberately left free. It reflects games genuinely played, and
     /// letting it tighten is what makes each of the anchor's games informative;
@@ -251,7 +251,7 @@ impl Pool {
 
     /// Drop a player entirely.
     ///
-    /// For identities that were never meant to persist — a placeholder that
+    /// For identities that were never meant to persist. A placeholder that
     /// stood in for a different opponent each time it appeared. Leaving those
     /// in place lets one id accumulate a history belonging to nobody.
     pub fn forget(&mut self, player: u64) {
@@ -294,7 +294,7 @@ impl Pool {
 
     /// Apply a recorded game.
     ///
-    /// Returns `false` for a game that did not finish — an unfinished game
+    /// Returns `false` for a game that did not finish, an unfinished game
     /// ranks nobody. Games where a bot substituted for a departed human (P-2)
     /// must also be excluded, but nothing in the log marks them yet, so that
     /// remains the caller's filter rather than something checked here.
@@ -533,7 +533,7 @@ mod tests {
 
         for _ in 0..400 {
             // Sample a finishing order weighted by strength, without
-            // replacement — a Plackett–Luce draw, which is the model's own
+            // replacement. A Plackett–Luce draw, which is the model's own
             // generative story.
             let mut left: Vec<usize> = (0..4).collect();
             let mut order = Vec::new();
@@ -658,7 +658,7 @@ mod tests {
         // The failure this exists to prevent: an early version and a late one
         // that never meet, each rated only against the reference. Without a
         // pin the reference sinks between the two sets of games, and the later
-        // version is measured against a weaker opponent — so the better record
+        // version is measured against a weaker opponent, so the better record
         // can come out looking worse.
         let record = |pinned: bool| {
             let mut pool = Pool::new(Model::default());

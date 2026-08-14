@@ -143,8 +143,8 @@ fn a_die_that_was_never_rolled_is_rejected() {
 
 // ---------------------------------------------------------------------------
 // Redaction. §7.6: a leak surfaces only when someone exploits it, so these
-// assert *indistinguishability* — that changing something hidden leaves the
-// view byte-identical — rather than spot-checking fields.
+// assert *indistinguishability*. That changing something hidden leaves the
+// view byte-identical, rather than spot-checking fields.
 // ---------------------------------------------------------------------------
 
 /// A position part-way through a real game, with cards in hands and a deck
@@ -162,7 +162,7 @@ fn moving_a_card_between_two_hands_is_invisible_to_a_third_seat() {
     for seed in 0..25 {
         let base = mid_game(seed);
         // Find a resource seat 0 holds, and hand it to seat 1. Hand *sizes*
-        // change, which is public (R-6.2) — so keep them equal by swapping.
+        // change, which is public (R-6.2), so keep them equal by swapping.
         let Some(mine) = (0..5).find(|&r| base.hand[0][r] > 0) else {
             continue;
         };
@@ -238,7 +238,7 @@ fn a_spectator_holds_no_private_data_at_all() {
     let s = mid_game(4);
     assert!(fog::fog(&s, Viewer::Spectator).own.is_none());
     // A seat index outside the game is treated as a spectator, not as an
-    // oracle — the safe direction for that to be wrong.
+    // oracle, the safe direction for that to be wrong.
     assert!(fog::fog(&s, Viewer::Seat(9)).own.is_none());
 }
 
@@ -265,7 +265,7 @@ fn only_the_thief_learns_which_card_was_stolen() {
         ));
     }
 
-    // And the thief's own view does show the card — via their hand, which is
+    // And the thief's own view does show the card, via their hand, which is
     // exactly how a person learns it at the table.
     let (seq, _) = steals[0];
     let ev = log.events.iter().find(|e| e.seq == seq).unwrap();

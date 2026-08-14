@@ -12,7 +12,7 @@
 //! **Omniscient store, redacted on serve** (H-2). The log holds the whole
 //! truth, including the development deck order. Nothing here may be handed to a
 //! client. Serving goes through [`fog`], which projects the state a viewer is
-//! entitled to see — never by filtering this type.
+//! entitled to see, never by filtering this type.
 
 use carranta_core::action::Resolved;
 use carranta_core::state::{MAX_PLAYERS, TradeMode};
@@ -33,7 +33,7 @@ pub const RULES_VERSION: u16 = 1;
 ///
 /// 2: offers may be addressed to a single seat (R-7.21). The action catalogue
 /// gained a field, so a log written by build 1 does not describe the same
-/// action space — which is exactly the drift §7.4 makes this column mandatory
+/// action space, which is exactly the drift §7.4 makes this column mandatory
 /// to catch.
 pub const ENGINE_VERSION: u16 = 2;
 
@@ -89,7 +89,7 @@ pub struct Stamp {
     /// Milliseconds since the Unix epoch, for ordering against the outside
     /// world.
     pub wall_ms: u64,
-    /// Microseconds on a monotonic clock, for durations — which wall time
+    /// Microseconds on a monotonic clock, for durations, which wall time
     /// cannot measure across an adjustment.
     pub mono_us: u64,
 }
@@ -106,7 +106,7 @@ pub enum Actor {
 ///
 /// Carries the whole generated board *and the development deck order*, which
 /// is what makes replay independent of the generator. It is also the single
-/// most sensitive thing in the log — see the type's placement behind [`fog`].
+/// most sensitive thing in the log, see the type's placement behind [`fog`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Created {
     pub rules_version: u16,
@@ -123,7 +123,7 @@ pub struct Created {
 /// What happened.
 ///
 /// Randomness rides on the decision that resolved it rather than arriving as a
-/// separate event. The two cannot be separated in time — a roll *is* its dice —
+/// separate event. The two cannot be separated in time. A roll *is* its dice,
 /// and pairing them removes the only ordering ambiguity a replayer would
 /// otherwise have to resolve.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,8 +131,8 @@ pub enum Payload {
     /// A decision from the §5.4 catalogue, with whatever it resolved.
     Decision { action: Action, resolved: Resolved },
     /// An offer was declined. Recorded because negotiation churn is data
-    /// (H-4) — under the open market it is most of the interaction in the game
-    /// — even though it changes no state.
+    /// (H-4), under the open market it is most of the interaction in the game
+    ///, even though it changes no state.
     Declined { offer: u8, by: u8 },
     /// The game reached a winner, or ran out of road.
     Ended {
@@ -165,7 +165,7 @@ pub struct Log {
     ///
     /// An index rather than history: every entry is regenerable by folding the
     /// events, so the event stream stays the canonical record (H-7). Each also
-    /// serves as a checksum — [`Log::verify`] replays into them.
+    /// serves as a checksum, [`Log::verify`] replays into them.
     pub snapshots: Vec<(u32, Box<State>)>,
 }
 
@@ -193,7 +193,7 @@ impl Log {
     ///
     /// Deliberately does *not* take the snapshot shortcut. The events are the
     /// canonical record and the snapshots are a derived index (H-7), so
-    /// "replay the game" means read the game — starting from a snapshot would
+    /// "replay the game" means read the game, starting from a snapshot would
     /// step over most of the log and trust an index to stand in for it.
     pub fn replay(&self) -> Result<State, ReplayError> {
         let mut state = *self.created.opening;
@@ -287,7 +287,7 @@ fn apply_event(state: &mut State, event: &Event) -> Result<(), ReplayError> {
 
 /// Builds a [`Log`] while a game is played.
 ///
-/// Recording is configurable per session (H-3) — a self-play rollout that
+/// Recording is configurable per session (H-3). A self-play rollout that
 /// wants no log simply does not construct one.
 pub struct Recorder {
     log: Log,

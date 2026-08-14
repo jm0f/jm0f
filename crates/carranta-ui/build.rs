@@ -2,7 +2,7 @@
 //!
 //! The interface is rebuilt by hand and served from a process you start
 //! yourself, so "am I looking at the change I just pulled, or the build from
-//! an hour ago?" is a question that comes up every single time — and a
+//! an hour ago?" is a question that comes up every single time, and a
 //! rebuilt page and a stale one look alike until you know what changed.
 //! Putting the commit in the page answers it at a glance.
 

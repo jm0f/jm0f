@@ -146,7 +146,7 @@ pub fn chi_squared_p(stat: f64, df: u32) -> f64 {
 /// Pearson's chi-squared statistic for observed counts against expected ones.
 ///
 /// Valid as a *statistic* at any sample size. What needs a large sample is
-/// reading its p-value off the chi-squared distribution — see [`crate::dice`],
+/// reading its p-value off the chi-squared distribution, see [`crate::dice`],
 /// which simulates the null instead when the sample is small.
 pub fn chi_squared_stat(observed: &[u32], expected: &[f64]) -> f64 {
     observed
@@ -264,7 +264,7 @@ pub fn least_squares(x: &[f64], y: &[f64]) -> Option<Fit> {
 ///
 /// Returns, for each input p-value, whether it is a discovery at level `q`.
 /// Order is preserved. Applied when per-game dice tests are used across a
-/// corpus — where, by construction, 5% of games clear p<0.05 with nothing
+/// corpus, where, by construction, 5% of games clear p<0.05 with nothing
 /// wrong with them.
 pub fn benjamini_hochberg(p_values: &[f64], q: f64) -> Vec<bool> {
     let m = p_values.len();

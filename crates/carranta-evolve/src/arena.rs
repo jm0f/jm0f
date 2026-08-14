@@ -5,14 +5,14 @@
 //!
 //! **Trading is on** (E-9). A bot tuned in a game where nobody trades learns
 //! strategies that will not transfer to human play, so training runs with
-//! `Restricted` — one card for one card, so the generated action space stays
+//! `Restricted`. One card for one card, so the generated action space stays
 //! enumerable, but the negotiation is real. Costs roughly twice `Disabled`.
 //!
 //! **Common random numbers** (E-4). Every genome in a generation plays the
 //! *same* board seeds against the *same* opponents, seat-rotated. That removes
 //! board luck and seat effects by construction rather than averaging them
-//! away — the feasibility measurement showed the paired difference between
-//! identical agents is exactly zero — and it is what makes a generation
+//! away. The feasibility measurement showed the paired difference between
+//! identical agents is exactly zero, and it is what makes a generation
 //! affordable.
 //!
 //! **Deterministic under parallelism.** A game's result depends only on its
@@ -160,7 +160,7 @@ impl Arena {
     /// Play one game and keep a full record of it (§7).
     ///
     /// For sampling only. Recording costs nothing measurable per game, but the
-    /// logs themselves would swamp a run that kept every one — so the trainer
+    /// logs themselves would swamp a run that kept every one, so the trainer
     /// takes a small sample and this stays off the hot path.
     pub fn play_recorded(&self, job: &Job) -> (Outcome, Log) {
         let mut a = seat_bot(job, 0);
@@ -215,7 +215,7 @@ impl Arena {
 /// Settle the market through the recorder, so completed trades reach the log.
 ///
 /// [`settle_market`] writes straight to a `State`, which would leave every
-/// trade out of the record — a busy market with no trades in it.
+/// trade out of the record, a busy market with no trades in it.
 fn settle_recorded(rec: &mut Recorder, policies: &mut [&mut dyn Policy]) {
     if rec.state().trade_mode == TradeMode::Disabled || rec.state().offer_count == 0 {
         return;
@@ -261,7 +261,7 @@ fn seat_bot(job: &Job, seat: usize) -> Heuristic {
 
 /// Finishing positions from the result: 1 = winner, ties share a position.
 ///
-/// The winner is placed first outright — only the active player can win
+/// The winner is placed first outright, only the active player can win
 /// (R-11.1), so equal points at the top is not a tie in the game.
 pub fn positions(winner: Option<u8>, vp: &[u32; MAX_PLAYERS]) -> [u32; MAX_PLAYERS] {
     core::array::from_fn(|i| {
@@ -363,7 +363,7 @@ mod tests {
     fn a_crippled_genome_loses() {
         // The sanity floor for the whole apparatus. All-zero weights score
         // every candidate identically, so the bot picks on its tie-break
-        // stream alone — random play, which the bot work measured at a 0.24%
+        // stream alone, random play, which the bot work measured at a 0.24%
         // win rate. If the arena cannot see that, no amount of selection helps.
         let arena = Arena::default();
         let base = Genome::default();
@@ -396,9 +396,9 @@ mod tests {
         // victory-point term barely changes how the bot plays.
         //
         // The reason is collinearity. `pips`, `road`, `militia` and `dev`
-        // already reward the actions that *produce* points — a settlement is
+        // already reward the actions that *produce* points. A settlement is
         // worth building for its production whether or not the point it
-        // carries is counted — so the points term is mostly re-describing what
+        // carries is counted, so the points term is mostly re-describing what
         // the other terms say.
         //
         // It matters for training: evolution cannot gain much on a gene that
@@ -435,7 +435,7 @@ mod tests {
         assert!(differed > 50, "the change did nothing at all to the games");
         assert!(
             no_points_wins * 2 > base_wins,
-            "expected near-parity, got {no_points_wins} vs {base_wins} —              if this now fails the feature set has stopped being collinear"
+            "expected near-parity, got {no_points_wins} vs {base_wins}, if this now fails the feature set has stopped being collinear"
         );
     }
 

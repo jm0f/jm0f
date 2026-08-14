@@ -98,7 +98,7 @@ fn games_to_resolve(sd: f64, delta: f64) -> f64 {
 
 fn main() {
     let mode = TradeMode::Disabled; // what training consumes (§6.5)
-    println!("population training feasibility — {mode:?} market\n");
+    println!("population training feasibility, {mode:?} market\n");
 
     // ---- 1. Does self-play scale across cores? ----
     println!("== parallel scaling ==");
@@ -141,7 +141,7 @@ fn main() {
     //
     // Pairing is exact here: identical weights play identical games on the
     // same board, so the null difference is *exactly* zero. Board luck and
-    // seat effects are removed by construction rather than averaged away —
+    // seat effects are removed by construction rather than averaged away,
     // which is the whole reason to pair. What is left is the only noise that
     // matters: the perturbation sending the game down a different path.
     println!("\n== how much signal does one game carry? ==");

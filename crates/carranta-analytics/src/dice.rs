@@ -3,15 +3,15 @@
 //! Two different questions live here and must not be confused:
 //!
 //! **(a) Was *this game's* dice sequence unusual?** ~60–100 rolls. A plain
-//! chi-squared p-value is invalid at that size — the expected count for 2 and
-//! for 12 is under 2 — so the null is simulated instead. And the result is
+//! chi-squared p-value is invalid at that size. The expected count for 2 and
+//! for 12 is under 2, so the null is simulated instead. And the result is
 //! presented as a percentile against recorded games, never as a significance
 //! claim: across thousands of games ~5% clear p<0.05 by construction, and those
 //! are precisely the games a player screenshots as proof of rigging.
 //!
 //! **(b) Is the *generator* fair?** Millions of pooled rolls, where chi-squared
 //! is valid but the opposite problem appears: any trivial deviation becomes
-//! "significant". Judge on effect size, and check independence too — a bad
+//! "significant". Judge on effect size, and check independence too. A bad
 //! generator can produce correct marginals with serial structure.
 //!
 //! Stated once, since it drives both: **small n makes p-values invalid, large n
@@ -85,7 +85,7 @@ pub struct GameDice {
     /// deviated at least this much.
     ///
     /// Exact by construction rather than asymptotic. **Do not present this as
-    /// a fairness verdict for one game** — use [`Corpus::deviation_percentile`]
+    /// a fairness verdict for one game**, use [`Corpus::deviation_percentile`]
     /// (§10.1). It is here for corpus-level analysis, where it belongs behind
     /// [`crate::stats::benjamini_hochberg`].
     pub p_value: f64,
@@ -103,7 +103,7 @@ pub fn analyse_game(rolls: &[u8], sims: u32, seed: u64) -> GameDice {
     let observed_stat = chi_squared_stat(&counts, &expected);
 
     // The null: draw `n` fair rolls and see how often they deviate at least as
-    // much. Adding one to both parts is the standard correction — a p-value of
+    // much. Adding one to both parts is the standard correction. A p-value of
     // exactly zero is never warranted by a finite simulation.
     let mut rng = Rng::new(seed);
     let mut at_least = 0u32;
@@ -162,7 +162,7 @@ pub struct Audit {
     pub rolls: u64,
     pub counts: [u64; OUTCOMES],
     pub chi_squared: f64,
-    /// Valid at this sample size — and, at this sample size, near-guaranteed
+    /// Valid at this sample size, and, at this sample size, near-guaranteed
     /// to be small for any real deviation. Judge on the effect sizes below.
     pub p_value: f64,
     pub kl_bits: f64,
@@ -317,7 +317,7 @@ mod tests {
     fn fair_dice_produce_uniform_p_values() {
         // The property that makes a p-value a p-value: under the null it is
         // uniform. If ~5% of fair games did not clear 0.05, the test would be
-        // miscalibrated — and §10.1's whole warning rests on this being true.
+        // miscalibrated, and §10.1's whole warning rests on this being true.
         let mut below = 0;
         let games = 400;
         for g in 0..games {
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn the_audit_catches_a_small_bias_the_effect_size_calls_small() {
         // 2% extra sevens: overwhelming at this n, but a small effect. That is
-        // exactly the large-n regime §10.1 warns about — the p-value alone
+        // exactly the large-n regime §10.1 warns about. The p-value alone
         // would say "rigged" for a deviation worth about a quarter of a
         // percentage point per outcome.
         let r = biased_rolls(500_000, 77, 0.02);

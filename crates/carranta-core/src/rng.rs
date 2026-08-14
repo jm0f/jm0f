@@ -3,7 +3,7 @@
 //! §6.4 requires four sources that can be varied independently: dice, the
 //! development deck shuffle, the random steal, and board generation. Holding
 //! them in one generator makes a change to any of them perturb all the others,
-//! which destroys paired evaluation and makes debugging miserable — vary the
+//! which destroys paired evaluation and makes debugging miserable, vary the
 //! dice while holding the board fixed and you want *only* the dice to move.
 //!
 //! SplitMix64: tiny, fast, and good enough for a board game. It is not
@@ -49,7 +49,7 @@ impl Rng {
     }
 
     /// Uniform in `0..n`. Unbiased by rejection, so it consumes a variable
-    /// number of draws — which is fine, since streams are independent.
+    /// number of draws, which is fine, since streams are independent.
     #[inline]
     pub fn below(&mut self, stream: Stream, n: u32) -> u32 {
         debug_assert!(n > 0);

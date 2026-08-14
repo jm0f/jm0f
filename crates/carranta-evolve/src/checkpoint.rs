@@ -1,6 +1,6 @@
 //! Saving and resuming a run.
 //!
-//! A multi-day run on a laptop will be interrupted — a lid closed, a reboot, a
+//! A multi-day run on a laptop will be interrupted, a lid closed, a reboot, a
 //! terminal shut. Without this, every interruption costs the whole run.
 //!
 //! **Resume is exact, not approximate.** A generation's randomness is derived
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn a_resumed_run_continues_exactly_as_if_it_had_not_stopped() {
         // The property that makes a multi-day run worth starting. Not
-        // "approximately the same" — the same games, the same champions, the
+        // "approximately the same". The same games, the same champions, the
         // same ratings.
         let mut straight = Trainer::new(quick(), 4_242);
         let mut interrupted = Trainer::new(quick(), 4_242);

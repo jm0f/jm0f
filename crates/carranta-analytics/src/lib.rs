@@ -1,7 +1,7 @@
 //! Metrics derived from Carranta game records (§10).
 //!
 //! Everything here reads a [`carranta_record::Log`] and computes; nothing is
-//! stored. That is deliberate and cheap — replaying a game costs ~35 µs, so a
+//! stored. That is deliberate and cheap, replaying a game costs ~35 µs, so a
 //! changed metric is recomputed over the corpus rather than migrated (H-7).
 //!
 //! | Module | Section | What it answers |
@@ -11,7 +11,7 @@
 //! | [`game`] | §10.3 | Everything countable about one game |
 //! | [`corpus`] | §10.3, §10.4 | Balance across many games, and who converts production into points |
 //! | [`rating`] | §10.4, §10.5 | Player skill, and luck-adjusted performance |
-//! | [`stats`] | — | The statistics the rest is built on |
+//! | [`stats`] |, | The statistics the rest is built on |
 //!
 //! One theme runs through all of it, from §10.1: **small n makes p-values
 //! invalid, large n makes them uninformative.** Every test here is paired with

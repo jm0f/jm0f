@@ -8,7 +8,7 @@
 //! **The expectation is exact, not simulated.** Production on a single roll is
 //! a deterministic function of the roll, so per-roll production has a known
 //! distribution over 11 outcomes. Rolls are independent, so expectations and
-//! variances add — even though buildings change during the game, since each
+//! variances add, even though buildings change during the game, since each
 //! roll simply contributes its own term. That gives an exact z-score where an
 //! estimate would otherwise be needed.
 //!
@@ -20,7 +20,7 @@
 //! ```
 //!
 //! `DiceLuck` is chance. `RobberCost` is *other players choosing to target
-//! you* — a social outcome, not a random one. `SupplyDenial` is a rules
+//! you*, a social outcome, not a random one. `SupplyDenial` is a rules
 //! artefact (R-5.6). Reported as one number they tell a player nothing about
 //! which of the three happened to them.
 
@@ -38,7 +38,7 @@ type YieldTable = [[[u32; 5]; MAX_PLAYERS]; OUTCOMES];
 /// stands.
 ///
 /// With `respect_robber`, the blocked hex pays nothing (R-5.8); without, it
-/// pays as though the robber were not there — the difference between the two
+/// pays as though the robber were not there. The difference between the two
 /// is precisely `RobberCost`.
 fn yields(state: &State, respect_robber: bool) -> YieldTable {
     let mut table: YieldTable = [[[0; 5]; MAX_PLAYERS]; OUTCOMES];
@@ -89,7 +89,7 @@ pub struct Report {
     pub e_robber: [[f64; 5]; MAX_PLAYERS],
     /// Variance of the robber-respecting expectation. Exact, summed per roll.
     pub variance: [[f64; 5]; MAX_PLAYERS],
-    /// Cards the rolls owed, given the real robber positions — before the
+    /// Cards the rolls owed, given the real robber positions, before the
     /// supply was checked.
     pub ideal: [[u32; 5]; MAX_PLAYERS],
     /// Cards actually received.
@@ -103,7 +103,7 @@ pub struct Report {
 pub struct Decomposition {
     /// Expected production ignoring robber and supply.
     pub e_raw: f64,
-    /// Expected production lost to the robber sitting on your hexes — an
+    /// Expected production lost to the robber sitting on your hexes, an
     /// opponent's choice, not chance.
     pub robber_cost: f64,
     /// Production owed but not paid because a stack ran out (R-5.6).
@@ -123,7 +123,7 @@ impl Report {
         self.decompose_resource(seat, None)
     }
 
-    /// The same, for one resource — which is what answers "was I starved of
+    /// The same, for one resource, which is what answers "was I starved of
     /// ore specifically".
     pub fn decompose_resource(&self, seat: usize, resource: Option<usize>) -> Decomposition {
         let pick = |xs: &[f64; 5]| -> f64 {
@@ -194,7 +194,7 @@ pub fn analyse(log: &Log) -> Result<Report, ReplayError> {
         };
 
         // Only a roll produces, and only from the board as it stands *before*
-        // the roll — so the tables are built here, not after applying.
+        // the roll, so the tables are built here, not after applying.
         let rolling = matches!(action, Action::Roll);
         let (blocked, open, before) = if rolling {
             (yields(&state, true), yields(&state, false), state.hand)
@@ -296,7 +296,7 @@ mod tests {
         // Dice luck is the only random term, so over many games and seats its
         // z-score should sit near zero with a spread near one. A systematic
         // offset would mean the expectation is wrong, not that anyone was
-        // lucky — which is the failure this catches.
+        // lucky, which is the failure this catches.
         let mut zs = Vec::new();
         for seed in 0..120 {
             let r = analyse(&self_play(seed, TradeMode::Disabled)).unwrap();

@@ -1,4 +1,4 @@
-//! `carranta-train` — run an evolution strategy over the heuristic's weights.
+//! `carranta-train`, run an evolution strategy over the heuristic's weights.
 //!
 //! Built to be started and left alone. It checkpoints after every generation,
 //! resumes exactly, and writes a history you can chart afterwards.
@@ -8,8 +8,7 @@
 //! cargo run --release -p carranta-evolve -- --out runs/first --resume
 //! ```
 //!
-//! To stop it cleanly, create a file called `stop` in the output directory —
-//! it finishes the generation in flight, checkpoints, and exits. Interrupting
+//! To stop it cleanly, create a file called `stop` in the output directory, //! it finishes the generation in flight, checkpoints, and exits. Interrupting
 //! it instead costs at most the generation in progress.
 //!
 //! Options: `--out DIR --resume --generations N --population N --survivors N
@@ -184,7 +183,7 @@ fn main() {
     } else {
         if ckpt.exists() {
             eprintln!(
-                "{} already exists — pass --resume to continue it, or choose another --out",
+                "{} already exists, pass --resume to continue it, or choose another --out",
                 ckpt.display()
             );
             std::process::exit(1);
@@ -208,11 +207,11 @@ fn main() {
     let started = std::time::Instant::now();
     let mut total_games = 0u64;
     let mut done = 0u32;
-    // Zero means "until told otherwise" — a multi-day run should not need a
+    // Zero means "until told otherwise". A multi-day run should not need a
     // generation count guessed in advance.
     while args.generations == 0 || done < args.generations {
         if stop.exists() {
-            println!("\nstop file found — finishing here");
+            println!("\nstop file found, finishing here");
             break;
         }
         done += 1;

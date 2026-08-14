@@ -6,7 +6,7 @@
 <title>Carranta</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
 <style>
-  /* Two faces, served from the binary — style.md §6.
+  /* Two faces, served from the binary, style.md §6.
      Fraunces for display: a variable serif with an optical-size axis and a
      "wonk" axis that flares its terminals, which is the retro park-poster
      quality the board is after. Figtree for everything read rather than
@@ -25,7 +25,7 @@
   :root {
     --sans: 'Figtree', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --display: 'Fraunces', Georgia, 'Times New Roman', serif;
-    /* Ink on warm paper, not pixels on a screen — docs/style.md. Nothing is
+    /* Ink on warm paper, not pixels on a screen, docs/style.md. Nothing is
        pure white because paper is not; nothing is pure black because ink is
        not. The one exception is the number discs, which need to punch. */
     --bg: #F3EDE1; --panel: #FBF7EF; --line: #E2D9C8;
@@ -34,10 +34,10 @@
 
     /* Six terrains separated by a lightness ladder rather than by hue.
        Forest and pasture are both green, fields and desert both warm sand, so
-       hue alone can never tell those pairs apart — value and chroma do it.
+       hue alone can never tell those pairs apart, value and chroma do it.
        The test: desaturate the board and check no two adjacent tiles merge. */
     --forest: #1B5637;      /* L 32 */
-    --mountains: #566373;   /* L 42 — deliberately the least saturated thing on
+    --mountains: #566373;   /* L 42, deliberately the least saturated thing on
                                the board. Its hue sits at 215, inside the arc the
                                seats now use, so it is chroma alone that keeps it
                                out of their way. Making these bluer would put a
@@ -63,11 +63,11 @@
        Being far off the terrain hues is what lets the pieces go bare: they
        carry no surround, so the only thing separating a piece from the tile
        under it is the colour itself. The old bone seat could not have done
-       this — it was one degree from desert and 1.33:1 against it. */
+       this, it was one degree from desert and 1.33:1 against it. */
     --p0: #2CA7BA; --p1: #3C2EB8; --p2: #C065D2; --p3: #C1256B;
 
     /* shadcn/ui's token names, mapped onto the palette above.
-       shadcn is not a package — it is source you copy and own — so what is
+       shadcn is not a package. It is source you copy and own, so what is
        borrowed here is the vocabulary and the component anatomy, not React,
        Tailwind or Radix, none of which this page has any way to run. The value
        of the vocabulary is that surfaces, borders and rings stop being chosen
@@ -104,7 +104,7 @@
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 14px/1.5 var(--sans);
-    /* Quantities line up in columns everywhere — style.md §6. */
+    /* Quantities line up in columns everywhere, style.md §6. */
     font-variant-numeric: tabular-nums;
     height: 100vh; height: 100dvh; overflow: hidden;
     display: flex; flex-direction: column;
@@ -139,11 +139,11 @@
   /* ---- button ----------------------------------------------------------
      shadcn's anatomy: one base, variants that change only surface and border,
      sizes that change only padding and height. Nothing else may restyle a
-     button — if a button needs to look different, it needs a variant.
+     button, if a button needs to look different, it needs a variant.
 
      Disabled is `aria-disabled`, never the `disabled` attribute. A disabled
      button is removed from the tab order and stops emitting pointer events, so
-     its explanation becomes unreachable by keyboard and by touch — which is
+     its explanation becomes unreachable by keyboard and by touch, which is
      exactly the audience that most needs to be told why it cannot act. Radix
      does the same thing for the same reason; the click handler guards instead. */
   button, .btn {
@@ -199,7 +199,7 @@
   /* ---- tooltip ---------------------------------------------------------
      `title` was doing this job and doing it badly: it never appears on touch,
      never on keyboard focus, and waits a second before it does appear on
-     hover. Anything carrying data-tip gets a real one — shown on hover and on
+     hover. Anything carrying data-tip gets a real one, shown on hover and on
      focus, dismissed on escape, flipped when it would leave the viewport. */
   .tip {
     position: fixed; z-index: 90; max-width: 15rem; padding: .4em .6em;
@@ -210,7 +210,7 @@
   }
   .tip[data-show] { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
-  /* Four regions that never trade places — docs/ui.md §2. Seats and history on
+  /* Four regions that never trade places, docs/ui.md §2. Seats and history on
      the left, board in the middle, a column held open on the right for chat,
      and everything you do along the bottom.
 
@@ -276,7 +276,7 @@
   .spot { cursor: pointer; }
   /* A ghost drifts; a placed piece does not. The movement is what separates
      "could go here" from "is here" without another colour or outline. Small
-     enough not to pull the eye off the board — it should read at the edge of
+     enough not to pull the eye off the board. It should read at the edge of
      vision, not demand attention. */
   @keyframes hover { 50% { transform: translateY(-3px); } }
   .ghost { animation: hover 2.2s ease-in-out infinite; }
@@ -287,8 +287,7 @@
            letter-spacing: .08em; margin-top: 6px; }
 
   /* ---- seat rows (left column) ---------------------------------------- */
-  /* Everyone is measured the same way in the same place, yours included —
-     comparing yourself to the table is the only thing this column is for. */
+  /* Everyone is measured the same way in the same place, yours included, comparing yourself to the table is the only thing this column is for. */
   .seatRow { display: grid; grid-template-columns: auto 1fr auto; gap: .5em .6em;
              align-items: center; padding: .5em .1em; border-top: 1px solid var(--line); }
   .seatRow:first-of-type { border-top: 0; }
@@ -406,13 +405,17 @@
     border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px;
   }
   .seed[readonly] { color: var(--muted-foreground); }
-  .copyRow { display: flex; gap: 6px; }
+  .copyRow { display: flex; gap: 6px; align-items: center; }
+  .copyRow .unit { color: var(--muted-foreground); font-size: 12px; }
+  .seatSlot input.slotName { flex: 1; min-width: 0; }
+  .fieldLabel[data-tip] { cursor: help; text-decoration: underline dotted;
+                          text-underline-offset: 3px; }
   .copyRow .seed { flex: 1; min-width: 0; }
 
   /* ---- the card that waits for you -------------------------------------- */
   /* It takes the decision and never the board. Rather than float over the
      island, it claims the column being held for chat and pushes the board
-     narrower — the board is an SVG that refits, so the whole position stays
+     narrower. The board is an SVG that refits, so the whole position stays
      visible while you decide, just smaller. A modal that hides the thing you
      are deciding about is a modal that makes you guess. */
   .prompt[hidden] { display: none; }
@@ -467,52 +470,38 @@
     <p class="lobbyLead">Set the table, then deal.</p>
 
     <div class="field">
-      <span class="fieldLabel">You</span>
-      <input id="lobbyName" class="seed" type="text" maxlength="24"
-             placeholder="what should we call you?" autocomplete="nickname">
-      <p class="fieldNote" id="nameNote">Editable because nobody is signed in.
-        An account would fill this in and this field would go away.</p>
-    </div>
-
-    <div class="field">
       <span class="fieldLabel">Table</span>
       <div class="segmented" id="lobbySeats"></div>
     </div>
 
     <div class="field">
-      <span class="fieldLabel">Who is playing</span>
+      <span class="fieldLabel" data-tip="Seats wait for people by default. The server cannot seat a person yet, so an open seat is played by a bot until it can." tabindex="0">Who is playing</span>
       <div class="seatSlots" id="lobbySlots"></div>
-      <p class="fieldNote">Seats wait for people by default. A seat left as a
-        bot is filled now; the server cannot seat a person yet, so an open seat
-        plays as a bot until it can.</p>
     </div>
 
     <div class="field">
-      <span class="fieldLabel">Invite</span>
+      <span class="fieldLabel" data-tip="Not live yet. The link is real, the joining is not." tabindex="0">Invite</span>
       <div class="copyRow">
         <input id="lobbyLink" class="seed" type="text" readonly>
         <button id="copyLink" class="btn-secondary" type="button">Copy</button>
       </div>
-      <p class="fieldNote">Not live yet — the link is real, the joining is not.
-        It carries the table, so whoever opens it lands on this board.</p>
     </div>
 
     <div class="field">
-      <span class="fieldLabel">Turn clock</span>
+      <span class="fieldLabel" id="clockLabel" tabindex="0">Turn clock</span>
       <div class="segmented" id="lobbyClockKind"></div>
-      <div class="segmented" id="lobbyClockSecs" style="margin-top:6px"></div>
-      <p class="fieldNote" id="clockNote"></p>
+      <div class="copyRow" id="lobbyClockSecsRow" style="margin-top:6px">
+        <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
+        <span class="unit">seconds</span>
+      </div>
     </div>
 
     <div class="field">
-      <span class="fieldLabel">Seed</span>
+      <span class="fieldLabel" data-tip="The same seed deals the same board. Paste one in to replay a board you have seen." tabindex="0">Seed</span>
       <div class="copyRow">
         <input id="lobbySeed" class="seed" type="text" inputmode="numeric">
-        <button id="rerollSeed" class="btn-secondary" type="button">New</button>
         <button id="copySeed" class="btn-secondary" type="button">Copy</button>
       </div>
-      <p class="fieldNote">The same seed deals the same board. Generated for
-        you, so it can be copied before the game starts.</p>
     </div>
 
     <button id="lobbyStart" class="btn-primary btn-block">Deal the board</button>
@@ -544,7 +533,7 @@
     <div class="prompt" id="prompt" hidden></div>
   </aside>
 
-  <!-- Everything you do, in one place under the board — docs/ui.md §3. A card
+  <!-- Everything you do, in one place under the board, docs/ui.md §3. A card
        the width of the board, not a bar the width of the window: your hand and
        the actions belong to the game, and the frame should say so. -->
   <footer class="dock panel">
@@ -567,7 +556,7 @@
   </div>
   <div class="dockGroup">
     <span class="dockLabel">elapsed</span>
-    <div class="clock" id="clock" data-tip="time since this game was dealt">—</div>
+    <div class="clock" id="clock" data-tip="time since this game was dealt">, </div>
   </div>
   </footer>
 </main>
@@ -655,8 +644,8 @@ function tone(hex, amount) {
   return `rgb(${r},${g},${b})`;
 }
 
-// Pieces carry no surround. Every earlier attempt at one — a morphology
-// dilate, then a union of offsets — read as a pale collar rather than as an
+// Pieces carry no surround. Every earlier attempt at one. A morphology
+// dilate, then a union of offsets, read as a pale collar rather than as an
 // edge, and the seats no longer need it: they sit on the half of the colour
 // wheel the terrain does not use (§2.3), so a piece is told from the tile
 // under it by hue, not by a spacer between them.
@@ -714,7 +703,7 @@ function draw() {
     g.appendChild(el('polygon', {
       points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
       // The outline is drawn in the panel's own colour, so it reads as a gap
-      // between tiles rather than a line around them — the board separates
+      // between tiles rather than a line around them. The board separates
       // into pieces without anything being added to it. Taken from the
       // stylesheet rather than written here, so it follows the theme.
       stroke: byHex[h.id] ? 'var(--accent)' : 'var(--panel)',
@@ -743,7 +732,7 @@ function draw() {
     }
     // Moving the robber is one click on the board. Choosing whom it robs is a
     // second decision hiding inside the same choice list, and taking the first
-    // one silently picked the victim for you — so when a hex offers more than
+    // one silently picked the victim for you, so when a hex offers more than
     // one, ask.
     if (byHex[h.id]) g.onclick = () => {
       const cs = byHex[h.id];
@@ -755,7 +744,7 @@ function draw() {
 
   // Ports sit just off the coast, each joined to the two intersections it
   // serves. They arrive per-intersection, so put each port back together
-  // first — drawing them apart would show eighteen ports where there are nine.
+  // first, drawing them apart would show eighteen ports where there are nine.
   portGroups().forEach(port => {
     const pts = port.at.map(v => vxy[v]);
     const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
@@ -763,7 +752,7 @@ function draw() {
     const k = Math.hypot(mx, my) || 1;
     const ox = mx + (mx / k) * 30, oy = my + (my / k) * 30;
     // Port furniture is paper and ink, not colour. It used to be a cool
-    // blue-grey, which put it at hue 214 — inside the arc the seats occupy,
+    // blue-grey, which put it at hue 214, inside the arc the seats occupy,
     // competing with seat 1 for the only blue on the board.
     pts.forEach(([x, y]) => svg.appendChild(el('line', {
       x1: ox, y1: oy, x2: x, y2: y, stroke: '#C8B79E', 'stroke-width': 2.5, opacity: .9,
@@ -785,14 +774,14 @@ function draw() {
     const edge = view.edges[e];
     const [x1, y1] = vxy[edge.a], [x2, y2] = vxy[edge.b];
     // Which drawing to use is decided by the edge's angle. A piece drawn in
-    // perspective cannot be rotated to face another way — it would lean the
-    // wrong direction — so each orientation needs its own drawing rather than
+    // perspective cannot be rotated to face another way. It would lean the
+    // wrong direction, so each orientation needs its own drawing rather than
     // a transform.
     const deg = ((Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI) % 180 + 180) % 180;
     // A pointy-top board has three edge angles and there is a drawing for each.
     const name = deg < 60 ? 'road-30' : (deg < 120 ? 'road-90' : 'road-150');
     // Scaled by the bar's own length rather than the drawing's box, which for
-    // a diagonal piece is far bigger than the bar inside it — the mistake that
+    // a diagonal piece is far bigger than the bar inside it. The mistake that
     // made the roads overshoot their edges.
     const k = Math.hypot(x2 - x1, y2 - y1) * 0.70 / ROAD_LENGTH;
     // Lifted so the piece's underside sits on the edge rather than its middle.
@@ -856,7 +845,7 @@ function draw() {
           (city ? 31 : 23) / (city ? 72 : 60), 0.72, byVertex[v][0].i);
   }
 
-  // Intersection numbers, for talking about specific places on the board —
+  // Intersection numbers, for talking about specific places on the board,
   // "the port between 8 and 16" rather than "the one at the top left". The
   // coastal ones are picked out, since those are the only ones a port can sit
   // on. Drawn last so nothing covers them.
@@ -882,7 +871,7 @@ function draw() {
 //
 // The board's extent is not a constant: three seats deal a different spread
 // than four, and port labels hang outside the coast. Measuring it means the
-// board is never clipped and never floats inside slack it does not need —
+// board is never clipped and never floats inside slack it does not need,
 // `preserveAspectRatio` then scales that box to whatever room the layout has.
 function fit(svg) {
   let box;
@@ -897,10 +886,10 @@ function fit(svg) {
 
 function render() {
   const v = view;
-  const how = v.calledOnTime ? ' on time — most points showing' : '';
+  const how = v.calledOnTime ? ' on time, most points showing' : '';
   const turn = v.winner !== null
     ? (v.winner === v.you ? `You won${how}` : `${seatName(v, v.winner)} won${how}`)
-    : (v.yourTurn ? `Your move — ${v.phase}` : `${seatName(v, v.toAct)} is playing`);
+    : (v.yourTurn ? `Your move, ${v.phase}` : `${seatName(v, v.toAct)} is playing`);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.getElementById('status').textContent = `${turn}${dice} · seed ${v.seed}`;
   document.getElementById('build').textContent = `build ${v.build}`;
@@ -908,13 +897,13 @@ function render() {
 
   draw();
 
-  // The engine enumerates every single-type offer it could generate — up to
+  // The engine enumerates every single-type offer it could generate, up to
   // ~180 of them. That is the right action space for a search and the wrong
   // one for a person, so they are folded away and the composer replaces them:
   // it can express those and the mixed offers generation never enumerates.
   // Two kinds of choice are shown elsewhere: the enumerated proposals, which
   // the composer replaces, and accepting or withdrawing, which belong beside
-  // the offer itself where its contents are visible — "Accept offer 0" says
+  // the offer itself where its contents are visible, "Accept offer 0" says
   // considerably less than the offer does.
   clockFrom(v);
   renderSeats(v);
@@ -942,21 +931,21 @@ let give = [0, 0, 0, 0, 0], want = [0, 0, 0, 0, 0], to = '';
 // Opponents are named rather than numbered. A row that says who did something
 // is easier to hold in your head than one that says which index did it, and an
 // offer from a name reads as coming from someone. Placeholder until told
-// otherwise — docs/ui.md §10.
+// otherwise, docs/ui.md §10.
 const BOT_NAMES = ['Ada', 'Bram', 'Ines', 'Odd'];
 const seatName = (v, s) => (s === v.you ? (v.youName || 'you') : BOT_NAMES[s]);
 
 // ---- placeholder art -------------------------------------------------------
-// Isometric solids in the piece idiom — three flat faces, light from the upper
+// Isometric solids in the piece idiom, three flat faces, light from the upper
 // left (style.md §3.3). Stand-ins until the drawn set arrives; the silhouettes
 // differ by proportion so the five are told apart by shape as well as by hue,
 // and each takes the colour of the terrain that produces it.
 const RES_LOOK = [
-  { hue: '#C2492A', w: 1.00, h: 0.30 },  // brick — hills
-  { hue: '#1B5637', w: 0.50, h: 0.92 },  // wood  — forest
-  { hue: '#A8C64A', w: 0.86, h: 0.56 },  // wool  — pasture
-  { hue: '#E8A020', w: 0.38, h: 1.00 },  // wheat — fields
-  { hue: '#566373', w: 0.60, h: 0.44 },  // ore   — mountains
+  { hue: '#C2492A', w: 1.00, h: 0.30 },  // brick, hills
+  { hue: '#1B5637', w: 0.50, h: 0.92 },  // wood, forest
+  { hue: '#A8C64A', w: 0.86, h: 0.56 },  // wool, pasture
+  { hue: '#E8A020', w: 0.38, h: 1.00 },  // wheat, fields
+  { hue: '#566373', w: 0.60, h: 0.44 },  // ore, mountains
 ];
 function isoSolid(hue, w, h) {
   const cx = 20, cy = 23, X = 15 * w, Y = X * 0.5, H = 17 * h;
@@ -973,13 +962,13 @@ function isoSolid(hue, w, h) {
 }
 const resIcon = i => isoSolid(RES_LOOK[i].hue, RES_LOOK[i].w, RES_LOOK[i].h);
 // Development cards are cards, not objects, so they carry a mark rather than a
-// solid — one ring, in the accent, the way the study's card backs do.
+// solid. One ring, in the accent, the way the study's card backs do.
 const devIcon = () =>
   `<svg viewBox="0 0 40 46" aria-hidden="true">`
   + `<circle cx="20" cy="23" r="9" fill="none" stroke="#6B3FA0" stroke-width="3.4"/>`
   + `<circle cx="20" cy="23" r="3.2" fill="#6B3FA0"/></svg>`;
 
-// Action glyphs stay flat silhouettes — they are marks, not objects, and the
+// Action glyphs stay flat silhouettes. They are marks, not objects, and the
 // study draws its own the same way.
 const GLYPH = {
   roll: '<svg viewBox="0 0 24 24"><rect x="2" y="8" width="13" height="13" rx="3"/>'
@@ -1012,7 +1001,7 @@ function renderSeats(v) {
     // Only public points are known about anybody else: a victory-point card
     // sitting in a hand counts for nothing the table can see, and the engine
     // withholds it until the game ends. Your own row shows your real total,
-    // which means the two numbers are not measured the same way — so the row
+    // which means the two numbers are not measured the same way, so the row
     // says which is which instead of letting you assume you are level.
     const vp = document.createElement('span');
     vp.className = 'vp';
@@ -1022,7 +1011,7 @@ function renderSeats(v) {
     vp.setAttribute('tabindex', '0');
     vp.setAttribute('data-tip', mine
       ? (v.yourVp > s.vp
-        ? `your real total. The table can only see ${s.vp} — the rest is in victory-point cards nobody else can count`
+        ? `your real total. The table can only see ${s.vp}. The rest is in victory-point cards nobody else can count`
         : 'your total, all of it public')
       : 'public points only. Victory-point cards in hand are not counted until the game ends');
     if (mine && v.yourVp > s.vp) vp.innerHTML += ` <small>(${s.vp} shown)</small>`;
@@ -1079,7 +1068,7 @@ function renderHand(v) {
   hand.textContent = '';
   const total = v.yourHand.reduce((a, b) => a + b, 0);
   hand.parentElement.querySelector('.dockLabel').textContent =
-    total > 7 ? `your cards — ${total}, a seven costs you half` : 'your cards';
+    total > 7 ? `your cards, ${total}, a seven costs you half` : 'your cards';
   v.resourceNames.forEach(r => {
     const arming = prompt.mode === 'compose';
     hand.appendChild(stackEl(
@@ -1095,7 +1084,7 @@ function renderHand(v) {
   v.devNames.forEach(c => {
     const n = v.yourDev[c.i];
     if (!n) return;
-    const fresh = v.yourFresh[c.i] ? ' — bought this turn, playable next' : '';
+    const fresh = v.yourFresh[c.i] ? ', bought this turn, playable next' : '';
     dev.appendChild(stackEl(n, devIcon(), `${n} ${c.name}${fresh}`, null));
   });
   if (!dev.children.length) dev.appendChild(stackEl(0, devIcon(), 'no development cards', null));
@@ -1112,7 +1101,7 @@ function missing(v, cost) {
 
 // Each button resolves to whatever the engine is actually offering. When it
 // resolves to nothing the button stays where it is and greys, and the reason
-// goes in the tooltip — a layout is only learnable if it never rearranges.
+// goes in the tooltip, a layout is only learnable if it never rearranges.
 function renderActions(v) {
   const roll = v.choices.find(c => c.group === 'roll');
   const buy = v.choices.find(c => c.label === 'Buy a development card');
@@ -1230,22 +1219,25 @@ const CLOCK_KINDS = [
   ['chess', 'chess clock'],
   ['off', 'no clock'],
 ];
-const CLOCK_SECS = {
-  turn: [[30, '30 sec'], [60, '60 sec'], [90, '90 sec'], [120, '2 min']],
-  chess: [[300, '5 min each'], [600, '10 min each'], [900, '15 min each'], [1800, '30 min each']],
-};
+const CLOCK_DEFAULT = { turn: 60, chess: 600 };
 const CLOCK_NOTE = {
   turn: 'A fresh allowance every turn. Run it out and your turn is ended for '
-      + 'you — rolling first if the dice have not been thrown, since a turn '
+      + 'you, rolling first if the dice have not been thrown, since a turn '
       + 'cannot end before them.',
   chess: 'One bank each for the whole game, draining only while it is your '
        + 'move. Spend it and your turns end as soon as they begin.',
   off: 'Nobody is hurried.',
 };
 
-// A seed you can copy before the game exists, so the board can be shared or
-// replayed. Regenerated on demand rather than silently reused.
-function freshSeed() { return String(Math.floor(Math.random() * 900000) + 100000); }
+// The engine seeds from a u64, so the seed should span one. Six digits was a
+// millionth of the space and would have collided across a few thousand games;
+// this draws the whole range from the platform's cryptographic source, which
+// is also the only one here that is not a weak PRNG in its own right.
+function freshSeed() {
+  const b = new Uint32Array(2);
+  crypto.getRandomValues(b);
+  return ((BigInt(b[0]) << 32n) | BigInt(b[1])).toString();
+}
 function inviteLink() {
   const q = new URLSearchParams({ table: lobby.seed || '000000', seats: String(lobby.seats) });
   return `${location.origin}/join?${q}`;
@@ -1290,9 +1282,24 @@ function renderLobby() {
     const dot = document.createElement('span');
     dot.className = 'dot';
     dot.style.background = COLOURS[i];
-    const name = document.createElement('span');
-    name.className = 'slotName';
-    name.textContent = i === 0 ? (lobby.name || 'you') : BOT_NAMES[i];
+    // Your own seat is where your name is typed. It is the row that already
+    // says who is sitting there, so a separate field asking the same thing was
+    // asking twice.
+    let name;
+    if (i === 0) {
+      name = document.createElement('input');
+      name.className = 'seed slotName';
+      name.id = 'lobbyName';
+      name.maxLength = 24;
+      name.placeholder = 'your name';
+      name.autocomplete = 'nickname';
+      name.value = lobby.name;
+      name.oninput = (e) => { lobby.name = e.target.value; };
+    } else {
+      name = document.createElement('span');
+      name.className = 'slotName';
+      name.textContent = BOT_NAMES[i];
+    }
     const seg = document.createElement('div');
     seg.className = 'segmented';
     // Seat 0 is the person at this browser; the rest wait for someone unless
@@ -1308,23 +1315,20 @@ function renderLobby() {
       lobby.clockKind = v;
       // Each kind measures a different thing, so carrying the number across
       // would turn "60 seconds a turn" into a one-minute chess bank.
-      if (v !== 'off') lobby.clockSecs = v === 'turn' ? 60 : 600;
+      if (v !== 'off') lobby.clockSecs = CLOCK_DEFAULT[v];
     });
-  const secsHost = document.getElementById('lobbyClockSecs');
-  secsHost.hidden = lobby.clockKind === 'off';
-  if (!secsHost.hidden) {
-    segmented(secsHost, CLOCK_SECS[lobby.clockKind], lobby.clockSecs,
-      v => { lobby.clockSecs = v; });
-  }
-  document.getElementById('clockNote').textContent = CLOCK_NOTE[lobby.clockKind];
+  document.getElementById('lobbyClockSecsRow').hidden = lobby.clockKind === 'off';
+  document.getElementById('lobbyClockSecs').value = lobby.clockSecs;
+  document.getElementById('clockLabel').setAttribute('data-tip', CLOCK_NOTE[lobby.clockKind]);
 
-  document.getElementById('lobbyName').value = lobby.name;
   document.getElementById('lobbySeed').value = lobby.seed;
   document.getElementById('lobbyLink').value = inviteLink();
 }
 
 function openLobby() {
-  if (!lobby.seed) lobby.seed = freshSeed();
+  // A new seed every time the lobby opens, so there is nothing to press to get
+  // one. Paste over it to replay a board.
+  lobby.seed = freshSeed();
   // A name outlives the game it was typed into, which is the closest thing to
   // being remembered while there is nobody to sign in as.
   if (!lobby.name) lobby.name = localStorage.getItem('carranta.name') || '';
@@ -1333,22 +1337,20 @@ function openLobby() {
   document.getElementById('lobbyName').focus();
 }
 
-document.getElementById('lobbyName').oninput = (e) => {
-  lobby.name = e.target.value;
-  const slot = document.querySelector('#lobbySlots .slotName');
-  if (slot) slot.textContent = lobby.name || 'you';
-};
 document.getElementById('lobbySeed').oninput = (e) => {
   lobby.seed = e.target.value.trim();
   document.getElementById('lobbyLink').value = inviteLink();
 };
-document.getElementById('rerollSeed').onclick = () => { lobby.seed = freshSeed(); renderLobby(); };
+document.getElementById('lobbyClockSecs').oninput = (e) => {
+  lobby.clockSecs = Math.max(5, Number(e.target.value) || 0);
+};
 document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.seed);
 document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLink());
 
 document.getElementById('lobbyStart').onclick = () => {
-  lobby.name = document.getElementById('lobbyName').value.trim();
+  lobby.name = (document.getElementById('lobbyName').value || '').trim();
   lobby.seed = document.getElementById('lobbySeed').value.trim();
+  lobby.clockSecs = Math.max(5, Number(document.getElementById('lobbyClockSecs').value) || 0);
   localStorage.setItem('carranta.name', lobby.name);
   const q = new URLSearchParams({
     seats: String(lobby.seats),
@@ -1358,7 +1360,7 @@ document.getElementById('lobbyStart').onclick = () => {
     clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
     name: lobby.name,
   });
-  if (/^\d+$/.test(lobby.seed)) q.set('seed', lobby.seed);
+  if (/^\d{1,20}$/.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
   load(`/api/new?${q}`, { method: 'POST' });
 };
@@ -1384,7 +1386,7 @@ function renderDice(v) {
 // ---- the card that waits for you -------------------------------------------
 // One place for every decision that has nowhere on the board to happen. It is
 // anchored above the dock rather than centred, so the position you are
-// deciding about is never behind it — docs/ui.md §5.
+// deciding about is never behind it, docs/ui.md §5.
 const prompt = { mode: null, data: null };
 function openPrompt(mode, data) {
   prompt.mode = mode; prompt.data = data || null;
@@ -1447,14 +1449,14 @@ function renderPrompt(v) {
   // Forced first: the game is waiting on you and nothing else matters.
   const discard = v.choices.filter(c => c.group === 'discard');
   // Declining is a single choice that clears every open offer at once, not one
-  // per offer — so it belongs to the card rather than to a row.
+  // per offer, so it belongs to the card rather than to a row.
   const decline = v.choices.find(c => c.label === 'No thanks');
   const answerable = v.offers.filter(o =>
     v.choices.some(c => c.label === `Accept offer ${o.i}` || c.label === `Withdraw offer ${o.i}`));
 
   // An offer you cannot afford has no accept choice behind it, so keying the
   // card on "answerable" hid the whole table whenever the one thing on it was
-  // out of your reach — including the button to turn it down.
+  // out of your reach, including the button to turn it down.
   const incoming = v.offers.filter(o => !o.mine);
   let mode = prompt.mode;
   if (discard.length) mode = 'discard';
@@ -1495,7 +1497,7 @@ function renderPrompt(v) {
   };
 
   if (mode === 'discard') {
-    head('A seven was rolled — hand half of it back', false);
+    head('A seven was rolled, hand half of it back', false);
     buttonList(discard);
     return;
   }
@@ -1505,7 +1507,7 @@ function renderPrompt(v) {
 }
 
 function renderOffers(v, host, offers, decline) {
-  const names = n => v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ') || '—';
+  const names = n => v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ') || ', ';
   offers.forEach(o => {
     const d = document.createElement('div');
     d.className = 'offer';
@@ -1557,7 +1559,7 @@ function renderOffers(v, host, offers, decline) {
     host.appendChild(el2('hr', { class: 'separator' }));
     const b = document.createElement('button');
     b.className = 'btn-secondary btn-block';
-    b.textContent = theirs > 1 ? `No thanks — turn down all ${theirs}` : 'No thanks';
+    b.textContent = theirs > 1 ? `No thanks, turn down all ${theirs}` : 'No thanks';
     b.onclick = () => act(decline.i);
     host.appendChild(b);
   }
@@ -1584,7 +1586,7 @@ function counter(o) {
 function renderCompose(v, host) {
   const h = document.createElement('h2');
   h.id = 'promptTitle';
-  h.textContent = v.yourTurn ? 'Offer a trade — click your cards to add them'
+  h.textContent = v.yourTurn ? 'Offer a trade, click your cards to add them'
     : `Counter ${seatName(v, v.toAct)}`;
   host.appendChild(h);
   const x = document.createElement('button');

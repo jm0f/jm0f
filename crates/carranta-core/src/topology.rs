@@ -1,7 +1,7 @@
 //! Static board topology: 19 hexes, 54 intersections, 72 edges.
 //!
 //! All tables are generated at compile time (see `build.rs`) so every lookup
-//! here is an indexed read from a `const` array — no lazy init, no atomics,
+//! here is an indexed read from a `const` array, no lazy init, no atomics,
 //! no bounds surprises. Everything is `#[inline]` and takes plain `u8` ids.
 
 include!(concat!(env!("OUT_DIR"), "/topology_tables.rs"));
@@ -9,7 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/topology_tables.rs"));
 /// Where each hex sits on the lattice, in axial `(q, r)`.
 ///
 /// Geometry, deliberately without units: a renderer chooses its own hex size
-/// and orientation. Nothing in the engine reads this — it exists so a board can
+/// and orientation. Nothing in the engine reads this. It exists so a board can
 /// be drawn without re-deriving the lattice.
 pub const fn hex_axial(h: u8) -> [i8; 2] {
     HEX_AXIAL[h as usize]
@@ -18,7 +18,7 @@ pub const fn hex_axial(h: u8) -> [i8; 2] {
 /// The three lattice positions meeting at an intersection.
 ///
 /// A vertex is the unique point where three hexes meet, and one or two of them
-/// may lie off the board at the coast — the meeting point is the same, so the
+/// may lie off the board at the coast. The meeting point is the same, so the
 /// positions are given rather than hex ids. A renderer places the intersection
 /// at their centroid.
 pub const fn vertex_axial(v: u8) -> [[i8; 2]; 3] {

@@ -4,9 +4,9 @@
 //! a search node is a `memcpy` of a few cache lines, which is what makes tree
 //! search over this game cheap (§6.3).
 //!
-//! Board occupancy lives in bitboards — one `u128` per player for roads over
+//! Board occupancy lives in bitboards. One `u128` per player for roads over
 //! the 72 edges, one `u64` each for settlements and cities over the 54
-//! intersections — so "which of my roads touch here" and "do I hold this
+//! intersections, so "which of my roads touch here" and "do I hold this
 //! port" are single mask operations rather than scans.
 
 use crate::rng::{Rng, Stream};
@@ -124,8 +124,8 @@ pub struct Offer {
     pub from: u8,
     /// The one seat this offer is addressed to, or `None` for the whole table.
     ///
-    /// R-7.19's market is open by default — any entitled seat may take any live
-    /// offer — and that stays the default. Addressing one is a *protocol*
+    /// R-7.19's market is open by default, any entitled seat may take any live
+    /// offer, and that stays the default. Addressing one is a *protocol*
     /// choice rather than a rule (nothing in R-7 mentions it), and it exists
     /// because "I'll trade you, and only you" is a normal thing to say at a
     /// table. R-7.3 still binds: an addressed offer must have the active player
@@ -277,7 +277,7 @@ impl State {
         // The sequence does the work the rules intend it to: the discs are
         // ordered so that following the path separates the high-probability
         // numbers. It is not a guarantee, though, because the desert can fall
-        // anywhere and skipping it shifts everything after it — which is
+        // anywhere and skipping it shifts everything after it, which is
         // exactly why R-3.12 exists. So the terrain and the starting corner
         // are drawn again when they land two reds together. Redrawing keeps
         // the result uniform over the boards that satisfy the constraint,
@@ -418,7 +418,7 @@ impl State {
     ///
     /// Replay supplies recorded randomness instead of drawing it (§7.1, H-1),
     /// so a replayed state's [`Rng`] has not advanced. The generator is engine
-    /// bookkeeping and not part of the position, so it is excluded — while
+    /// bookkeeping and not part of the position, so it is excluded, while
     /// every other field, including any added later, is compared.
     pub fn same_game_as(&self, other: &State) -> bool {
         let mut a = *self;
@@ -487,7 +487,7 @@ impl State {
     /// Intersections where `p` may legally place a settlement.
     ///
     /// The Distance Rule (R-8.5) bans any intersection within one edge of a
-    /// building, so the forbidden set is every building plus its neighbours —
+    /// building, so the forbidden set is every building plus its neighbours,
     /// computed here as a mask rather than a per-candidate walk.
     pub fn settlement_spots(&self, p: usize, setup: bool) -> VertexSet {
         let taken = self.all_buildings();
@@ -507,7 +507,7 @@ impl State {
     /// Edges where `p` may legally build a road.
     ///
     /// A road must extend the player's own network (R-8.2) and may not reach
-    /// past an opponent's building (R-8.3) — so the junctions it may grow from
+    /// past an opponent's building (R-8.3), so the junctions it may grow from
     /// are its own road ends and buildings, minus any intersection an opponent
     /// has built on.
     pub fn road_spots(&self, p: usize) -> EdgeSet {
@@ -564,7 +564,7 @@ impl State {
 /// than luck: 6s and 8s sit far apart in it. Dealing numbers at random
 /// instead puts two reds together on about six boards in seven.
 ///
-/// These eighteen values are content, not rules — the path in [`spiral_from`]
+/// These eighteen values are content, not rules, the path in [`spiral_from`]
 /// is what R-3.3 fixes, and a different sequence over the same multiset is a
 /// design choice this is deliberately easy to change.
 pub const DISCS: [u8; 18] = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
@@ -572,7 +572,7 @@ pub const DISCS: [u8; 18] = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6,
 /// The path the discs are laid along: from one corner, counterclockwise round
 /// the coast, then the inner ring, then the middle (R-3.3).
 ///
-/// `corner` selects which of the six corners to start from — the rules say
+/// `corner` selects which of the six corners to start from. The rules say
 /// "any corner", and starting somewhere different is the only variety the
 /// placement has once the sequence is fixed.
 ///
@@ -680,7 +680,7 @@ pub fn red_numbers_touch(number: &[u8; HEX_COUNT]) -> bool {
 
 /// The coastline, in order, as a closed walk.
 ///
-/// A coastal intersection is one that does not touch three hexes — the sea
+/// A coastal intersection is one that does not touch three hexes, the sea
 /// takes the place of the missing one. There are 30 of them and they form a
 /// simple cycle, so the walk is unambiguous: every coastal vertex has exactly
 /// two coastal neighbours, and taking the unvisited one each step goes round
@@ -710,7 +710,7 @@ pub fn coast_ring() -> Vec<u8> {
 
 /// The default port layout (ART-1).
 ///
-/// Nine ports — four generic and one per resource — each occupying **two
+/// Nine ports, four generic and one per resource. Each occupying **two
 /// adjacent coastal intersections**, which is what a port is: a stretch of
 /// coast with two landing points, either of which a building can claim
 /// (R-7.9). A port on a single intersection would be half a port, and would
@@ -737,8 +737,8 @@ fn build_ports() -> [VertexSet; PORT_KINDS] {
     // pattern closes exactly on itself.
     //
     // The *order* matters as much as the counts, and is not obvious. Coastal
-    // intersections are not evenly spaced by angle — the six corners of the
-    // island bunch them up — so an even spacing counted in intersections is an
+    // intersections are not evenly spaced by angle. The six corners of the
+    // island bunch them up, so an even spacing counted in intersections is an
     // uneven one to look at. Starting `1, 2, 1` rather than `1, 1, 2` puts the
     // wide gaps where the coast is already turning a corner, which flattens
     // the spread from a 15° spacing range to 10°. That 10° is not merely
@@ -954,7 +954,7 @@ mod tests {
 
     #[test]
     fn the_constraint_is_the_only_thing_the_redeal_changes() {
-        // Dealing again must still deal a whole set of discs — a repair that
+        // Dealing again must still deal a whole set of discs. A repair that
         // quietly dropped or duplicated one would pass the adjacency test.
         for seed in [1u64, 7, 99, 1234] {
             let s = State::new(4, seed);
@@ -1042,8 +1042,8 @@ mod tests {
         );
 
         // Walk the coast and read off the runs: every port must be two long,
-        // and every gap between ports one or two. A layout that clusters —
-        // as the first one did — shows up here as a long portless stretch.
+        // and every gap between ports one or two. A layout that clusters,
+        // as the first one did, shows up here as a long portless stretch.
         let flags: Vec<bool> = ring.iter().map(|&v| all & vertex_bit(v) != 0).collect();
         let start = flags.iter().position(|&f| !f).expect("gaps exist");
         let mut runs: Vec<(bool, usize)> = Vec::new();
@@ -1068,7 +1068,7 @@ mod tests {
     fn the_ports_are_evenly_spread_round_the_island() {
         // Counting intersections is not enough: the coast bunches at the six
         // corners, so a layout can be evenly spaced along the shore and still
-        // look lopsided. This measures what a player sees — the angle from the
+        // look lopsided. This measures what a player sees. The angle from the
         // middle of the board to each port.
         let ring = coast_ring();
         let s = State::new(4, 1);
@@ -1105,7 +1105,7 @@ mod tests {
             .collect();
         let max = gaps.iter().cloned().fold(f64::MIN, f64::max);
         let min = gaps.iter().cloned().fold(f64::MAX, f64::min);
-        // 10.2° is the tightest any legal layout achieves — an exhaustive
+        // 10.2° is the tightest any legal layout achieves. An exhaustive
         // search over every choice of 9 non-overlapping coastal edges found
         // nothing better, since 9 ports do not divide a six-cornered coast
         // evenly. The first arrangement of these same gaps scored 14.8.

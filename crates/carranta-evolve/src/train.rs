@@ -2,8 +2,8 @@
 //!
 //! A generation is:
 //!
-//! 1. Draw a fixed opponent field — current population, hall of fame, and the
-//!    anchor — held constant across every genome, so genomes are compared on
+//! 1. Draw a fixed opponent field, current population, hall of fame, and the
+//!    anchor, held constant across every genome, so genomes are compared on
 //!    identical conditions (E-4).
 //! 2. Play every genome over the same board seeds, its seat rotated.
 //! 3. Score by mean finishing position (E-6): the whole order, not one bit.
@@ -70,7 +70,7 @@ pub struct Config {
     pub hall_size: usize,
     /// Validation games recorded and analysed per generation (§10).
     ///
-    /// Behavioural markers, not a fitness signal — selection never sees them.
+    /// Behavioural markers, not a fitness signal, selection never sees them.
     /// A handful is enough to show a trend across generations, and recording
     /// costs nothing measurable per game. Zero switches it off.
     pub sample: u32,
@@ -377,8 +377,8 @@ impl Trainer {
                 if sidx == seat {
                     *slot = champion;
                 } else {
-                    // A member of the live population has no durable identity —
-                    // it may not survive the generation — so it plays under a
+                    // A member of the live population has no durable identity,
+                    // it may not survive the generation, so it plays under a
                     // throwaway id. Rated opponents keep theirs and go on
                     // accumulating games.
                     *slot = match opponents[k] {
@@ -422,7 +422,7 @@ impl Trainer {
 
         self.hall.push(champion);
         if self.hall.len() > cfg.hall_size {
-            // Drop the oldest kept version, never the anchor — it is not in
+            // Drop the oldest kept version, never the anchor, it is not in
             // the hall to begin with.
             self.hall.remove(0);
         }
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn the_starting_point_is_never_lost() {
         // Genome zero is the unmutated hand-set weights, and elitism carries
-        // the survivors forward untouched — so a run cannot end up worse than
+        // the survivors forward untouched, so a run cannot end up worse than
         // where it started.
         let t = Trainer::new(quick(), 3);
         assert_eq!(t.population[0], Genome::default());
