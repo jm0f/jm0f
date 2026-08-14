@@ -288,31 +288,38 @@ function tone(hex, amount) {
   return `rgb(${r},${g},${b})`;
 }
 
-// A halo around every piece, in the board's own background colour, so a piece
-// keeps its silhouette against terrain of any tone. Drawn as a dilation of the
-// piece's own alpha rather than a stroke, because stroking the artwork would
-// outline every internal face as well as the outside.
+// How wide a piece's surround is, in board units — not in pixels.
 //
-// The colour is read from the stylesheet at draw time rather than written
-// here, so it follows the theme wherever that goes.
-function pieceHalo(svg) {
+// The board scales with the window, so a fixed pixel width would be a fat
+// collar on a small board and a hairline on a large one. In board units it
+// holds the same proportion at every size, which is also how the gaps between
+// hexes are measured, so the two stay in step.
+const HALO = 1.8;
+
+// The surround itself, in the board's own background colour, so a piece keeps
+// its silhouette against terrain of any tone.
+//
+// One filter per piece rather than one shared: the drawings are placed as
+// nested viewports at different scales, and a filter radius is expressed in
+// the units of whatever it is applied to. A single radius would come out
+// thicker on a settlement than on a road. Dividing by the piece's own scale
+// makes every surround the same width on the board.
+//
+// It is a dilation of the piece's alpha rather than a stroke, because
+// stroking the artwork would outline every internal face of the drawing as
+// well as its outside, turning a road into a wireframe.
+function haloFilter(svg, id, k) {
   const bg = getComputedStyle(document.documentElement)
     .getPropertyValue('--panel').trim() || '#ffffff';
   const defs = el('defs', {});
   const f = el('filter', {
-    id: 'halo', x: '-20%', y: '-20%', width: '140%', height: '140%',
+    id, x: '-40%', y: '-40%', width: '180%', height: '180%',
   });
   f.appendChild(el('feMorphology', {
-    in: 'SourceAlpha', operator: 'dilate', radius: 1.4, result: 'fat',
+    in: 'SourceAlpha', operator: 'dilate', radius: HALO / k, result: 'fat',
   }));
   f.appendChild(el('feFlood', { 'flood-color': bg, result: 'ink' }));
-  f.appendChild(el('feComposite', {
-    in: 'ink', in2: 'fat', operator: 'in', result: 'edge',
-  }));
-  const m = el('feMerge', {});
-  m.appendChild(el('feMergeNode', { in: 'edge' }));
-  m.appendChild(el('feMergeNode', { in: 'SourceGraphic' }));
-  f.appendChild(m);
+  f.appendChild(el('feComposite', { in: 'ink', in2: 'fat', operator: 'in' }));
   defs.appendChild(f);
   svg.appendChild(defs);
 }
@@ -330,7 +337,7 @@ async function loadArt() {
 // units tall, in the seat's colour. `anchor` shifts it down by a fraction of
 // its height, so a building stands on its intersection rather than floating
 // with the point in the middle of it.
-function place(svg, name, x, y, k, seat, anchor = 0.5) {
+function place(svg, name, x, y, k, seat, anchor = 0.5, halo = false, id = '') {
   const src = art[name];
   if (!src) return;
   const w = parseFloat(src.getAttribute('width'));
@@ -346,7 +353,10 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
   node.setAttribute('x', x - (w * k) / 2);
   node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
-  node.setAttribute('filter', 'url(#halo)');
+  if (halo) {
+    haloFilter(svg, `h-${id}`, k);
+    node.setAttribute('filter', `url(#h-${id})`);
+  }
   svg.appendChild(node);
   return node;
 }
@@ -354,7 +364,6 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
 function draw() {
   const svg = document.getElementById('board');
   svg.textContent = '';
-  pieceHalo(svg);
   const vxy = {};
   view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
 
@@ -468,6 +477,8 @@ function draw() {
   // Painter's order: whatever sits lowest on the board goes on last, or a
   // piece in front is covered by the one behind it.
   solids.sort((a, b) => a.y - b.y);
+  solids.forEach((s, i) =>
+    place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor, true, i));
   solids.forEach((s) => place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor));
 
   // Where you may build, shown as a ghost of the piece you would get rather
