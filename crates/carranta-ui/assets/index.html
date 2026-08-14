@@ -370,11 +370,18 @@
   /* One clock, large, above the players. It was a figure on every row, which
      made four small numbers where only one of them was moving. */
   .clockPanel { text-align: center; padding: .8em .6em .7em; }
+  /* Every character gets its own box, and a digit's box is exactly as wide as
+     a zero. Fraunces is a display serif whose figures are proportional, and
+     asking for tabular-nums does nothing when the face has no tabular set to
+     switch to, so a 1 was narrower than an 8 and the whole clock shuffled on
+     every tick. Fixed boxes take the font out of it entirely. */
   .bigClock {
+    display: flex; justify-content: center; align-items: baseline;
     font-family: var(--display); font-size: 2.6em; line-height: 1;
-    font-variant-numeric: tabular-nums; letter-spacing: .01em;
     font-weight: 600; color: var(--foreground);
   }
+  .bigClock i { font-style: normal; width: 1ch; text-align: center; }
+  .bigClock i.sep { width: .42ch; }
   .clockUnder { display: flex; justify-content: center; gap: .7em;
                 margin-top: .35em; color: var(--muted-foreground);
                 font-size: .88em; }
@@ -1247,6 +1254,18 @@ function clockFrom(v) {
   clockBase = clockDown && clockWho ? clockWho.left : (v.elapsed || 0);
   tickClock();
 }
+// One box per character, so nothing moves when a 1 replaces an 8.
+function setDigits(el, text) {
+  if (el.dataset.shown === text) return;
+  el.dataset.shown = text;
+  el.textContent = '';
+  for (const ch of text) {
+    const c = document.createElement('i');
+    if (ch === ':') c.className = 'sep';
+    c.textContent = ch;
+    el.appendChild(c);
+  }
+}
 function mmss(t) {
   const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
@@ -1263,7 +1282,7 @@ function tickClock() {
     : clockBase + gone;
   el.classList.toggle('low', running && t > 0 && t <= 15);
   el.classList.toggle('over', clockDown && t <= 0);
-  el.textContent = clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t));
+  setDigits(el, clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t)));
 
   const who = document.getElementById('clockWho');
   if (who) {
