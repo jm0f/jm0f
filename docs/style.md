@@ -142,13 +142,21 @@ part of it.
 
 ### 3.3 Icons
 
-- **Flat filled silhouettes.** No outlines, no strokes, no detail lines.
-- Built from primitives: a mountain is two triangles, a tree is a stacked
-  triangle, water is a teardrop, sun is an eight-point star, wood is a log
-  end-on.
-- Readable at **16 px**. If it needs more, it is too complicated.
-- One colour each, taken from the terrain ladder — the icon for a resource is
-  the colour of the terrain that produces it.
+**Isometric objects, in the same idiom as the pieces** (§3.4): three flat
+faces, light from the upper left, no gradient within a face, no outline.
+
+A resource is drawn as the thing itself seen as a small solid — a log, a
+brick, a fleece, a sheaf, a cut stone — not as a symbol standing for it. One
+hue each, taken from the terrain that produces it, in three flat steps.
+
+- Readable at **20 px**. Below that an isometric solid loses its faces; use a
+  count badge or a colour chip instead of shrinking the object further.
+- Five to seven colours across the whole icon set, not per icon.
+
+**This reverses an earlier rule** that made icons flat silhouettes while the
+pieces were dimensional. The board carried two visual languages for no reason
+anyone could state. Objects won because the pieces were already objects and
+they are the larger commitment.
 
 ### 3.4 Pieces
 
