@@ -507,7 +507,7 @@
     <p class="lobbyLead">Set the table, then deal.</p>
 
     <div class="field">
-      <span class="fieldLabel">Table</span>
+      <span class="fieldLabel">Mode</span>
       <div class="segmented" id="lobbySeats"></div>
     </div>
 
@@ -1330,7 +1330,9 @@ function segmented(host, options, current, pick) {
 
 function renderLobby() {
   segmented(document.getElementById('lobbySeats'),
-    [[3, '3 players'], [4, '4 players']], lobby.seats, v => {
+    // Four first because four is the default, and the default belongs where
+    // the eye lands rather than where the counting starts.
+    [[4, '4 players'], [3, '3 players']], lobby.seats, v => {
       lobby.seats = v;
       lobby.roles = lobby.roles.slice(0, v);
       while (lobby.roles.length < v) lobby.roles.push('open');
