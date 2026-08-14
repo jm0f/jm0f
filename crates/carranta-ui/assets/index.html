@@ -411,13 +411,17 @@
      cross, so two fronts are always in flight and the motion never resolves.
      That is what makes it read as waiting rather than as progress: nothing
      about it suggests a proportion of something finished. */
-  .waiting { display: inline-flex; align-items: center; gap: 10px; }
-  .loader { display: inline-grid; grid-template-columns: repeat(3, 4px); gap: 1.5px; }
+  .loader { display: inline-grid; grid-template-columns: repeat(3, 4px); gap: 1.5px;
+           flex: none; justify-content: center; }
   .loader i {
-    width: 4px; height: 4px; border-radius: 1px; background: var(--foreground);
+    width: 4px; height: 4px; border-radius: 1px;
+    background: var(--cell, var(--foreground));
     opacity: .15; animation: pixel-on 650ms ease-in-out infinite;
   }
-  @keyframes pixel-on { 0%, 100% { opacity: .15 } 50% { opacity: 1 } }
+  /* Seat colours run from L* 30 to 63, and the dimmest of them at 15% opacity
+     on warm paper is barely there, so the trough sits higher than the original
+     ink-on-white version needed. */
+  @keyframes pixel-on { 0%, 100% { opacity: .22 } 50% { opacity: 1 } }
   /* The label is the gradient; the text is only a mask over it. */
   .shimmer {
     background-image: linear-gradient(90deg,
@@ -1271,10 +1275,11 @@ const CLOCK_NOTE = {
 // Delay per cell is (column + distance from the middle row) x 90ms. Written
 // out rather than hard-coded so the shape of the wavefront is legible: it is a
 // chevron, and it drives to the right.
-function pixelLoader() {
+function pixelLoader(colour) {
   const grid = document.createElement('span');
   grid.className = 'loader';
   grid.setAttribute('aria-hidden', 'true');
+  if (colour) grid.style.setProperty('--cell', colour);
   for (let k = 0; k < 9; k++) {
     const cell = document.createElement('i');
     const row = Math.floor(k / 3), col = k % 3;
@@ -1337,8 +1342,10 @@ function renderLobby() {
     const row = document.createElement('div');
     row.className = 'seatSlot';
     const dot = document.createElement('span');
-    // The colour belongs to the seat, not to whoever ends up in it, so it is
-    // shown from the start.
+    // An empty seat shows its colour as the loader rather than as a dot: the
+    // marker is the same size and in the same place, so the row settles into a
+    // solid dot when somebody takes the seat instead of rearranging.
+    const taken = i === 0 || lobby.roles[i] === 'bot';
     dot.className = 'dot';
     dot.style.background = COLOURS[i];
     // Your own seat is where your name is typed. It is the row that already
@@ -1358,13 +1365,9 @@ function renderLobby() {
       // A seat waiting for someone has nobody in it, so it carries no name. A
       // bot only gets called Bram once you have decided to put one there.
       name = document.createElement('span');
-      const bot = lobby.roles[i] === 'bot';
-      name.className = 'slotName' + (bot ? '' : ' empty waiting');
-      if (bot) {
-        name.textContent = BOT_NAMES[i];
-      } else {
-        name.append(pixelLoader(), shimmer('waiting'));
-      }
+      name.className = 'slotName' + (taken ? '' : ' empty');
+      if (taken) name.textContent = BOT_NAMES[i];
+      else name.appendChild(shimmer('waiting'));
     }
 
     // Waiting is a state, not a control, so it is written rather than offered.
@@ -1388,7 +1391,8 @@ function renderLobby() {
       control.textContent = 'Add bot';
       control.onclick = () => { lobby.roles[i] = 'bot'; renderLobby(); };
     }
-    row.append(dot, name, control);
+    // The loader stands in for the dot until the seat is taken.
+    row.append(taken ? dot : pixelLoader(COLOURS[i]), name, control);
     slots.appendChild(row);
   }
 
