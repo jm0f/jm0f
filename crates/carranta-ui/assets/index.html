@@ -401,8 +401,8 @@
   .seatSlot .dot { width: 1.05em; height: 1.05em; border-radius: 50%; flex: none; }
   .seatSlot .slotName { flex: 1; font-weight: 500; }
   .seatSlot .slotName.empty { color: var(--muted-foreground); font-weight: 400; font-style: italic; }
-  .seatSlot .dot.empty { background: transparent !important;
-                         box-shadow: inset 0 0 0 2px var(--border); }
+  .seatBtn { border-color: transparent; font-weight: 600; }
+  .seatBtn:hover { border-color: transparent; filter: brightness(1.08); }
   .seed {
     font: inherit; width: 100%; color: var(--foreground); background: var(--card);
     border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px;
@@ -1236,6 +1236,17 @@ const CLOCK_NOTE = {
 // millionth of the space and would have collided across a few thousand games;
 // this draws the whole range from the platform's cryptographic source, which
 // is also the only one here that is not a weak PRNG in its own right.
+// Whichever of ink or paper reads better on a given seat colour. The four
+// seats span L* 30 to 63, so one fixed choice would fail at one end.
+function onColour(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = (c) => { c /= 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; };
+  const l = .2126 * lin((n >> 16) & 255) + .7152 * lin((n >> 8) & 255) + .0722 * lin(n & 255);
+  const onLight = (l + .05) / (.0323 + .05);   // against #33261B
+  const onDark = (1.05) / (l + .05);           // against #FFF7EE, near enough
+  return onDark >= onLight ? '#FFF7EE' : '#33261B';
+}
+
 function freshSeed() {
   const b = new Uint32Array(2);
   crypto.getRandomValues(b);
@@ -1283,7 +1294,9 @@ function renderLobby() {
     const row = document.createElement('div');
     row.className = 'seatSlot';
     const dot = document.createElement('span');
-    dot.className = 'dot' + (i > 0 && lobby.roles[i] !== 'bot' ? ' empty' : '');
+    // The colour belongs to the seat, not to whoever ends up in it, so it is
+    // shown from the start.
+    dot.className = 'dot';
     dot.style.background = COLOURS[i];
     // Your own seat is where your name is typed. It is the row that already
     // says who is sitting there, so a separate field asking the same thing was
@@ -1302,16 +1315,35 @@ function renderLobby() {
       // A seat waiting for someone has nobody in it, so it carries no name. A
       // bot only gets called Bram once you have decided to put one there.
       name = document.createElement('span');
-      name.className = 'slotName' + (lobby.roles[i] === 'bot' ? '' : ' empty');
-      name.textContent = lobby.roles[i] === 'bot' ? BOT_NAMES[i] : 'nobody yet';
+      const bot = lobby.roles[i] === 'bot';
+      name.className = 'slotName' + (bot ? '' : ' empty');
+      name.textContent = bot ? BOT_NAMES[i] : 'waiting';
     }
-    const seg = document.createElement('div');
-    seg.className = 'segmented';
-    // Seat 0 is the person at this browser; the rest wait for someone unless
-    // you say otherwise.
-    const choices = i === 0 ? [['you', 'you']] : [['open', 'waiting'], ['bot', 'bot']];
-    segmented(seg, choices, lobby.roles[i], v => { lobby.roles[i] = v; });
-    row.append(dot, name, seg);
+
+    // Waiting is a state, not a control, so it is written rather than offered.
+    // The only thing you can do to a seat is put a bot in it or take it out
+    // again, and that is one button whose colour is the seat's.
+    let control;
+    if (i === 0) {
+      control = document.createElement('span');
+      control.className = 'tag tag-secondary';
+      control.textContent = 'you';
+    } else if (lobby.roles[i] === 'bot') {
+      control = document.createElement('button');
+      control.type = 'button';
+      control.className = 'btn-ghost btn-sm';
+      control.textContent = 'Remove';
+      control.onclick = () => { lobby.roles[i] = 'open'; renderLobby(); };
+    } else {
+      control = document.createElement('button');
+      control.type = 'button';
+      control.className = 'btn-sm seatBtn';
+      control.textContent = 'Add bot';
+      control.style.background = COLOURS[i];
+      control.style.color = onColour(SEAT_HEX[i]);
+      control.onclick = () => { lobby.roles[i] = 'bot'; renderLobby(); };
+    }
+    row.append(dot, name, control);
     slots.appendChild(row);
   }
 
