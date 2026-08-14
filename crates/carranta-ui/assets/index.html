@@ -294,7 +294,7 @@ function tone(hex, amount) {
 // collar on a small board and a hairline on a large one. In board units it
 // holds the same proportion at every size, which is also how the gaps between
 // hexes are measured, so the two stay in step.
-const HALO = 1.2;
+const HALO = 1.6;
 
 // The surround itself, in the board's own background colour, so a piece keeps
 // its silhouette against terrain of any tone.
@@ -314,11 +314,28 @@ function haloFilter(svg, id) {
   const f = el('filter', {
     id, x: '-40%', y: '-40%', width: '180%', height: '180%',
   });
-  f.appendChild(el('feMorphology', {
-    in: 'SourceAlpha', operator: 'dilate', radius: HALO, result: 'fat',
-  }));
+  // Eight copies of the silhouette pushed out around a circle, unioned.
+  //
+  // Not a morphology dilate: that grows a shape by a *box*, so a 45-degree
+  // edge only gains radius/root-2 of width where a vertical edge gains the
+  // full radius. These pieces are isometric — nearly every edge is diagonal —
+  // which is why the surround looked present on some sides and missing on
+  // others. Offsetting round a circle grows every direction alike.
+  const merge = el('feMerge', {});
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    f.appendChild(el('feOffset', {
+      in: 'SourceAlpha',
+      dx: (Math.cos(a) * HALO).toFixed(3),
+      dy: (Math.sin(a) * HALO).toFixed(3),
+      result: `o${i}`,
+    }));
+    merge.appendChild(el('feMergeNode', { in: `o${i}` }));
+  }
+  merge.setAttribute('result', 'ring');
+  f.appendChild(merge);
   f.appendChild(el('feFlood', { 'flood-color': bg, result: 'ink' }));
-  f.appendChild(el('feComposite', { in: 'ink', in2: 'fat', operator: 'in' }));
+  f.appendChild(el('feComposite', { in: 'ink', in2: 'ring', operator: 'in' }));
   defs.appendChild(f);
   svg.appendChild(defs);
 }
