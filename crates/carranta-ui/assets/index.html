@@ -314,16 +314,22 @@ function haloFilter(svg, id) {
   const f = el('filter', {
     id, x: '-40%', y: '-40%', width: '180%', height: '180%',
   });
-  // Eight copies of the silhouette pushed out around a circle, unioned.
+  // Copies of the silhouette pushed out around a circle, unioned.
   //
   // Not a morphology dilate: that grows a shape by a *box*, so a 45-degree
-  // edge only gains radius/root-2 of width where a vertical edge gains the
-  // full radius. These pieces are isometric — nearly every edge is diagonal —
-  // which is why the surround looked present on some sides and missing on
-  // others. Offsetting round a circle grows every direction alike.
+  // edge gains only radius over root two where a vertical edge gains the full
+  // radius. These pieces are isometric — nearly every edge is diagonal — which
+  // is why the surround read as present on some sides and missing on others.
+  //
+  // The sample count is what keeps it even. The union of N offsets is a
+  // polygon of N sides, not a circle: at eight it visibly flat-cuts the
+  // corners and comes up short between samples. Twenty-four keeps the worst
+  // case within a percent of the intended width, which is below what the eye
+  // resolves at this size.
+  const STEPS = 24;
   const merge = el('feMerge', {});
-  for (let i = 0; i < 8; i++) {
-    const a = (i * Math.PI) / 4;
+  for (let i = 0; i < STEPS; i++) {
+    const a = (i * 2 * Math.PI) / STEPS;
     f.appendChild(el('feOffset', {
       in: 'SourceAlpha',
       dx: (Math.cos(a) * HALO).toFixed(3),
