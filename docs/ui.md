@@ -108,7 +108,22 @@ hide.
 
 Opponents are bots with **names and colour dots**, not seat numbers. A row that
 says who did something is easier to hold in your head than one that says which
-index did it, and an offer from a name reads as coming from someone.
+index did it, and an offer from a name reads as coming from someone. The names
+are applied in the page, not the engine — the log arrives saying "Seat 2" and
+is rewritten, so the history and the rows never disagree.
+
+### The two victory-point numbers are not the same measurement
+
+**An opponent's score is public points only.** A victory-point card sitting in
+a hand counts for nothing anyone else can see, and the engine withholds it
+until the game ends — `apparent_vp` is `public_victory_points` during play and
+the true total only at game over. **Your own row shows your real total**,
+hidden cards included, because you are allowed to know your own hand.
+
+So the column does not compare like with like, and someone on 7 showing may
+already have won. The row says so rather than letting you assume otherwise:
+every score carries the explanation, and your own says how much of it the table
+can actually see when the two differ.
 
 ---
 

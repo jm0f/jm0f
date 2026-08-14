@@ -224,8 +224,12 @@
      measurements. */
   main {
     display: grid; gap: clamp(8px, .8vw, 16px); padding: clamp(8px, .8vw, 16px);
+    /* The board is about as tall as it is wide, so on any wide screen its
+       height is the limit and the spare width sits empty beside it. Spend it
+       on the columns: they were sized to be out of the way, which made the
+       seat rows abbreviate themselves into things like "3s 4c 13r". */
     grid-template-columns:
-      clamp(186px, 15.5vw, 268px) minmax(0, 1fr) clamp(132px, 11vw, 216px);
+      clamp(224px, 20vw, 400px) minmax(0, 1fr) clamp(180px, 15vw, 330px);
     grid-template-rows: minmax(0, 1fr) auto;
     flex: 1; min-height: 0;
   }
@@ -295,7 +299,8 @@
   .seatRow .vp { font-variant-numeric: tabular-nums; font-weight: 600; }
   .seatRow .vp small { color: var(--dim); font-weight: 400; }
   .seatRow .counts { grid-column: 2 / span 2; display: flex; flex-wrap: wrap;
-                     gap: .15em .7em; color: var(--dim); font-size: .92em; }
+                     gap: .2em .7em; color: var(--muted-foreground); font-size: .92em; }
+  .seatRow .counts .left { flex-basis: 100%; }
   .seatRow .counts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
   .logPanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
   #log { overflow-y: auto; color: var(--dim); font-size: .95em; min-height: 0; flex: 1; }
@@ -351,9 +356,15 @@
   }
   .act svg { width: 1.5em; height: 1.5em; fill: currentColor; }
   .dice { display: flex; gap: .4em; }
-  .die { width: 2.6em; height: 2.6em; border-radius: .5em; border: 1px solid var(--line);
-         background: var(--panel); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
-  .die circle { fill: var(--ink); }
+  .die { width: 2.6em; height: 2.6em; border-radius: .5em; border: 1px solid var(--border);
+         background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
+  .die circle { fill: var(--foreground); }
+  .clock {
+    height: 2.6em; display: flex; align-items: center; padding: 0 .7em;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10);
+    font-variant-numeric: tabular-nums; font-size: 1.05em; letter-spacing: .02em;
+  }
 
   /* ---- the card that waits for you -------------------------------------- */
   /* It takes the decision and never the board. Rather than float over the
@@ -370,7 +381,7 @@
     outline: 2px solid var(--accent); outline-offset: -2px;
   }
   main.prompting { grid-template-columns:
-    clamp(186px, 15.5vw, 268px) minmax(0, 1fr) clamp(300px, 26vw, 430px); }
+    clamp(224px, 20vw, 400px) minmax(0, 1fr) clamp(320px, 27vw, 470px); }
   main.prompting .reserved { display: none; }
   .prompt h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
                color: var(--dim); margin: 0 0 10px; font-weight: 600;
@@ -454,6 +465,10 @@
   <div class="dockGroup">
     <span class="dockLabel">dice</span>
     <div class="dice" id="dice"></div>
+  </div>
+  <div class="dockGroup">
+    <span class="dockLabel">elapsed</span>
+    <div class="clock" id="clock" data-tip="time since this game was dealt">—</div>
   </div>
   </footer>
 </main>
@@ -784,8 +799,8 @@ function fit(svg) {
 function render() {
   const v = view;
   const turn = v.winner !== null
-    ? (v.winner === v.you ? 'You won' : `Seat ${v.winner} won`)
-    : (v.yourTurn ? `Your move — ${v.phase}` : `Seat ${v.toAct} is playing`);
+    ? (v.winner === v.you ? 'You won' : `${seatName(v, v.winner)} won`)
+    : (v.yourTurn ? `Your move — ${v.phase}` : `${seatName(v, v.toAct)} is playing`);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.getElementById('status').textContent = `${turn}${dice} · seed ${v.seed}`;
   document.getElementById('build').textContent = `build ${v.build}`;
@@ -801,6 +816,7 @@ function render() {
   // the composer replaces, and accepting or withdrawing, which belong beside
   // the offer itself where its contents are visible — "Accept offer 0" says
   // considerably less than the offer does.
+  clockFrom(v.elapsed);
   renderSeats(v);
   renderHand(v);
   renderActions(v);
@@ -893,18 +909,32 @@ function renderSeats(v) {
     const who = document.createElement('span');
     who.className = 'who';
     who.textContent = seatName(v, s.seat);
+    // Only public points are known about anybody else: a victory-point card
+    // sitting in a hand counts for nothing the table can see, and the engine
+    // withholds it until the game ends. Your own row shows your real total,
+    // which means the two numbers are not measured the same way — so the row
+    // says which is which instead of letting you assume you are level.
     const vp = document.createElement('span');
     vp.className = 'vp';
-    // Your own total includes the victory points still hidden in your hand;
-    // everyone else's is only what the table can see.
-    vp.innerHTML = `${s.seat === v.you ? v.yourVp : s.vp} <small>vp</small>`;
+    const mine = s.seat === v.you;
+    const shown = mine ? v.yourVp : s.vp;
+    vp.innerHTML = `${shown} <small>vp</small>`;
+    vp.setAttribute('tabindex', '0');
+    vp.setAttribute('data-tip', mine
+      ? (v.yourVp > s.vp
+        ? `your real total. The table can only see ${s.vp} — the rest is in victory-point cards nobody else can count`
+        : 'your total, all of it public')
+      : 'public points only. Victory-point cards in hand are not counted until the game ends');
+    if (mine && v.yourVp > s.vp) vp.innerHTML += ` <small>(${s.vp} shown)</small>`;
+
     const counts = document.createElement('span');
     counts.className = 'counts';
-    let html = `<span><b>${s.hand}</b> cards</span><span><b>${s.dev}</b> dev</span>`
-      + `<span data-tip="settlements, cities and roads still to place" tabindex="0">`
-      + `<b>${s.settlementsLeft}</b>s <b>${s.citiesLeft}</b>c <b>${s.roadsLeft}</b>r left</span>`;
-    if (s.longestRoad) html += `<span class="tag tag-default">road ${s.road}</span>`;
-    if (s.largestMilitia) html += `<span class="tag tag-default">militia ${s.militia}</span>`;
+    let html = `<span><b>${s.hand}</b> cards</span><span><b>${s.dev}</b> dev</span>`;
+    if (s.longestRoad) html += `<span class="tag tag-default">longest road · ${s.road}</span>`;
+    if (s.largestMilitia) html += `<span class="tag tag-default">largest militia · ${s.militia}</span>`;
+    html += `<span class="left" data-tip="pieces still to place" tabindex="0">`
+      + `<b>${s.settlementsLeft}</b> settlements · <b>${s.citiesLeft}</b> cities`
+      + ` · <b>${s.roadsLeft}</b> roads left</span>`;
     counts.innerHTML = html;
     row.append(dot, who, vp, counts);
     host.appendChild(row);
@@ -1030,6 +1060,27 @@ function renderActions(v) {
     host.appendChild(b);
   });
 }
+
+// ---- the clock -------------------------------------------------------------
+// The server owns the start time, so a reload does not reset it; the page only
+// carries the count forward between polls rather than keeping its own idea of
+// when the game began.
+let clockBase = 0, clockAt = 0;
+function clockFrom(seconds) {
+  clockBase = seconds || 0;
+  clockAt = Date.now();
+  tickClock();
+}
+function tickClock() {
+  const t = clockBase + Math.floor((Date.now() - clockAt) / 1000);
+  const el = document.getElementById('clock');
+  if (!el) return;
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  el.textContent = h
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+}
+setInterval(tickClock, 1000);
 
 const PIPS = {
   1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]],

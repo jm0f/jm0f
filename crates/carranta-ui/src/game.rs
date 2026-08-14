@@ -38,6 +38,9 @@ pub struct Session {
     /// Offers the human has already waved away, so they are asked once.
     declined: [bool; MAX_OFFERS],
     seed: u64,
+    /// When this game was dealt. The clock belongs to the server rather than
+    /// to the page, so reloading the browser does not restart it.
+    started: std::time::Instant,
 }
 
 impl Session {
@@ -54,7 +57,13 @@ impl Session {
             )],
             declined: [false; MAX_OFFERS],
             seed,
+            started: std::time::Instant::now(),
         }
+    }
+
+    /// Whole seconds since the game was dealt.
+    pub fn elapsed_secs(&self) -> u64 {
+        self.started.elapsed().as_secs()
     }
 
     pub fn version(&self) -> u64 {

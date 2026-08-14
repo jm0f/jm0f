@@ -163,6 +163,9 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);
     j.ints("dice", v.dice.iter().map(|&n| n as i64));
+    // The clock is read from the server rather than kept by the page, so a
+    // reload shows how long the game has actually been going.
+    j.int("elapsed", session.elapsed_secs() as i64);
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {
