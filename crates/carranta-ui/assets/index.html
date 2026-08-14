@@ -229,7 +229,7 @@
        on the columns: they were sized to be out of the way, which made the
        seat rows abbreviate themselves into things like "3s 4c 13r". */
     grid-template-columns:
-      clamp(224px, 20vw, 400px) minmax(0, 1fr) clamp(180px, 15vw, 330px);
+      clamp(224px, 20vw, 400px) minmax(0, 1fr) clamp(260px, 21vw, 400px);
     grid-template-rows: minmax(0, 1fr) auto;
     flex: 1; min-height: 0;
   }
@@ -291,8 +291,14 @@
   .seatRow { display: grid; grid-template-columns: auto 1fr auto; gap: .5em .6em;
              align-items: center; padding: .5em .1em; border-top: 1px solid var(--line); }
   .seatRow:first-of-type { border-top: 0; }
-  .seatRow.acting { background: rgba(232, 84, 47, .07); border-radius: 8px;
-                    box-shadow: inset 2px 0 0 var(--accent); }
+  /* Whose turn it is gets a box of its own rather than a stripe: a complete
+     border reads as "this one", where an edge marker reads as decoration. */
+  .seatRow.acting {
+    background: rgba(232, 84, 47, .07);
+    border: 1px solid var(--accent); border-radius: var(--radius-md);
+    padding: .5em .6em; margin: .2em 0;
+  }
+  .seatRow.acting + .seatRow { border-top: 0; }
   .dot { width: 1.15em; height: 1.15em; border-radius: 50%; grid-row: span 2; }
   .seatRow .who { font-weight: 600; }
   .seatRow .vp { font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -456,10 +462,10 @@
 
   /* ---- the card that waits for you -------------------------------------- */
   /* It takes the decision and never the board. Rather than float over the
-     island, it claims the column being held for chat and pushes the board
-     narrower. The board is an SVG that refits, so the whole position stays
-     visible while you decide, just smaller. A modal that hides the thing you
-     are deciding about is a modal that makes you guess. */
+     island, it takes over the column already held for chat. That column is a
+     fixed width and stays one whether the card is open or not: a panel that
+     resizes the board underneath it moves everything the player is reading,
+     which is worse than covering a corner would have been. */
   .prompt[hidden] { display: none; }
   .prompt {
     position: relative; min-height: 0; overflow-y: auto;
@@ -468,8 +474,6 @@
     box-shadow: 0 6px 14px rgba(51, 38, 27, .10), 0 26px 60px rgba(51, 38, 27, .20);
     outline: 2px solid var(--accent); outline-offset: -2px;
   }
-  main.prompting { grid-template-columns:
-    clamp(224px, 20vw, 400px) minmax(0, 1fr) clamp(320px, 27vw, 470px); }
   main.prompting .reserved { display: none; }
   .prompt h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
                color: var(--dim); margin: 0 0 10px; font-weight: 600;
@@ -553,7 +557,7 @@
 <main>
   <aside class="col left">
     <div class="panel">
-      <h2>Table</h2>
+      <h2>Players</h2>
       <div id="seatRows"></div>
     </div>
     <div class="panel logPanel">
@@ -1065,8 +1069,9 @@ function renderSeats(v) {
       const t = Math.max(0, s.timeLeft);
       const m = Math.floor(t / 60), sec = t % 60;
       html += `<span class="tag ${s.timeLeft <= 0 ? 'tag-default' : 'tag-outline'}"`
+        + ` data-clock="${s.seat}"`
         + ` data-tip="${v.clock === 'chess' ? 'left in their bank' : 'their allowance each turn'}">`
-        + `${m}:${String(sec).padStart(2, '0')}${s.onClock ? ' ▸' : ''}</span>`;
+        + `${m}:${String(sec).padStart(2, '0')}${s.onClock ? ' \u25B8' : ''}</span>`;
     }
     if (s.longestRoad) html += `<span class="tag tag-default">longest road · ${s.road}</span>`;
     if (s.largestMilitia) html += `<span class="tag tag-default">largest militia · ${s.militia}</span>`;
@@ -1206,16 +1211,19 @@ function renderActions(v) {
 //
 // A timed game counts down; an untimed one counts up. Past zero it keeps going
 // and shows the overrun, because a clock frozen at 0:00 reads as broken.
-let clockBase = 0, clockAt = 0, clockDown = false, clockYours = false;
+let clockBase = 0, clockAt = 0, clockDown = false, clockWho = null, clockSeats = [];
 function clockFrom(v) {
   clockDown = v.clock !== 'off';
-  // Your own clock is the one worth showing large: what everyone else has left
-  // belongs on their row, next to the rest of what is theirs.
-  const me = v.seats.find(s => s.seat === v.you);
-  clockYours = clockDown && v.yourTurn;
-  clockBase = clockDown ? (me && me.timeLeft !== undefined ? me.timeLeft : 0)
-    : (v.elapsed || 0);
   clockAt = Date.now();
+  clockSeats = v.seats.map(s => ({
+    seat: s.seat, left: s.timeLeft, running: !!s.onClock, name: seatName(v, s.seat),
+  }));
+  // The clock shown large is whoever is on it, not whoever is reading. You
+  // need to see the other side thinking as much as you need to see yourself
+  // running out.
+  const live = clockSeats.find(s => s.running);
+  clockWho = live || clockSeats.find(s => s.seat === v.you) || null;
+  clockBase = clockDown && clockWho ? clockWho.left : (v.elapsed || 0);
   tickClock();
 }
 function mmss(t) {
@@ -1224,21 +1232,34 @@ function mmss(t) {
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 function tickClock() {
+  const gone = Math.floor((Date.now() - clockAt) / 1000);
   const el = document.getElementById('clock');
-  if (!el) return;
-  // Only your own clock is actually running down; when it is not your move the
-  // number is what you will have, not what you are spending.
-  const gone = clockYours ? Math.floor((Date.now() - clockAt) / 1000) : 0;
-  const t = clockDown ? clockBase - gone : clockBase + Math.floor((Date.now() - clockAt) / 1000);
-  const low = clockDown && clockYours && t > 0 && t <= 15;
-  el.classList.toggle('low', low);
-  el.classList.toggle('over', clockDown && t <= 0);
-  el.textContent = clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t));
-  const label = el.parentElement.querySelector('.dockLabel');
-  if (label) {
-    label.textContent = !clockDown ? 'elapsed'
-      : clockYours ? (t <= 0 ? 'time up' : 'your clock') : 'your clock';
+  if (el) {
+    // Only a running clock counts down; a seat waiting its turn is showing
+    // what it will get, which does not shrink while it waits.
+    const running = clockDown && clockWho && clockWho.running;
+    const t = clockDown ? (clockWho ? clockWho.left - (running ? gone : 0) : 0)
+      : clockBase + gone;
+    el.classList.toggle('low', running && t > 0 && t <= 15);
+    el.classList.toggle('over', clockDown && t <= 0);
+    el.textContent = clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t));
+    const label = el.parentElement.querySelector('.dockLabel');
+    if (label) {
+      label.textContent = !clockDown ? 'elapsed'
+        : !clockWho ? 'clock'
+        : clockWho.name === 'you' ? 'your clock' : `${clockWho.name}'s clock`;
+    }
   }
+  // Every seat's own figure ticks too, so the left column is live rather than
+  // three seconds stale between polls.
+  clockSeats.forEach(s => {
+    const tag = document.querySelector(`[data-clock="${s.seat}"]`);
+    if (!tag) return;
+    const t = Math.max(0, s.left - (s.running ? gone : 0));
+    tag.textContent = mmss(t) + (s.running ? ' \u25B8' : '');
+    tag.classList.toggle('tag-default', t <= 0);
+    tag.classList.toggle('tag-outline', t > 0);
+  });
 }
 setInterval(tickClock, 1000);
 
@@ -1303,7 +1324,9 @@ function shimmer(text) {
 function freshSeed() {
   const b = new Uint32Array(2);
   crypto.getRandomValues(b);
-  return ((BigInt(b[0]) << 32n) | BigInt(b[1])).toString();
+  const n = (BigInt(b[0]) << 32n) | BigInt(b[1]);
+  const s = n.toString(36).padStart(13, '0');
+  return `${s.slice(0, 5)}-${s.slice(5, 9)}-${s.slice(9, 13)}`;
 }
 function inviteLink() {
   const q = new URLSearchParams({ table: lobby.seed || '000000', seats: String(lobby.seats) });
@@ -1419,6 +1442,23 @@ function renderLobby() {
 
   document.getElementById('lobbySeed').value = lobby.seed;
   document.getElementById('lobbyLink').value = inviteLink();
+
+  // A seat still waiting has nobody in it, and dealing would quietly turn it
+  // into a bot. Better to refuse and say which seats are short than to let a
+  // mis-click decide who is playing.
+  const short = lobby.roles.filter(r => r === 'open').length;
+  const start = document.getElementById('lobbyStart');
+  if (short) {
+    start.setAttribute('aria-disabled', 'true');
+    start.setAttribute('data-tip', short === 1
+      ? 'One seat is still waiting. Add a bot to it, or drop to three players.'
+      : `${short} seats are still waiting. Add bots to them, or drop to three players.`);
+    start.textContent = short === 1 ? 'One seat still waiting' : `${short} seats still waiting`;
+  } else {
+    start.removeAttribute('aria-disabled');
+    start.setAttribute('data-tip', 'Deal the board');
+    start.textContent = 'Deal the board';
+  }
 }
 
 function openLobby() {
@@ -1444,6 +1484,7 @@ document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.se
 document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLink());
 
 document.getElementById('lobbyStart').onclick = () => {
+  if (document.getElementById('lobbyStart').getAttribute('aria-disabled')) return;
   lobby.name = (document.getElementById('lobbyName').value || '').trim();
   lobby.seed = document.getElementById('lobbySeed').value.trim();
   lobby.clockSecs = Math.max(5, Number(document.getElementById('lobbyClockSecs').value) || 0);
@@ -1456,7 +1497,7 @@ document.getElementById('lobbyStart').onclick = () => {
     clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
     name: lobby.name,
   });
-  if (/^\d{1,20}$/.test(lobby.seed)) q.set('seed', lobby.seed);
+  if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
   load(`/api/new?${q}`, { method: 'POST' });
 };

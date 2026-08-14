@@ -142,10 +142,14 @@ without one happens in a card that waits for you.**
 | Monopoly / invention resource pick | Card |
 | Incoming trade offer | Card |
 
-The card **captures the decision but does not cover the board.** It is placed
-clear of the play area, because every one of these choices is one you should
-make while looking at the position. A modal that hides the thing you are
-deciding about is a modal that makes you guess.
+The card **captures the decision but does not cover the board.** It takes over
+the column already held for chat, because every one of these choices is one you
+should make while looking at the position.
+
+**That column is a fixed width and never changes.** An earlier version widened
+it while a card was open, which shifted the board and everything on it. A panel
+that resizes what the player is reading is worse than one that covers a corner:
+nothing should move because a question arrived.
 
 ---
 
@@ -195,8 +199,19 @@ an account. When there are accounts the name comes from one and the field goes
 away; the server already stores it per session rather than the page holding it,
 so that swap does not move anything.
 
+**The board cannot be dealt with an empty seat.** Dealing would quietly turn a
+waiting seat into a bot, which is a decision about who is playing being made by
+a mis-click. The button says how many seats are short and refuses until they
+are filled or the table drops to three.
+
 **The seed is generated, not blank.** It exists before the game does, so it can
-be copied, shared or written down first, and re-rolled if you do not like it.
+be copied, shared or written down first.
+
+It is written as base 36 in three groups, `0n6pc-0cu9-x0n2`, rather than as
+twenty decimal digits. Twenty digits cannot be checked by eye or read down a
+phone. Thirteen characters is what a u64 takes in base 36, and the engine seeds
+from a u64, so padding it out to look longer would claim entropy that is not
+there. Reading one back ignores case and hyphens.
 
 **There is no market setting.** People trade freely or it is not the same game.
 The restricted and closed markets remain in the engine and in its tests; they
@@ -217,15 +232,45 @@ began, and what each seat has spent. Reloading the page hands nobody more time.
 Each seat's own clock rides on its row in the left column; the dock shows
 yours.
 
-**Running out ends your turn, never the game.** Two rules keep that honest:
+**Running out ends your turn, never the game.**
 
-- **Rolling comes first when it has to.** A turn cannot be ended before the
-  dice, so an allowance that expires before the roll rolls for you and then
-  ends the turn. Without this the clock would stall the game rather than pass
-  it on.
-- **Nothing else is ever forced.** A setup placement, a discard and a robber
-  move are real choices; a clock picking one would be inventing a move rather
-  than declining to make one. There the clock sits at zero and waits.
+### What a clock is allowed to do for you
+
+Most of the game can be declined: you can always simply end your turn. Some of
+it cannot, and those are the places a clock has to act or the game stops
+forever on whoever walked away.
+
+The list is fixed by the engine's own `Phase`, not guessed at. Every phase a
+player can be the decider in:
+
+| Phase | Can it be passed? | What the clock does |
+|---|---|---|
+| `SetupSettlement` | No | Places at random among the legal spots |
+| `SetupRoad` | No | Places at random among the legal spots |
+| `PreRoll` | No, but only one move exists | Rolls |
+| `Discard` | No | Discards at random down to the limit |
+| `MoveRobber` | No | Moves the robber and picks the victim at random |
+| `Action` | Yes | Ends the turn |
+| `GameOver` | Nothing to do | Nothing |
+
+So the ordering is: **end the turn if you can, roll if you must, otherwise pick
+a legal move at random.** Random is a bad outcome for the player it happens to
+and a much better one than three other people waiting on an empty chair.
+
+A test walks sixty games and asserts that any position offering the human no
+way to pass is one of the four phases named above, so a new blocking phase
+fails the suite rather than quietly stalling a game.
+
+**The forfeit draws from its own generator**, seeded from the game's seed but
+separate from it, so a forced move never disturbs the dice or the deck, and the
+same seed with the same timings forfeits the same way.
+
+### The clock is shown for whoever is on it
+
+Not just for you. Each seat's figure sits on its row and ticks every second,
+with a marker on the one that is running; the large clock in the dock follows
+the seat on the move and is labelled with their name. You need to see the other
+side thinking as much as you need to see yourself running out.
 
 Enforcement is lazy. A server that only wakes when asked cannot act on the
 second, so it happens on the next request, and the page's existing poll is

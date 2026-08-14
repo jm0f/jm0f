@@ -217,7 +217,7 @@ impl Server {
                     _ => TradeMode::Full,
                 };
                 let seed = param(query, "seed")
-                    .and_then(|v| v.parse().ok())
+                    .and_then(|v| crate::game::parse_seed(&decode(&v)))
                     // No clock dependency: the previous game's seed advances.
                     .unwrap_or_else(|| session.seed().wrapping_add(1));
                 // The clock is a lobby setting: which kind, and how many

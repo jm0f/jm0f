@@ -61,7 +61,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     // turns it into a double and quietly rounds the last few digits. The page
     // shows the seed for copying, so a rounded one would deal a different board
     // than the one it claims to name.
-    j.str("seed", &session.seed().to_string());
+    j.str("seed", &crate::game::seed_code(session.seed()));
     // Which build is serving this, so a stale process is visible rather than
     // mistaken for a change that did not work.
     j.str("build", env!("CARRANTA_BUILD"));

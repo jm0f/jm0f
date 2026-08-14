@@ -9,11 +9,44 @@
 
 use carranta_bot::{Heuristic, Policy};
 use carranta_core::action::{Action, Illegal};
+use carranta_core::rng::{Rng, Stream};
 use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Phase, State, TradeMode};
 use carranta_record::fog::{Fog, Viewer, fog};
 
 /// The seat a person plays.
 pub const HUMAN: u8 = 0;
+
+/// A seed as something a person can read out loud, copy, or type back in.
+///
+/// Base 36 rather than decimal, grouped, because twenty digits in a row cannot
+/// be checked by eye and cannot be dictated. The width is thirteen characters
+/// because that is what a u64 takes in base 36 and the engine seeds from a
+/// u64. Padding it out to look longer would be claiming entropy that is not
+/// there.
+pub fn seed_code(seed: u64) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut buf = [b'0'; 13];
+    let mut n = seed;
+    for slot in buf.iter_mut().rev() {
+        *slot = DIGITS[(n % 36) as usize];
+        n /= 36;
+    }
+    let s = std::str::from_utf8(&buf).unwrap_or("0");
+    format!("{}-{}-{}", &s[0..5], &s[5..9], &s[9..13])
+}
+
+/// The inverse, tolerant of how it comes back: hyphens optional, case ignored.
+pub fn parse_seed(text: &str) -> Option<u64> {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    u64::from_str_radix(&cleaned, 36).ok()
+}
 
 /// How long people get to think.
 ///
@@ -101,6 +134,10 @@ pub struct Session {
     /// What this player calls themselves. Editable while nobody is signed in;
     /// an account would supply it instead.
     name: String,
+    /// Picks a move when the clock runs out in a phase that cannot be passed.
+    /// Its own generator rather than the game's, so forfeits never disturb the
+    /// dice or the deck.
+    forfeit: Rng,
 }
 
 impl Session {
@@ -113,7 +150,8 @@ impl Session {
                 .collect(),
             version: 0,
             log: vec![format!(
-                "New game, {seats} seats, {mode:?} market, seed {seed}"
+                "New game, {seats} seats, {mode:?} market, seed {}",
+                seed_code(seed)
             )],
             declined: [false; MAX_OFFERS],
             seed,
@@ -124,6 +162,7 @@ impl Session {
             charged_to: HUMAN,
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
+            forfeit: Rng::new(seed ^ 0x5EED_C10C_C0FF_EE01),
         }
     }
 
@@ -227,32 +266,41 @@ impl Session {
             }
             let mut buf = Vec::new();
             self.state.legal_into(&mut buf);
-            // Ending is the forfeit. Rolling comes first when it has to,
-            // because the turn cannot be ended before the dice, without this
-            // a clock that expired before the roll would stall the game
-            // rather than pass it on.
+            if buf.is_empty() {
+                return;
+            }
+
+            // Ending the turn is the forfeit, and rolling comes before it
+            // because a turn cannot be ended before the dice.
             //
-            // Nothing else is forced. A setup placement, a discard and a
-            // robber move are real choices, and a clock picking one for you
-            // would be inventing a move rather than declining to make one.
+            // Everything left is a phase the rules do not let anyone pass:
+            // placing a starting settlement, placing the road that goes with
+            // it, discarding on a seven, and moving the robber. There the
+            // clock picks a legal move at random, because the alternative is
+            // a game that stops forever on someone who walked away. Random
+            // and stated is worse for that player than choosing well and
+            // better than everyone waiting.
+            //
+            // Drawn from the session's own generator, so a game with the same
+            // seed and the same timings forfeits identically.
             let forced = if buf.contains(&Action::EndTurn) {
                 Action::EndTurn
             } else if buf.contains(&Action::Roll) {
                 Action::Roll
             } else {
-                return;
+                buf[self.forfeit.below(Stream::Steal, buf.len() as u32) as usize]
             };
-            let ending = forced == Action::EndTurn;
+
             if self.state.apply(forced).is_err() {
                 return;
             }
             self.version += 1;
-            if ending {
-                self.log.push("Your time ran out, turn ended".to_string());
-            } else {
-                self.log
-                    .push("Your time ran out, rolled for you".to_string());
-            }
+            let what = match forced {
+                Action::EndTurn => "turn ended".to_string(),
+                Action::Roll => "rolled for you".to_string(),
+                other => format!("{} for you", describe(&other, &self.state, HUMAN as usize)),
+            };
+            self.log.push(format!("Your time ran out, {what}"));
             self.forget_declines();
             self.finish_move();
         }
@@ -1128,16 +1176,109 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_never_skips_a_placement_it_would_leave_illegal() {
-        // Setup cannot be passed: ending a turn is not a legal action there, so
-        // an expired clock has to wait rather than break the position.
+    fn a_clock_forces_a_placement_rather_than_stalling_on_it() {
+        // Setup cannot be passed, so an expired clock has to choose. It used
+        // to decline and wait, which meant a game stopped forever on anyone
+        // who walked away during setup.
         let mut s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::PerTurn(1));
         assert!(matches!(s.state.phase, Phase::SetupSettlement { .. }));
-        std::thread::sleep(std::time::Duration::from_millis(1_100));
         let before = s.version();
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
         s.enforce_clock();
-        assert_eq!(s.version(), before, "nothing was forced");
-        assert!(!s.choices().is_empty(), "the placement is still being asked for");
+        assert!(s.version() > before, "a placement was made");
+        assert!(
+            !matches!(s.state.phase, Phase::SetupSettlement { round: 0 }),
+            "and the position moved on rather than staying stuck"
+        );
+        assert!(
+            s.log().iter().any(|l| l.contains("time ran out")),
+            "and it says the clock did it, not the player"
+        );
+    }
+
+    #[test]
+    fn a_seed_code_round_trips_and_reads_in_groups() {
+        for seed in [0u64, 1, 42, 1 << 32, u64::MAX, 12614495042559003205] {
+            let code = seed_code(seed);
+            assert_eq!(code.len(), 15, "{code} is thirteen characters and two hyphens");
+            assert_eq!(code.matches('-').count(), 2);
+            assert_eq!(parse_seed(&code), Some(seed), "{code} should read back");
+        }
+        // Tolerant of how it comes back from a person.
+        let code = seed_code(9_876_543_210);
+        assert_eq!(parse_seed(&code.replace('-', "")), Some(9_876_543_210));
+        assert_eq!(parse_seed(&code.to_uppercase()), Some(9_876_543_210));
+        assert_eq!(parse_seed(""), None);
+    }
+
+    /// The phases a player cannot pass, and so the complete set where a clock
+    /// has to choose for them. Locked to the engine's own phase list: if a new
+    /// blocking phase is ever added, this fails rather than silently letting a
+    /// game stall on it.
+    #[test]
+    fn every_phase_that_cannot_be_passed_has_something_to_force() {
+        let mut seen: Vec<std::mem::Discriminant<Phase>> = Vec::new();
+        for seed in 0..60u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..400 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                if s.state.decider() == HUMAN {
+                    let mut buf = Vec::new();
+                    s.state.legal_into(&mut buf);
+                    // Whatever the phase, the clock must have a move to make.
+                    assert!(
+                        !buf.is_empty(),
+                        "seed {seed}: {:?} offers the human nothing",
+                        s.state.phase
+                    );
+                    let d = std::mem::discriminant(&s.state.phase);
+                    if !seen.contains(&d) {
+                        seen.push(d);
+                    }
+                    let passable =
+                        buf.contains(&Action::EndTurn) || buf.contains(&Action::Roll);
+                    if !passable {
+                        // A forfeit here is a random legal move, so every
+                        // option has to be applicable.
+                        assert!(
+                            matches!(
+                                s.state.phase,
+                                Phase::SetupSettlement { .. }
+                                    | Phase::SetupRoad { .. }
+                                    | Phase::Discard
+                                    | Phase::MoveRobber { .. }
+                            ),
+                            "seed {seed}: {:?} cannot be passed and is not on the \
+                             forfeit list in enforce_clock",
+                            s.state.phase
+                        );
+                    }
+                    let v = s.version();
+                    let _ = s.act(0, v);
+                } else {
+                    let v = s.version();
+                    if s.act(0, v).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(seen.len() >= 5, "the sweep should reach most phases, saw {}", seen.len());
+    }
+
+    #[test]
+    fn a_forfeit_uses_its_own_generator_and_repeats_for_a_seed() {
+        // Same seed, same forced pick: a game is reproducible even when the
+        // clock is the one moving.
+        let pick = |seed: u64| {
+            let mut s = Session::new(4, seed, TradeMode::Full).with_clock(Clock::PerTurn(1));
+            std::thread::sleep(std::time::Duration::from_millis(1_100));
+            s.enforce_clock();
+            s.log().last().cloned().unwrap_or_default()
+        };
+        assert_eq!(pick(7), pick(7));
     }
 
     #[test]
