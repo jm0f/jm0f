@@ -136,7 +136,7 @@ fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
         Action::BuildSettlement(_) => "Build a settlement".to_string(),
         Action::BuildCity(_) => "Upgrade to a city".to_string(),
         Action::MoveRobber { victim, .. } => match victim {
-            Some(v) => format!("Move the robber and rob seat {v}"),
+            Some(v) => format!("Move the robber onto seat {v}"),
             None => "Move the robber".to_string(),
         },
         ref other => describe(other, state, seat),
@@ -171,6 +171,20 @@ fn gains(before: &[[u8; 5]; MAX_PLAYERS], after: &[[u8; 5]; MAX_PLAYERS], seat: 
         }
     }
     parts.join(", ")
+}
+
+/// Whether a seat's hand grew by exactly one card without it being said which.
+///
+/// A robber steal is public in the fact and private in the detail: the table
+/// sees a card cross, and only the two of them see what it was. The count
+/// moves, so the count is what gets reported.
+fn took_a_card(
+    before: &[[u8; 5]; MAX_PLAYERS],
+    after: &[[u8; 5]; MAX_PLAYERS],
+    seat: usize,
+) -> bool {
+    let sum = |h: &[u8; 5]| h.iter().map(|&n| n as u32).sum::<u32>();
+    sum(&after[seat]) > sum(&before[seat])
 }
 
 /// Why an action was refused.
@@ -374,6 +388,25 @@ impl Session {
             if !got.is_empty() {
                 self.note_at(at, Some(seat as u8), format!("Collect {got}"));
             }
+        }
+    }
+
+    /// Note a robber steal, which is a card of unknown kind changing hands.
+    fn note_steal(
+        &mut self,
+        at: (u32, bool),
+        action: &Action,
+        seat: u8,
+        before: &[[u8; 5]; MAX_PLAYERS],
+    ) {
+        let Action::MoveRobber {
+            victim: Some(from), ..
+        } = action
+        else {
+            return;
+        };
+        if took_a_card(before, &self.state.hand, seat as usize) {
+            self.note_at(at, Some(seat), format!("Take a card, unseen, from seat {from}"));
         }
     }
 
@@ -686,6 +719,7 @@ impl Session {
                 if pays_out(&action) {
                     self.note_production(at, &purse);
                 }
+                self.note_steal(at, &action, HUMAN, &purse);
                 self.forget_declines();
             }
         }
@@ -782,6 +816,7 @@ impl Session {
             if pays_out(&action) {
                 self.note_production(at, &purse);
             }
+            self.note_steal(at, &action, seat as u8, &purse);
             self.forget_declines();
             // Each bot pays for its own thinking, and the turn passing between
             // two bots is still the turn passing.
