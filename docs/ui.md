@@ -196,6 +196,16 @@ at, rather than in a disconnected panel of steppers.
 **Receiving:** an offer arrives as a card that waits for an answer, accept,
 decline, or counter. It does not sit quietly in a panel to be missed.
 
+Each offer carries **the waiting loader in the proposer's colour**, beside their
+name. It is the same animation an empty seat uses, and for the same reason:
+somebody is waiting on an answer. The motion walks the eye from who asked to
+the buttons that answer them.
+
+**Silence is a refusal.** An offer left on the table stops the bots, because
+they are waiting on you. That wait is charged to whoever owes the answer, not
+to whoever holds the turn, and when their clock runs out the offers are
+declined for them.
+
 ---
 
 ## 7. The roll
