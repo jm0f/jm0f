@@ -81,24 +81,25 @@ neighbours only ~45° apart, so the seats also stagger in lightness —
 furthest apart in hue. Teal and purple are the weakest value pair at 1.22:1,
 and they are 104° apart. Nothing is close on both axes at once.
 
-**Judge a seat colour against paper, not against terrain.** Every piece wears
-a surround in `--bg` (§3.4), so the colour a piece is actually seen against is
-`#F3EDE1` — the terrain never touches it. All four clear **2.45:1** there.
+**The arc is what lets pieces go bare.** Pieces carry no surround (§3.4), so
+the only thing dividing a piece from the tile under it is the colour. That
+only works because the seats and the land share no hue. Value contrast is no
+help at all — every seat has some tile it is within 1.06:1 of, teal on fields
+being the worst — so hue is carrying the whole separation.
 
 Mountains at 215° sits inside the seats' arc; only its very low chroma keeps
 it out of their way. Do not make it bluer.
 
 **What this replaced, and why.** The previous set was blue `#0B72E8`, crimson
-`#E01B4C`, bone `#F7F2E7`, violet `#6B3FA0`. Bone was 1° from desert in hue
-and **1.04:1 against the paper of its own surround** — its silhouette
-dissolved into the halo meant to protect it. Crimson was 27° from hills, and
-1.04:1 against blue in value. The new set's worst figures are 39° and 1.22:1.
+`#E01B4C`, bone `#F7F2E7`, violet `#6B3FA0`. Bone was 1° from desert and
+1.33:1 against it, so it needed a surround to exist at all. Crimson was 27°
+from hills, and 1.04:1 against blue in value. The new set's worst figures are
+39° and 1.22:1.
 
-**No colour is legible on all six terrains, and that is fine.** The ladder
-spans luminance 0.07 to 0.66; clearing 2:1 against every rung at once needs a
-colour darker than `#0B0B0B` or brighter than white. The surround is not a
-refinement, it is what makes pieces work at all — do not remove it in the
-belief that a better colour would do the job.
+**Do not try to solve this with lightness.** The ladder spans luminance 0.07
+to 0.66; clearing 2:1 against every rung at once needs a colour darker than
+`#0B0B0B` or brighter than white. No piece colour can be bright against
+forest and dark against desert. Hue separation is the only move available.
 
 ### 2.4 Accent and interface
 
@@ -158,9 +159,12 @@ artwork and dimensional pieces share a surface.
 Each piece is drawn as three flat faces: a lit top, a mid side, a shadowed end.
 No gradients within a face. Light always from the upper left.
 
-Every piece carries a **surround in the board's background colour**, 1.6 board
-units wide, so its silhouette survives against any terrain. Grown as an offset
-union, not a box dilation — see `crates/carranta-ui/assets/index.html`.
+**No outline, no surround, no shadow.** A piece is separated from the board by
+hue, which is what §2.3's arc buys. Two surrounds were built and both were
+wrong — a box dilation left the diagonal edges thin, and an even offset union
+read as a pale collar sitting between the piece and the board rather than as
+part of either. If a piece is hard to see, the colour is wrong; do not put a
+ring around it.
 
 ---
 

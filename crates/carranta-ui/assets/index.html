@@ -42,10 +42,10 @@
        closest pair in value (teal and purple, 1.22:1) is 104 degrees apart in
        hue, so nothing is close on both axes at once.
 
-       Each also clears 2.45:1 against the paper, which matters more than
-       contrast against terrain: every piece wears a halo in --bg, so paper is
-       what a piece is actually seen against. The old bone seat managed 1.04
-       there — its silhouette dissolved into its own halo. */
+       Being far off the terrain hues is what lets the pieces go bare: they
+       carry no surround, so the only thing separating a piece from the tile
+       under it is the colour itself. The old bone seat could not have done
+       this — it was one degree from desert and 1.33:1 against it. */
     --p0: #2CA7BA; --p1: #3C2EB8; --p2: #C065D2; --p3: #C1256B;
   }
   * { box-sizing: border-box; }
@@ -313,64 +313,12 @@ function tone(hex, amount) {
   return `rgb(${r},${g},${b})`;
 }
 
-// How wide a piece's surround is, in board units — not in pixels.
+// Pieces carry no surround. Every earlier attempt at one — a morphology
+// dilate, then a union of offsets — read as a pale collar rather than as an
+// edge, and the seats no longer need it: they sit on the half of the colour
+// wheel the terrain does not use (§2.3), so a piece is told from the tile
+// under it by hue, not by a spacer between them.
 //
-// The board scales with the window, so a fixed pixel width would be a fat
-// collar on a small board and a hairline on a large one. In board units it
-// holds the same proportion at every size, which is also how the gaps between
-// hexes are measured, so the two stay in step.
-const HALO = 1.6;
-
-// The surround itself, in the board's own background colour, so a piece keeps
-// its silhouette against terrain of any tone.
-//
-// The radius is in board units directly. A filter on a nested viewport is
-// resolved in the *parent* coordinate system, not the child's — dividing by
-// the piece's own scale, as an earlier version did, multiplied the width by
-// two or three and turned the surround into a blob.
-//
-// It is a dilation of the piece's alpha rather than a stroke, because
-// stroking the artwork would outline every internal face of the drawing as
-// well as its outside, turning a road into a wireframe.
-function haloFilter(svg, id) {
-  const bg = getComputedStyle(document.documentElement)
-    .getPropertyValue('--panel').trim() || '#ffffff';
-  const defs = el('defs', {});
-  const f = el('filter', {
-    id, x: '-40%', y: '-40%', width: '180%', height: '180%',
-  });
-  // Copies of the silhouette pushed out around a circle, unioned.
-  //
-  // Not a morphology dilate: that grows a shape by a *box*, so a 45-degree
-  // edge gains only radius over root two where a vertical edge gains the full
-  // radius. These pieces are isometric — nearly every edge is diagonal — which
-  // is why the surround read as present on some sides and missing on others.
-  //
-  // The sample count is what keeps it even. The union of N offsets is a
-  // polygon of N sides, not a circle: at eight it visibly flat-cuts the
-  // corners and comes up short between samples. Twenty-four keeps the worst
-  // case within a percent of the intended width, which is below what the eye
-  // resolves at this size.
-  const STEPS = 24;
-  const merge = el('feMerge', {});
-  for (let i = 0; i < STEPS; i++) {
-    const a = (i * 2 * Math.PI) / STEPS;
-    f.appendChild(el('feOffset', {
-      in: 'SourceAlpha',
-      dx: (Math.cos(a) * HALO).toFixed(3),
-      dy: (Math.sin(a) * HALO).toFixed(3),
-      result: `o${i}`,
-    }));
-    merge.appendChild(el('feMergeNode', { in: `o${i}` }));
-  }
-  merge.setAttribute('result', 'ring');
-  f.appendChild(merge);
-  f.appendChild(el('feFlood', { 'flood-color': bg, result: 'ink' }));
-  f.appendChild(el('feComposite', { in: 'ink', in2: 'ring', operator: 'in' }));
-  defs.appendChild(f);
-  svg.appendChild(defs);
-}
-
 // The drawings, fetched once and kept as parsed nodes to clone per piece.
 const art = {};
 async function loadArt() {
@@ -384,7 +332,7 @@ async function loadArt() {
 // units tall, in the seat's colour. `anchor` shifts it down by a fraction of
 // its height, so a building stands on its intersection rather than floating
 // with the point in the middle of it.
-function place(svg, name, x, y, k, seat, anchor = 0.5, halo = false, id = '') {
+function place(svg, name, x, y, k, seat, anchor = 0.5) {
   const src = art[name];
   if (!src) return;
   const w = parseFloat(src.getAttribute('width'));
@@ -400,10 +348,6 @@ function place(svg, name, x, y, k, seat, anchor = 0.5, halo = false, id = '') {
   node.setAttribute('x', x - (w * k) / 2);
   node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
-  if (halo) {
-    haloFilter(svg, `h-${id}`);
-    node.setAttribute('filter', `url(#h-${id})`);
-  }
   svg.appendChild(node);
   return node;
 }
@@ -527,8 +471,6 @@ function draw() {
   // Painter's order: whatever sits lowest on the board goes on last, or a
   // piece in front is covered by the one behind it.
   solids.sort((a, b) => a.y - b.y);
-  solids.forEach((s, i) =>
-    place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor, true, i));
   solids.forEach((s) => place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor));
 
   // Where you may build, shown as a ghost of the piece you would get rather
