@@ -126,12 +126,23 @@
      One layout at every size rather than a second one for small screens: the
      columns and the dock size in viewport-relative units and their contents in
      em, so the whole thing shrinks in proportion instead of reflowing. */
+  /* Two rows, so the dock is a card the width of the board rather than a bar
+     the width of the window. The side columns span both rows and run the full
+     height; the board and the dock share the middle column, which is what
+     makes them line up at every size without either knowing the other's
+     measurements. */
   main {
     display: grid; gap: clamp(8px, .8vw, 16px); padding: clamp(8px, .8vw, 16px);
     grid-template-columns:
       clamp(186px, 15.5vw, 268px) minmax(0, 1fr) clamp(132px, 11vw, 216px);
+    grid-template-rows: minmax(0, 1fr) auto;
     flex: 1; min-height: 0;
   }
+  .col.left { grid-column: 1; }
+  .col.right { grid-column: 3; }
+  .col { grid-row: 1 / span 2; }
+  .boardPanel { grid-column: 2; grid-row: 1; }
+  .dock { grid-column: 2; grid-row: 2; }
   .panel {
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
     box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07);
@@ -202,10 +213,8 @@
 
   /* ---- the dock -------------------------------------------------------- */
   .dock {
-    flex: none; display: flex; align-items: flex-end; gap: clamp(10px, 1.2vw, 26px);
-    padding: clamp(6px, .7vw, 12px) clamp(10px, 1vw, 20px);
-    border-top: 1px solid var(--line); background: rgba(251, 247, 239, .78);
-    backdrop-filter: saturate(150%) blur(10px);
+    display: flex; align-items: flex-end; gap: clamp(10px, 1.2vw, 26px);
+    padding: clamp(8px, .8vw, 14px) clamp(12px, 1.1vw, 20px);
     font-size: clamp(11px, .8vw, 14px);
   }
   .dockGroup { display: flex; flex-direction: column; gap: .45em; }
@@ -314,7 +323,7 @@
 </header>
 
 <main>
-  <aside class="col">
+  <aside class="col left">
     <div class="panel">
       <h2>Table</h2>
       <div id="seatRows"></div>
@@ -330,17 +339,18 @@
          aria-label="game board"></svg>
   </div>
 
-  <aside class="col">
+  <aside class="col right">
     <div class="panel reserved">
       <h2>Table talk</h2>
       <p>Chat lands here once the open seats have people in them.</p>
     </div>
     <div class="prompt" id="prompt" hidden></div>
   </aside>
-</main>
 
-<!-- Everything you do, in one place along the bottom — docs/ui.md §3. -->
-<footer class="dock">
+  <!-- Everything you do, in one place under the board — docs/ui.md §3. A card
+       the width of the board, not a bar the width of the window: your hand and
+       the actions belong to the game, and the frame should say so. -->
+  <footer class="dock panel">
   <div class="dockGroup">
     <span class="dockLabel">your cards</span>
     <div class="stacks" id="hand"></div>
@@ -358,7 +368,8 @@
     <span class="dockLabel">dice</span>
     <div class="dice" id="dice"></div>
   </div>
-</footer>
+  </footer>
+</main>
 
 <script>
 const COLOURS = ['var(--p0)','var(--p1)','var(--p2)','var(--p3)'];
