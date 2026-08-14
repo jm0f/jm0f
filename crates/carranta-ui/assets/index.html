@@ -397,7 +397,12 @@
   }
   .segmented button[aria-pressed="true"]:hover { background: var(--primary); filter: brightness(1.07); }
   .seatSlots { display: flex; flex-direction: column; gap: 6px; }
-  .seatSlot { display: flex; align-items: center; gap: 10px; }
+  /* A grid rather than a flex row, so the marker, the name and the control
+     line up down the column. The control column is as wide as its widest
+     member, which stops the name field's right edge moving from row to row. */
+  .seatSlot { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto;
+              align-items: center; column-gap: 16px; }
+  .seatCtl { display: flex; justify-content: flex-end; min-width: 5.8em; }
   .seatSlot .dot { width: 1.05em; height: 1.05em; border-radius: 50%; flex: none; }
   .seatSlot .slotName { flex: 1; font-weight: 500; }
   .seatSlot .slotName.empty { color: var(--muted-foreground); font-weight: 400; }
@@ -1394,7 +1399,10 @@ function renderLobby() {
       control.onclick = () => { lobby.roles[i] = 'bot'; renderLobby(); };
     }
     // The loader stands in for the dot until the seat is taken.
-    row.append(taken ? dot : pixelLoader(COLOURS[i]), name, control);
+    const cell = document.createElement('span');
+    cell.className = 'seatCtl';
+    cell.appendChild(control);
+    row.append(taken ? dot : pixelLoader(COLOURS[i]), name, cell);
     slots.appendChild(row);
   }
 
