@@ -42,7 +42,7 @@ Four, fixed. Nothing moves between them as the position changes.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Left: seats, then log.** All four players in identical rows, yours among
+**Left: the clock, the seats, then the log.** All four players in identical rows, yours among
 them, comparing yourself to the table only works if everyone is measured the
 same way in the same place. History runs beneath them, because a log and a
 seat row answer the same question: who did what.
@@ -105,6 +105,15 @@ badge when that seat holds the longest road or the largest militia.
 Pieces remaining is on the row because it is a real signal. A player down to
 their last settlements is close to winning, and it is the one the raw numbers
 hide.
+
+### History is grouped by turn
+
+Each line carries the turn it happened in and the seat that caused it, so the
+page groups and colours rather than parsing sentences back apart. A turn is a
+sticky heading with a rule under it; a line is a colour dot and what happened,
+with the actor's name dropped because the dot already says it. Things the table
+did rather than a player, the deal and the result, carry no dot and are set
+apart.
 
 Opponents are bots with **names and colour dots**, not seat numbers. A row that
 says who did something is easier to hold in your head than one that says which
@@ -265,12 +274,25 @@ fails the suite rather than quietly stalling a game.
 separate from it, so a forced move never disturbs the dice or the deck, and the
 same seed with the same timings forfeits the same way.
 
-### The clock is shown for whoever is on it
+**An unanswered offer is a refusal.** An offer left on the table stops the bots,
+because they are waiting on an answer. That wait belongs to whoever owes the
+answer, not to whoever holds the turn, so the clock charges it to them and
+declines for them when it runs out. Getting this wrong stopped the game dead:
+the clock ran against the seat whose turn it was, and enforcement only ever
+looked at the decider, so nothing was ever forced and nothing ever moved.
 
-Not just for you. Each seat's figure sits on its row and ticks every second,
-with a marker on the one that is running; the large clock in the dock follows
-the seat on the move and is labelled with their name. You need to see the other
-side thinking as much as you need to see yourself running out.
+### One clock, above the players
+
+A single large figure with whose turn it is and the turn number beneath it. It
+follows whoever is on the clock, not whoever is reading: you need to see the
+other side thinking as much as you need to see yourself run out.
+
+It used to be a figure on every seat row, which made four small numbers where
+only one of them was ever moving.
+
+**The turn counter is the session's**, not the engine's. The engine tracks
+whose move it is, not how many moves have gone by. Setup is dealt rather than
+played and is not counted.
 
 Enforcement is lazy. A server that only wakes when asked cannot act on the
 second, so it happens on the next request, and the page's existing poll is

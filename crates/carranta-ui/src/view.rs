@@ -154,7 +154,10 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
         // Whose clock is running matters as much as what is left on it: a
         // per-turn allowance only counts down for the seat holding the turn.
         if let Some(left) = session.time_left(p as u8) {
-            o.int("timeLeft", left).bool("onClock", v.to_act == p as u8);
+            // Whose clock is running, which is not always whose turn it is:
+            // an unanswered offer stops the game on the human.
+            o.int("timeLeft", left)
+                .bool("onClock", session.on_clock() == p as u8);
         }
     });
     let own = v
@@ -175,6 +178,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.str("clock", session.clock().name());
     j.int("clockSecs", session.clock().secs() as i64);
     j.str("youName", session.name());
+    j.int("turns", session.turns() as i64);
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {
@@ -223,7 +227,9 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
             .into_iter()
             .rev(),
         |o, line| {
-            o.str("t", line);
+            o.str("t", &line.text)
+                .int("turn", line.turn as i64)
+                .opt_int("seat", line.seat.map(|x| x as i64));
         },
     );
     let _ = MAX_PLAYERS;

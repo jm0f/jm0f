@@ -288,17 +288,20 @@
 
   /* ---- seat rows (left column) ---------------------------------------- */
   /* Everyone is measured the same way in the same place, yours included, comparing yourself to the table is the only thing this column is for. */
+  /* Every row carries the box, transparent unless it is the one on the move.
+     Colouring an existing border rather than adding one is what keeps the
+     scores in a column: padding that appears with the highlight would indent
+     one row and misalign every figure in it. */
   .seatRow { display: grid; grid-template-columns: auto 1fr auto; gap: .5em .6em;
-             align-items: center; padding: .5em .1em; border-top: 1px solid var(--line); }
-  .seatRow:first-of-type { border-top: 0; }
+             align-items: center; padding: .5em .6em; margin-top: .15em;
+             border: 1px solid transparent; border-radius: var(--radius-md); }
+  .seatRow + .seatRow { border-top-color: transparent;
+                        box-shadow: 0 -1px 0 var(--line); }
+  .seatRow.acting + .seatRow, .seatRow:first-of-type { box-shadow: none; }
   /* Whose turn it is gets a box of its own rather than a stripe: a complete
      border reads as "this one", where an edge marker reads as decoration. */
-  .seatRow.acting {
-    background: rgba(232, 84, 47, .07);
-    border: 1px solid var(--accent); border-radius: var(--radius-md);
-    padding: .5em .6em; margin: .2em 0;
-  }
-  .seatRow.acting + .seatRow { border-top: 0; }
+  .seatRow.acting { background: rgba(232, 84, 47, .07); border-color: var(--accent);
+                    box-shadow: none; }
   .dot { width: 1.15em; height: 1.15em; border-radius: 50%; grid-row: span 2; }
   .seatRow .who { font-weight: 600; }
   .seatRow .vp { font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -364,17 +367,22 @@
   .die { width: 2.6em; height: 2.6em; border-radius: .5em; border: 1px solid var(--border);
          background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
   .die circle { fill: var(--foreground); }
-  .clock {
-    height: 2.6em; display: flex; align-items: center; padding: 0 .7em;
-    border: 1px solid var(--border); border-radius: var(--radius-md);
-    background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10);
-    font-variant-numeric: tabular-nums; font-size: 1.05em; letter-spacing: .02em;
+  /* One clock, large, above the players. It was a figure on every row, which
+     made four small numbers where only one of them was moving. */
+  .clockPanel { text-align: center; padding: .8em .6em .7em; }
+  .bigClock {
+    font-family: var(--display); font-size: 2.6em; line-height: 1;
+    font-variant-numeric: tabular-nums; letter-spacing: .01em;
+    font-weight: 600; color: var(--foreground);
   }
-  /* The last minute, then past the end. Colour rather than a blink: the clock
+  .clockUnder { display: flex; justify-content: center; gap: .7em;
+                margin-top: .35em; color: var(--muted-foreground);
+                font-size: .88em; }
+  .clockUnder span:empty { display: none; }
+  /* The last stretch, then past the end. Colour rather than a blink: a clock
      should be readable at a glance, not competing with the board for notice. */
-  .clock.low { color: var(--accent); font-weight: 600; }
-  .clock.over { background: var(--accent); border-color: transparent;
-                color: var(--primary-foreground); font-weight: 600; }
+  .bigClock.low { color: var(--accent); }
+  .bigClock.over { color: var(--accent); }
 
   /* ---- lobby ------------------------------------------------------------ */
   .lobby[hidden] { display: none; }
@@ -556,6 +564,10 @@
 
 <main>
   <aside class="col left">
+    <div class="panel clockPanel">
+      <div class="bigClock" id="clock">0:00</div>
+      <div class="clockUnder"><span id="clockWho"></span><span id="turnCount"></span></div>
+    </div>
     <div class="panel">
       <h2>Players</h2>
       <div id="seatRows"></div>
@@ -599,10 +611,6 @@
   <div class="dockGroup">
     <span class="dockLabel">dice</span>
     <div class="dice" id="dice"></div>
-  </div>
-  <div class="dockGroup">
-    <span class="dockLabel">elapsed</span>
-    <div class="clock" id="clock" data-tip="time since this game was dealt">, </div>
   </div>
   </footer>
 </main>
@@ -958,14 +966,36 @@ function render() {
   renderDice(v);
   renderPrompt(v);
 
+  // History, grouped by turn. It was a flat run of sentences each repeating
+  // whose they were; the turn is a heading now and the actor is a colour, so
+  // the eye can find a turn boundary without reading a word of it.
   const log = document.getElementById('log');
   log.textContent = '';
+  let shownTurn = null;
   v.log.forEach(l => {
+    if (l.turn !== shownTurn) {
+      shownTurn = l.turn;
+      const h = document.createElement('div');
+      h.className = 'logTurn';
+      h.textContent = shownTurn === 0 ? 'setup' : `turn ${shownTurn}`;
+      log.appendChild(h);
+    }
     const d = document.createElement('div');
+    d.className = 'logLine';
+    if (l.seat !== null && l.seat !== undefined) {
+      const dot = document.createElement('span');
+      dot.className = 'logDot';
+      dot.style.background = COLOURS[l.seat];
+      dot.title = seatName(v, l.seat);
+      d.appendChild(dot);
+    } else {
+      d.classList.add('logTable');
+    }
+    const t = document.createElement('span');
     // The engine writes seat numbers because that is what it knows. Naming
-    // happens here, so the history calls people what the seat rows call them
-    // rather than making you hold a second mapping in your head.
-    d.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, n) => seatName(v, +n));
+    // happens here, so the history calls people what the rows call them.
+    t.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, n) => seatName(v, +n));
+    d.appendChild(t);
     log.appendChild(d);
   });
   log.scrollTop = log.scrollHeight;
@@ -1065,14 +1095,6 @@ function renderSeats(v) {
     const counts = document.createElement('span');
     counts.className = 'counts';
     let html = `<span><b>${s.hand}</b> cards</span><span><b>${s.dev}</b> dev</span>`;
-    if (s.timeLeft !== undefined) {
-      const t = Math.max(0, s.timeLeft);
-      const m = Math.floor(t / 60), sec = t % 60;
-      html += `<span class="tag ${s.timeLeft <= 0 ? 'tag-default' : 'tag-outline'}"`
-        + ` data-clock="${s.seat}"`
-        + ` data-tip="${v.clock === 'chess' ? 'left in their bank' : 'their allowance each turn'}">`
-        + `${m}:${String(sec).padStart(2, '0')}</span>`;
-    }
     if (s.longestRoad) html += `<span class="tag tag-default">longest road · ${s.road}</span>`;
     if (s.largestMilitia) html += `<span class="tag tag-default">largest militia · ${s.militia}</span>`;
     html += `<span class="left" data-tip="pieces still to place" tabindex="0">`
@@ -1211,18 +1233,17 @@ function renderActions(v) {
 //
 // A timed game counts down; an untimed one counts up. Past zero it keeps going
 // and shows the overrun, because a clock frozen at 0:00 reads as broken.
-let clockBase = 0, clockAt = 0, clockDown = false, clockWho = null, clockSeats = [];
+let clockBase = 0, clockAt = 0, clockDown = false, clockWho = null, clockTurns = 0;
 function clockFrom(v) {
   clockDown = v.clock !== 'off';
   clockAt = Date.now();
-  clockSeats = v.seats.map(s => ({
+  clockTurns = v.turns || 0;
+  const seats = v.seats.map(s => ({
     seat: s.seat, left: s.timeLeft, running: !!s.onClock, name: seatName(v, s.seat),
   }));
-  // The clock shown large is whoever is on it, not whoever is reading. You
-  // need to see the other side thinking as much as you need to see yourself
-  // running out.
-  const live = clockSeats.find(s => s.running);
-  clockWho = live || clockSeats.find(s => s.seat === v.you) || null;
+  // The clock shown is whoever is on it, not whoever is reading. You need to
+  // see the other side thinking as much as you need to see yourself run out.
+  clockWho = seats.find(s => s.running) || seats.find(s => s.seat === v.you) || null;
   clockBase = clockDown && clockWho ? clockWho.left : (v.elapsed || 0);
   tickClock();
 }
@@ -1232,34 +1253,26 @@ function mmss(t) {
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 function tickClock() {
-  const gone = Math.floor((Date.now() - clockAt) / 1000);
   const el = document.getElementById('clock');
-  if (el) {
-    // Only a running clock counts down; a seat waiting its turn is showing
-    // what it will get, which does not shrink while it waits.
-    const running = clockDown && clockWho && clockWho.running;
-    const t = clockDown ? (clockWho ? clockWho.left - (running ? gone : 0) : 0)
-      : clockBase + gone;
-    el.classList.toggle('low', running && t > 0 && t <= 15);
-    el.classList.toggle('over', clockDown && t <= 0);
-    el.textContent = clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t));
-    const label = el.parentElement.querySelector('.dockLabel');
-    if (label) {
-      label.textContent = !clockDown ? 'elapsed'
-        : !clockWho ? 'clock'
-        : clockWho.name === 'you' ? 'your clock' : `${clockWho.name}'s clock`;
-    }
+  if (!el) return;
+  const gone = Math.floor((Date.now() - clockAt) / 1000);
+  // Only a running clock counts down. A seat waiting its turn is showing what
+  // it will get, which does not shrink while it waits.
+  const running = clockDown && clockWho && clockWho.running;
+  const t = clockDown ? (clockWho ? clockWho.left - (running ? gone : 0) : 0)
+    : clockBase + gone;
+  el.classList.toggle('low', running && t > 0 && t <= 15);
+  el.classList.toggle('over', clockDown && t <= 0);
+  el.textContent = clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t));
+
+  const who = document.getElementById('clockWho');
+  if (who) {
+    who.textContent = !clockDown ? 'elapsed'
+      : !clockWho ? ''
+      : clockWho.name === 'you' ? 'your turn' : `${clockWho.name}'s turn`;
   }
-  // Every seat's own figure ticks too, so the left column is live rather than
-  // three seconds stale between polls.
-  clockSeats.forEach(s => {
-    const tag = document.querySelector(`[data-clock="${s.seat}"]`);
-    if (!tag) return;
-    const t = Math.max(0, s.left - (s.running ? gone : 0));
-    tag.textContent = mmss(t);
-    tag.classList.toggle('tag-default', t <= 0);
-    tag.classList.toggle('tag-outline', t > 0);
-  });
+  const turns = document.getElementById('turnCount');
+  if (turns) turns.textContent = clockTurns ? `turn ${clockTurns}` : 'setting up';
 }
 setInterval(tickClock, 1000);
 

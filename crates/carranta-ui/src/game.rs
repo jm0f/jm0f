@@ -91,6 +91,18 @@ impl Clock {
     }
 }
 
+/// One line of history.
+///
+/// Carries who did it and which turn it happened in, so the page can group and
+/// colour rather than parsing sentences back apart.
+pub struct LogLine {
+    pub turn: u32,
+    /// The seat responsible. `None` for things the table did rather than a
+    /// player: the deal, the result.
+    pub seat: Option<u8>,
+    pub text: String,
+}
+
 /// Why an action was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
@@ -110,7 +122,7 @@ pub struct Session {
     /// Bumped on every applied action, so a click made against a stale board is
     /// refused rather than applied to a different position.
     version: u64,
-    log: Vec<String>,
+    log: Vec<LogLine>,
     /// Offers the human has already waved away, so they are asked once.
     declined: [bool; MAX_OFFERS],
     seed: u64,
@@ -134,6 +146,9 @@ pub struct Session {
     /// What this player calls themselves. Editable while nobody is signed in;
     /// an account would supply it instead.
     name: String,
+    /// How many turns have been taken. Counted here because the engine has no
+    /// notion of one: it tracks whose move it is, not how many have gone by.
+    turns: u32,
     /// Picks a move when the clock runs out in a phase that cannot be passed.
     /// Its own generator rather than the game's, so forfeits never disturb the
     /// dice or the deck.
@@ -149,10 +164,14 @@ impl Session {
                 .map(|s| Heuristic::new(seed.wrapping_mul(31).wrapping_add(s as u64 + 1)))
                 .collect(),
             version: 0,
-            log: vec![format!(
-                "New game, {seats} seats, {mode:?} market, seed {}",
-                seed_code(seed)
-            )],
+            log: vec![LogLine {
+                turn: 0,
+                seat: None,
+                text: format!(
+                    "{seats} players, {mode:?} market, seed {}",
+                    seed_code(seed)
+                ),
+            }],
             declined: [false; MAX_OFFERS],
             seed,
             started: std::time::Instant::now(),
@@ -162,6 +181,7 @@ impl Session {
             charged_to: HUMAN,
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
+            turns: 0,
             forfeit: Rng::new(seed ^ 0x5EED_C10C_C0FF_EE01),
         }
     }
@@ -172,7 +192,7 @@ impl Session {
         let now = std::time::Instant::now();
         self.turn_began = now;
         self.last_settle = now;
-        self.charged_to = self.state.decider();
+        self.charged_to = self.on_clock();
         self
     }
 
@@ -199,6 +219,41 @@ impl Session {
         self.clock
     }
 
+    /// Turns taken since the board was dealt, setup aside.
+    pub fn turns(&self) -> u32 {
+        self.turns
+    }
+
+    /// Whose clock should be running.
+    ///
+    /// Usually whoever is deciding, but not always: an offer left on the table
+    /// stops the bots until the human answers it, and that wait belongs to the
+    /// human even though the turn is somebody else's. Charging it to the seat
+    /// whose turn it is meant their clock drained while they were not the one
+    /// holding anybody up, and meant nothing was ever forced, because the
+    /// enforcement only ever looked at the decider. The game simply stopped.
+    pub fn on_clock(&self) -> u8 {
+        let deciding = self.state.decider();
+        if deciding != HUMAN && !self.choices().is_empty() {
+            HUMAN
+        } else {
+            deciding
+        }
+    }
+
+    /// Add a line of history, stamped with the turn and whoever caused it.
+    fn note(&mut self, seat: Option<u8>, text: String) {
+        let turn = self.turns;
+        self.log.push(LogLine { turn, seat, text });
+    }
+
+    /// Wave away every offer currently open, as declining does.
+    fn decline_open_offers(&mut self) {
+        for i in self.open_offers() {
+            self.declined[i as usize] = true;
+        }
+    }
+
     /// Settle the running clock against whoever it belongs to, then hand it to
     /// whoever is deciding now. Called after anything that could move the turn.
     fn hand_over_clock(&mut self) {
@@ -209,10 +264,17 @@ impl Session {
         }
         self.last_settle = now;
         // The turn's own clock restarts only when the turn changes hands.
-        let deciding = self.state.decider();
+        let deciding = self.on_clock();
         if deciding != self.charged_to {
             self.turn_began = now;
             self.charged_to = deciding;
+            // Setup is dealt rather than played, so it is not counted.
+            if !matches!(
+                self.state.phase,
+                Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+            ) {
+                self.turns += 1;
+            }
         }
     }
 
@@ -261,8 +323,20 @@ impl Session {
         // every turn the moment it starts, and that should play out across
         // requests instead of inside one of them.
         for _ in 0..8 {
-            if self.state.decider() != HUMAN || !self.out_of_time(HUMAN) {
+            if self.on_clock() != HUMAN || !self.out_of_time(HUMAN) {
                 return;
+            }
+            // The turn is someone else's and the only thing owed is an answer
+            // to what is on the table. Silence is a refusal: waiting cannot be
+            // allowed to hold up three other people indefinitely.
+            if self.state.decider() != HUMAN {
+                if self.open_offers().is_empty() {
+                    return;
+                }
+                self.decline_open_offers();
+                self.note(Some(HUMAN), "Time ran out, declined the offers".to_string());
+                self.finish_move();
+                continue;
             }
             let mut buf = Vec::new();
             self.state.legal_into(&mut buf);
@@ -300,7 +374,7 @@ impl Session {
                 Action::Roll => "rolled for you".to_string(),
                 other => format!("{} for you", describe(&other, &self.state, HUMAN as usize)),
             };
-            self.log.push(format!("Your time ran out, {what}"));
+            self.note(Some(HUMAN), format!("Time ran out, {what}"));
             self.forget_declines();
             self.finish_move();
         }
@@ -325,7 +399,7 @@ impl Session {
         &self.state
     }
 
-    pub fn log(&self) -> &[String] {
+    pub fn log(&self) -> &[LogLine] {
         &self.log
     }
 
@@ -436,7 +510,7 @@ impl Session {
                 for i in self.open_offers() {
                     self.declined[i as usize] = true;
                 }
-                self.log.push("You declined the open offers".to_string());
+                self.note(Some(HUMAN), "Declined the open offers".to_string());
             }
             Choice::Play(action) => {
                 // Named before it is applied: a phrase describes the position
@@ -444,7 +518,7 @@ impl Session {
                 let phrase = describe(&action, &self.state, HUMAN as usize);
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.version += 1;
-                self.log.push(format!("You: {phrase}"));
+                self.note(Some(HUMAN), phrase);
                 self.forget_declines();
             }
         }
@@ -481,7 +555,7 @@ impl Session {
         let phrase = describe(&action, &self.state, HUMAN as usize);
         self.state.apply(action).map_err(Refused::Illegal)?;
         self.version += 1;
-        self.log.push(format!("You: {phrase}"));
+        self.note(Some(HUMAN), phrase);
         self.forget_declines();
         self.finish_move();
         Ok(())
@@ -493,11 +567,17 @@ impl Session {
     /// offer nobody is asked about is not an offer, and before this the bots
     /// only ever saw one after the human had ended their turn.
     fn finish_move(&mut self) {
+        // Three handovers, not one, because the turn can change hands twice
+        // inside a single call and the clock has to see both.
+        //
+        // The first catches the move that was just made passing the turn on.
+        // Without it the sequence human, bots, human looked to the clock like
+        // the human never stopped deciding, so a per-turn allowance was never
+        // refilled and an expired clock forfeited the next turn too. In setup
+        // that meant one timeout took both of a player's placements.
+        self.hand_over_clock();
         self.settle_between_bots();
         self.run_bots();
-        // The turn may have moved on, so settle the running clock and hand it
-        // to whoever is deciding now. Doing it here rather than at each caller
-        // means no entry point can forget.
         self.hand_over_clock();
     }
 
@@ -523,9 +603,12 @@ impl Session {
             }
             self.version += 1;
             if worth_logging(&action) {
-                self.log.push(format!("Seat {seat}: {phrase}"));
+                self.note(Some(seat as u8), phrase);
             }
             self.forget_declines();
+            // Each bot pays for its own thinking, and the turn passing between
+            // two bots is still the turn passing.
+            self.hand_over_clock();
             self.settle_between_bots();
         }
         if let Phase::GameOver { winner } = self.state.phase {
@@ -534,8 +617,8 @@ impl Session {
             } else {
                 format!("Seat {winner} wins")
             };
-            if self.log.last().map(|l| l.as_str()) != Some(who.as_str()) {
-                self.log.push(who);
+            if self.log.last().map(|l| l.text.as_str()) != Some(who.as_str()) {
+                self.note(None, who);
             }
         }
     }
@@ -561,7 +644,7 @@ impl Session {
                     if self.bots[seat as usize].accepts(&self.state, seat as usize, i as usize) {
                         if self.state.apply(take).is_ok() {
                             self.version += 1;
-                            self.log.push(format!("Seat {seat} took an offer"));
+                            self.note(Some(seat as u8), "Took an offer".to_string());
                             self.forget_declines();
                         }
                         acted = true;
@@ -1019,7 +1102,7 @@ mod tests {
         let settled = !s.state().offers[..s.state().offer_count as usize]
             .iter()
             .any(|o| o.from == HUMAN);
-        let asked = s.log().iter().any(|l| l.contains("took an offer"));
+        let asked = s.log().iter().any(|l| l.text.contains("took an offer"));
         assert!(
             settled || asked || s.state().decider() != HUMAN,
             "the offer was never put to anyone"
@@ -1161,15 +1244,15 @@ mod tests {
         assert!(s.version() > before, "the turn was moved on for the player");
         assert!(s.winner().is_none(), "a clock does not decide the game");
         assert!(
-            s.log().iter().any(|l| l.contains("time ran out")),
+            s.log().iter().any(|l| l.text.contains("ran out")),
             "and it says so"
         );
         assert!(
-            s.log().iter().any(|l| l.contains("rolled for you")),
+            s.log().iter().any(|l| l.text.contains("rolled for you")),
             "rolling came first, because a turn cannot be ended before the dice"
         );
         assert!(
-            s.log().iter().any(|l| l.contains("turn ended")),
+            s.log().iter().any(|l| l.text.contains("turn ended")),
             "and the turn ended in the same sweep, rolling must not refill the \
              allowance, or a clock could roll for you forever"
         );
@@ -1191,7 +1274,7 @@ mod tests {
             "and the position moved on rather than staying stuck"
         );
         assert!(
-            s.log().iter().any(|l| l.contains("time ran out")),
+            s.log().iter().any(|l| l.text.contains("ran out")),
             "and it says the clock did it, not the player"
         );
     }
@@ -1269,6 +1352,85 @@ mod tests {
     }
 
     #[test]
+    fn the_next_turn_starts_on_a_full_allowance() {
+        // The bug this pins: the sequence human, bots, human looked to the
+        // clock like the human never stopped deciding, because the handover
+        // was only checked after the bots had finished and by then the decider
+        // was the human again. So the allowance was never refilled, and a
+        // player who had used most of it, or all of it, carried that into
+        // their next turn. In setup one lapse took both placements.
+        let mut s = Session::new(4, 5, TradeMode::Full).with_clock(Clock::PerTurn(4));
+        assert!(matches!(s.state.phase, Phase::SetupSettlement { round: 0 }));
+
+        // Spend most of round one's allowance, then place.
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        assert!(
+            s.time_left(HUMAN).is_some_and(|t| t <= 2),
+            "two of the four seconds are gone"
+        );
+        for _ in 0..2 {
+            let v = s.version();
+            s.act(0, v).expect("a legal setup placement");
+        }
+
+        // The bots have played and it is the human's turn again.
+        assert_eq!(s.state.decider(), HUMAN, "back to the human for round two");
+        assert_eq!(
+            s.time_left(HUMAN),
+            Some(4),
+            "round two starts full, not with round one's remainder"
+        );
+    }
+
+    #[test]
+    fn an_unanswered_offer_is_declined_rather_than_stopping_the_game() {
+        // An offer waiting on the human halts the bots, because the human owes
+        // an answer. The turn belongs to somebody else, though, so the clock
+        // used to be charged to them and enforcement never ran: the game stood
+        // still for as long as nobody clicked.
+        let mut found = None;
+        'seeds: for seed in 0..200u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..300 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                // An offer is on the table and it is not the human's turn.
+                if s.state.decider() != HUMAN && !s.open_offers().is_empty() {
+                    found = Some(s);
+                    break 'seeds;
+                }
+                let v = s.version();
+                if s.act(0, v).is_err() {
+                    break;
+                }
+            }
+        }
+        let mut s = found.expect("some seed reaches an offer on a bot's turn");
+
+        // The wait is the human's, so the human's clock is the one running.
+        assert_eq!(s.on_clock(), HUMAN, "the hold-up belongs to whoever must answer");
+
+        s = s.with_clock(Clock::PerTurn(1));
+        let before = s.version();
+        let offers = s.open_offers().len();
+        assert!(offers > 0);
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(s.out_of_time(HUMAN));
+        s.enforce_clock();
+
+        assert!(
+            s.open_offers().is_empty(),
+            "silence is a refusal, so the table is cleared"
+        );
+        assert!(s.version() >= before, "and play carries on");
+        assert!(
+            s.log().iter().any(|l| l.text.contains("declined")),
+            "and the log says the clock did it"
+        );
+    }
+
+    #[test]
     fn a_forfeit_uses_its_own_generator_and_repeats_for_a_seed() {
         // Same seed, same forced pick: a game is reproducible even when the
         // clock is the one moving.
@@ -1276,7 +1438,7 @@ mod tests {
             let mut s = Session::new(4, seed, TradeMode::Full).with_clock(Clock::PerTurn(1));
             std::thread::sleep(std::time::Duration::from_millis(1_100));
             s.enforce_clock();
-            s.log().last().cloned().unwrap_or_default()
+            s.log().last().map(|l| l.text.clone()).unwrap_or_default()
         };
         assert_eq!(pick(7), pick(7));
     }
