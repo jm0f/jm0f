@@ -65,8 +65,39 @@
        under it is the colour itself. The old bone seat could not have done
        this — it was one degree from desert and 1.33:1 against it. */
     --p0: #2CA7BA; --p1: #3C2EB8; --p2: #C065D2; --p3: #C1256B;
+
+    /* shadcn/ui's token names, mapped onto the palette above.
+       shadcn is not a package — it is source you copy and own — so what is
+       borrowed here is the vocabulary and the component anatomy, not React,
+       Tailwind or Radix, none of which this page has any way to run. The value
+       of the vocabulary is that surfaces, borders and rings stop being chosen
+       per component: there is one answer for "the edge of a thing" and every
+       thing uses it.
+
+       One deliberate deviation. shadcn's --accent is a subtle hover surface;
+       ours was already the vermillion call to action and is load-bearing
+       throughout style.md. Rather than redefine a name in use, the hover
+       surface is --subtle and the call to action stays --accent, which
+       --primary also points at. */
+    --background: var(--bg);        --foreground: var(--ink);
+    --card: var(--panel);           --card-foreground: var(--ink);
+    --popover: var(--panel);        --popover-foreground: var(--ink);
+    --primary: var(--accent);       --primary-foreground: #FFF7EE;
+    --secondary: #F3EDE1;           --secondary-foreground: var(--ink);
+    --muted: #F0E8DA;               --muted-foreground: var(--dim);
+    --subtle: #EFE6D6;              --subtle-foreground: var(--ink);
+    --destructive: #C2492A;         --destructive-foreground: #FFF7EE;
+    --border: var(--line);          --input: var(--line);
+    --ring: var(--accent);
+    --radius: 10px;
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 14px;
   }
   * { box-sizing: border-box; }
+
+  /* Every focusable thing shows where it is. The page had no focus treatment
+     at all, which meant it could be tabbed through but not followed. */
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  :focus:not(:focus-visible) { outline: none; }
   /* The board should use the window it is given, so the page is a column that
      fills the viewport exactly: header at its natural height, everything else
      sharing what is left. Nothing scrolls the page itself. */
@@ -105,20 +136,80 @@
   .vid.coast { fill: #1E7E96; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
-  button, select {
-    font: inherit; color: var(--ink); background: var(--panel);
-    border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer;
-    box-shadow: 0 1px 2px rgba(51, 38, 27, .07);
+  /* ---- button ----------------------------------------------------------
+     shadcn's anatomy: one base, variants that change only surface and border,
+     sizes that change only padding and height. Nothing else may restyle a
+     button — if a button needs to look different, it needs a variant.
+
+     Disabled is `aria-disabled`, never the `disabled` attribute. A disabled
+     button is removed from the tab order and stops emitting pointer events, so
+     its explanation becomes unreachable by keyboard and by touch — which is
+     exactly the audience that most needs to be told why it cannot act. Radix
+     does the same thing for the same reason; the click handler guards instead. */
+  button, .btn {
+    font: inherit; font-weight: 500; color: var(--foreground); background: var(--card);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 5px 10px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: .4em;
+    transition: background-color .14s ease-out, border-color .14s ease-out,
+                color .14s ease-out, filter .14s ease-out;
   }
-  button:hover:not(:disabled) { background: #F3EDE1; border-color: #D3C6AE; }
-  #new, #propose {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-color: transparent; color: #fff; font-weight: 600;
-    box-shadow: 0 2px 6px rgba(232, 84, 47, .30);
+  button:hover, .btn:hover { background: var(--subtle); border-color: #D3C6AE; }
+  button:active, .btn:active { filter: brightness(.97); }
+  button[aria-disabled="true"], .btn[aria-disabled="true"], button:disabled {
+    opacity: .5; cursor: default; background: var(--card); border-color: var(--border);
   }
-  #new:hover, #propose:hover:not(:disabled) { filter: brightness(1.08); }
-  .choices button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { opacity: .45; cursor: default; }
+  button[aria-disabled="true"]:active, .btn[aria-disabled="true"]:active { filter: none; }
+
+  .btn-primary {
+    background: var(--primary); border-color: transparent; color: var(--primary-foreground);
+    font-weight: 600;
+  }
+  .btn-primary:hover { background: var(--primary); filter: brightness(1.07); }
+  .btn-primary[aria-disabled="true"], .btn-primary:disabled {
+    background: var(--primary); border-color: transparent; color: var(--primary-foreground);
+  }
+  .btn-secondary { background: var(--secondary); color: var(--secondary-foreground); border-color: transparent; }
+  .btn-secondary:hover { background: var(--subtle); border-color: transparent; }
+  .btn-ghost { background: transparent; border-color: transparent; box-shadow: none; }
+  .btn-ghost:hover { background: var(--subtle); border-color: transparent; }
+  .btn-sm { padding: 2px 8px; font-size: .92em; border-radius: var(--radius-sm); }
+  .btn-icon { padding: 0; width: 1.9em; height: 1.9em; }
+  .btn-block { width: 100%; }
+
+  /* ---- tag (shadcn "badge"; the name badge is already the count on a pile) */
+  .tag {
+    display: inline-flex; align-items: center; padding: .05em .55em;
+    border: 1px solid transparent; border-radius: 999px;
+    font-size: .82em; font-weight: 600; line-height: 1.5;
+  }
+  .tag-default { background: var(--primary); color: var(--primary-foreground); }
+  .tag-secondary { background: var(--secondary); color: var(--secondary-foreground); }
+  .tag-outline { border-color: var(--border); color: var(--muted-foreground); }
+
+  .separator { height: 1px; background: var(--border); border: 0; margin: .6em 0; }
+
+  select {
+    font: inherit; color: var(--foreground); background: var(--card);
+    border: 1px solid var(--input); border-radius: var(--radius-md);
+    padding: 5px 10px; cursor: pointer;
+  }
+  select:hover { border-color: #D3C6AE; }
+
+  /* ---- tooltip ---------------------------------------------------------
+     `title` was doing this job and doing it badly: it never appears on touch,
+     never on keyboard focus, and waits a second before it does appear on
+     hover. Anything carrying data-tip gets a real one — shown on hover and on
+     focus, dismissed on escape, flipped when it would leave the viewport. */
+  .tip {
+    position: fixed; z-index: 90; max-width: 15rem; padding: .4em .6em;
+    background: var(--foreground); color: var(--background);
+    border-radius: var(--radius-sm); font-size: 12px; line-height: 1.4;
+    pointer-events: none; opacity: 0; transition: opacity .12s ease-out;
+    box-shadow: 0 4px 12px rgba(51, 38, 27, .25);
+  }
+  .tip[data-show] { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
   /* Four regions that never trade places — docs/ui.md §2. Seats and history on
      the left, board in the middle, a column held open on the right for chat,
      and everything you do along the bottom.
@@ -143,12 +234,14 @@
   .col { grid-row: 1 / span 2; }
   .boardPanel { grid-column: 2; grid-row: 1; }
   .dock { grid-column: 2; grid-row: 2; }
+  /* ---- card ---- */
   .panel {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+    background: var(--card); color: var(--card-foreground);
+    border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px;
     box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07);
   }
   .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
-              color: var(--dim); margin: 0 0 8px; font-weight: 600; }
+              color: var(--muted-foreground); margin: 0 0 8px; font-weight: 600; }
   /* `min-height: 0` on both is what lets the board shrink: a grid or flex item
      defaults to refusing to go below its content, which is exactly how a board
      ends up taller than the window. */
@@ -204,8 +297,6 @@
   .seatRow .counts { grid-column: 2 / span 2; display: flex; flex-wrap: wrap;
                      gap: .15em .7em; color: var(--dim); font-size: .92em; }
   .seatRow .counts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .bonus { display: inline-block; padding: 0 .45em; border-radius: 999px;
-           background: var(--accent); color: #FBF7EF; font-size: .82em; font-weight: 600; }
   .logPanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
   #log { overflow-y: auto; color: var(--dim); font-size: .95em; min-height: 0; flex: 1; }
   #log div { padding: 1px 0; }
@@ -259,10 +350,6 @@
     font-size: .86em;
   }
   .act svg { width: 1.5em; height: 1.5em; fill: currentColor; }
-  .act.primary { background: linear-gradient(135deg, var(--accent), var(--accent2));
-                 border-color: transparent; color: #fff; font-weight: 600;
-                 box-shadow: 0 2px 6px rgba(232, 84, 47, .30); }
-  .act.primary:hover:not(:disabled) { filter: brightness(1.08); }
   .dice { display: flex; gap: .4em; }
   .die { width: 2.6em; height: 2.6em; border-radius: .5em; border: 1px solid var(--line);
          background: var(--panel); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
@@ -319,7 +406,7 @@
     <option value="disabled">no trading</option>
   </select>
   <label class="toggle"><input type="checkbox" id="labels"> ids</label>
-  <button id="new">New game</button>
+  <button id="new" class="btn-primary">New game</button>
 </header>
 
 <main>
@@ -811,10 +898,10 @@ function renderSeats(v) {
     const counts = document.createElement('span');
     counts.className = 'counts';
     let html = `<span><b>${s.hand}</b> cards</span><span><b>${s.dev}</b> dev</span>`
-      + `<span title="settlements, cities and roads still to place">`
+      + `<span data-tip="settlements, cities and roads still to place" tabindex="0">`
       + `<b>${s.settlementsLeft}</b>s <b>${s.citiesLeft}</b>c <b>${s.roadsLeft}</b>r left</span>`;
-    if (s.longestRoad) html += `<span class="bonus">road ${s.road}</span>`;
-    if (s.largestMilitia) html += `<span class="bonus">militia ${s.militia}</span>`;
+    if (s.longestRoad) html += `<span class="tag tag-default">road ${s.road}</span>`;
+    if (s.largestMilitia) html += `<span class="tag tag-default">militia ${s.militia}</span>`;
     counts.innerHTML = html;
     row.append(dot, who, vp, counts);
     host.appendChild(row);
@@ -827,7 +914,7 @@ function renderSeats(v) {
 function stackEl(count, icon, title, onClick) {
   const b = document.createElement('button');
   b.className = 'stack' + (count ? '' : ' empty');
-  b.title = title;
+  b.setAttribute('data-tip', title);
   b.disabled = !onClick;
   if (onClick) b.onclick = onClick;
   for (let d = Math.min(count, 5); d >= 2; d--) {
@@ -921,19 +1008,22 @@ function renderActions(v) {
   host.textContent = '';
   spec.forEach(s => {
     const b = document.createElement('button');
-    b.className = 'act' + (s.primary && s.c ? ' primary' : '');
-    b.innerHTML = GLYPH[s.g] + `<span>${s.label}</span>`;
     const live = s.c || (s.list && s.list.length) || s.open;
-    b.disabled = !live;
-    b.title = live ? s.label : (s.why || 'not now');
-    if (s.c) b.onclick = () => act(s.c.i);
-    else if (s.open) b.onclick = () => openPrompt('compose');
-    else if (s.list && s.list.length) {
-      b.onclick = () => openPrompt('pick', {
+    b.className = 'act' + (s.primary && live ? ' btn-primary' : '');
+    b.innerHTML = GLYPH[s.g] + `<span>${s.label}</span>`;
+    // aria-disabled rather than disabled, so the button keeps its place in the
+    // tab order and still answers "why not?" to a keyboard or a thumb.
+    if (!live) b.setAttribute('aria-disabled', 'true');
+    b.setAttribute('data-tip', live ? s.label : (s.why || 'not now'));
+    b.onclick = () => {
+      if (!live) return;
+      if (s.c) act(s.c.i);
+      else if (s.open) openPrompt('compose');
+      else openPrompt('pick', {
         title: s.g === 'bank' ? 'Trade with the bank' : 'Play a development card',
         choices: s.list,
       });
-    }
+    };
     host.appendChild(b);
   });
 }
@@ -961,8 +1051,59 @@ function renderDice(v) {
 // anchored above the dock rather than centred, so the position you are
 // deciding about is never behind it — docs/ui.md §5.
 const prompt = { mode: null, data: null };
-function openPrompt(mode, data) { prompt.mode = mode; prompt.data = data || null; renderPrompt(view); renderHand(view); }
+function openPrompt(mode, data) {
+  prompt.mode = mode; prompt.data = data || null;
+  renderPrompt(view); renderHand(view);
+  // Move the caret into the card so a keyboard lands where the game is
+  // waiting, the way a dialog primitive would. It is not aria-modal: the board
+  // stays live behind it on purpose, and claiming otherwise would lie to a
+  // screen reader about what is reachable.
+  const first = document.querySelector('#prompt button, #prompt select');
+  if (first) first.focus();
+}
 function closePrompt() { prompt.mode = null; prompt.data = null; renderPrompt(view); renderHand(view); }
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  hideTip();
+  // A forced decision has no close button, so escape must not dismiss it either.
+  if (prompt.mode) closePrompt();
+});
+
+// ---- tooltip ---------------------------------------------------------------
+// One element, moved and filled per trigger. Shown on hover and on focus, so a
+// keyboard gets the same answer a mouse does; flipped below the trigger when
+// there is no room above it.
+const tip = document.createElement('div');
+tip.className = 'tip';
+tip.setAttribute('role', 'tooltip');
+tip.id = 'tip';
+document.body.appendChild(tip);
+let tipFor = null;
+function showTip(el) {
+  const text = el.getAttribute('data-tip');
+  if (!text) return;
+  tipFor = el;
+  tip.textContent = text;
+  tip.setAttribute('data-show', '');
+  el.setAttribute('aria-describedby', 'tip');
+  const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  const above = r.top - t.height - 8 > 4;
+  tip.style.top = `${above ? r.top - t.height - 8 : r.bottom + 8}px`;
+  tip.style.left = `${Math.max(6, Math.min(window.innerWidth - t.width - 6,
+    r.left + r.width / 2 - t.width / 2))}px`;
+}
+function hideTip() {
+  if (tipFor) tipFor.removeAttribute('aria-describedby');
+  tipFor = null;
+  tip.removeAttribute('data-show');
+}
+['mouseover', 'focusin'].forEach(ev => document.addEventListener(ev, (e) => {
+  const el = e.target.closest && e.target.closest('[data-tip]');
+  if (el !== tipFor) { hideTip(); if (el) showTip(el); }
+}));
+['mouseout', 'focusout'].forEach(ev => document.addEventListener(ev, (e) => {
+  if (tipFor && !tipFor.contains(e.relatedTarget)) hideTip();
+}));
 
 function renderPrompt(v) {
   const host = document.getElementById('prompt');
@@ -983,12 +1124,16 @@ function renderPrompt(v) {
   if (!mode) { host.hidden = true; return; }
   host.hidden = false;
 
+  host.setAttribute('role', 'dialog');
+  host.setAttribute('aria-labelledby', 'promptTitle');
   const head = (text, closable) => {
     const h = document.createElement('h2');
+    h.id = 'promptTitle';
     h.textContent = text;
     host.appendChild(h);
     if (closable) {
       const x = document.createElement('button');
+      x.className = 'btn-ghost btn-sm';
       x.textContent = 'close';
       x.style.cssText = 'position:absolute; top:10px; right:12px;';
       x.onclick = closePrompt;
@@ -1038,12 +1183,14 @@ function renderOffers(v, host, offers) {
     const c = v.choices.find(x => x.label === `Accept offer ${o.i}` || x.label === `Withdraw offer ${o.i}`);
     if (c) {
       const b = document.createElement('button');
+      b.className = o.mine ? 'btn-secondary btn-sm' : 'btn-primary btn-sm';
       b.textContent = o.mine ? 'withdraw' : 'accept';
       b.onclick = () => act(c.i);
       d.appendChild(b);
     }
     if (!o.mine && v.canPropose) {
       const b = document.createElement('button');
+      b.className = 'btn-secondary btn-sm';
       b.textContent = 'counter';
       b.onclick = () => counter(o);
       d.appendChild(b);
@@ -1064,10 +1211,12 @@ function counter(o) {
 
 function renderCompose(v, host) {
   const h = document.createElement('h2');
+  h.id = 'promptTitle';
   h.textContent = v.yourTurn ? 'Offer a trade — click your cards to add them'
     : `Counter ${seatName(v, v.toAct)}`;
   host.appendChild(h);
   const x = document.createElement('button');
+  x.className = 'btn-ghost btn-sm';
   x.textContent = 'close';
   x.style.cssText = 'position:absolute; top:10px; right:12px;';
   x.onclick = closePrompt;
@@ -1108,6 +1257,7 @@ function renderCompose(v, host) {
       have.className = 'have';
       have.textContent = giving ? v.yourHand[r.i] : '';
       const minus = document.createElement('button');
+      minus.className = 'btn-sm btn-icon';
       minus.textContent = '−';
       minus.disabled = counts[r.i] === 0;
       minus.onclick = () => { counts[r.i]--; renderPrompt(view); renderHand(view); };
@@ -1115,6 +1265,7 @@ function renderCompose(v, host) {
       n.className = 'n';
       n.textContent = counts[r.i];
       const plus = document.createElement('button');
+      plus.className = 'btn-sm btn-icon';
       plus.textContent = '+';
       // You can only offer what you hold; what you ask for is bounded by the
       // supply, and refused at acceptance if nobody can pay.
@@ -1130,8 +1281,9 @@ function renderCompose(v, host) {
   const sum = a => a.reduce((p, q) => p + q, 0);
   const go = document.createElement('button');
   go.id = 'propose';
+  go.className = 'btn-primary btn-block';
   go.textContent = 'Put it on the table';
-  go.style.cssText = 'margin-top:10px; width:100%';
+  go.style.cssText = 'margin-top:10px';
   go.disabled = !sum(give) || !sum(want);
   go.onclick = () => {
     prompt.mode = null;

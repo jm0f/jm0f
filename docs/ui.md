@@ -183,7 +183,51 @@ the interface should not have to move when it happens.
 
 ---
 
-## 9. Art
+## 9. Components
+
+The interface is built on **shadcn/ui's token vocabulary and component
+anatomy**, ported as plain CSS. shadcn is not a package — it is source you copy
+and own — so what is borrowed is the naming and the structure, not React,
+Tailwind or Radix, none of which this page can run.
+
+Tokens: `--background`, `--foreground`, `--card`, `--popover`, `--primary`,
+`--secondary`, `--muted`, `--subtle`, `--destructive`, `--border`, `--input`,
+`--ring`, `--radius`. Every surface, edge and ring comes from these rather than
+being chosen per component.
+
+**One deviation.** shadcn's `--accent` is a subtle hover surface; ours was
+already the vermillion call to action and is load-bearing throughout
+`style.md`. The hover surface is `--subtle` instead, and `--primary` points at
+`--accent`.
+
+Components: `.btn` with `-primary` / `-secondary` / `-ghost` variants and
+`-sm` / `-icon` / `-block` sizes; `.panel` as the card; `.tag` as the pill
+(shadcn calls it a badge, but `.badge` here is already the count on a pile);
+`.separator`; a tooltip; and the decision card as a dialog.
+
+**A button is styled by its variant and by nothing else.** If a button needs to
+look different, it needs a variant, not a rule keyed to its id.
+
+### Two accessibility rules this pass established
+
+**Unavailable is `aria-disabled`, never the `disabled` attribute.** A disabled
+button leaves the tab order and stops emitting pointer events, so its
+explanation becomes unreachable by keyboard and by touch — precisely the
+audience that most needs it. The click handler guards instead.
+
+**Explanations use a real tooltip, not `title`.** `title` never appears on
+touch, never on keyboard focus, and waits a second on hover. Anything carrying
+`data-tip` gets one shown on hover *and* focus, dismissed on escape, flipped
+when it would leave the viewport, and wired with `aria-describedby`.
+
+The decision card is `role="dialog"` with `aria-labelledby`, takes focus when
+it opens, and closes on escape. It is deliberately **not** `aria-modal`: the
+board stays live behind it, and saying otherwise would misdescribe what is
+reachable.
+
+---
+
+## 10. Art
 
 Icons are **isometric objects**, not flat silhouettes: three flat faces, light
 from the upper left, one hue each — the same idiom as the road, settlement and
@@ -199,7 +243,7 @@ and swapping them is a file drop into `art/`.
 
 ---
 
-## 10. Still open
+## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a
   negotiation. Currently a button in the grid; whether it shares the trade
