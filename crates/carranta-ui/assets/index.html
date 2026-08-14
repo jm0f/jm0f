@@ -811,7 +811,10 @@ function render() {
   log.textContent = '';
   v.log.forEach(l => {
     const d = document.createElement('div');
-    d.textContent = l.t;
+    // The engine writes seat numbers because that is what it knows. Naming
+    // happens here, so the history calls people what the seat rows call them
+    // rather than making you hold a second mapping in your head.
+    d.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, n) => seatName(v, +n));
     log.appendChild(d);
   });
   log.scrollTop = log.scrollHeight;
@@ -1111,12 +1114,19 @@ function renderPrompt(v) {
 
   // Forced first: the game is waiting on you and nothing else matters.
   const discard = v.choices.filter(c => c.group === 'discard');
+  // Declining is a single choice that clears every open offer at once, not one
+  // per offer — so it belongs to the card rather than to a row.
+  const decline = v.choices.find(c => c.label === 'No thanks');
   const answerable = v.offers.filter(o =>
     v.choices.some(c => c.label === `Accept offer ${o.i}` || c.label === `Withdraw offer ${o.i}`));
 
+  // An offer you cannot afford has no accept choice behind it, so keying the
+  // card on "answerable" hid the whole table whenever the one thing on it was
+  // out of your reach — including the button to turn it down.
+  const incoming = v.offers.filter(o => !o.mine);
   let mode = prompt.mode;
   if (discard.length) mode = 'discard';
-  else if (!mode && answerable.some(o => !o.mine)) mode = 'offers';
+  else if (!mode && incoming.length && (decline || answerable.some(o => !o.mine))) mode = 'offers';
 
   // Opening the card widens its column, which narrows the board rather than
   // covering it.
@@ -1158,11 +1168,11 @@ function renderPrompt(v) {
     return;
   }
   if (mode === 'pick') { head(prompt.data.title, true); buttonList(prompt.data.choices); return; }
-  if (mode === 'offers') { head('On the table', false); renderOffers(v, host, answerable); return; }
+  if (mode === 'offers') { head('On the table', false); renderOffers(v, host, v.offers, decline); return; }
   if (mode === 'compose') { renderCompose(v, host); return; }
 }
 
-function renderOffers(v, host, offers) {
+function renderOffers(v, host, offers, decline) {
   const names = n => v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ') || '—';
   offers.forEach(o => {
     const d = document.createElement('div');
@@ -1195,8 +1205,38 @@ function renderOffers(v, host, offers) {
       b.onclick = () => counter(o);
       d.appendChild(b);
     }
+    // No accept button and nothing in hand to cover it: say which, rather than
+    // leaving a row with no explanation for why it cannot be taken.
+    if (!o.mine && !c && v.resourceNames.some(r => v.yourHand[r.i] < o.want[r.i])) {
+      const s = document.createElement('span');
+      s.className = 'tag tag-outline';
+      s.textContent = 'you cannot cover this';
+      d.appendChild(s);
+    }
     host.appendChild(d);
   });
+
+  // Turning offers down was reachable in the engine and nowhere on the screen,
+  // which left the card with no way out except accepting something. Declining
+  // clears every open offer at once, so it is one button for the card and its
+  // wording says how far it reaches.
+  if (decline) {
+    const theirs = offers.filter(o => !o.mine).length;
+    host.appendChild(el2('hr', { class: 'separator' }));
+    const b = document.createElement('button');
+    b.className = 'btn-secondary btn-block';
+    b.textContent = theirs > 1 ? `No thanks — turn down all ${theirs}` : 'No thanks';
+    b.onclick = () => act(decline.i);
+    host.appendChild(b);
+  }
+}
+
+// The board is drawn with SVG elements; the panels are ordinary HTML, and a
+// separator built in the SVG namespace renders as nothing at all.
+function el2(tag, attrs) {
+  const n = document.createElement(tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
 }
 
 // Answer an offer with one of your own: their side becomes yours, mirrored,
