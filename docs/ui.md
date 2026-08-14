@@ -115,6 +115,11 @@ under it; its lines hang off a bar in the same colour, so a run of moves by one
 player reads as one block. Things the table did rather than a player, the deal
 and the result, carry no colour and sit apart.
 
+**A turn is a box**, bordered in that seat's colour on the left edge, the way
+the players list boxes whoever is on the move. A turn is a unit of the game and
+gets a container rather than a rule and some indentation. A turn that logged
+nothing gets no box.
+
 **No board indices.** A button has to tell two otherwise identical choices
 apart and so carries the vertex or edge; the log does not. The board already
 shows where the road went, and "Build road at 68" asks the reader to hold a
@@ -130,14 +135,21 @@ Each player takes a turn placing, and treating those as something other than
 turns collapsed eight of them into one undifferentiated block with no way to
 say whose placement was whose.
 
-They are counted, and numbered **separately from play**: the deal runs `setup
-1` to `setup 8`, then play starts again at `turn 1`. One run would have called
-the first real turn turn nine.
+They are counted in **one run with play**: four players place eight times
+between them, so the first turn of play is turn 9. Three players place six
+times, so theirs is turn 7.
 
-**A new turn is not only a new decider.** The player who places last in the
-deal is the player who moves first, so the turn changes with the decider
-unchanged. Entering `PreRoll` is the other boundary, and it happens exactly
-once per turn.
+**A new turn is not only a new decider.** The deal is a snake, so the player
+who places last in the first round places first in the second, and then moves
+first in play. The turn changes hands twice without the decider changing, and
+both were missed: the fold merged two placement turns into one, and the last
+placement ran into the first turn of play on the same clock. Entering
+`PreRoll` marks the start of a turn of play and entering `SetupSettlement` the
+start of a placement, each exactly once per turn.
+
+**A line is stamped before its action is applied.** Applying moves the phase
+on, and the last placement moves it out of the deal entirely, so stamping
+afterwards filed that placement under a turn that had not started.
 
 Opponents are bots with **names and colour dots**, not seat numbers. A row that
 says who did something is easier to hold in your head than one that says which
@@ -195,6 +207,9 @@ at, rather than in a disconnected panel of steppers.
 
 **Receiving:** an offer arrives as a card that waits for an answer, accept,
 decline, or counter. It does not sit quietly in a panel to be missed.
+
+An offer reads **"Ines offers 1 wood for 2 wheat"**. It used to be "Ines: 1
+wood for 2 wheat", which left the reader to work out which side was which.
 
 Each offer carries **the waiting loader in the proposer's colour**, beside their
 name. It is the same animation an empty seat uses, and for the same reason:

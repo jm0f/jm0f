@@ -313,27 +313,25 @@
   .logPanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
   #log { overflow-y: auto; color: var(--muted-foreground); font-size: .95em;
          min-height: 0; flex: 1; }
-  /* A turn is a heading with a rule in that seat's colour, so a boundary is
-     findable without reading a word. Sticky, because the turn you are looking
-     at should still say which it is after you have scrolled past its top. */
+  /* A turn is a unit of the game, so it gets a box, the way the players list
+     boxes whoever is on the move. The colour is the seat's, carried on the
+     border rather than on every line inside it. */
+  .logGroup {
+    border: 1px solid var(--border); border-left: 3px solid var(--rule, var(--border));
+    border-radius: var(--radius-md);
+    padding: .4em .6em .45em; margin-bottom: .45em;
+  }
   .logTurn {
-    position: sticky; top: 0; z-index: 1;
     display: flex; justify-content: space-between; align-items: baseline; gap: .6em;
-    margin: 1em 0 .35em; padding: .2em 0 .25em;
-    background: var(--card);
+    margin-bottom: .25em;
     font-size: .8em; text-transform: uppercase; letter-spacing: .09em;
     font-weight: 600; color: var(--muted-foreground);
-    border-bottom: 2px solid var(--rule, var(--border));
   }
-  .logTurn:first-child { margin-top: 0; }
   .logWho { color: var(--foreground); letter-spacing: .04em; }
-  /* The actor is the bar the line hangs off rather than a dot beside it: a run
-     of moves by one player reads as one block that way. */
-  .logLine { padding: 2px 0 2px .7em;
-             box-shadow: inset 2px 0 0 var(--rule, var(--border)); }
-  /* Things the table did rather than a player: no colour, and set apart. */
-  .logTable { color: var(--foreground); font-weight: 500;
-              box-shadow: none; padding-left: 0; }
+  .logLine { padding: 1px 0; }
+  /* Things the table did rather than a player: no colour on the edge. */
+  .logGroup.logTable { border-left-color: var(--border); }
+  .logGroup.logTable .logLine { color: var(--foreground); font-weight: 500; }
   #note { color: #E8542F; }
 
   /* ---- the dock -------------------------------------------------------- */
@@ -994,47 +992,52 @@ function render() {
   renderDice(v);
   renderPrompt(v);
 
-  // History, grouped by turn. Each heading carries whose turn it was in that
-  // seat's colour, so a boundary is findable without reading a word.
+  // The log, a box per turn in that seat's colour, the way the players list
+  // boxes whoever is on the move. A turn is a unit of the game, so it gets a
+  // container rather than a rule and some indentation.
   const log = document.getElementById('log');
   // Only follow the tail if you were already at it. Snapping to the bottom on
   // every poll made the history unreadable: scroll up and it yanked you back
   // three seconds later.
   const atTail = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
   log.textContent = '';
-  let shownTurn = null;
-  v.log.forEach((l, i) => {
-    if (l.turn !== shownTurn) {
-      shownTurn = l.turn;
-      // Whose turn it is, taken from the first line in the group that has an
-      // actor. A turn belongs to whoever moved in it.
-      const owner = v.log.slice(i).find(x => x.turn === l.turn && x.seat !== null
-        && x.seat !== undefined);
-      const h = document.createElement('div');
-      h.className = 'logTurn';
-      if (owner) h.style.setProperty('--rule', COLOURS[owner.seat]);
-      const n = document.createElement('span');
-      n.textContent = l.turn === 0 ? 'the deal' : (l.setup ? `setup ${l.turn}` : `turn ${l.turn}`);
-      h.appendChild(n);
-      if (owner) {
-        const who = document.createElement('span');
-        who.className = 'logWho';
-        who.textContent = seatName(v, owner.seat);
-        h.appendChild(who);
-      }
-      log.appendChild(h);
-    }
-    const d = document.createElement('div');
-    d.className = 'logLine';
-    if (l.seat !== null && l.seat !== undefined) {
-      d.style.setProperty('--rule', COLOURS[l.seat]);
+  // Gather first, so a turn that logged nothing does not leave an empty box.
+  const groups = [];
+  v.log.forEach(l => {
+    const last = groups[groups.length - 1];
+    if (!last || last.turn !== l.turn || last.setup !== l.setup) {
+      groups.push({ turn: l.turn, setup: l.setup, lines: [l] });
     } else {
-      d.classList.add('logTable');
+      last.lines.push(l);
     }
-    // The engine writes seat numbers because that is what it knows. Naming
-    // happens here, so the history calls people what the rows call them.
-    d.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, n) => seatName(v, +n));
-    log.appendChild(d);
+  });
+  groups.forEach(g => {
+    const owner = g.lines.find(x => x.seat !== null && x.seat !== undefined);
+    const box = document.createElement('div');
+    box.className = 'logGroup' + (owner ? '' : ' logTable');
+    if (owner) box.style.setProperty('--rule', COLOURS[owner.seat]);
+    const h = document.createElement('div');
+    h.className = 'logTurn';
+    const n = document.createElement('span');
+    n.textContent = g.turn === 0 ? 'new game'
+      : g.setup ? `setup ${g.turn}` : `turn ${g.turn}`;
+    h.appendChild(n);
+    if (owner) {
+      const who = document.createElement('span');
+      who.className = 'logWho';
+      who.textContent = seatName(v, owner.seat);
+      h.appendChild(who);
+    }
+    box.appendChild(h);
+    g.lines.forEach(l => {
+      const d = document.createElement('div');
+      d.className = 'logLine';
+      // The engine writes seat numbers because that is what it knows. Naming
+      // happens here, so the log calls people what the rows call them.
+      d.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x));
+      box.appendChild(d);
+    });
+    log.appendChild(box);
   });
   if (atTail) log.scrollTop = log.scrollHeight;
 }
@@ -1718,7 +1721,10 @@ function renderOffers(v, host, offers, decline) {
     const who = document.createElement('span');
     who.className = 'who';
     const addressed = o.to === null ? '' : (o.to === v.you ? ' → you' : ` → ${seatName(v, o.to)}`);
-    who.textContent = `${o.mine ? 'you' : seatName(v, o.from)}: ${names(o.give)} for ${names(o.want)}`;
+    // "Ines: 1 wood for 2 wheat" left it to the reader to work out which side
+    // was which. "Offers A for B" says who is handing over what.
+    const from = o.mine ? 'You offer' : `${seatName(v, o.from)} offers`;
+    who.textContent = `${from} ${names(o.give)} for ${names(o.want)}`;
     if (addressed) {
       const tag = document.createElement('span');
       tag.className = 'addressed';

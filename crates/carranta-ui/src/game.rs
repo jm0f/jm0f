@@ -169,16 +169,17 @@ pub struct Session {
     /// What this player calls themselves. Editable while nobody is signed in;
     /// an account would supply it instead.
     name: String,
-    /// Turns taken, counted separately for the deal and for play because they
-    /// are different things and numbering them in one run would have the first
-    /// real turn called turn nine. Counted here at all because the engine has
-    /// no notion of a turn: it tracks whose move it is, not how many have gone.
-    setup_turns: u32,
-    play_turns: u32,
-    /// Whether the phase was `PreRoll` at the last handover. Entering it is a
-    /// turn boundary in its own right: the last player to place in the deal is
-    /// the first to play, so the turn changes without the decider changing.
+    /// Turns taken, in one run from the first placement onwards. Four players
+    /// place eight times between them, so the first turn of play is turn nine.
+    /// Counted here because the engine has no notion of a turn: it tracks whose
+    /// move it is, not how many have gone by.
+    turns: u32,
+    /// The phase at the last handover, for the two boundaries that a change of
+    /// decider does not catch. Both are cases where the turn changes hands and
+    /// comes back to the same person: the last player to place in the deal
+    /// places first in the second round and then moves first in play.
     was_preroll: bool,
+    was_placing: bool,
     /// Picks a move when the clock runs out in a phase that cannot be passed.
     /// Its own generator rather than the game's, so forfeits never disturb the
     /// dice or the deck.
@@ -212,9 +213,11 @@ impl Session {
             charged_to: HUMAN,
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
-            setup_turns: 1,
-            play_turns: 0,
+            turns: 1,
             was_preroll: false,
+            // The game opens on a placement, which is turn one rather than a
+            // boundary into it.
+            was_placing: true,
             forfeit: Rng::new(seed ^ 0x5EED_C10C_C0FF_EE01),
         }
     }
@@ -252,13 +255,9 @@ impl Session {
         self.clock
     }
 
-    /// The turn number to show, which counts the deal and play separately.
+    /// The turn number to show.
     pub fn turn_no(&self) -> u32 {
-        if self.in_setup() {
-            self.setup_turns
-        } else {
-            self.play_turns
-        }
+        self.turns
     }
 
     /// Whether the board is still being dealt.
@@ -286,16 +285,29 @@ impl Session {
         }
     }
 
-    /// Add a line of history, stamped with the turn and whoever caused it.
-    fn note(&mut self, seat: Option<u8>, text: String) {
-        let setup = self.in_setup();
-        let turn = self.turn_no();
+    /// Which turn it is right now, to be read *before* an action is applied.
+    ///
+    /// Applying can move the phase on, and the last placement of the deal moves
+    /// it out of the deal entirely. Stamping afterwards filed that placement
+    /// under a turn that had not started yet.
+    fn stamp(&self) -> (u32, bool) {
+        (self.turn_no(), self.in_setup())
+    }
+
+    /// Add a line of history under the turn it belongs to.
+    fn note_at(&mut self, (turn, setup): (u32, bool), seat: Option<u8>, text: String) {
         self.log.push(LogLine {
             turn,
             setup,
             text,
             seat,
         });
+    }
+
+    /// Add a line for something happening now rather than for an action.
+    fn note(&mut self, seat: Option<u8>, text: String) {
+        let at = self.stamp();
+        self.note_at(at, seat, text);
     }
 
     /// Wave away every offer currently open, as declining does.
@@ -319,22 +331,23 @@ impl Session {
         // decider unchanged, and their first real turn used to inherit whatever
         // was left of their setup allowance. Entering PreRoll is the other
         // boundary, and it happens exactly once per turn.
+        // A new turn is not only a new decider. The deal runs as a snake, so
+        // the player who places last in the first round places first in the
+        // second, and then moves first in play: the turn changes hands twice
+        // without the decider changing, and both were being missed. Entering
+        // PreRoll marks the start of a turn of play, entering SetupSettlement
+        // the start of a placement, and each happens exactly once per turn.
         let deciding = self.on_clock();
         let preroll = matches!(self.state.phase, Phase::PreRoll);
-        let starting_a_turn = preroll && !self.was_preroll;
+        let placing = matches!(self.state.phase, Phase::SetupSettlement { .. });
+        let starting_a_turn =
+            (preroll && !self.was_preroll) || (placing && !self.was_placing);
         self.was_preroll = preroll;
+        self.was_placing = placing;
         if deciding != self.charged_to || starting_a_turn {
             self.turn_began = now;
             self.charged_to = deciding;
-            // The deal counts too. Each player takes a turn in it, and treating
-            // those as something else collapsed eight real turns into one
-            // undifferentiated block with no way to say whose placement was
-            // whose.
-            if self.in_setup() {
-                self.setup_turns += 1;
-            } else {
-                self.play_turns += 1;
-            }
+            self.turns += 1;
         }
     }
 
@@ -417,6 +430,7 @@ impl Session {
             //
             // Drawn from the session's own generator, so a game with the same
             // seed and the same timings forfeits identically.
+            let at = self.stamp();
             let forced = if buf.contains(&Action::EndTurn) {
                 Action::EndTurn
             } else if buf.contains(&Action::Roll) {
@@ -434,7 +448,7 @@ impl Session {
                 Action::Roll => "rolled for you".to_string(),
                 other => format!("{} for you", log_phrase(&other, &self.state, HUMAN as usize)),
             };
-            self.note(Some(HUMAN), format!("Time ran out, {what}"));
+            self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
             self.forget_declines();
             self.finish_move();
         }
@@ -576,9 +590,10 @@ impl Session {
                 // Named before it is applied: a phrase describes the position
                 // the action was taken in, not the one it produced.
                 let phrase = log_phrase(&action, &self.state, HUMAN as usize);
+                let at = self.stamp();
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.version += 1;
-                self.note(Some(HUMAN), phrase);
+                self.note_at(at, Some(HUMAN), phrase);
                 self.forget_declines();
             }
         }
@@ -613,9 +628,10 @@ impl Session {
             want,
         };
         let phrase = log_phrase(&action, &self.state, HUMAN as usize);
+        let at = self.stamp();
         self.state.apply(action).map_err(Refused::Illegal)?;
         self.version += 1;
-        self.note(Some(HUMAN), phrase);
+        self.note_at(at, Some(HUMAN), phrase);
         self.forget_declines();
         self.finish_move();
         Ok(())
@@ -658,12 +674,13 @@ impl Session {
             let seat = self.state.decider() as usize;
             let action = self.bots[seat].choose(&self.state, &buf);
             let phrase = log_phrase(&action, &self.state, seat);
+            let at = self.stamp();
             if self.state.apply(action).is_err() {
                 break;
             }
             self.version += 1;
             if worth_logging(&action) {
-                self.note(Some(seat as u8), phrase);
+                self.note_at(at, Some(seat as u8), phrase);
             }
             self.forget_declines();
             // Each bot pays for its own thinking, and the turn passing between
@@ -1467,20 +1484,65 @@ mod tests {
     }
 
     #[test]
-    fn the_deal_and_play_are_numbered_separately() {
+    fn the_last_placement_of_the_deal_is_filed_under_the_deal() {
+        // Applying moves the phase on, and the last placement moves it out of
+        // the deal entirely. Stamping the line afterwards filed it under a turn
+        // that had not started yet, so the log showed a stray group between the
+        // last setup turn and the first real one.
         let mut s = Session::new(4, 5, TradeMode::Full);
-        assert!(s.in_setup());
-        assert_eq!(s.turn_no(), 1, "the deal starts at one");
         while s.in_setup() {
             let v = s.version();
             s.act(0, v).expect("a legal placement");
         }
-        assert!(!s.in_setup());
-        assert_eq!(
-            s.turn_no(),
-            1,
-            "and so does play, rather than carrying on from the deal"
+        let strays: Vec<_> = s
+            .log()
+            .iter()
+            .filter(|l| !l.setup && l.turn == 0 && l.seat.is_some())
+            .map(|l| l.text.clone())
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "no move belongs to turn zero, found {strays:?}"
         );
+        // The final placement is the deal's last turn, not play's first.
+        let last = s
+            .log()
+            .iter()
+            .rev()
+            .find(|l| l.seat.is_some())
+            .expect("something was placed");
+        assert!(last.setup, "the last placement is still part of the deal");
+    }
+
+    #[test]
+    fn four_players_place_eight_times_and_then_play_turn_nine() {
+        // The deal is a snake: the player who places last in the first round
+        // places first in the second. The decider does not change across that
+        // fold, so their two placements were counted as one turn and the deal
+        // came out one short.
+        let mut s = Session::new(4, 5, TradeMode::Full);
+        assert!(s.in_setup());
+        assert_eq!(s.turn_no(), 1, "the deal opens on turn one");
+        let mut placements = 0;
+        while s.in_setup() {
+            let v = s.version();
+            s.act(0, v).expect("a legal placement");
+            placements += 1;
+        }
+        // The human acts four times, a settlement and a road in each round;
+        // the bots take theirs inside the same calls.
+        assert_eq!(placements, 4);
+        assert_eq!(s.turn_no(), 9, "eight placement turns, then the first of play");
+    }
+
+    #[test]
+    fn three_players_place_six_times_and_then_play_turn_seven() {
+        let mut s = Session::new(3, 9, TradeMode::Full);
+        while s.in_setup() {
+            let v = s.version();
+            s.act(0, v).expect("a legal placement");
+        }
+        assert_eq!(s.turn_no(), 7);
     }
 
     #[test]
