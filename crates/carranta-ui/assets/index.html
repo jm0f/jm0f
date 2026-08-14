@@ -294,21 +294,20 @@ function tone(hex, amount) {
 // collar on a small board and a hairline on a large one. In board units it
 // holds the same proportion at every size, which is also how the gaps between
 // hexes are measured, so the two stay in step.
-const HALO = 1.8;
+const HALO = 1.2;
 
 // The surround itself, in the board's own background colour, so a piece keeps
 // its silhouette against terrain of any tone.
 //
-// One filter per piece rather than one shared: the drawings are placed as
-// nested viewports at different scales, and a filter radius is expressed in
-// the units of whatever it is applied to. A single radius would come out
-// thicker on a settlement than on a road. Dividing by the piece's own scale
-// makes every surround the same width on the board.
+// The radius is in board units directly. A filter on a nested viewport is
+// resolved in the *parent* coordinate system, not the child's — dividing by
+// the piece's own scale, as an earlier version did, multiplied the width by
+// two or three and turned the surround into a blob.
 //
 // It is a dilation of the piece's alpha rather than a stroke, because
 // stroking the artwork would outline every internal face of the drawing as
 // well as its outside, turning a road into a wireframe.
-function haloFilter(svg, id, k) {
+function haloFilter(svg, id) {
   const bg = getComputedStyle(document.documentElement)
     .getPropertyValue('--panel').trim() || '#ffffff';
   const defs = el('defs', {});
@@ -316,7 +315,7 @@ function haloFilter(svg, id, k) {
     id, x: '-40%', y: '-40%', width: '180%', height: '180%',
   });
   f.appendChild(el('feMorphology', {
-    in: 'SourceAlpha', operator: 'dilate', radius: HALO / k, result: 'fat',
+    in: 'SourceAlpha', operator: 'dilate', radius: HALO, result: 'fat',
   }));
   f.appendChild(el('feFlood', { 'flood-color': bg, result: 'ink' }));
   f.appendChild(el('feComposite', { in: 'ink', in2: 'fat', operator: 'in' }));
@@ -354,7 +353,7 @@ function place(svg, name, x, y, k, seat, anchor = 0.5, halo = false, id = '') {
   node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
   if (halo) {
-    haloFilter(svg, `h-${id}`, k);
+    haloFilter(svg, `h-${id}`);
     node.setAttribute('filter', `url(#h-${id})`);
   }
   svg.appendChild(node);
