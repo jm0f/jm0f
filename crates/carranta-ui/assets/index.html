@@ -7,21 +7,32 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
 <style>
   :root {
-    /* Light ground. Everything below is re-picked for it rather than tinted
-       from the dark palette: a colour that reads as vivid against near-black
-       goes garish against white, and the two sets share almost nothing. */
-    --bg: #ffffff; --panel: #ffffff; --line: #e3e8ee;
-    --ink: #0a2540; --dim: #5c6f8a;
-    --accent: #635bff; --accent2: #0aa4f5;
-    /* Flat, unbroken colour. The scheme's confidence comes from committing
-       to one value per terrain — a gradient softens exactly the crispness
-       that makes it work. */
-    --hills: #FA4616; --forest: #0F5C39; --pasture: #A3E635;
-    --fields: #FFC300; --mountains: #474D66; --desert: #FFA333;
-    --water: #4A9BF7;
-    /* Player colours darkened for contrast against light terrain — the dark
-       theme's pastels vanished on the pasture and fields. */
-    --p0: #1d6fe0; --p1: #e0244f; --p2: #6b7c93; --p3: #e8720c;
+    /* Ink on warm paper, not pixels on a screen — docs/style.md. Nothing is
+       pure white because paper is not; nothing is pure black because ink is
+       not. The one exception is the number discs, which need to punch. */
+    --bg: #F3EDE1; --panel: #FBF7EF; --line: #E2D9C8;
+    --ink: #33261B; --dim: #6B5B4C;
+    --accent: #E8542F; --accent2: #F5A81C;
+
+    /* Six terrains separated by a lightness ladder rather than by hue.
+       Forest and pasture are both green, fields and desert both warm sand, so
+       hue alone can never tell those pairs apart — value and chroma do it.
+       The test: desaturate the board and check no two adjacent tiles merge. */
+    --forest: #1B5637;      /* L 32 */
+    --mountains: #566373;   /* L 42 — deliberately the least saturated thing on
+                               the board, which is what leaves the blue part of
+                               the wheel free for a player colour. Making these
+                               bluer would cost seat 1 its legibility. */
+    --hills: #C2492A;       /* L 50 */
+    --fields: #E8A020;      /* L 70 */
+    --pasture: #A8C64A;     /* L 78 */
+    --desert: #E6D2A8;      /* L 86 */
+    --water: #31AFC9;
+
+    /* Placed against that ladder rather than chosen alone: each has to read on
+       all six terrains and be told from the other three at a glance. Violet is
+       the one hue nothing else on the board occupies. */
+    --p0: #0B72E8; --p1: #E01B4C; --p2: #F7F2E7; --p3: #6B3FA0;
   }
   * { box-sizing: border-box; }
   /* The board should use the window it is given, so the page is a column that
@@ -35,14 +46,14 @@
     /* Two wide, faint pools of colour rather than a flat field, so the dark
        reads as depth instead of as absence. */
     background:
-      radial-gradient(1200px 620px at 85% -18%, rgba(99, 91, 255, .20), transparent 62%),
-      radial-gradient(900px 520px at 96% 6%, rgba(255, 94, 140, .16), transparent 58%),
-      radial-gradient(700px 520px at 62% -12%, rgba(10, 164, 245, .16), transparent 60%),
+      radial-gradient(1200px 620px at 85% -18%, rgba(232, 84, 47, .12), transparent 62%),
+      radial-gradient(900px 520px at 96% 6%, rgba(245, 168, 28, .12), transparent 58%),
+      radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%),
       var(--bg);
   }
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.72);
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(251, 247, 239, .78);
     backdrop-filter: saturate(150%) blur(10px);
     flex: none;
   }
@@ -50,20 +61,20 @@
   header .status { color: var(--dim); }
   header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
   .vid { font: 600 8px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
-         dominant-baseline: central; pointer-events: none; fill: #0a2540; }
-  .vid.coast { fill: #0b6bb8; }
+         dominant-baseline: central; pointer-events: none; fill: #33261B; }
+  .vid.coast { fill: #1E7E96; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
   button, select {
-    font: inherit; color: var(--ink); background: #fff;
+    font: inherit; color: var(--ink); background: var(--panel);
     border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer;
-    box-shadow: 0 1px 2px rgba(10, 37, 64, .06);
+    box-shadow: 0 1px 2px rgba(51, 38, 27, .07);
   }
-  button:hover:not(:disabled) { background: #f6f9fc; border-color: #cfd8e3; }
+  button:hover:not(:disabled) { background: #F3EDE1; border-color: #D3C6AE; }
   #new, #propose {
     background: linear-gradient(135deg, var(--accent), var(--accent2));
     border-color: transparent; color: #fff; font-weight: 600;
-    box-shadow: 0 2px 6px rgba(99, 91, 255, .35);
+    box-shadow: 0 2px 6px rgba(232, 84, 47, .30);
   }
   #new:hover, #propose:hover:not(:disabled) { filter: brightness(1.08); }
   .choices button:hover:not(:disabled) { border-color: var(--accent); }
@@ -79,7 +90,7 @@
   }
   .panel {
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
-    box-shadow: 0 2px 5px rgba(10, 37, 64, .04), 0 12px 28px rgba(10, 37, 64, .06);
+    box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07);
   }
   .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
               color: var(--dim); margin: 0 0 8px; font-weight: 600; }
@@ -102,8 +113,8 @@
   }
   .hexnum { font: 600 13px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
             dominant-baseline: central; pointer-events: none; }
-  .pip { fill: #1b1d22; }
-  .red { fill: #d13b3b; }
+  .pip { fill: #33261B; }
+  .red { fill: #C2492A; }
   .spot { cursor: pointer; }
   /* A ghost drifts; a placed piece does not. The movement is what separates
      "could go here" from "is here" without another colour or outline. Small
@@ -124,11 +135,11 @@
   th { color: var(--dim); font-weight: 500; font-size: 11px; }
   .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
   .cards { display: flex; gap: 6px; flex-wrap: wrap; }
-  .card { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: #f6f9fc; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: #F3EDE1; }
   .card b { font-variant-numeric: tabular-nums; }
   #log { max-height: 200px; overflow-y: auto; color: var(--dim); font-size: 12px; }
   #log div { padding: 1px 0; }
-  #note { color: #c2410c; }
+  #note { color: #E8542F; }
   .toRow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .toRow select { flex: 1; }
   .compose { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -262,7 +273,7 @@ function portGroups() {
 
 // Player colours as values rather than CSS variables, because a piece is
 // drawn in several tones of one colour and they have to be computed.
-const SEAT_HEX = ['#1d6fe0', '#e0244f', '#6b7c93', '#e8720c'];
+const SEAT_HEX = ['#0B72E8', '#E01B4C', '#F7F2E7', '#6B3FA0'];
 const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
 
 // The palette the drawings are in, and how light each tone is relative to the
@@ -415,7 +426,7 @@ function draw() {
       // again, since the disc supplies the contrast whatever is under it.
       g.appendChild(el('circle', { cx, cy, r: 17, fill: '#ffffff' }));
       const hot = h.number === 6 || h.number === 8;
-      const ink = hot ? '#c02626' : '#1b1d22';
+      const ink = hot ? '#C2492A' : '#33261B';
       const t = el('text', { x: cx, y: cy - 3, class: 'hexnum', fill: ink });
       t.textContent = h.number;
       g.appendChild(t);
