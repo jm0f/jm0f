@@ -1071,7 +1071,7 @@ function renderSeats(v) {
       html += `<span class="tag ${s.timeLeft <= 0 ? 'tag-default' : 'tag-outline'}"`
         + ` data-clock="${s.seat}"`
         + ` data-tip="${v.clock === 'chess' ? 'left in their bank' : 'their allowance each turn'}">`
-        + `${m}:${String(sec).padStart(2, '0')}${s.onClock ? ' \u25B8' : ''}</span>`;
+        + `${m}:${String(sec).padStart(2, '0')}</span>`;
     }
     if (s.longestRoad) html += `<span class="tag tag-default">longest road · ${s.road}</span>`;
     if (s.largestMilitia) html += `<span class="tag tag-default">largest militia · ${s.militia}</span>`;
@@ -1256,7 +1256,7 @@ function tickClock() {
     const tag = document.querySelector(`[data-clock="${s.seat}"]`);
     if (!tag) return;
     const t = Math.max(0, s.left - (s.running ? gone : 0));
-    tag.textContent = mmss(t) + (s.running ? ' \u25B8' : '');
+    tag.textContent = mmss(t);
     tag.classList.toggle('tag-default', t <= 0);
     tag.classList.toggle('tag-outline', t > 0);
   });
