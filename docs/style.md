@@ -218,13 +218,29 @@ that implies a lens.
 
 ## 6. Typography
 
+Two faces, both **SIL Open Font Licence**, both served from the binary. The
+licence matters as much as the design: a commercial webfont can be *used* but
+not redistributed, and this page makes no external requests, so the file has to
+live in the repository. Anything we cannot ship in the repo, we cannot use.
+
+| Face | Role |
+|---|---|
+| **Fraunces** | Display. A variable serif with an optical-size axis and a `WONK` axis that flares its terminals — the retro park-poster quality, available as a switch rather than as a redraw. |
+| **Figtree** | Everything else. Geometric-humanist, large x-height, level colour at small sizes. |
+
 | Role | Treatment |
 |---|---|
-| Display | Heavy rounded geometric sans, tight tracking, often in vermillion on paper |
-| Headings | Condensed geometric sans, small caps, generous letter-spacing |
-| Body | Humanist sans, normal weight, ink-soft |
+| Wordmark | Fraunces 700, `opsz 120`, `SOFT 20`, `WONK 1`, in vermillion on paper |
+| Headings | Figtree 600, uppercase, 0.08em tracking, ink-soft |
+| Body | Figtree 400, ink |
 | Numerals | Tabular, always — quantities line up in columns |
-| Labels | Small caps, 0.08em tracking, ink-soft |
+| Labels | Figtree 600, uppercase, 0.08em tracking, ink-soft |
+
+**Use the optical-size axis for what it is.** Fraunces at `opsz 144` is drawn
+for a headline; the same glyphs at 14px come out as hairlines. Board numerals
+were set that way once and the discs went weak — they are back in Figtree 700,
+which is the right answer for the mark you read on every roll. Display faces
+go on things that are looked at, not on things that are read at speed.
 
 Never centre body text. Never justify. Never use more than two weights on one
 surface.

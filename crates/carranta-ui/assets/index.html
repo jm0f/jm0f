@@ -6,7 +6,25 @@
 <title>Carranta</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
 <style>
+  /* Two faces, served from the binary — style.md §6.
+     Fraunces for display: a variable serif with an optical-size axis and a
+     "wonk" axis that flares its terminals, which is the retro park-poster
+     quality the board is after. Figtree for everything read rather than
+     looked at: geometric-humanist, large x-height, level colour at small
+     sizes. Both SIL Open Font Licence, which is what lets them live in the
+     repository instead of being fetched from someone else's server.
+     `swap` because a board that renders late is worse than one that reflows. */
+  @font-face {
+    font-family: 'Fraunces'; font-style: normal; font-weight: 300 900;
+    font-display: swap; src: url(/font/fraunces.woff2) format('woff2');
+  }
+  @font-face {
+    font-family: 'Figtree'; font-style: normal; font-weight: 300 900;
+    font-display: swap; src: url(/font/figtree.woff2) format('woff2');
+  }
   :root {
+    --sans: 'Figtree', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --display: 'Fraunces', Georgia, 'Times New Roman', serif;
     /* Ink on warm paper, not pixels on a screen — docs/style.md. Nothing is
        pure white because paper is not; nothing is pure black because ink is
        not. The one exception is the number discs, which need to punch. */
@@ -54,7 +72,9 @@
      sharing what is left. Nothing scrolls the page itself. */
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 14px/1.5 var(--sans);
+    /* Quantities line up in columns everywhere — style.md §6. */
+    font-variant-numeric: tabular-nums;
     height: 100vh; height: 100dvh; overflow: hidden;
     display: flex; flex-direction: column;
     /* Two wide, faint pools of colour rather than a flat field, so the dark
@@ -71,10 +91,16 @@
     backdrop-filter: saturate(150%) blur(10px);
     flex: none;
   }
-  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  /* The wordmark is the one place the display face is allowed to be itself:
+     large optical size for the high contrast, wonk on for the flared leg. */
+  h1 {
+    font: 700 22px/1 var(--display); margin: 0; letter-spacing: .005em;
+    font-variation-settings: 'opsz' 120, 'SOFT' 20, 'WONK' 1;
+    color: var(--accent);
+  }
   header .status { color: var(--dim); }
   header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
-  .vid { font: 600 8px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
+  .vid { font: 600 8px var(--sans); text-anchor: middle;
          dominant-baseline: central; pointer-events: none; fill: #33261B; }
   .vid.coast { fill: #1E7E96; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -129,8 +155,14 @@
   .reserved { display: flex; flex-direction: column; justify-content: center;
               flex: 1; text-align: center; color: var(--dim); }
   .reserved p { margin: 0; font-size: .92em; line-height: 1.45; opacity: .75; }
-  .hexnum { font: 600 13px ui-sans-serif, system-ui, sans-serif; text-anchor: middle;
-            dominant-baseline: central; pointer-events: none; }
+  /* Board numerals take the text face, not the display one. Fraunces was tried
+     here and is wrong at this size for the reason optical-size axes exist: its
+     display cut thins the strokes to hairlines, and a 6 inside a 17-unit disc
+     is the mark on this board that can least afford it. Sturdy beats
+     characterful on the thing you read every roll. */
+  .hexnum { font: 700 13.5px var(--sans); text-anchor: middle;
+            dominant-baseline: central; pointer-events: none;
+            font-variant-numeric: tabular-nums; }
   .pip { fill: #33261B; }
   .red { fill: #C2492A; }
   .spot { cursor: pointer; }

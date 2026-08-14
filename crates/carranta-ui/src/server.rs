@@ -46,6 +46,24 @@ const ART: [(&str, &str); 5] = [
     ("city", include_str!("../../../art/city.svg")),
 ];
 
+/// The two typefaces, carried in the binary like everything else.
+///
+/// Both are under the SIL Open Font Licence, which is why they can live in the
+/// repository at all: a commercial webfont licence would let us *use* the font
+/// but not redistribute the file, and this page has no external requests to
+/// load one from. The licences ship beside them in `assets/fonts/`, which the
+/// OFL requires.
+///
+/// Figtree is Google's latin subset as served. Fraunces is cut down to the
+/// printable latin range — it is a display face used for a wordmark and a
+/// dozen headings, and the full build is six times the size for glyphs no
+/// heading will ever contain. All four of its axes survive the cut, including
+/// the optical size and the wonk that give it its character.
+const FONTS: [(&str, &[u8]); 2] = [
+    ("figtree", include_bytes!("../assets/fonts/figtree.woff2")),
+    ("fraunces", include_bytes!("../assets/fonts/fraunces.woff2")),
+];
+
 /// Largest request body accepted. A click is a few dozen bytes; anything
 /// larger is a mistake or a probe, and is refused rather than buffered.
 const MAX_BODY: usize = 4 * 1024;
@@ -137,6 +155,13 @@ impl Server {
                 let name = p.trim_start_matches("/art/").trim_end_matches(".svg");
                 match ART.iter().find(|(n, _)| *n == name) {
                     Some((_, body)) => respond(&mut stream, 200, "image/svg+xml", body.as_bytes()),
+                    None => respond(&mut stream, 404, "text/plain", b"not found"),
+                }
+            }
+            ("GET", p) if p.starts_with("/font/") => {
+                let name = p.trim_start_matches("/font/").trim_end_matches(".woff2");
+                match FONTS.iter().find(|(n, _)| *n == name) {
+                    Some((_, bytes)) => respond(&mut stream, 200, "font/woff2", bytes),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
             }
