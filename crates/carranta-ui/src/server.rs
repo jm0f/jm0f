@@ -14,7 +14,7 @@ use carranta_core::state::TradeMode;
 
 use carranta_core::action::Illegal;
 
-use crate::game::{Refused, Session};
+use crate::game::{Expiry, Refused, Session};
 use crate::json;
 use crate::view;
 
@@ -217,7 +217,16 @@ impl Server {
                     .and_then(|v| v.parse().ok())
                     // No clock dependency: the previous game's seed advances.
                     .unwrap_or_else(|| session.seed().wrapping_add(1));
-                *session = Session::new(seats, seed, mode);
+                // The clock is a lobby setting: seconds, zero for untimed,
+                // plus what running out should do.
+                let clock: u64 = param(query, "clock")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let expiry = match param(query, "expiry").as_deref() {
+                    Some("call") => Expiry::CallTheGame,
+                    _ => Expiry::Overtime,
+                };
+                *session = Session::new(seats, seed, mode).with_clock(clock, expiry);
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }

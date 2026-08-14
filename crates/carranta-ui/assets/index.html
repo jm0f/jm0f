@@ -365,6 +365,46 @@
     background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10);
     font-variant-numeric: tabular-nums; font-size: 1.05em; letter-spacing: .02em;
   }
+  /* The last minute, then past the end. Colour rather than a blink: the clock
+     should be readable at a glance, not competing with the board for notice. */
+  .clock.low { color: var(--accent); font-weight: 600; }
+  .clock.over { background: var(--accent); border-color: transparent;
+                color: var(--primary-foreground); font-weight: 600; }
+
+  /* ---- lobby ------------------------------------------------------------ */
+  .lobby[hidden] { display: none; }
+  .lobby {
+    position: fixed; inset: 0; z-index: 60; overflow-y: auto;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: clamp(16px, 4vh, 56px) 16px;
+    background:
+      radial-gradient(900px 500px at 50% -10%, rgba(232, 84, 47, .13), transparent 62%),
+      var(--background);
+  }
+  .lobbyCard { width: min(560px, 100%); padding: clamp(20px, 3vw, 32px); }
+  .lobbyTitle { font-family: var(--display); font-size: 32px; margin: 0;
+                color: var(--accent); font-weight: 700; letter-spacing: .01em; }
+  .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
+  .field { margin-bottom: 1.35em; }
+  .fieldLabel { display: block; font-size: 11px; text-transform: uppercase;
+                letter-spacing: .08em; color: var(--muted-foreground);
+                font-weight: 600; margin-bottom: .5em; }
+  .fieldNote { margin: .5em 0 0; font-size: 12px; line-height: 1.45;
+               color: var(--muted-foreground); }
+  .segmented { display: flex; flex-wrap: wrap; gap: 6px; }
+  .segmented button[aria-pressed="true"] {
+    background: var(--primary); border-color: transparent;
+    color: var(--primary-foreground); font-weight: 600;
+  }
+  .segmented button[aria-pressed="true"]:hover { background: var(--primary); filter: brightness(1.07); }
+  .seatSlots { display: flex; flex-direction: column; gap: 6px; }
+  .seatSlot { display: flex; align-items: center; gap: 10px; }
+  .seatSlot .dot { width: 1.05em; height: 1.05em; border-radius: 50%; flex: none; }
+  .seatSlot .slotName { flex: 1; font-weight: 500; }
+  .seed {
+    font: inherit; width: 100%; color: var(--foreground); background: var(--card);
+    border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px;
+  }
 
   /* ---- the card that waits for you -------------------------------------- */
   /* It takes the decision and never the board. Rather than float over the
@@ -410,15 +450,58 @@
   <span class="status" id="status">loading…</span>
   <span class="build" id="build"></span>
   <span class="spacer"></span>
-  <select id="seats"><option value="3">3 seats</option><option value="4" selected>4 seats</option></select>
-  <select id="mode">
-    <option value="full" selected>open market</option>
-    <option value="restricted">1-for-1 trades</option>
-    <option value="disabled">no trading</option>
-  </select>
   <label class="toggle"><input type="checkbox" id="labels"> ids</label>
   <button id="new" class="btn-primary">New game</button>
 </header>
+
+<!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
+     dropdowns above it: the settings get room to say what they do, and the
+     header keeps only whose turn it is. Seats read "bot" or "open" so the shape
+     is right for people joining, though only bots sit behind them today. -->
+<div class="lobby" id="lobby" hidden>
+  <div class="lobbyCard panel">
+    <h1 class="lobbyTitle">Carranta</h1>
+    <p class="lobbyLead">Set the table, then deal.</p>
+
+    <div class="field">
+      <span class="fieldLabel">Seats</span>
+      <div class="segmented" id="lobbySeats"></div>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel">Who is playing</span>
+      <div class="seatSlots" id="lobbySlots"></div>
+      <p class="fieldNote">Open seats are held for people. Until the server can
+        take them, a bot plays the seat and the game runs as it does now.</p>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel">Market</span>
+      <div class="segmented" id="lobbyMode"></div>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel">Game clock</span>
+      <div class="segmented" id="lobbyClock"></div>
+      <p class="fieldNote">The clock counts down from here. It belongs to the
+        server, so reloading the page does not give anyone more time.</p>
+    </div>
+
+    <div class="field" id="lobbyExpiryField">
+      <span class="fieldLabel">When time runs out</span>
+      <div class="segmented" id="lobbyExpiry"></div>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel">Seed</span>
+      <input id="lobbySeed" class="seed" type="text" inputmode="numeric"
+             placeholder="leave empty for the next one">
+      <p class="fieldNote">The same seed deals the same board.</p>
+    </div>
+
+    <button id="lobbyStart" class="btn-primary btn-block">Deal the board</button>
+  </div>
+</div>
 
 <main>
   <aside class="col left">
@@ -798,8 +881,9 @@ function fit(svg) {
 
 function render() {
   const v = view;
+  const how = v.calledOnTime ? ' on time — most points showing' : '';
   const turn = v.winner !== null
-    ? (v.winner === v.you ? 'You won' : `${seatName(v, v.winner)} won`)
+    ? (v.winner === v.you ? `You won${how}` : `${seatName(v, v.winner)} won${how}`)
     : (v.yourTurn ? `Your move — ${v.phase}` : `${seatName(v, v.toAct)} is playing`);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.getElementById('status').textContent = `${turn}${dice} · seed ${v.seed}`;
@@ -816,7 +900,7 @@ function render() {
   // the composer replaces, and accepting or withdrawing, which belong beside
   // the offer itself where its contents are visible — "Accept offer 0" says
   // considerably less than the offer does.
-  clockFrom(v.elapsed);
+  clockFrom(v);
   renderSeats(v);
   renderHand(v);
   renderActions(v);
@@ -1062,25 +1146,125 @@ function renderActions(v) {
 }
 
 // ---- the clock -------------------------------------------------------------
-// The server owns the start time, so a reload does not reset it; the page only
-// carries the count forward between polls rather than keeping its own idea of
-// when the game began.
-let clockBase = 0, clockAt = 0;
-function clockFrom(seconds) {
-  clockBase = seconds || 0;
+// The server owns the start time and the limit, so a reload does not reset the
+// clock or hand anybody more time. The page only carries the count between
+// polls rather than keeping its own idea of when the game began.
+//
+// A timed game counts down; an untimed one counts up. Past zero it keeps going
+// and shows the overrun, because a clock frozen at 0:00 reads as broken.
+let clockBase = 0, clockAt = 0, clockDown = false;
+function clockFrom(v) {
+  clockDown = v.clockLimit !== null && v.clockLimit !== undefined;
+  clockBase = clockDown ? v.remaining : (v.elapsed || 0);
   clockAt = Date.now();
   tickClock();
 }
-function tickClock() {
-  const t = clockBase + Math.floor((Date.now() - clockAt) / 1000);
-  const el = document.getElementById('clock');
-  if (!el) return;
+function mmss(t) {
   const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
-  el.textContent = h
-    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     : `${m}:${String(s).padStart(2, '0')}`;
 }
+function tickClock() {
+  const el = document.getElementById('clock');
+  if (!el) return;
+  const gone = Math.floor((Date.now() - clockAt) / 1000);
+  const t = clockDown ? clockBase - gone : clockBase + gone;
+  el.classList.toggle('low', clockDown && t > 0 && t <= 60);
+  el.classList.toggle('over', clockDown && t <= 0);
+  el.textContent = clockDown && t <= 0 ? `+${mmss(-t)}` : mmss(Math.max(0, t));
+  const label = el.parentElement.querySelector('.dockLabel');
+  if (label) label.textContent = clockDown ? (t <= 0 ? 'over time' : 'remaining') : 'elapsed';
+}
 setInterval(tickClock, 1000);
+
+// ---- the lobby -------------------------------------------------------------
+// Settings live here rather than in the header: a lobby is configurable while
+// people are still arriving, which a row of dropdowns over a live board is not.
+const SEAT_ROLES = ['you', 'bot', 'open'];
+const lobby = {
+  seats: 4,
+  roles: ['you', 'bot', 'bot', 'bot'],
+  mode: 'full',
+  clock: 0,
+  expiry: 'call',
+  seed: '',
+};
+const CLOCKS = [[0, 'untimed'], [900, '15 min'], [1800, '30 min'], [2700, '45 min'], [3600, '60 min']];
+
+function segmented(host, options, current, pick) {
+  host.textContent = '';
+  options.forEach(([value, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(value === current));
+    b.onclick = () => { pick(value); renderLobby(); };
+    host.appendChild(b);
+  });
+}
+
+function renderLobby() {
+  segmented(document.getElementById('lobbySeats'),
+    [[3, '3 seats'], [4, '4 seats']], lobby.seats, v => {
+      lobby.seats = v;
+      lobby.roles = lobby.roles.slice(0, v);
+      while (lobby.roles.length < v) lobby.roles.push('bot');
+    });
+
+  const slots = document.getElementById('lobbySlots');
+  slots.textContent = '';
+  for (let i = 0; i < lobby.seats; i++) {
+    const row = document.createElement('div');
+    row.className = 'seatSlot';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = COLOURS[i];
+    const name = document.createElement('span');
+    name.className = 'slotName';
+    name.textContent = i === 0 ? 'you' : BOT_NAMES[i];
+    const seg = document.createElement('div');
+    seg.className = 'segmented';
+    // Seat 0 is the person at this browser; the rest can be a bot or held open.
+    const choices = i === 0 ? [['you', 'you']] : [['bot', 'bot'], ['open', 'open']];
+    segmented(seg, choices, lobby.roles[i], v => { lobby.roles[i] = v; });
+    row.append(dot, name, seg);
+    slots.appendChild(row);
+  }
+
+  segmented(document.getElementById('lobbyMode'),
+    [['full', 'open market'], ['restricted', '1-for-1 only'], ['disabled', 'no trading']],
+    lobby.mode, v => { lobby.mode = v; });
+
+  segmented(document.getElementById('lobbyClock'), CLOCKS, lobby.clock, v => { lobby.clock = v; });
+
+  // Nothing to decide about running out if there is no clock to run out.
+  document.getElementById('lobbyExpiryField').hidden = !lobby.clock;
+  segmented(document.getElementById('lobbyExpiry'),
+    [['call', 'the game is called — most points showing wins'],
+     ['overtime', 'keep playing — the clock just runs on']],
+    lobby.expiry, v => { lobby.expiry = v; });
+
+  document.getElementById('lobbySeed').value = lobby.seed;
+}
+
+function openLobby() {
+  document.getElementById('lobby').hidden = false;
+  renderLobby();
+  document.getElementById('lobbySeats').querySelector('button').focus();
+}
+
+document.getElementById('lobbyStart').onclick = () => {
+  lobby.seed = document.getElementById('lobbySeed').value.trim();
+  const q = new URLSearchParams({
+    seats: String(lobby.seats),
+    mode: lobby.mode,
+    clock: String(lobby.clock),
+    expiry: lobby.expiry,
+  });
+  if (/^\d+$/.test(lobby.seed)) q.set('seed', lobby.seed);
+  document.getElementById('lobby').hidden = true;
+  load(`/api/new?${q}`, { method: 'POST' });
+};
 
 const PIPS = {
   1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]],
@@ -1406,12 +1590,15 @@ function act(i) {
   });
 }
 document.getElementById('labels').onchange = () => { if (view) { draw(); } };
-document.getElementById('new').onclick = () => {
-  const seats = document.getElementById('seats').value;
-  const mode = document.getElementById('mode').value;
-  load(`/api/new?seats=${seats}&mode=${mode}`, { method: 'POST' });
-};
-loadArt().then(() => load('/api/state'));
+// New game goes through the lobby rather than restarting on the spot: the
+// settings are the point of pressing it.
+document.getElementById('new').onclick = openLobby;
+// A game nobody has touched yet gets the lobby; one already in progress does
+// not, so reloading the page mid-game returns you to the board rather than
+// making you deal a new one.
+loadArt()
+  .then(() => load('/api/state'))
+  .then(() => { if (view.version === 0) openLobby(); });
 
 // The server is restarted whenever a change is pulled, and a page served by
 // the old one cannot re-render its way up to date. Watch the build stamp and

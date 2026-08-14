@@ -15,6 +15,20 @@ use carranta_record::fog::{Fog, Viewer, fog};
 /// The seat a person plays.
 pub const HUMAN: u8 = 0;
 
+/// What happens when a timed game runs out.
+///
+/// Kept at the session layer on purpose. Ending on the clock is a house rule
+/// about how long people want to sit there, not a rule of the game, and the
+/// engine's own win condition stays the only thing in `carranta-core` that can
+/// declare a winner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Expiry {
+    /// The clock keeps running past zero and the game plays to its own finish.
+    Overtime,
+    /// Play stops and whoever is ahead on public points takes it.
+    CallTheGame,
+}
+
 /// Why an action was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
@@ -41,6 +55,9 @@ pub struct Session {
     /// When this game was dealt. The clock belongs to the server rather than
     /// to the page, so reloading the browser does not restart it.
     started: std::time::Instant,
+    /// How long the game is allowed to run, in seconds. `None` is untimed.
+    limit: Option<u64>,
+    expiry: Expiry,
 }
 
 impl Session {
@@ -58,12 +75,68 @@ impl Session {
             declined: [false; MAX_OFFERS],
             seed,
             started: std::time::Instant::now(),
+            limit: None,
+            expiry: Expiry::Overtime,
         }
+    }
+
+    /// Put this game on a clock. Zero seconds means untimed, so the lobby can
+    /// pass "off" without a special case.
+    pub fn with_clock(mut self, limit_secs: u64, expiry: Expiry) -> Self {
+        self.limit = (limit_secs > 0).then_some(limit_secs);
+        self.expiry = expiry;
+        self
     }
 
     /// Whole seconds since the game was dealt.
     pub fn elapsed_secs(&self) -> u64 {
         self.started.elapsed().as_secs()
+    }
+
+    /// The limit in seconds, if this game is on a clock.
+    pub fn limit_secs(&self) -> Option<u64> {
+        self.limit
+    }
+
+    pub fn expiry(&self) -> Expiry {
+        self.expiry
+    }
+
+    /// Seconds left. Negative once the clock has run out, so the page can show
+    /// overtime rather than sitting at zero and looking broken.
+    pub fn remaining_secs(&self) -> Option<i64> {
+        self.limit
+            .map(|l| l as i64 - self.elapsed_secs().min(i64::MAX as u64) as i64)
+    }
+
+    /// Whether the clock has run out at all — true under either expiry rule.
+    pub fn out_of_time(&self) -> bool {
+        self.remaining_secs().is_some_and(|r| r <= 0)
+    }
+
+    /// Whether the clock has actually stopped play.
+    pub fn called_on_time(&self) -> bool {
+        self.expiry == Expiry::CallTheGame && self.out_of_time()
+    }
+
+    /// Who has won: the engine's own verdict, or — when the clock has been
+    /// allowed to stop play — whoever is ahead on the points the table can see.
+    ///
+    /// Public points, not real ones, because a called game is decided on what
+    /// was on the board when time ran out. Ties go to the earliest seat, which
+    /// is arbitrary but has to be something.
+    pub fn winner(&self) -> Option<u8> {
+        if let Phase::GameOver { winner } = self.state.phase {
+            return Some(winner);
+        }
+        if !self.called_on_time() {
+            return None;
+        }
+        // Reversed seat index in the key, because `max_by_key` keeps the *last*
+        // of several equal maxima and the tie is meant to go to the earliest.
+        (0..self.state.players as usize)
+            .max_by_key(|&p| (self.state.public_victory_points(p), std::cmp::Reverse(p)))
+            .map(|p| p as u8)
     }
 
     pub fn version(&self) -> u64 {
@@ -91,7 +164,10 @@ impl Session {
     ///
     /// Empty while it is a bot's turn and nothing is being asked of the human.
     pub fn choices(&self) -> Vec<Choice> {
-        if matches!(self.state.phase, Phase::GameOver { .. }) {
+        // A called game offers nothing, the same as a finished one. Checked
+        // here rather than in the routes so there is one gate rather than one
+        // per entry point.
+        if matches!(self.state.phase, Phase::GameOver { .. }) || self.called_on_time() {
             return Vec::new();
         }
         if self.state.decider() == HUMAN {
@@ -846,5 +922,47 @@ mod tests {
             assert!(!phrase.is_empty(), "{a:?} has no phrase");
             assert!(!Choice::Play(a).group().is_empty());
         }
+    }
+
+    #[test]
+    fn an_untimed_game_has_no_clock_and_never_runs_out() {
+        let s = Session::new(4, 1, TradeMode::Full);
+        assert_eq!(s.limit_secs(), None);
+        assert_eq!(s.remaining_secs(), None);
+        assert!(!s.out_of_time());
+        assert!(!s.called_on_time());
+        assert!(!s.choices().is_empty(), "an untimed game is still playable");
+    }
+
+    #[test]
+    fn a_zero_length_clock_means_untimed_rather_than_already_over() {
+        // The lobby sends "off" as zero, so this is the path a normal game
+        // takes, not an edge case.
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(0, Expiry::CallTheGame);
+        assert_eq!(s.limit_secs(), None);
+        assert!(!s.called_on_time());
+        assert!(!s.choices().is_empty());
+    }
+
+    #[test]
+    fn overtime_runs_the_clock_past_zero_without_stopping_play() {
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(1, Expiry::Overtime);
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(s.out_of_time(), "the clock has run out");
+        assert!(s.remaining_secs().is_some_and(|r| r <= 0), "counts past zero");
+        assert!(!s.called_on_time(), "overtime does not call the game");
+        assert!(!s.choices().is_empty(), "play continues");
+        assert_eq!(s.winner(), None);
+    }
+
+    #[test]
+    fn a_called_game_offers_nothing_and_names_a_winner() {
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(1, Expiry::CallTheGame);
+        assert!(!s.called_on_time(), "not yet");
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(s.called_on_time());
+        assert!(s.choices().is_empty(), "a called game is unplayable");
+        // Nobody has scored, so the tie goes to the earliest seat.
+        assert_eq!(s.winner(), Some(0));
     }
 }

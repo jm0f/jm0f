@@ -177,13 +177,40 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 A **setup screen before the game**, not a row of dropdowns above it. The board
 does not exist yet when you are on it.
 
-It carries: seat count, who holds each seat, trading mode, bot pacing, and
-optionally a seed. It stays configurable **while people join** — which is what
-makes it a lobby rather than a settings dialog.
+It carries: seat count, who holds each seat, trading mode, the game clock,
+what happens when the clock runs out, and optionally a seed. It stays
+configurable **while people join** — which is what makes it a lobby rather than
+a settings dialog.
 
-**Bot pacing is a lobby choice, not a global setting**: play the bots' turns
-out at reading speed so you can see what they are doing, or resolve them
-instantly. Both are legitimate and it depends on the mood you are in.
+A fresh server opens on the lobby. A reload part-way through a game does not:
+the board comes back instead, because the clock is running and dealing again
+would be the wrong default.
+
+**Bot pacing belongs here too** — play the bots' turns out at reading speed, or
+resolve them instantly. It is **not built yet** and so is not in the lobby:
+bots currently run to completion inside the request that ends your turn, and
+pacing them means the server holding a turn open and being stepped. A control
+that does nothing is worse than a control that is missing.
+
+### The clock
+
+Untimed, or 15 / 30 / 45 / 60 minutes, counting **down**. It belongs to the
+server — `Session` holds the start time and the limit — so reloading the page
+does not hand anybody more time. The page only carries the count between polls.
+
+Past zero it keeps going and shows the overrun as `+0:42`, because a clock
+frozen at `0:00` reads as broken. The last minute turns vermillion; overtime
+inverts.
+
+**Running out is a house rule, not a rule of the game**, so it lives in
+`Session` and never in `carranta-core` — the engine's own win condition stays
+the only thing in the engine that can declare a winner. Two settings:
+
+- **The game is called.** Play stops, and whoever is ahead on *public* points
+  takes it — what was on the board when time ran out, not what was hidden in
+  hands. Ties go to the earliest seat, which is arbitrary but has to be
+  something.
+- **Keep playing.** The clock runs on and the game plays to its own finish.
 
 ### What "while people join" implies
 

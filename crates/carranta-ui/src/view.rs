@@ -10,7 +10,7 @@ use carranta_core::topology::{
     vertex_bit,
 };
 
-use crate::game::{HUMAN, Session, Target};
+use crate::game::{Expiry, HUMAN, Session, Target};
 use crate::json::Json;
 
 const RESOURCES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
@@ -66,13 +66,9 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.int("toAct", v.to_act as i64);
     j.str("phase", phase_name(v.phase));
     j.bool("yourTurn", session.state().decider() == HUMAN);
-    j.opt_int(
-        "winner",
-        match v.phase {
-            Phase::GameOver { winner } => Some(winner as i64),
-            _ => None,
-        },
-    );
+    // The session's verdict, not the engine's: a game stopped by the clock has
+    // a winner the engine knows nothing about.
+    j.opt_int("winner", session.winner().map(|w| w as i64));
     match note {
         Some(n) => j.str("note", n),
         None => j.str("note", ""),
@@ -164,8 +160,19 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.int("devLeft", v.dev_left as i64);
     j.ints("dice", v.dice.iter().map(|&n| n as i64));
     // The clock is read from the server rather than kept by the page, so a
-    // reload shows how long the game has actually been going.
+    // reload shows how long the game has actually been going. A timed game
+    // sends what is left; an untimed one sends nothing and the page counts up.
     j.int("elapsed", session.elapsed_secs() as i64);
+    j.opt_int("clockLimit", session.limit_secs().map(|l| l as i64));
+    j.opt_int("remaining", session.remaining_secs());
+    j.bool("calledOnTime", session.called_on_time());
+    j.str(
+        "expiry",
+        match session.expiry() {
+            Expiry::Overtime => "overtime",
+            Expiry::CallTheGame => "call",
+        },
+    );
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {
