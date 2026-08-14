@@ -288,6 +288,35 @@ function tone(hex, amount) {
   return `rgb(${r},${g},${b})`;
 }
 
+// A halo around every piece, in the board's own background colour, so a piece
+// keeps its silhouette against terrain of any tone. Drawn as a dilation of the
+// piece's own alpha rather than a stroke, because stroking the artwork would
+// outline every internal face as well as the outside.
+//
+// The colour is read from the stylesheet at draw time rather than written
+// here, so it follows the theme wherever that goes.
+function pieceHalo(svg) {
+  const bg = getComputedStyle(document.documentElement)
+    .getPropertyValue('--panel').trim() || '#ffffff';
+  const defs = el('defs', {});
+  const f = el('filter', {
+    id: 'halo', x: '-20%', y: '-20%', width: '140%', height: '140%',
+  });
+  f.appendChild(el('feMorphology', {
+    in: 'SourceAlpha', operator: 'dilate', radius: 1.4, result: 'fat',
+  }));
+  f.appendChild(el('feFlood', { 'flood-color': bg, result: 'ink' }));
+  f.appendChild(el('feComposite', {
+    in: 'ink', in2: 'fat', operator: 'in', result: 'edge',
+  }));
+  const m = el('feMerge', {});
+  m.appendChild(el('feMergeNode', { in: 'edge' }));
+  m.appendChild(el('feMergeNode', { in: 'SourceGraphic' }));
+  f.appendChild(m);
+  defs.appendChild(f);
+  svg.appendChild(defs);
+}
+
 // The drawings, fetched once and kept as parsed nodes to clone per piece.
 const art = {};
 async function loadArt() {
@@ -317,6 +346,7 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
   node.setAttribute('x', x - (w * k) / 2);
   node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
+  node.setAttribute('filter', 'url(#halo)');
   svg.appendChild(node);
   return node;
 }
@@ -324,6 +354,7 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
 function draw() {
   const svg = document.getElementById('board');
   svg.textContent = '';
+  pieceHalo(svg);
   const vxy = {};
   view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
 
