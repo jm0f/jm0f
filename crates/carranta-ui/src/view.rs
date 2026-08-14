@@ -177,9 +177,11 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.int("elapsed", session.elapsed_secs() as i64);
     j.str("clock", session.clock().name());
     j.int("clockSecs", session.clock().secs() as i64);
+    j.int("clockIncrement", session.clock().increment() as i64);
     j.str("youName", session.name());
     j.int("turns", session.turn_no() as i64);
     j.bool("inSetup", session.in_setup());
+    j.bool("logShown", session.log_shown());
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {
@@ -218,7 +220,14 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
         o.int("i", i as i64).str("name", name);
     });
 
-    let log = session.log();
+    // A table playing without the record is not sent one. Hiding it in the
+    // page would leave the history sitting in the response for anyone who
+    // opened the network tab, which is not playing from memory.
+    let log: &[_] = if session.log_shown() {
+        session.log()
+    } else {
+        &[]
+    };
     j.array(
         "log",
         log.iter()

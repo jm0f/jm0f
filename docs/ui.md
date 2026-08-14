@@ -106,6 +106,13 @@ Pieces remaining is on the row because it is a real signal. A player down to
 their last settlements is close to winning, and it is the one the raw numbers
 hide.
 
+### The log can be turned off
+
+A table rule, not a personal setting: playing from memory only works if nobody
+has the record. With it off **the server does not send one at all**, because
+hiding it in the page would leave the history sitting in the response for
+anyone who opened the network tab, which is not playing from memory.
+
 ### The log is grouped by turn
 
 Each line carries the turn it happened in and the seat that caused it, so the
@@ -240,7 +247,7 @@ A **setup screen before the game**, not a row of dropdowns above it. The board
 does not exist yet when you are on it.
 
 It carries: your name, the size of the table, who holds each seat, an invite
-link, the turn clock, and a seed. It stays configurable **while people join**, which is what makes it a lobby rather than a settings dialog.
+link, the turn clock, whether the table keeps a log, and a seed. It stays configurable **while people join**, which is what makes it a lobby rather than a settings dialog.
 
 A fresh server opens on the lobby. A reload part-way through a game does not:
 the board comes back instead, because the clock is running and dealing again
@@ -282,7 +289,12 @@ thing that actually runs long.
 
 - **Per turn**, default **60 seconds**: a fresh allowance every turn.
 - **Chess clock**: one bank each for the whole game, draining only while it is
-  your move. Spend it and your turns end as soon as they begin.
+  your move, plus an **increment** credited back for every turn you finish.
+  Spend the bank and your turns end as soon as they begin.
+
+  The increment is what makes it a chess clock rather than a countdown. Without
+  one a long game is decided by the clock instead of by the board; with one, a
+  player who keeps moving keeps playing. Set it to zero for sudden death.
 - **No clock.**
 
 It belongs to the server: `Session` holds the allowance, when the current turn

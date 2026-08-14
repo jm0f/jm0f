@@ -93,6 +93,10 @@
     --radius-sm: 6px; --radius-md: 8px; --radius-lg: 14px;
   }
   * { box-sizing: border-box; }
+  /* The hidden attribute is display: none from the user agent, at the weakest
+     possible specificity, so any display rule of ours silently beat it. The
+     clock's seconds row is display: flex and stayed on screen when hidden. */
+  [hidden] { display: none !important; }
 
   /* Every focusable thing shows where it is. The page had no focus treatment
      at all, which meant it could be tabbed through but not followed. */
@@ -489,6 +493,8 @@
   .seed[readonly] { color: var(--muted-foreground); }
   .copyRow { display: flex; gap: 6px; align-items: center; }
   .copyRow .unit { color: var(--muted-foreground); font-size: 12px; }
+  .copyRow.spent { opacity: .45; }
+  .seed:disabled { cursor: default; }
   .seatSlot input.slotName { flex: 1; min-width: 0; }
   .fieldLabel[data-tip] { cursor: help; text-decoration: underline dotted;
                           text-underline-offset: 3px; }
@@ -572,8 +578,17 @@
       <div class="segmented" id="lobbyClockKind"></div>
       <div class="copyRow" id="lobbyClockSecsRow" style="margin-top:6px">
         <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
-        <span class="unit">seconds</span>
+        <span class="unit" id="lobbyClockSecsUnit">seconds</span>
       </div>
+      <div class="copyRow" id="lobbyClockIncRow" style="margin-top:6px">
+        <input id="lobbyClockInc" class="seed" type="number" min="0" max="600" step="1">
+        <span class="unit">seconds back per turn</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel" data-tip="With the log off the server does not send one at all, so the table plays from memory." tabindex="0">Log</span>
+      <div class="segmented" id="lobbyLog"></div>
     </div>
 
     <div class="field">
@@ -598,7 +613,7 @@
       <h2>Players</h2>
       <div id="seatRows"></div>
     </div>
-    <div class="panel logPanel">
+    <div class="panel logPanel" id="logPanel">
       <h2>Log</h2>
       <div id="log"></div>
     </div>
@@ -995,6 +1010,7 @@ function render() {
   // The log, a box per turn in that seat's colour, the way the players list
   // boxes whoever is on the move. A turn is a unit of the game, so it gets a
   // container rather than a rule and some indentation.
+  document.getElementById('logPanel').hidden = v.logShown === false;
   const log = document.getElementById('log');
   // Only follow the tail if you were already at it. Snapping to the bottom on
   // every poll made the history unreadable: scroll up and it yanked you back
@@ -1339,6 +1355,8 @@ const lobby = {
   seats: 4,
   roles: ['you', 'open', 'open', 'open'],
   clockKind: 'turn',
+  clockInc: 10,
+  log: true,
   clockSecs: 60,
   seed: '',
   name: '',
@@ -1354,7 +1372,8 @@ const CLOCK_NOTE = {
       + 'you, rolling first if the dice have not been thrown, since a turn '
       + 'cannot end before them.',
   chess: 'One bank each for the whole game, draining only while it is your '
-       + 'move. Spend it and your turns end as soon as they begin.',
+       + 'move, with an increment credited back for every turn you finish. '
+       + 'Spend the bank and your turns end as soon as they begin.',
   off: 'Nobody is hurried.',
 };
 
@@ -1502,9 +1521,24 @@ function renderLobby() {
       // would turn "60 seconds a turn" into a one-minute chess bank.
       if (v !== 'off') lobby.clockSecs = CLOCK_DEFAULT[v];
     });
-  document.getElementById('lobbyClockSecsRow').hidden = lobby.clockKind === 'off';
-  document.getElementById('lobbyClockSecs').value = lobby.clockSecs;
+  // Greyed rather than removed when there is no clock: a field that vanishes
+  // takes the layout with it, and the number is still worth seeing.
+  const off = lobby.clockKind === 'off';
+  const secs = document.getElementById('lobbyClockSecs');
+  secs.value = lobby.clockSecs;
+  secs.disabled = off;
+  document.getElementById('lobbyClockSecsRow').classList.toggle('spent', off);
+  document.getElementById('lobbyClockSecsUnit').textContent =
+    lobby.clockKind === 'chess' ? 'seconds each' : 'seconds';
+  // The increment is what makes a chess clock a chess clock, so it only exists
+  // when one is chosen.
+  document.getElementById('lobbyClockIncRow').hidden = lobby.clockKind !== 'chess';
+  document.getElementById('lobbyClockInc').value = lobby.clockInc;
   document.getElementById('clockLabel').setAttribute('data-tip', CLOCK_NOTE[lobby.clockKind]);
+
+  segmented(document.getElementById('lobbyLog'),
+    [[true, 'keep a log'], [false, 'play from memory']], lobby.log,
+    v => { lobby.log = v; });
 
   document.getElementById('lobbySeed').value = lobby.seed;
   document.getElementById('lobbyLink').value = inviteLink();
@@ -1546,6 +1580,9 @@ document.getElementById('lobbySeed').oninput = (e) => {
 document.getElementById('lobbyClockSecs').oninput = (e) => {
   lobby.clockSecs = Math.max(5, Number(e.target.value) || 0);
 };
+document.getElementById('lobbyClockInc').oninput = (e) => {
+  lobby.clockInc = Math.max(0, Number(e.target.value) || 0);
+};
 document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.seed);
 document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLink());
 
@@ -1561,7 +1598,9 @@ document.getElementById('lobbyStart').onclick = () => {
     mode: 'full',
     clock: lobby.clockKind,
     clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
+    clockInc: String(lobby.clockKind === 'chess' ? lobby.clockInc : 0),
     name: lobby.name,
+    log: lobby.log ? 'on' : 'off',
   });
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;

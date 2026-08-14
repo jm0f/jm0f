@@ -225,10 +225,15 @@ impl Server {
                 let secs: u64 = param(query, "clockSecs")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0);
-                let clock = Clock::parse(param(query, "clock").as_deref(), secs);
+                let increment: u64 = param(query, "clockInc")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let clock = Clock::parse(param(query, "clock").as_deref(), secs, increment);
                 let name = param(query, "name").unwrap_or_default();
+                let log_shown = param(query, "log").as_deref() != Some("off");
                 *session = Session::new(seats, seed, mode)
                     .with_clock(clock)
+                    .with_log(log_shown)
                     .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())

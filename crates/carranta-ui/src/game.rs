@@ -59,17 +59,22 @@ pub enum Clock {
     Off,
     /// A fresh allowance every turn. Run it out and your turn is ended for you.
     PerTurn(u64),
-    /// One bank each for the whole game, draining only while it is your move,
-    /// a chess clock. Empty it and your turns end the moment they begin.
-    Chess(u64),
+    /// A chess clock: one bank each for the whole game, draining only while it
+    /// is your move, with an increment credited back for each turn you finish.
+    /// Empty the bank and your turns end the moment they begin.
+    ///
+    /// The increment is what makes it a chess clock rather than a sudden-death
+    /// timer. Without one a long game is decided by the clock rather than by
+    /// the board; with one, a player who keeps moving keeps playing.
+    Chess { bank: u64, increment: u64 },
 }
 
 impl Clock {
     /// What the lobby sends: a name and a number of seconds.
-    pub fn parse(kind: Option<&str>, secs: u64) -> Clock {
+    pub fn parse(kind: Option<&str>, secs: u64, increment: u64) -> Clock {
         match (kind, secs) {
             (_, 0) => Clock::Off,
-            (Some("chess"), s) => Clock::Chess(s),
+            (Some("chess"), bank) => Clock::Chess { bank, increment },
             (Some("turn"), s) => Clock::PerTurn(s),
             _ => Clock::Off,
         }
@@ -79,14 +84,24 @@ impl Clock {
         match self {
             Clock::Off => "off",
             Clock::PerTurn(_) => "turn",
-            Clock::Chess(_) => "chess",
+            Clock::Chess { .. } => "chess",
         }
     }
 
     pub fn secs(self) -> u64 {
         match self {
             Clock::Off => 0,
-            Clock::PerTurn(s) | Clock::Chess(s) => s,
+            Clock::PerTurn(s) => s,
+            Clock::Chess { bank, .. } => bank,
+        }
+    }
+
+    /// Seconds credited back for finishing a turn. Zero for anything but a
+    /// chess clock, and legitimately zero for a sudden-death one.
+    pub fn increment(self) -> u64 {
+        match self {
+            Clock::Chess { increment, .. } => increment,
+            _ => 0,
         }
     }
 }
@@ -180,6 +195,9 @@ pub struct Session {
     /// places first in the second round and then moves first in play.
     was_preroll: bool,
     was_placing: bool,
+    /// Whether the table keeps a visible record. A table rule rather than a
+    /// personal setting: playing from memory only works if nobody has the log.
+    log_shown: bool,
     /// Picks a move when the clock runs out in a phase that cannot be passed.
     /// Its own generator rather than the game's, so forfeits never disturb the
     /// dice or the deck.
@@ -213,6 +231,7 @@ impl Session {
             charged_to: HUMAN,
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
+            log_shown: true,
             turns: 1,
             was_preroll: false,
             // The game opens on a placement, which is turn one rather than a
@@ -244,6 +263,16 @@ impl Session {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Play with the record hidden, so the table has to remember.
+    pub fn with_log(mut self, shown: bool) -> Self {
+        self.log_shown = shown;
+        self
+    }
+
+    pub fn log_shown(&self) -> bool {
+        self.log_shown
     }
 
     /// Whole seconds since the game was dealt.
@@ -345,6 +374,17 @@ impl Session {
         self.was_preroll = preroll;
         self.was_placing = placing;
         if deciding != self.charged_to || starting_a_turn {
+            // Finishing a turn credits the increment back, which is the whole
+            // difference between a chess clock and a countdown: a player who
+            // keeps moving keeps playing, and the game is decided on the board.
+            let inc = self.clock.increment();
+            if inc > 0 {
+                let prev = self.charged_to as usize;
+                if prev < MAX_PLAYERS {
+                    self.spent[prev] = self.spent[prev]
+                        .saturating_sub(std::time::Duration::from_secs(inc));
+                }
+            }
             self.turn_began = now;
             self.charged_to = deciding;
             self.turns += 1;
@@ -373,7 +413,7 @@ impl Session {
             } else {
                 n as i64
             }),
-            Clock::Chess(bank) => Some(bank as i64 - self.used(seat).as_secs() as i64),
+            Clock::Chess { bank, .. } => Some(bank as i64 - self.used(seat).as_secs() as i64),
         }
     }
 
@@ -1270,11 +1310,17 @@ mod tests {
     #[test]
     fn zero_seconds_means_untimed_whichever_kind_was_asked_for() {
         // The lobby sends "off" as zero seconds, so this is the ordinary path.
-        assert_eq!(Clock::parse(Some("turn"), 0), Clock::Off);
-        assert_eq!(Clock::parse(Some("chess"), 0), Clock::Off);
-        assert_eq!(Clock::parse(None, 60), Clock::Off);
-        assert_eq!(Clock::parse(Some("turn"), 60), Clock::PerTurn(60));
-        assert_eq!(Clock::parse(Some("chess"), 600), Clock::Chess(600));
+        assert_eq!(Clock::parse(Some("turn"), 0, 0), Clock::Off);
+        assert_eq!(Clock::parse(Some("chess"), 0, 0), Clock::Off);
+        assert_eq!(Clock::parse(None, 60, 0), Clock::Off);
+        assert_eq!(Clock::parse(Some("turn"), 60, 0), Clock::PerTurn(60));
+        assert_eq!(
+            Clock::parse(Some("chess"), 600, 5),
+            Clock::Chess {
+                bank: 600,
+                increment: 5
+            }
+        );
     }
 
     #[test]
@@ -1288,8 +1334,46 @@ mod tests {
     }
 
     #[test]
+    fn a_chess_clock_credits_the_increment_back_for_a_finished_turn() {
+        // Without an increment this is a sudden-death timer, and a long game is
+        // decided by the clock rather than by the board.
+        let mut s = Session::new(4, 5, TradeMode::Full).with_clock(Clock::Chess {
+            bank: 60,
+            increment: 10,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        let before = s.time_left(HUMAN).expect("a bank");
+        assert!(before <= 58, "two seconds of thinking are gone, left {before}");
+        // Half a turn is not a finished turn: placing the settlement leaves
+        // the road still owed, so nothing is credited yet.
+        let v = s.version();
+        s.act(0, v).expect("a legal settlement");
+        assert_eq!(
+            s.time_left(HUMAN),
+            Some(before),
+            "no credit for a turn still in progress"
+        );
+        // Finishing it credits the increment.
+        let v = s.version();
+        s.act(0, v).expect("a legal road");
+        let after = s.time_left(HUMAN).expect("a bank");
+        assert!(
+            after > before,
+            "the increment is credited, {before} to {after}"
+        );
+    }
+
+    #[test]
+    fn a_sudden_death_chess_clock_credits_nothing() {
+        assert_eq!(Clock::parse(Some("chess"), 600, 0).increment(), 0);
+        assert_eq!(Clock::parse(Some("chess"), 600, 10).increment(), 10);
+        // Only a chess clock has one.
+        assert_eq!(Clock::parse(Some("turn"), 60, 10).increment(), 0);
+    }
+
+    #[test]
     fn a_chess_bank_drains_only_while_it_is_your_move() {
-        let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::Chess(600));
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::Chess { bank: 600, increment: 0 });
         std::thread::sleep(std::time::Duration::from_millis(1_100));
         assert!(s.time_left(0).is_some_and(|t| t < 600), "the mover's bank drains");
         assert_eq!(s.time_left(1), Some(600), "a seat not moving spends nothing");
