@@ -15,18 +15,47 @@ use carranta_record::fog::{Fog, Viewer, fog};
 /// The seat a person plays.
 pub const HUMAN: u8 = 0;
 
-/// What happens when a timed game runs out.
+/// How long people get to think.
 ///
-/// Kept at the session layer on purpose. Ending on the clock is a house rule
-/// about how long people want to sit there, not a rule of the game, and the
-/// engine's own win condition stays the only thing in `carranta-core` that can
-/// declare a winner.
+/// Kept at the session layer on purpose. A clock is a house rule about how long
+/// anyone is prepared to sit and wait, not a rule of the game, so nothing in
+/// `carranta-core` knows one exists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Expiry {
-    /// The clock keeps running past zero and the game plays to its own finish.
-    Overtime,
-    /// Play stops and whoever is ahead on public points takes it.
-    CallTheGame,
+pub enum Clock {
+    /// Take as long as you like.
+    Off,
+    /// A fresh allowance every turn. Run it out and your turn is ended for you.
+    PerTurn(u64),
+    /// One bank each for the whole game, draining only while it is your move —
+    /// a chess clock. Empty it and your turns end the moment they begin.
+    Chess(u64),
+}
+
+impl Clock {
+    /// What the lobby sends: a name and a number of seconds.
+    pub fn parse(kind: Option<&str>, secs: u64) -> Clock {
+        match (kind, secs) {
+            (_, 0) => Clock::Off,
+            (Some("chess"), s) => Clock::Chess(s),
+            (Some("turn"), s) => Clock::PerTurn(s),
+            _ => Clock::Off,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Clock::Off => "off",
+            Clock::PerTurn(_) => "turn",
+            Clock::Chess(_) => "chess",
+        }
+    }
+
+    pub fn secs(self) -> u64 {
+        match self {
+            Clock::Off => 0,
+            Clock::PerTurn(s) | Clock::Chess(s) => s,
+        }
+    }
 }
 
 /// Why an action was refused.
@@ -55,9 +84,23 @@ pub struct Session {
     /// When this game was dealt. The clock belongs to the server rather than
     /// to the page, so reloading the browser does not restart it.
     started: std::time::Instant,
-    /// How long the game is allowed to run, in seconds. `None` is untimed.
-    limit: Option<u64>,
-    expiry: Expiry,
+    clock: Clock,
+    /// When the running seat's *turn* began. Reset only when the turn actually
+    /// changes hands — a per-turn allowance must not refill because something
+    /// happened mid-turn, or a clock that rolled for you would hand you a fresh
+    /// allowance for doing nothing.
+    turn_began: std::time::Instant,
+    /// When time was last charged to anyone. Moves on at every settle.
+    last_settle: std::time::Instant,
+    /// Whose clock is running. Not always the decider: bots resolve inside the
+    /// request that hands them the turn, so the seat being charged is whoever
+    /// the clock was last handed to.
+    charged_to: u8,
+    /// Time each seat has already used, settled at each handover.
+    spent: [std::time::Duration; MAX_PLAYERS],
+    /// What this player calls themselves. Editable while nobody is signed in;
+    /// an account would supply it instead.
+    name: String,
 }
 
 impl Session {
@@ -75,17 +118,37 @@ impl Session {
             declined: [false; MAX_OFFERS],
             seed,
             started: std::time::Instant::now(),
-            limit: None,
-            expiry: Expiry::Overtime,
+            clock: Clock::Off,
+            turn_began: std::time::Instant::now(),
+            last_settle: std::time::Instant::now(),
+            charged_to: HUMAN,
+            spent: [std::time::Duration::ZERO; MAX_PLAYERS],
+            name: "you".to_string(),
         }
     }
 
-    /// Put this game on a clock. Zero seconds means untimed, so the lobby can
-    /// pass "off" without a special case.
-    pub fn with_clock(mut self, limit_secs: u64, expiry: Expiry) -> Self {
-        self.limit = (limit_secs > 0).then_some(limit_secs);
-        self.expiry = expiry;
+    /// Put this game on a clock.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        let now = std::time::Instant::now();
+        self.turn_began = now;
+        self.last_settle = now;
+        self.charged_to = self.state.decider();
         self
+    }
+
+    /// Name the person at this browser. Empty falls back rather than showing a
+    /// blank seat.
+    pub fn with_name(mut self, name: &str) -> Self {
+        let name = name.trim();
+        if !name.is_empty() {
+            self.name = name.chars().take(24).collect();
+        }
+        self
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Whole seconds since the game was dealt.
@@ -93,50 +156,113 @@ impl Session {
         self.started.elapsed().as_secs()
     }
 
-    /// The limit in seconds, if this game is on a clock.
-    pub fn limit_secs(&self) -> Option<u64> {
-        self.limit
+    pub fn clock(&self) -> Clock {
+        self.clock
     }
 
-    pub fn expiry(&self) -> Expiry {
-        self.expiry
+    /// Settle the running clock against whoever it belongs to, then hand it to
+    /// whoever is deciding now. Called after anything that could move the turn.
+    fn hand_over_clock(&mut self) {
+        let now = std::time::Instant::now();
+        let owner = self.charged_to as usize;
+        if owner < MAX_PLAYERS {
+            self.spent[owner] += now - self.last_settle;
+        }
+        self.last_settle = now;
+        // The turn's own clock restarts only when the turn changes hands.
+        let deciding = self.state.decider();
+        if deciding != self.charged_to {
+            self.turn_began = now;
+            self.charged_to = deciding;
+        }
     }
 
-    /// Seconds left. Negative once the clock has run out, so the page can show
-    /// overtime rather than sitting at zero and looking broken.
-    pub fn remaining_secs(&self) -> Option<i64> {
-        self.limit
-            .map(|l| l as i64 - self.elapsed_secs().min(i64::MAX as u64) as i64)
+    /// Time a seat has used, including the stretch not yet settled.
+    fn used(&self, seat: u8) -> std::time::Duration {
+        let mut d = self.spent[seat as usize];
+        if seat == self.charged_to {
+            d += self.last_settle.elapsed();
+        }
+        d
     }
 
-    /// Whether the clock has run out at all — true under either expiry rule.
-    pub fn out_of_time(&self) -> bool {
-        self.remaining_secs().is_some_and(|r| r <= 0)
-    }
-
-    /// Whether the clock has actually stopped play.
-    pub fn called_on_time(&self) -> bool {
-        self.expiry == Expiry::CallTheGame && self.out_of_time()
-    }
-
-    /// Who has won: the engine's own verdict, or — when the clock has been
-    /// allowed to stop play — whoever is ahead on the points the table can see.
+    /// Seconds left on a seat's clock, negative once it has run out so the page
+    /// can show the overrun rather than sitting at zero looking broken.
     ///
-    /// Public points, not real ones, because a called game is decided on what
-    /// was on the board when time ran out. Ties go to the earliest seat, which
-    /// is arbitrary but has to be something.
+    /// A per-turn allowance only means anything for the seat currently on the
+    /// clock; everyone else is shown the full allocation they will get.
+    pub fn time_left(&self, seat: u8) -> Option<i64> {
+        match self.clock {
+            Clock::Off => None,
+            Clock::PerTurn(n) => Some(if seat == self.charged_to {
+                n as i64 - self.turn_began.elapsed().as_secs() as i64
+            } else {
+                n as i64
+            }),
+            Clock::Chess(bank) => Some(bank as i64 - self.used(seat).as_secs() as i64),
+        }
+    }
+
+    /// Whether that seat has nothing left to think with.
+    pub fn out_of_time(&self, seat: u8) -> bool {
+        self.time_left(seat).is_some_and(|t| t <= 0)
+    }
+
+    /// End the human's turn when their clock has run out.
+    ///
+    /// Enforced lazily, on the way in to a request, because a server that only
+    /// wakes when asked cannot end a turn at the exact second. Only ever ends a
+    /// turn that could legally be ended — a clock should not be able to skip a
+    /// setup placement or a discard, which would leave the position illegal.
+    pub fn enforce_clock(&mut self) {
+        if self.clock == Clock::Off {
+            return;
+        }
+        // Bounded rather than looped to exhaustion: an empty chess bank ends
+        // every turn the moment it starts, and that should play out across
+        // requests instead of inside one of them.
+        for _ in 0..8 {
+            if self.state.decider() != HUMAN || !self.out_of_time(HUMAN) {
+                return;
+            }
+            let mut buf = Vec::new();
+            self.state.legal_into(&mut buf);
+            // Ending is the forfeit. Rolling comes first when it has to,
+            // because the turn cannot be ended before the dice — without this
+            // a clock that expired before the roll would stall the game
+            // rather than pass it on.
+            //
+            // Nothing else is forced. A setup placement, a discard and a
+            // robber move are real choices, and a clock picking one for you
+            // would be inventing a move rather than declining to make one.
+            let forced = if buf.contains(&Action::EndTurn) {
+                Action::EndTurn
+            } else if buf.contains(&Action::Roll) {
+                Action::Roll
+            } else {
+                return;
+            };
+            let ending = forced == Action::EndTurn;
+            if self.state.apply(forced).is_err() {
+                return;
+            }
+            self.version += 1;
+            if ending {
+                self.log.push("Your time ran out — turn ended".to_string());
+            } else {
+                self.log
+                    .push("Your time ran out — rolled for you".to_string());
+            }
+            self.forget_declines();
+            self.finish_move();
+        }
+    }
+
     pub fn winner(&self) -> Option<u8> {
-        if let Phase::GameOver { winner } = self.state.phase {
-            return Some(winner);
+        match self.state.phase {
+            Phase::GameOver { winner } => Some(winner),
+            _ => None,
         }
-        if !self.called_on_time() {
-            return None;
-        }
-        // Reversed seat index in the key, because `max_by_key` keeps the *last*
-        // of several equal maxima and the tie is meant to go to the earliest.
-        (0..self.state.players as usize)
-            .max_by_key(|&p| (self.state.public_victory_points(p), std::cmp::Reverse(p)))
-            .map(|p| p as u8)
     }
 
     pub fn version(&self) -> u64 {
@@ -164,10 +290,7 @@ impl Session {
     ///
     /// Empty while it is a bot's turn and nothing is being asked of the human.
     pub fn choices(&self) -> Vec<Choice> {
-        // A called game offers nothing, the same as a finished one. Checked
-        // here rather than in the routes so there is one gate rather than one
-        // per entry point.
-        if matches!(self.state.phase, Phase::GameOver { .. }) || self.called_on_time() {
+        if matches!(self.state.phase, Phase::GameOver { .. }) {
             return Vec::new();
         }
         if self.state.decider() == HUMAN {
@@ -324,6 +447,10 @@ impl Session {
     fn finish_move(&mut self) {
         self.settle_between_bots();
         self.run_bots();
+        // The turn may have moved on, so settle the running clock and hand it
+        // to whoever is deciding now. Doing it here rather than at each caller
+        // means no entry point can forget.
+        self.hand_over_clock();
     }
 
     /// Advance until the human has something to decide, or the game ends.
@@ -925,44 +1052,104 @@ mod tests {
     }
 
     #[test]
-    fn an_untimed_game_has_no_clock_and_never_runs_out() {
+    fn an_untimed_game_never_puts_anyone_on_a_clock() {
         let s = Session::new(4, 1, TradeMode::Full);
-        assert_eq!(s.limit_secs(), None);
-        assert_eq!(s.remaining_secs(), None);
-        assert!(!s.out_of_time());
-        assert!(!s.called_on_time());
-        assert!(!s.choices().is_empty(), "an untimed game is still playable");
+        assert_eq!(s.clock(), Clock::Off);
+        assert_eq!(s.time_left(0), None);
+        assert!(!s.out_of_time(0));
     }
 
     #[test]
-    fn a_zero_length_clock_means_untimed_rather_than_already_over() {
-        // The lobby sends "off" as zero, so this is the path a normal game
-        // takes, not an edge case.
-        let s = Session::new(4, 1, TradeMode::Full).with_clock(0, Expiry::CallTheGame);
-        assert_eq!(s.limit_secs(), None);
-        assert!(!s.called_on_time());
-        assert!(!s.choices().is_empty());
+    fn zero_seconds_means_untimed_whichever_kind_was_asked_for() {
+        // The lobby sends "off" as zero seconds, so this is the ordinary path.
+        assert_eq!(Clock::parse(Some("turn"), 0), Clock::Off);
+        assert_eq!(Clock::parse(Some("chess"), 0), Clock::Off);
+        assert_eq!(Clock::parse(None, 60), Clock::Off);
+        assert_eq!(Clock::parse(Some("turn"), 60), Clock::PerTurn(60));
+        assert_eq!(Clock::parse(Some("chess"), 600), Clock::Chess(600));
     }
 
     #[test]
-    fn overtime_runs_the_clock_past_zero_without_stopping_play() {
-        let s = Session::new(4, 1, TradeMode::Full).with_clock(1, Expiry::Overtime);
+    fn a_per_turn_allowance_only_counts_down_for_whoever_holds_the_turn() {
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::PerTurn(60));
         std::thread::sleep(std::time::Duration::from_millis(1_100));
-        assert!(s.out_of_time(), "the clock has run out");
-        assert!(s.remaining_secs().is_some_and(|r| r <= 0), "counts past zero");
-        assert!(!s.called_on_time(), "overtime does not call the game");
-        assert!(!s.choices().is_empty(), "play continues");
-        assert_eq!(s.winner(), None);
+        // Seat 0 is deciding, so seat 0 is being charged.
+        assert!(s.time_left(0).is_some_and(|t| t < 60), "the mover is charged");
+        assert_eq!(s.time_left(1), Some(60), "everyone else still has the full turn");
+        assert_eq!(s.time_left(2), Some(60));
     }
 
     #[test]
-    fn a_called_game_offers_nothing_and_names_a_winner() {
-        let s = Session::new(4, 1, TradeMode::Full).with_clock(1, Expiry::CallTheGame);
-        assert!(!s.called_on_time(), "not yet");
+    fn a_chess_bank_drains_only_while_it_is_your_move() {
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::Chess(600));
         std::thread::sleep(std::time::Duration::from_millis(1_100));
-        assert!(s.called_on_time());
-        assert!(s.choices().is_empty(), "a called game is unplayable");
-        // Nobody has scored, so the tie goes to the earliest seat.
-        assert_eq!(s.winner(), Some(0));
+        assert!(s.time_left(0).is_some_and(|t| t < 600), "the mover's bank drains");
+        assert_eq!(s.time_left(1), Some(600), "a seat not moving spends nothing");
+    }
+
+    #[test]
+    fn running_out_ends_the_turn_rather_than_the_game() {
+        let mut s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::PerTurn(1));
+        // Play out setup so that ending a turn is a legal thing to do at all.
+        while matches!(
+            s.state.phase,
+            Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+        ) {
+            let i = s
+                .choices()
+                .iter()
+                .position(|c| matches!(c, Choice::Play(_)))
+                .expect("setup always offers a placement");
+            let v = s.version();
+            s.act(i, v).expect("a legal placement");
+        }
+        // Setup leaves the human before the roll, where ending a turn is not
+        // legal yet — the clock has to roll first or the game would stall.
+        assert!(matches!(s.state.phase, Phase::PreRoll));
+        let before = s.version();
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(s.out_of_time(HUMAN), "the allowance has gone");
+        s.enforce_clock();
+        assert!(s.version() > before, "the turn was moved on for the player");
+        assert!(s.winner().is_none(), "a clock does not decide the game");
+        assert!(
+            s.log().iter().any(|l| l.contains("time ran out")),
+            "and it says so"
+        );
+        assert!(
+            s.log().iter().any(|l| l.contains("rolled for you")),
+            "rolling came first, because a turn cannot be ended before the dice"
+        );
+        assert!(
+            s.log().iter().any(|l| l.contains("turn ended")),
+            "and the turn ended in the same sweep — rolling must not refill the \
+             allowance, or a clock could roll for you forever"
+        );
+    }
+
+    #[test]
+    fn a_clock_never_skips_a_placement_it_would_leave_illegal() {
+        // Setup cannot be passed: ending a turn is not a legal action there, so
+        // an expired clock has to wait rather than break the position.
+        let mut s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::PerTurn(1));
+        assert!(matches!(s.state.phase, Phase::SetupSettlement { .. }));
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        let before = s.version();
+        s.enforce_clock();
+        assert_eq!(s.version(), before, "nothing was forced");
+        assert!(!s.choices().is_empty(), "the placement is still being asked for");
+    }
+
+    #[test]
+    fn a_name_is_kept_trimmed_and_falls_back_when_blank() {
+        assert_eq!(Session::new(4, 1, TradeMode::Full).name(), "you");
+        assert_eq!(
+            Session::new(4, 1, TradeMode::Full).with_name("  Robin  ").name(),
+            "Robin"
+        );
+        assert_eq!(
+            Session::new(4, 1, TradeMode::Full).with_name("   ").name(),
+            "you"
+        );
     }
 }

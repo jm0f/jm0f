@@ -10,7 +10,7 @@ use carranta_core::topology::{
     vertex_bit,
 };
 
-use crate::game::{Expiry, HUMAN, Session, Target};
+use crate::game::{HUMAN, Session, Target};
 use crate::json::Json;
 
 const RESOURCES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
@@ -147,6 +147,11 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
             .int("discardsDue", v.discard_left[p] as i64)
             .bool("longestRoad", v.longest_road == Some(p as u8))
             .bool("largestMilitia", v.largest_militia == Some(p as u8));
+        // Whose clock is running matters as much as what is left on it: a
+        // per-turn allowance only counts down for the seat holding the turn.
+        if let Some(left) = session.time_left(p as u8) {
+            o.int("timeLeft", left).bool("onClock", v.to_act == p as u8);
+        }
     });
     let own = v
         .own
@@ -163,16 +168,9 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     // reload shows how long the game has actually been going. A timed game
     // sends what is left; an untimed one sends nothing and the page counts up.
     j.int("elapsed", session.elapsed_secs() as i64);
-    j.opt_int("clockLimit", session.limit_secs().map(|l| l as i64));
-    j.opt_int("remaining", session.remaining_secs());
-    j.bool("calledOnTime", session.called_on_time());
-    j.str(
-        "expiry",
-        match session.expiry() {
-            Expiry::Overtime => "overtime",
-            Expiry::CallTheGame => "call",
-        },
-    );
+    j.str("clock", session.clock().name());
+    j.int("clockSecs", session.clock().secs() as i64);
+    j.str("youName", session.name());
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {

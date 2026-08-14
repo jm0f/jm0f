@@ -177,51 +177,65 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 A **setup screen before the game**, not a row of dropdowns above it. The board
 does not exist yet when you are on it.
 
-It carries: seat count, who holds each seat, trading mode, the game clock,
-what happens when the clock runs out, and optionally a seed. It stays
-configurable **while people join** — which is what makes it a lobby rather than
-a settings dialog.
+It carries: your name, the size of the table, who holds each seat, an invite
+link, the turn clock, and a seed. It stays configurable **while people join** —
+which is what makes it a lobby rather than a settings dialog.
 
 A fresh server opens on the lobby. A reload part-way through a game does not:
 the board comes back instead, because the clock is running and dealing again
 would be the wrong default.
 
-**Bot pacing belongs here too** — play the bots' turns out at reading speed, or
-resolve them instantly. It is **not built yet** and so is not in the lobby:
-bots currently run to completion inside the request that ends your turn, and
-pacing them means the server holding a turn open and being stepped. A control
-that does nothing is worse than a control that is missing.
+**Seats wait for people by default.** A seat can be set to a bot, but the
+default is open, because the reason a lobby exists is that someone else is
+coming. The server cannot seat a person yet, so an open seat is played by a bot
+until it can — said plainly on the screen rather than implied.
 
-### The clock
+**Your name is editable because nobody is signed in.** It is kept in the
+browser between games, which is the closest thing to being remembered without
+an account. When there are accounts the name comes from one and the field goes
+away; the server already stores it per session rather than the page holding it,
+so that swap does not move anything.
 
-Untimed, or 15 / 30 / 45 / 60 minutes, counting **down**. It belongs to the
-server — `Session` holds the start time and the limit — so reloading the page
-does not hand anybody more time. The page only carries the count between polls.
+**The seed is generated, not blank.** It exists before the game does, so it can
+be copied, shared or written down first, and re-rolled if you do not like it.
 
-Past zero it keeps going and shows the overrun as `+0:42`, because a clock
-frozen at `0:00` reads as broken. The last minute turns vermillion; overtime
-inverts.
+**There is no market setting.** People trade freely or it is not the same game.
+The restricted and closed markets remain in the engine and in its tests; they
+are not something to put in front of a table of humans.
 
-**Running out is a house rule, not a rule of the game**, so it lives in
-`Session` and never in `carranta-core` — the engine's own win condition stays
-the only thing in the engine that can declare a winner. Two settings:
+### The clock is per turn
 
-- **The game is called.** Play stops, and whoever is ahead on *public* points
-  takes it — what was on the board when time ran out, not what was hidden in
-  hands. Ties go to the earliest seat, which is arbitrary but has to be
-  something.
-- **Keep playing.** The clock runs on and the game plays to its own finish.
+Not a countdown on the whole game — an allowance for **thinking**, which is the
+thing that actually runs long.
 
-### What "while people join" implies
+- **Per turn**, default **60 seconds**: a fresh allowance every turn.
+- **Chess clock**: one bank each for the whole game, draining only while it is
+  your move. Spend it and your turns end as soon as they begin.
+- **No clock.**
 
-Real players are the direction, not the current state. This pass builds the
-lobby's shape — seats that read *bot* or *open*, a join link, a start button —
-with bots behind every seat. The server still serves one game to one browser.
+It belongs to the server: `Session` holds the allowance, when the current turn
+began, and what each seat has spent. Reloading the page hands nobody more time.
+Each seat's own clock rides on its row in the left column; the dock shows
+yours.
 
-Turning the open seats real means sessions with their own identity and their
-own hidden hand, and pushing updates instead of polling. The engine already
-keeps per-seat hidden state, so that work is the server's, not the game's, and
-the interface should not have to move when it happens.
+**Running out ends your turn, never the game.** Two rules keep that honest:
+
+- **Rolling comes first when it has to.** A turn cannot be ended before the
+  dice, so an allowance that expires before the roll rolls for you and then
+  ends the turn. Without this the clock would stall the game rather than pass
+  it on.
+- **Nothing else is ever forced.** A setup placement, a discard and a robber
+  move are real choices; a clock picking one would be inventing a move rather
+  than declining to make one. There the clock sits at zero and waits.
+
+Enforcement is lazy — a server that only wakes when asked cannot act on the
+second — so it happens on the next request, and the page's existing poll is
+what makes that arrive.
+
+**A per-turn allowance must not refill mid-turn.** Time is settled against a
+seat whenever anything happens, but the turn's own clock restarts only when the
+turn changes hands. Getting this wrong made a clock roll for the player and
+then hand them a fresh minute for it.
 
 ---
 

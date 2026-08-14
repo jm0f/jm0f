@@ -14,7 +14,7 @@ use carranta_core::state::TradeMode;
 
 use carranta_core::action::Illegal;
 
-use crate::game::{Expiry, Refused, Session};
+use crate::game::{Clock, Refused, Session};
 use crate::json;
 use crate::view;
 
@@ -166,7 +166,10 @@ impl Server {
                 }
             }
             ("GET", "/api/state") => {
-                let session = self.session.lock().unwrap();
+                let mut session = self.session.lock().unwrap();
+                // A server only wakes when asked, so a turn that ran out of
+                // time ends on the next request rather than on the second.
+                session.enforce_clock();
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
@@ -217,16 +220,16 @@ impl Server {
                     .and_then(|v| v.parse().ok())
                     // No clock dependency: the previous game's seed advances.
                     .unwrap_or_else(|| session.seed().wrapping_add(1));
-                // The clock is a lobby setting: seconds, zero for untimed,
-                // plus what running out should do.
-                let clock: u64 = param(query, "clock")
+                // The clock is a lobby setting: which kind, and how many
+                // seconds it allows. Zero seconds is untimed either way.
+                let secs: u64 = param(query, "clockSecs")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0);
-                let expiry = match param(query, "expiry").as_deref() {
-                    Some("call") => Expiry::CallTheGame,
-                    _ => Expiry::Overtime,
-                };
-                *session = Session::new(seats, seed, mode).with_clock(clock, expiry);
+                let clock = Clock::parse(param(query, "clock").as_deref(), secs);
+                let name = param(query, "name").unwrap_or_default();
+                *session = Session::new(seats, seed, mode)
+                    .with_clock(clock)
+                    .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
@@ -263,6 +266,38 @@ fn param(query: &str, key: &str) -> Option<String> {
         let (k, v) = pair.split_once('=')?;
         (k == key).then(|| v.to_string())
     })
+}
+
+/// Percent-decoding, enough for a query value.
+///
+/// Names arrive from a text field, so spaces and accents are ordinary rather
+/// than exotic. Anything that is not valid UTF-8 after decoding is dropped
+/// rather than guessed at.
+fn decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                match u8::from_str_radix(&raw[i + 1..i + 3], 16) {
+                    Ok(b) => out.push(b),
+                    // Not a real escape; keep it as typed.
+                    Err(_) => out.push(b'%'),
+                }
+                i += 3;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &[u8]) -> std::io::Result<()> {

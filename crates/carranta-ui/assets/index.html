@@ -405,6 +405,9 @@
     font: inherit; width: 100%; color: var(--foreground); background: var(--card);
     border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px;
   }
+  .seed[readonly] { color: var(--muted-foreground); }
+  .copyRow { display: flex; gap: 6px; }
+  .copyRow .seed { flex: 1; min-width: 0; }
 
   /* ---- the card that waits for you -------------------------------------- */
   /* It takes the decision and never the board. Rather than float over the
@@ -464,39 +467,52 @@
     <p class="lobbyLead">Set the table, then deal.</p>
 
     <div class="field">
-      <span class="fieldLabel">Seats</span>
+      <span class="fieldLabel">You</span>
+      <input id="lobbyName" class="seed" type="text" maxlength="24"
+             placeholder="what should we call you?" autocomplete="nickname">
+      <p class="fieldNote" id="nameNote">Editable because nobody is signed in.
+        An account would fill this in and this field would go away.</p>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel">Table</span>
       <div class="segmented" id="lobbySeats"></div>
     </div>
 
     <div class="field">
       <span class="fieldLabel">Who is playing</span>
       <div class="seatSlots" id="lobbySlots"></div>
-      <p class="fieldNote">Open seats are held for people. Until the server can
-        take them, a bot plays the seat and the game runs as it does now.</p>
+      <p class="fieldNote">Seats wait for people by default. A seat left as a
+        bot is filled now; the server cannot seat a person yet, so an open seat
+        plays as a bot until it can.</p>
     </div>
 
     <div class="field">
-      <span class="fieldLabel">Market</span>
-      <div class="segmented" id="lobbyMode"></div>
+      <span class="fieldLabel">Invite</span>
+      <div class="copyRow">
+        <input id="lobbyLink" class="seed" type="text" readonly>
+        <button id="copyLink" class="btn-secondary" type="button">Copy</button>
+      </div>
+      <p class="fieldNote">Not live yet — the link is real, the joining is not.
+        It carries the table, so whoever opens it lands on this board.</p>
     </div>
 
     <div class="field">
-      <span class="fieldLabel">Game clock</span>
-      <div class="segmented" id="lobbyClock"></div>
-      <p class="fieldNote">The clock counts down from here. It belongs to the
-        server, so reloading the page does not give anyone more time.</p>
-    </div>
-
-    <div class="field" id="lobbyExpiryField">
-      <span class="fieldLabel">When time runs out</span>
-      <div class="segmented" id="lobbyExpiry"></div>
+      <span class="fieldLabel">Turn clock</span>
+      <div class="segmented" id="lobbyClockKind"></div>
+      <div class="segmented" id="lobbyClockSecs" style="margin-top:6px"></div>
+      <p class="fieldNote" id="clockNote"></p>
     </div>
 
     <div class="field">
       <span class="fieldLabel">Seed</span>
-      <input id="lobbySeed" class="seed" type="text" inputmode="numeric"
-             placeholder="leave empty for the next one">
-      <p class="fieldNote">The same seed deals the same board.</p>
+      <div class="copyRow">
+        <input id="lobbySeed" class="seed" type="text" inputmode="numeric">
+        <button id="rerollSeed" class="btn-secondary" type="button">New</button>
+        <button id="copySeed" class="btn-secondary" type="button">Copy</button>
+      </div>
+      <p class="fieldNote">The same seed deals the same board. Generated for
+        you, so it can be copied before the game starts.</p>
     </div>
 
     <button id="lobbyStart" class="btn-primary btn-block">Deal the board</button>
@@ -928,7 +944,7 @@ let give = [0, 0, 0, 0, 0], want = [0, 0, 0, 0, 0], to = '';
 // offer from a name reads as coming from someone. Placeholder until told
 // otherwise — docs/ui.md §10.
 const BOT_NAMES = ['Ada', 'Bram', 'Ines', 'Odd'];
-const seatName = (v, s) => (s === v.you ? 'you' : BOT_NAMES[s]);
+const seatName = (v, s) => (s === v.you ? (v.youName || 'you') : BOT_NAMES[s]);
 
 // ---- placeholder art -------------------------------------------------------
 // Isometric solids in the piece idiom — three flat faces, light from the upper
@@ -1014,6 +1030,13 @@ function renderSeats(v) {
     const counts = document.createElement('span');
     counts.className = 'counts';
     let html = `<span><b>${s.hand}</b> cards</span><span><b>${s.dev}</b> dev</span>`;
+    if (s.timeLeft !== undefined) {
+      const t = Math.max(0, s.timeLeft);
+      const m = Math.floor(t / 60), sec = t % 60;
+      html += `<span class="tag ${s.timeLeft <= 0 ? 'tag-default' : 'tag-outline'}"`
+        + ` data-tip="${v.clock === 'chess' ? 'left in their bank' : 'their allowance each turn'}">`
+        + `${m}:${String(sec).padStart(2, '0')}${s.onClock ? ' ▸' : ''}</span>`;
+    }
     if (s.longestRoad) html += `<span class="tag tag-default">longest road · ${s.road}</span>`;
     if (s.largestMilitia) html += `<span class="tag tag-default">largest militia · ${s.militia}</span>`;
     html += `<span class="left" data-tip="pieces still to place" tabindex="0">`
@@ -1152,10 +1175,15 @@ function renderActions(v) {
 //
 // A timed game counts down; an untimed one counts up. Past zero it keeps going
 // and shows the overrun, because a clock frozen at 0:00 reads as broken.
-let clockBase = 0, clockAt = 0, clockDown = false;
+let clockBase = 0, clockAt = 0, clockDown = false, clockYours = false;
 function clockFrom(v) {
-  clockDown = v.clockLimit !== null && v.clockLimit !== undefined;
-  clockBase = clockDown ? v.remaining : (v.elapsed || 0);
+  clockDown = v.clock !== 'off';
+  // Your own clock is the one worth showing large: what everyone else has left
+  // belongs on their row, next to the rest of what is theirs.
+  const me = v.seats.find(s => s.seat === v.you);
+  clockYours = clockDown && v.yourTurn;
+  clockBase = clockDown ? (me && me.timeLeft !== undefined ? me.timeLeft : 0)
+    : (v.elapsed || 0);
   clockAt = Date.now();
   tickClock();
 }
@@ -1167,29 +1195,72 @@ function mmss(t) {
 function tickClock() {
   const el = document.getElementById('clock');
   if (!el) return;
-  const gone = Math.floor((Date.now() - clockAt) / 1000);
-  const t = clockDown ? clockBase - gone : clockBase + gone;
-  el.classList.toggle('low', clockDown && t > 0 && t <= 60);
+  // Only your own clock is actually running down; when it is not your move the
+  // number is what you will have, not what you are spending.
+  const gone = clockYours ? Math.floor((Date.now() - clockAt) / 1000) : 0;
+  const t = clockDown ? clockBase - gone : clockBase + Math.floor((Date.now() - clockAt) / 1000);
+  const low = clockDown && clockYours && t > 0 && t <= 15;
+  el.classList.toggle('low', low);
   el.classList.toggle('over', clockDown && t <= 0);
-  el.textContent = clockDown && t <= 0 ? `+${mmss(-t)}` : mmss(Math.max(0, t));
+  el.textContent = clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t));
   const label = el.parentElement.querySelector('.dockLabel');
-  if (label) label.textContent = clockDown ? (t <= 0 ? 'over time' : 'remaining') : 'elapsed';
+  if (label) {
+    label.textContent = !clockDown ? 'elapsed'
+      : clockYours ? (t <= 0 ? 'time up' : 'your clock') : 'your clock';
+  }
 }
 setInterval(tickClock, 1000);
 
 // ---- the lobby -------------------------------------------------------------
 // Settings live here rather than in the header: a lobby is configurable while
 // people are still arriving, which a row of dropdowns over a live board is not.
-const SEAT_ROLES = ['you', 'bot', 'open'];
+// Seats wait for people unless told otherwise, and the market is always open:
+// a table of humans that cannot trade freely is not the game anyone came for,
+// so it is not offered as a setting.
 const lobby = {
   seats: 4,
-  roles: ['you', 'bot', 'bot', 'bot'],
-  mode: 'full',
-  clock: 0,
-  expiry: 'call',
+  roles: ['you', 'open', 'open', 'open'],
+  clockKind: 'turn',
+  clockSecs: 60,
   seed: '',
+  name: '',
 };
-const CLOCKS = [[0, 'untimed'], [900, '15 min'], [1800, '30 min'], [2700, '45 min'], [3600, '60 min']];
+const CLOCK_KINDS = [
+  ['turn', 'per turn'],
+  ['chess', 'chess clock'],
+  ['off', 'no clock'],
+];
+const CLOCK_SECS = {
+  turn: [[30, '30 sec'], [60, '60 sec'], [90, '90 sec'], [120, '2 min']],
+  chess: [[300, '5 min each'], [600, '10 min each'], [900, '15 min each'], [1800, '30 min each']],
+};
+const CLOCK_NOTE = {
+  turn: 'A fresh allowance every turn. Run it out and your turn is ended for '
+      + 'you — rolling first if the dice have not been thrown, since a turn '
+      + 'cannot end before them.',
+  chess: 'One bank each for the whole game, draining only while it is your '
+       + 'move. Spend it and your turns end as soon as they begin.',
+  off: 'Nobody is hurried.',
+};
+
+// A seed you can copy before the game exists, so the board can be shared or
+// replayed. Regenerated on demand rather than silently reused.
+function freshSeed() { return String(Math.floor(Math.random() * 900000) + 100000); }
+function inviteLink() {
+  const q = new URLSearchParams({ table: lobby.seed || '000000', seats: String(lobby.seats) });
+  return `${location.origin}/join?${q}`;
+}
+async function copyInto(button, text) {
+  const said = button.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copied';
+  } catch (e) {
+    // Clipboard access can be refused; selecting it is the honest fallback.
+    button.textContent = 'Select it';
+  }
+  setTimeout(() => { button.textContent = said; }, 1400);
+}
 
 function segmented(host, options, current, pick) {
   host.textContent = '';
@@ -1205,10 +1276,10 @@ function segmented(host, options, current, pick) {
 
 function renderLobby() {
   segmented(document.getElementById('lobbySeats'),
-    [[3, '3 seats'], [4, '4 seats']], lobby.seats, v => {
+    [[3, '3 players'], [4, '4 players']], lobby.seats, v => {
       lobby.seats = v;
       lobby.roles = lobby.roles.slice(0, v);
-      while (lobby.roles.length < v) lobby.roles.push('bot');
+      while (lobby.roles.length < v) lobby.roles.push('open');
     });
 
   const slots = document.getElementById('lobbySlots');
@@ -1221,45 +1292,71 @@ function renderLobby() {
     dot.style.background = COLOURS[i];
     const name = document.createElement('span');
     name.className = 'slotName';
-    name.textContent = i === 0 ? 'you' : BOT_NAMES[i];
+    name.textContent = i === 0 ? (lobby.name || 'you') : BOT_NAMES[i];
     const seg = document.createElement('div');
     seg.className = 'segmented';
-    // Seat 0 is the person at this browser; the rest can be a bot or held open.
-    const choices = i === 0 ? [['you', 'you']] : [['bot', 'bot'], ['open', 'open']];
+    // Seat 0 is the person at this browser; the rest wait for someone unless
+    // you say otherwise.
+    const choices = i === 0 ? [['you', 'you']] : [['open', 'waiting'], ['bot', 'bot']];
     segmented(seg, choices, lobby.roles[i], v => { lobby.roles[i] = v; });
     row.append(dot, name, seg);
     slots.appendChild(row);
   }
 
-  segmented(document.getElementById('lobbyMode'),
-    [['full', 'open market'], ['restricted', '1-for-1 only'], ['disabled', 'no trading']],
-    lobby.mode, v => { lobby.mode = v; });
+  segmented(document.getElementById('lobbyClockKind'), CLOCK_KINDS, lobby.clockKind,
+    v => {
+      lobby.clockKind = v;
+      // Each kind measures a different thing, so carrying the number across
+      // would turn "60 seconds a turn" into a one-minute chess bank.
+      if (v !== 'off') lobby.clockSecs = v === 'turn' ? 60 : 600;
+    });
+  const secsHost = document.getElementById('lobbyClockSecs');
+  secsHost.hidden = lobby.clockKind === 'off';
+  if (!secsHost.hidden) {
+    segmented(secsHost, CLOCK_SECS[lobby.clockKind], lobby.clockSecs,
+      v => { lobby.clockSecs = v; });
+  }
+  document.getElementById('clockNote').textContent = CLOCK_NOTE[lobby.clockKind];
 
-  segmented(document.getElementById('lobbyClock'), CLOCKS, lobby.clock, v => { lobby.clock = v; });
-
-  // Nothing to decide about running out if there is no clock to run out.
-  document.getElementById('lobbyExpiryField').hidden = !lobby.clock;
-  segmented(document.getElementById('lobbyExpiry'),
-    [['call', 'the game is called — most points showing wins'],
-     ['overtime', 'keep playing — the clock just runs on']],
-    lobby.expiry, v => { lobby.expiry = v; });
-
+  document.getElementById('lobbyName').value = lobby.name;
   document.getElementById('lobbySeed').value = lobby.seed;
+  document.getElementById('lobbyLink').value = inviteLink();
 }
 
 function openLobby() {
+  if (!lobby.seed) lobby.seed = freshSeed();
+  // A name outlives the game it was typed into, which is the closest thing to
+  // being remembered while there is nobody to sign in as.
+  if (!lobby.name) lobby.name = localStorage.getItem('carranta.name') || '';
   document.getElementById('lobby').hidden = false;
   renderLobby();
-  document.getElementById('lobbySeats').querySelector('button').focus();
+  document.getElementById('lobbyName').focus();
 }
 
+document.getElementById('lobbyName').oninput = (e) => {
+  lobby.name = e.target.value;
+  const slot = document.querySelector('#lobbySlots .slotName');
+  if (slot) slot.textContent = lobby.name || 'you';
+};
+document.getElementById('lobbySeed').oninput = (e) => {
+  lobby.seed = e.target.value.trim();
+  document.getElementById('lobbyLink').value = inviteLink();
+};
+document.getElementById('rerollSeed').onclick = () => { lobby.seed = freshSeed(); renderLobby(); };
+document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.seed);
+document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLink());
+
 document.getElementById('lobbyStart').onclick = () => {
+  lobby.name = document.getElementById('lobbyName').value.trim();
   lobby.seed = document.getElementById('lobbySeed').value.trim();
+  localStorage.setItem('carranta.name', lobby.name);
   const q = new URLSearchParams({
     seats: String(lobby.seats),
-    mode: lobby.mode,
-    clock: String(lobby.clock),
-    expiry: lobby.expiry,
+    // Humans trade freely or it is not the same game. Not a setting.
+    mode: 'full',
+    clock: lobby.clockKind,
+    clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
+    name: lobby.name,
   });
   if (/^\d+$/.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
@@ -1607,7 +1704,10 @@ loadArt()
 setInterval(async () => {
   try {
     const next = await (await fetch('/api/state', { cache: 'no-store' })).json();
-    if (view && next.build !== view.build) { location.reload(); }
+    if (view && next.build !== view.build) { location.reload(); return; }
+    // The same poll enforces the clock: the server only wakes when asked, so
+    // without this a turn that ran out of time would sit there until clicked.
+    if (view && next.version !== view.version) { view = next; render(); }
   } catch (e) {
     // The server is mid-restart. Nothing to do but ask again shortly.
   }
