@@ -473,7 +473,7 @@
   .stack:not(:disabled):hover .layer { border-color: #D3C6AE; }
   .stack.armed .layer { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .badge {
-    position: absolute; top: -.25em; right: -.35em; z-index: 3;
+    position: absolute; top: -.25em; right: -.35em; z-index: 20;
     min-width: 1.5em; height: 1.5em; padding: 0 .3em; border-radius: 999px;
     background: var(--ink); color: var(--panel);
     font-size: .82em; font-weight: 600; line-height: 1.5em; text-align: center;
@@ -497,7 +497,13 @@
   .rcard {
     position: absolute; bottom: 0; width: 5.3em; height: 7em;
     border-radius: .55em; background: var(--face);
-    box-shadow: 0 1px 2px rgba(51, 38, 27, .18);
+    /* Two edges, because one was not enough on both halves of the palette. The
+       pale inner border separates the dark faces, where a shadow disappears
+       into the colour; the shadow thrown to the right separates the light ones,
+       where the pale border does. Cast rightwards because that is the side the
+       card behind shows. */
+    border: 1px solid rgba(255, 250, 242, .5);
+    box-shadow: 2px 0 4px rgba(51, 38, 27, .28), 0 1px 2px rgba(51, 38, 27, .18);
     overflow: hidden;
   }
   .rcard::after {
@@ -1538,10 +1544,15 @@ function resStackEl(count, res, title, onClick) {
     card.className = 'rcard';
     card.style.left = `${d * step}em`;
     card.style.setProperty('--face', `var(${RESOURCE_FACE[res]})`);
+    // The leftmost card is the front one, so the fan reads the way a hand held
+    // in one hand does. That is the opposite of paint order, so the stacking is
+    // reversed rather than the cards being appended backwards: the loop still
+    // runs left to right, which is the order everything else about it is in.
+    card.style.zIndex = shown - d;
     // Only the front card shows its face. The ones behind it are edges, and a
     // centred disc sliced by the card in front of it read as a bite taken out
     // rather than as a card underneath.
-    if (d === shown - 1) card.appendChild(document.createElement('i'));
+    if (d === 0) card.appendChild(document.createElement('i'));
     b.appendChild(card);
   }
   const badge = document.createElement('span');
