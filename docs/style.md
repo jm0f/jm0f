@@ -171,6 +171,19 @@ Only the front card shows its face; the rest are edges, since a centred disc
 sliced by the card in front of it reads as a bite rather than as a card
 underneath.
 
+**A port wears the resource it deals in**, in that terrain's colour with the
+board's own tooth over it, so which port it is arrives before any label does.
+That frees the label to carry the rate, `2:1` or `3:1`, which is the thing a
+player actually needs off it; it used to carry two letters of the resource
+name, naming the port and leaving the rate unsaid. The ink flips between paper
+and ink by the circle's lightness, since the five terrain colours span L\* 32
+to 78 and no one ink reads on all of them.
+
+**A port marker sits on the perpendicular bisector of the two intersections it
+serves**, so its two legs are the same length. Pushing it out radially from the
+middle of the board instead left one leg longer than the other wherever the
+chord was not square to that direction, which was most of them.
+
 **The fan compresses rather than growing.** A card is two thirds the height of
 the dock, and the dock is only as wide as the board, so five stacks each
 spreading a card's width per extra card was wider than the space at every

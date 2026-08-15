@@ -1198,19 +1198,54 @@ function draw() {
     const pts = port.at.map(v => vxy[v]);
     const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
     const my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-    const k = Math.hypot(mx, my) || 1;
-    const ox = mx + (mx / k) * 30, oy = my + (my / k) * 30;
+    // Pushed out along the perpendicular bisector of the two intersections it
+    // serves, so its two legs are the same length and the marker sits square
+    // to the coast. Pushing it radially from the middle of the board instead
+    // left one leg longer than the other wherever the chord was not square to
+    // that direction, which was most of them.
+    let nx = 0, ny = 0;
+    if (pts.length === 2) {
+      nx = -(pts[1][1] - pts[0][1]);
+      ny = pts[1][0] - pts[0][0];
+    }
+    let n = Math.hypot(nx, ny);
+    if (n < 0.001) { nx = mx; ny = my; n = Math.hypot(mx, my) || 1; }
+    nx /= n; ny /= n;
+    // Two perpendiculars, and the one pointing out to sea is the one wanted.
+    if (nx * mx + ny * my < 0) { nx = -nx; ny = -ny; }
+    const ox = mx + nx * 30, oy = my + ny * 30;
     // Port furniture is paper and ink, not colour. It used to be a cool
     // blue-grey, which put it at hue 214, inside the arc the seats occupy,
     // competing with seat 1 for the only blue on the board.
     pts.forEach(([x, y]) => base.appendChild(el('line', {
       x1: ox, y1: oy, x2: x, y2: y, stroke: '#C8B79E', 'stroke-width': 2.5, opacity: .9,
     })));
-    base.appendChild(el('circle', { cx: ox, cy: oy, r: 12, fill: 'var(--panel)', stroke: 'var(--line)' }));
-    const t = el('text', { x: ox, y: oy, class: 'hexnum', fill: 'var(--dim)', 'font-size': 9 });
-    // Two letters, taken from the same names the cards use, so a port and a
-    // card cannot be read as different resources.
-    t.textContent = port.kind === 0 ? '3:1' : ['Br', 'Wd', 'Wl', 'Wh', 'Or'][port.kind - 1];
+    // A port that deals in one resource wears that resource's colour, with the
+    // board's own tooth over it, so which port it is arrives before any label
+    // does. The label is then free to be the thing the letters never said: the
+    // rate. A general port has no resource to wear and keeps the paper.
+    const res = port.kind === 0 ? null : port.kind - 1;
+    base.appendChild(el('circle', {
+      cx: ox, cy: oy, r: 12,
+      fill: res === null ? 'var(--panel)' : `var(${RESOURCE_FACE[res]})`,
+      stroke: 'var(--line)',
+    }));
+    if (res !== null) {
+      const tooth = el('circle', {
+        cx: ox, cy: oy, r: 12, fill: 'url(#cardboard)', opacity: .45,
+      });
+      tooth.style.mixBlendMode = 'soft-light';
+      tooth.style.pointerEvents = 'none';
+      base.appendChild(tooth);
+    }
+    const t = el('text', {
+      x: ox, y: oy, class: 'hexnum', 'font-size': 9,
+      fill: res === null ? 'var(--dim)' : onColour(RESOURCE_HEX[res]),
+    });
+    // The rate, which is what the port is for. It used to carry two letters of
+    // the resource name, which named the port and left the thing you actually
+    // need to know off it.
+    t.textContent = res === null ? '3:1' : '2:1';
     base.appendChild(t);
   });
 
@@ -1587,6 +1622,9 @@ function stackEl(count, icon, title, onClick) {
 // A resource card wears the colour of the land it comes off, so a card and the
 // hex that pays it are the same thing seen twice.
 const RESOURCE_FACE = ['--hills', '--forest', '--pasture', '--fields', '--mountains'];
+// The same five as values, for the places that have to compute against them
+// rather than hand them to CSS.
+const RESOURCE_HEX = ['#C2492A', '#1B5637', '#A8C64A', '#E8A020', '#566373'];
 // How many cards are drawn before the fan stops growing. Past this the badge
 // is doing the counting anyway, and a hand of twelve fanned out would push the
 // dock wider than the board.
@@ -1887,10 +1925,11 @@ const VISIBILITY_NOTE = {
 // number: a fixed wait reads as a machine working through a list, and the
 // point of pacing is that it does not.
 const PACE_NOTE = {
-  slow: 'A move every second or two, with room to read each one as it lands. '
-      + 'A four player round takes the better part of ten seconds.',
-  fast: 'A beat between moves, long enough to see what happened without '
-      + 'waiting on it. A round goes by in a couple of seconds.',
+  slow: 'A move every two or three seconds, with time to look at the board '
+      + 'between them. A four player round takes the better part of half a '
+      + 'minute.',
+  fast: 'A beat between moves, long enough to watch each one land without '
+      + 'waiting on it. A round goes by in a few seconds.',
   instant: 'No wait at all. The bots have finished before the board has '
          + 'redrawn, which is what you want when you are testing rather than '
          + 'playing.',

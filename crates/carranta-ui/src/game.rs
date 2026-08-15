@@ -1223,14 +1223,15 @@ impl Pace {
     /// The window a single move's wait is drawn from, in milliseconds.
     ///
     /// Fast is a beat: long enough that a move is a thing that happened rather
-    /// than a thing that had already happened, short enough that a four-player
-    /// round is a couple of seconds. Slow is reading speed. The spread on each
-    /// is wide enough to break the rhythm without either overlapping the other.
+    /// than a thing that had already happened, short enough that a round does
+    /// not become a wait. Slow is reading speed, with time to look at the board
+    /// between moves. The spread on each is wide enough to break the rhythm
+    /// without either overlapping the other.
     fn window(self) -> (u64, u64) {
         match self {
             Pace::Instant => (0, 0),
-            Pace::Fast => (220, 620),
-            Pace::Slow => (850, 2100),
+            Pace::Fast => (420, 980),
+            Pace::Slow => (1400, 3000),
         }
     }
 }
