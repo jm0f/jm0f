@@ -419,10 +419,12 @@
              text-transform: none;
              font-variant-numeric: tabular-nums; letter-spacing: .02em; }
   .logLine { padding: 1px 0; }
-  /* A resource in the log: the card, then how many of it. */
-  .logRes { display: inline-flex; align-items: center; gap: .15em; }
+  /* A resource in the log: a fan of cards, counted by looking, as in the dock. */
+  .logRes { display: inline-flex; align-items: center; gap: .2em; }
+  .logFan { position: relative; display: inline-block;
+            height: 1.25em; vertical-align: -.28em; flex: none; }
   .logRes .rcard.mini { width: .95em; height: 1.25em; border-radius: .16em;
-                        margin-right: .1em; vertical-align: -.28em; }
+                        margin-right: 0; vertical-align: -.28em; }
   .logRes .rcard.mini i { width: .42em; height: .42em; }
   .logRes b { font-weight: 600; color: var(--foreground); }
   /* The dice of a roll, at the size of the words around them. */
@@ -1142,8 +1144,14 @@ function draw() {
     // inside the outline rather than as a border, because the hex's own stroke
     // is the gap between tiles and has to stay that.
     const lip = el('polygon', {
-      points: hexPoints(cx, cy, 0.965), fill: 'none',
-      stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1.6,
+      // Hard against the inside of the gap stroke, so it sits where a card's
+      // border sits rather than floating a little way in from the edge.
+      points: hexPoints(cx, cy, 0.976), fill: 'none',
+      stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1,
+      // The same one pixel the card's border is, at any board size. A stroke
+      // measured in board units is thicker than the card's whenever the board
+      // is drawn larger than its own coordinates, which is most of the time.
+      'vector-effect': 'non-scaling-stroke',
     });
     lip.style.pointerEvents = 'none';
     g.appendChild(lip);
@@ -2394,20 +2402,46 @@ function logParts(v, text) {
   while ((m = re.exec(text)) !== null) {
     if (m.index > at) out.push(text.slice(at, m.index));
     const word = m[2] || m[3];
-    const chip = document.createElement('span');
-    chip.className = 'logRes';
-    chip.append(miniCard(RESOURCE_WORDS.indexOf(word)));
-    if (m[1]) {
-      const n = document.createElement('b');
-      n.textContent = m[1];
-      chip.appendChild(n);
-    }
-    chip.title = m[1] ? `${m[1]} ${word}` : word;
-    out.push(chip);
+    out.push(logFan(RESOURCE_WORDS.indexOf(word), m[1] ? +m[1] : 1, word));
     at = m.index + m[0].length;
   }
   if (at < text.length) out.push(text.slice(at));
   return out.length ? out : [text];
+}
+
+// The same fan the hand uses, at the size of the words around it. Counting the
+// cards is what the dock already asks of the reader, so the log asks the same
+// thing rather than switching to a number halfway down the screen.
+//
+// Past what can be told apart at this size the number comes back, because a
+// fan nobody can count is worse than the digit it replaced.
+const LOG_FAN_MAX = 6;
+function logFan(res, n, word) {
+  const wrap = document.createElement('span');
+  wrap.className = 'logRes';
+  wrap.title = `${n} ${word}`;
+  const shown = Math.min(n, LOG_FAN_MAX);
+  const step = 0.28;
+  const fan = document.createElement('span');
+  fan.className = 'logFan';
+  fan.style.width = `${0.95 + (shown - 1) * step}em`;
+  for (let d = 0; d < shown; d++) {
+    const card = miniCard(res);
+    card.style.position = 'absolute';
+    card.style.left = `${d * step}em`;
+    card.style.zIndex = shown - d;
+    // Only the front card shows its face, as in the hand: a disc sliced by the
+    // card in front of it reads as a bite rather than as a card underneath.
+    if (d > 0) card.textContent = '';
+    fan.appendChild(card);
+  }
+  wrap.appendChild(fan);
+  if (n > LOG_FAN_MAX) {
+    const b = document.createElement('b');
+    b.textContent = n;
+    wrap.appendChild(b);
+  }
+  return wrap;
 }
 
 function logDie(n) {

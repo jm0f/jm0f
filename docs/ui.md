@@ -176,9 +176,12 @@ are named explicitly rather than inferred from a hand changing.
 the board answers to; the two dice follow. `Roll 4 and 5, 9` read as three
 numbers of equal standing, which is not what a roll is.
 
-**Resources are drawn, not named.** A line carries the card and a count where
-it used to carry a noun, so a reader scanning a turn sees colours rather than a
-wall of words. The roll shows its two dice instead of writing them in brackets.
+**Resources are drawn, not named.** A line carries a fan of cards where it used
+to carry a noun and a number, counted by looking exactly as the dock asks, so a
+reader scanning a turn sees colours rather than a wall of words. Past what can
+be told apart at that size the number comes back, because a fan nobody can
+count is worse than the digit it replaced. The roll shows its two dice instead
+of writing them in brackets.
 
 **A handful of discards is one line.** The engine discards one card at a time,
 so handing four back was four lines saying almost the same thing; what happened
