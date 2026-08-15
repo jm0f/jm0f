@@ -503,7 +503,10 @@
        where the pale border does. Cast rightwards because that is the side the
        card behind shows. */
     border: 1px solid rgba(255, 250, 242, .5);
-    box-shadow: 2px 0 4px rgba(51, 38, 27, .28), 0 1px 2px rgba(51, 38, 27, .18);
+    /* Light, because it compounds: five overlapping cards each throwing a
+       shadow on the one behind stacked into a dark band down the fan. The pale
+       border is doing most of the separating, so the shadow only has to hint. */
+    box-shadow: 1px 0 2px rgba(51, 38, 27, .13), 0 1px 1px rgba(51, 38, 27, .10);
     overflow: hidden;
   }
   .rcard::after {
@@ -542,7 +545,10 @@
      a card this small caught a few coarse blotches rather than a tooth, which
      read as damage rather than as stock. */
   .rcard.mini::after { background-size: 20px 20px; opacity: .4; }
-  .compose .name { display: flex; align-items: center; }
+  .compose .name, .discardGrid .name { display: flex; align-items: center; }
+  /* A card and its name, so choosing a resource looks the same wherever it is
+     asked for. */
+  .resPick { display: inline-flex; align-items: center; }
   .resStack:not(:disabled):hover { transform: translateY(-2px); }
 
   /* ---- actions --------------------------------------------------------- */
@@ -752,7 +758,7 @@
      second copy of them along the top was a status bar for a game that does
      not need one. The name links home. -->
 <header>
-  <a class="wordmark" href="/">Carranta</a>
+  <a class="wordmark" href="/" id="wordmark">Carranta</a>
   <span class="gameName" id="gameName" hidden></span>
 </header>
 
@@ -2103,6 +2109,14 @@ function openLobby() {
   document.getElementById('lobbyName').focus();
 }
 
+// The mark is meant to go home, and there is no home yet. Until there is, it
+// opens the lobby, which is the only other place the page can be and is the
+// one worth reaching while the game is still being built.
+document.getElementById('wordmark').onclick = (e) => {
+  e.preventDefault();
+  openLobby();
+};
+
 document.getElementById('lobbyGame').oninput = (e) => {
   lobby.game = e.target.value;
 };
@@ -2441,10 +2455,17 @@ function resourceButtons(v, host, order, find, onFirst) {
   box.className = 'buttons';
   order.forEach(r => {
     const b = document.createElement('button');
-    b.textContent = resName(v, r);
+    // Added rather than assigned: the available case sets its own variant, and
+    // assigning over this wiped the card layout off exactly the buttons that
+    // could be pressed.
+    b.classList.add('resPick');
+    b.append(miniCard(r), resName(v, r));
     const c = find(r);
     if (c) {
-      b.className = 'btn-primary';
+      // Not the accent. Five vermillion buttons make none of them the action
+      // (style.md §2.4), and a brick card on a vermillion ground disappears
+      // into it. The card carries the identity; the button is just its ground.
+      b.classList.add('btn-secondary');
       b.onclick = () => { prompt.mode = null; act(c.i); };
     } else if (onFirst) {
       b.onclick = () => onFirst(r);
@@ -2575,7 +2596,7 @@ function renderDiscard(v, host, head) {
     row.className = 'row ' + (toss[r.i] ? 'on' : 'off');
     const name = document.createElement('span');
     name.className = 'name';
-    name.textContent = r.name;
+    name.append(miniCard(r.i), r.name);
     const have = document.createElement('span');
     have.className = 'have';
     have.textContent = held;
@@ -2791,8 +2812,15 @@ function renderCompose(v, host) {
   go.className = 'btn-primary btn-block';
   go.textContent = 'Put it on the table';
   go.style.cssText = 'margin-top:10px';
-  go.disabled = !sum(give) || !sum(want);
+  // aria-disabled with a reason, the way every other unavailable control here
+  // works. The native attribute drops it out of the tab order and says nothing,
+  // so a half-built offer looked like a washed-out button and no explanation.
+  const short = !sum(give) ? 'pick what you are giving'
+    : (!sum(want) ? 'pick what you want for it' : '');
+  if (short) go.setAttribute('aria-disabled', 'true');
+  go.setAttribute('data-tip', short || 'offer it to the table');
   go.onclick = () => {
+    if (short) return;
     prompt.mode = null;
     load('/api/propose', {
       method: 'POST',
