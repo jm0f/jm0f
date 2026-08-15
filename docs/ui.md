@@ -396,6 +396,14 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 A **setup screen before the game**, not a row of dropdowns above it. The board
 does not exist yet when you are on it.
 
+**Two columns, split by what the setting is about.** The left is the table:
+what it is called, who is at it, how fast the bots move, who can find it, the
+link, and which board it deals. The right is the game: the size of the table,
+chat, the turn clock, the bank and the log. One long column asked a reader to
+hold that distinction in their head instead of seeing it. Below 720px it
+becomes one column in the same order, because a narrow window should get the
+same screen and not a different one.
+
 It carries: your name, the size of the table, who holds each seat, whether the
 table is listed, an invite link, the turn clock, whether the table keeps a log,
 and a seed. It stays configurable **while people join**, which is what makes it

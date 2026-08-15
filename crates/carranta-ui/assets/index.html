@@ -626,7 +626,18 @@
       radial-gradient(900px 500px at 50% -10%, rgba(232, 84, 47, .13), transparent 62%),
       var(--background);
   }
-  .lobbyCard { width: min(560px, 100%); padding: clamp(20px, 3vw, 32px); }
+  .lobbyCard { width: min(880px, 100%); padding: clamp(20px, 3vw, 32px); }
+  /* Two columns where there is room for two, one where there is not. The card
+     is the same card either way; only the number of columns changes, so a
+     narrow window gets the same fields in the same order rather than a
+     different screen. */
+  .lobbyCols { display: grid; grid-template-columns: 1fr 1fr;
+               gap: 0 clamp(20px, 3vw, 44px); margin-top: 1.2em; }
+  .lobbyCol { min-width: 0; }
+  .lobbyCol .field:last-child { margin-bottom: 0; }
+  @media (max-width: 720px) {
+    .lobbyCols { grid-template-columns: 1fr; }
+  }
   .lobbyTitle { font-family: var(--display); font-size: 32px; margin: 0;
                 color: var(--accent); font-weight: 700; letter-spacing: .01em; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
@@ -802,78 +813,89 @@
   <div class="lobbyCard panel">
     <h1 class="lobbyTitle">Carranta</h1>
 
-    <div class="field">
-      <span class="fieldLabel" data-tip="What this table is called, for the people you invite to it." tabindex="0">Game</span>
-      <input id="lobbyGame" class="seed" type="text" maxlength="40" placeholder="name this game">
-    </div>
-
-    <div class="field">
-      <span class="fieldLabel">Mode</span>
-      <div class="tabs" id="lobbySeats"></div>
-    </div>
-
-    <div class="field">
-      <span class="fieldLabel" data-tip="Seats wait for people by default. The server cannot seat a person yet, so an open seat is played by a bot until it can." tabindex="0">Who is playing</span>
-      <div class="seatSlots" id="lobbySlots"></div>
-    </div>
-
-    <div class="field" id="paceField">
-      <span class="fieldLabel">Bot speed</span>
-      <div class="tabs" id="lobbyPace"></div>
-    </div>
-
-    <div class="field">
-      <span class="fieldLabel">Visibility</span>
-      <div class="tabs" id="lobbyVisibility"></div>
-    </div>
-
-    <div class="field">
-      <span class="fieldLabel">Chat</span>
-      <div class="tabs" id="lobbyChat"></div>
-    </div>
-
-    <div class="field">
-      <span class="fieldLabel" data-tip="Not live yet. The link is real, the joining is not." tabindex="0">Invite</span>
-      <div class="copyRow">
-        <input id="lobbyLink" class="seed" type="text" readonly>
-        <button id="copyLink" class="btn-secondary" type="button">Copy</button>
+    <!-- Two columns, split by what the setting is about. The left one is the
+         table: who is at it, who can find it, and which board it deals. The
+         right one is the game: how it is played once everyone has sat down.
+         One long column asked a reader to hold that distinction in their head
+         instead of seeing it. -->
+    <div class="lobbyCols">
+      <div class="lobbyCol">
+      <div class="field">
+        <span class="fieldLabel" data-tip="What this table is called, for the people you invite to it." tabindex="0">Game</span>
+        <input id="lobbyGame" class="seed" type="text" maxlength="40" placeholder="name this game">
       </div>
-    </div>
 
-    <div class="field">
-      <span class="fieldLabel">Turn clock</span>
-      <div class="tabs" id="lobbyClockKind"></div>
-      <div class="clockFields">
-        <div class="copyRow" id="lobbyClockSecsRow">
-          <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
-          <span class="unit" id="lobbyClockSecsUnit">seconds</span>
-        </div>
-        <div class="copyRow" id="lobbyClockIncRow">
-          <input id="lobbyClockInc" class="seed" type="number" min="0" max="600" step="1">
-          <span class="unit">back per turn</span>
+      <div class="field">
+        <span class="fieldLabel" data-tip="Seats wait for people by default. The server cannot seat a person yet, so an open seat is played by a bot until it can." tabindex="0">Who is playing</span>
+        <div class="seatSlots" id="lobbySlots"></div>
+      </div>
+
+      <div class="field" id="paceField">
+        <span class="fieldLabel">Bot speed</span>
+        <div class="tabs" id="lobbyPace"></div>
+      </div>
+
+      <div class="field">
+        <span class="fieldLabel">Visibility</span>
+        <div class="tabs" id="lobbyVisibility"></div>
+      </div>
+
+      <div class="field">
+        <span class="fieldLabel" data-tip="Not live yet. The link is real, the joining is not." tabindex="0">Invite</span>
+        <div class="copyRow">
+          <input id="lobbyLink" class="seed" type="text" readonly>
+          <button id="copyLink" class="btn-secondary" type="button">Copy</button>
         </div>
       </div>
-    </div>
 
-    <div class="field">
-      <span class="fieldLabel">Bank</span>
-      <div class="tabs" id="lobbyBank"></div>
-    </div>
+      <div class="field">
+        <span class="fieldLabel" data-tip="The same seed deals the same board. Paste one in to replay a board you have seen." tabindex="0">Seed</span>
+        <div class="copyRow">
+          <input id="lobbySeed" class="seed" type="text" inputmode="numeric">
+          <button id="copySeed" class="btn-secondary" type="button">Copy</button>
+        </div>
+      </div>
+      </div>
 
-    <div class="field">
-      <span class="fieldLabel">Log</span>
-      <div class="tabs" id="lobbyLog"></div>
-    </div>
+      <div class="lobbyCol">
+      <div class="field">
+        <span class="fieldLabel">Mode</span>
+        <div class="tabs" id="lobbySeats"></div>
+      </div>
 
-    <div class="field">
-      <span class="fieldLabel" data-tip="The same seed deals the same board. Paste one in to replay a board you have seen." tabindex="0">Seed</span>
-      <div class="copyRow">
-        <input id="lobbySeed" class="seed" type="text" inputmode="numeric">
-        <button id="copySeed" class="btn-secondary" type="button">Copy</button>
+      <div class="field">
+        <span class="fieldLabel">Chat</span>
+        <div class="tabs" id="lobbyChat"></div>
+      </div>
+
+      <div class="field">
+        <span class="fieldLabel">Turn clock</span>
+        <div class="tabs" id="lobbyClockKind"></div>
+        <div class="clockFields">
+          <div class="copyRow" id="lobbyClockSecsRow">
+            <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
+            <span class="unit" id="lobbyClockSecsUnit">seconds</span>
+          </div>
+          <div class="copyRow" id="lobbyClockIncRow">
+            <input id="lobbyClockInc" class="seed" type="number" min="0" max="600" step="1">
+            <span class="unit">back per turn</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="fieldLabel">Bank</span>
+        <div class="tabs" id="lobbyBank"></div>
+      </div>
+
+      <div class="field">
+        <span class="fieldLabel">Log</span>
+        <div class="tabs" id="lobbyLog"></div>
+      </div>
       </div>
     </div>
 
-    <button id="lobbyStart" class="btn-primary btn-block">Deal the board</button>
+    <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">Deal the board</button>
   </div>
 </div>
 
