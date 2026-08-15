@@ -299,6 +299,14 @@ impl State {
         if self.dev_playable(p, DevCard::Militia) > 0 {
             out.push(Action::PlayMilitia);
         }
+        // Only the militia may be played before the roll (R-9.5). It is the
+        // one card whose timing changes anything: moving the robber before
+        // production decides which hexes pay this turn. The other three do the
+        // same thing on either side of the dice, so offering them early was a
+        // choice with no consequence, sitting in front of every roll.
+        if self.phase == Phase::PreRoll {
+            return;
+        }
         if self.dev_playable(p, DevCard::RoadBuilding) > 0 {
             out.push(Action::PlayRoadBuilding);
         }
@@ -554,13 +562,13 @@ impl State {
                 Ok(())
             }
 
-            (Phase::PreRoll | Phase::Action, Action::PlayRoadBuilding) => {
+            (Phase::Action, Action::PlayRoadBuilding) => {
                 self.take_dev(p, DevCard::RoadBuilding)?;
                 self.free_roads = 2;
                 Ok(())
             }
 
-            (Phase::PreRoll | Phase::Action, Action::PlayInvention(pick)) => {
+            (Phase::Action, Action::PlayInvention(pick)) => {
                 self.take_dev(p, DevCard::Invention)?;
                 // Takes as many as remain if a stack runs short (R-7.17).
                 for r in pick {
@@ -572,7 +580,7 @@ impl State {
                 Ok(())
             }
 
-            (Phase::PreRoll | Phase::Action, Action::PlayMonopoly(r)) => {
+            (Phase::Action, Action::PlayMonopoly(r)) => {
                 self.take_dev(p, DevCard::Monopoly)?;
                 for q in 0..self.players as usize {
                     if q == p {
@@ -1206,6 +1214,60 @@ mod tests {
         assert_eq!(s.settlements_left[0], SETTLEMENT_POOL, "returned to pool");
         assert_eq!(s.cities_left[0], CITY_POOL - 1);
         s.assert_invariants();
+    }
+
+    #[test]
+    fn only_the_militia_may_be_played_before_the_roll() {
+        // R-9.5. Hold one of everything, bought last turn so nothing is fresh,
+        // and ask what is on offer before the dice.
+        let mut s = State::new(3, 9);
+        s.phase = Phase::PreRoll;
+        for card in [
+            DevCard::Militia,
+            DevCard::RoadBuilding,
+            DevCard::Monopoly,
+            DevCard::Invention,
+        ] {
+            s.dev_held[0][card as usize] = 1;
+            s.dev_fresh[0][card as usize] = 0;
+        }
+
+        let mut buf = Vec::new();
+        s.legal_into(&mut buf);
+        assert!(
+            buf.contains(&Action::PlayMilitia),
+            "the militia is the one card the roll's timing matters to"
+        );
+        for a in [
+            Action::PlayRoadBuilding,
+            Action::PlayMonopoly(Resource::Ore),
+            Action::PlayInvention([Resource::Wood, Resource::Ore]),
+        ] {
+            assert!(!buf.contains(&a), "{a:?} was offered before the roll");
+            // Not merely unlisted: refused if asked for directly, or the rule
+            // would hold only for a caller that reads the list first.
+            assert_eq!(
+                s.clone().apply(a),
+                Err(Illegal::WrongPhase),
+                "{a:?} was allowed before the roll"
+            );
+        }
+
+        // All four are back once the dice have been thrown.
+        s.phase = Phase::Action;
+        buf.clear();
+        s.legal_into(&mut buf);
+        for a in [
+            Action::PlayMilitia,
+            Action::PlayRoadBuilding,
+            Action::PlayMonopoly(Resource::Ore),
+            Action::PlayInvention([Resource::Wood, Resource::Ore]),
+        ] {
+            assert!(
+                buf.contains(&a),
+                "{a:?} should be playable in the action phase"
+            );
+        }
     }
 
     #[test]

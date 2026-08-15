@@ -1480,7 +1480,13 @@ function renderHand(v) {
     // hand reads as the interface being broken. The rule has nothing to say
     // about a card that is never played, so the badge stays off those.
     const fresh = scores ? 0 : v.yourFresh[c.i];
-    const note = fresh ? `, ${fresh} bought this turn and playable next` : '';
+    // Only the militia may be played before the roll (R-9.5). A pile that
+    // simply refuses to click, with nothing said, is the interface looking
+    // broken; the rule is short enough to just state.
+    const early = !scores && c.name !== 'militia' && v.yourTurn
+      && v.phase === 'before the roll';
+    const note = fresh ? `, ${fresh} bought this turn and playable next`
+      : (early ? ', roll first. Only the militia is played before the dice' : '');
     // A card you can play is played by clicking it. A button elsewhere that
     // opened a list of the same cards was a second way to reach the thing you
     // were already looking at.

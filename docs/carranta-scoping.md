@@ -167,7 +167,7 @@ Building costs, a working set, not yet balance-tested (§12.1):
 | R-9.2 | Development cards do **not** count toward hand size when a 7 is rolled, and cannot be stolen by the robber. |
 | R-9.3 | A player may play **at most 1** development card per turn, placing it **face up** in their player area. |
 | R-9.4 | A development card may not be played on the turn it was bought. |
-| R-9.5 | A development card may be played either **before rolling the dice** or at any time during the Action phase, including in the middle of trading. Playing one before the roll consumes the turn's single card play. |
+| R-9.5 | A development card may be played at any time during the Action phase, including in the middle of trading. **Before the roll, only the Militia may be played**, and doing so consumes the turn's single card play. It is the one card whose timing changes anything: moving the robber before production decides which hexes pay this turn. Invention, Monopoly and Road Building do the same thing on either side of the dice, so they wait for the Action phase. |
 | R-9.6 | Development cards may not be traded or given away, and never go back into the supply. |
 
 **Card effects**
@@ -341,7 +341,7 @@ SETUP_ROUND_1  → (per player: place settlement → place road)        [R-3.7]
 SETUP_ROUND_2  → (reverse order: place settlement → place road
                   → collect starting resources)                     [R-3.8, R-3.10]
       ↓
-PRE_ROLL       → optional PLAY_DEV_CARD                             [R-5.1, R-9.5]
+PRE_ROLL       → optional PLAY_MILITIA (no other card)              [R-5.1, R-9.5]
       ↓ ROLL_DICE
    roll == 7 ?
       ├─ yes → DISCARD_PENDING (all players with >7 cards)          [R-6.2]

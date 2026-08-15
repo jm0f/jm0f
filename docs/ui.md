@@ -88,6 +88,11 @@ you are already looking at. A card bought this turn is marked `new` and cannot
 be played until the next one (R-9.4): the engine refuses it either way, but a
 refusal you cannot see in your own hand reads as the interface being broken.
 
+**Before the roll, only the militia is playable** (R-9.5), and the other piles
+say so rather than simply declining to click. It is the one card whose timing
+changes anything, since moving the robber before production decides which
+hexes pay this turn.
+
 **A victory point card is the exception, and is not a card you play.** It
 scores the moment it is bought, it is yours alone until the game ends, and no
 action exists behind it (R-9.11). It carried the `new` badge and offered
