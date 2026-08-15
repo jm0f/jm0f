@@ -427,6 +427,10 @@
                         margin-right: 0; vertical-align: -.28em; }
   .logRes .rcard.mini i { width: .42em; height: .42em; }
   .logRes b { font-weight: 600; color: var(--foreground); }
+  /* A piece in the log, sized to the line it sits on. */
+  .logPiece { display: inline-block; width: 1.15em; height: 1.35em;
+              vertical-align: -.32em; margin: 0 .1em; }
+  .logPiece svg { width: 100%; height: 100%; overflow: visible; }
   /* The dice of a roll, at the size of the words around them. */
   .logDie { width: 1.05em; height: 1.05em; vertical-align: -.2em;
             margin-right: .2em; color: var(--muted-foreground);
@@ -1057,7 +1061,7 @@ function tone(hex, amount) {
 // The drawings, fetched once and kept as parsed nodes to clone per piece.
 const art = {};
 async function loadArt() {
-  for (const name of ['road-30', 'road-90', 'road-150', 'settlement', 'city']) {
+  for (const name of ['road-30', 'road-90', 'road-150', 'settlement', 'city', 'robber']) {
     const text = await (await fetch(`/art/${name}.svg`)).text();
     art[name] = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
   }
@@ -1110,6 +1114,11 @@ function draw() {
   const vxy = {};
   view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
 
+  // Where the robber is, noted while the hexes are drawn and used once the
+  // pieces are down. Declared here rather than beside its use, which put it in
+  // the temporal dead zone of a loop that runs earlier and threw on the first
+  // hex holding it, taking the rest of the board with it.
+  let robberAt = null;
   // Which board features are clickable this move.
   const byVertex = {}, byEdge = {}, byHex = {};
   view.choices.forEach(c => {
@@ -1173,9 +1182,9 @@ function draw() {
         }));
       }
     }
-    if (h.robber) {
-      g.appendChild(el('circle', { cx, cy: cy + 26, r: 9, fill: '#111', stroke: '#fff', 'stroke-width': 1.5 }));
-    }
+    // Where the robber is, drawn once the pieces are down so it stands on top
+    // of them rather than under whatever was placed last.
+    if (h.robber) robberAt = [cx, cy];
     // Moving the robber is one click on the board. Choosing whom it robs is a
     // second decision hiding inside the same choice list, and taking the first
     // one silently picked the victim for you, so when a hex offers more than
@@ -1240,6 +1249,15 @@ function draw() {
       tooth.style.mixBlendMode = 'soft-light';
       tooth.style.pointerEvents = 'none';
       base.appendChild(tooth);
+      // The cards' edge, the same one the tiles carry. A port is a piece of
+      // the same board and should be cut from the same stock.
+      const lip = el('circle', {
+        cx: ox, cy: oy, r: 15.6, fill: 'none',
+        stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1,
+        'vector-effect': 'non-scaling-stroke',
+      });
+      lip.style.pointerEvents = 'none';
+      base.appendChild(lip);
     }
     const t = el('text', {
       x: ox, y: oy, class: 'hexnum', 'font-size': 12,
@@ -1298,6 +1316,10 @@ function draw() {
   // piece in front is covered by the one behind it.
   solids.sort((a, b) => a.y - b.y);
   solids.forEach((s) => place(svg, s.art, s.x, s.y, s.k, s.seat, s.anchor));
+  // Last of all, so it stands on the tile rather than under whichever piece
+  // happened to be drawn after it. It belongs to no seat, and its greys are
+  // not in the tint table, so it comes through the seat colouring untouched.
+  if (robberAt) place(svg, 'robber', robberAt[0], robberAt[1] + 6, 0.5, 0, 0.82);
 
   // Where you may build, shown as a ghost of the piece you would get rather
   // than an abstract marker: the same drawing, in your colour, at a fraction
@@ -1491,7 +1513,9 @@ function render() {
       }
       // The engine writes seat numbers because that is what it knows. Naming
       // happens here, so the log calls people what the rows call them.
-      d.append(...logParts(v, l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x))));
+      const by = (l.seat !== null && l.seat !== undefined) ? l.seat
+        : (owner ? owner.seat : v.you);
+      d.append(...logParts(v, l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x)), by));
       box.appendChild(d);
     });
     log.appendChild(box);
@@ -2445,24 +2469,56 @@ function mergeDiscards(lines) {
 // rather than written. The words are the engine's; what changes here is that a
 // reader scanning a turn sees colours where it used to be a wall of nouns.
 const RESOURCE_WORDS = ['brick', 'wood', 'wool', 'wheat', 'ore'];
-function logParts(v, text) {
-  // "Rolled 8 (5, 3)": the bracket is the two dice, so draw them.
-  const roll = /^Rolled (\d+) \((\d), (\d)\)$/.exec(text);
-  if (roll) {
-    return [`Rolled ${roll[1]} `, logDie(+roll[2]), logDie(+roll[3])];
-  }
+const PIECE_WORDS = { settlement: 'settlement', city: 'city', road: 'road' };
+function logParts(v, text, seat) {
   const out = [];
   let at = 0;
-  const re = /(\d+)\s+(brick|wood|wool|wheat|ore)\b|\b(brick|wood|wool|wheat|ore)\b/g;
+  // Three things get drawn rather than written: the dice of a roll, the
+  // resources, and the pieces. The dice are matched wherever they appear
+  // rather than only at the start of a line, because a turn the clock ended
+  // says "Time ran out, rolled 6 (4, 2) for you" and that is the same roll.
+  const re = new RegExp(
+    'rolled (\\d+) \\((\\d), (\\d)\\)'
+    + '|(\\d+)\\s+(brick|wood|wool|wheat|ore)\\b'
+    + '|\\b(brick|wood|wool|wheat|ore)\\b'
+    + '|\\b(settlement|city|road)\\b', 'gi');
   let m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > at) out.push(text.slice(at, m.index));
-    const word = m[2] || m[3];
-    out.push(logFan(RESOURCE_WORDS.indexOf(word), m[1] ? +m[1] : 1, word));
+    if (m[1]) {
+      out.push(`${text.slice(m.index, m.index + 6)} ${m[1]} `,
+               logDie(+m[2]), logDie(+m[3]));
+    } else if (m[5] || m[6]) {
+      const word = (m[5] || m[6]).toLowerCase();
+      out.push(logFan(RESOURCE_WORDS.indexOf(word), m[4] ? +m[4] : 1, word));
+    } else {
+      out.push(pieceGlyph(PIECE_WORDS[m[7].toLowerCase()], seat));
+    }
     at = m.index + m[0].length;
   }
   if (at < text.length) out.push(text.slice(at));
   return out.length ? out : [text];
+}
+
+// A piece in the log, in the colour of whoever put it there, so a line about
+// building shows the thing that was built. A road is drawn flat rather than at
+// one of the board's three angles, since a line of text has only one.
+function pieceGlyph(name, seat) {
+  const src = art[name === 'road' ? 'road-90' : name];
+  const wrap = document.createElement('span');
+  wrap.className = 'logPiece';
+  if (!src) { wrap.textContent = name; return wrap; }
+  const node = src.cloneNode(true);
+  node.querySelectorAll('[fill]').forEach((n) => {
+    const f = (n.getAttribute('fill') || '').toUpperCase();
+    if (f in ART_TONES) n.setAttribute('fill', tone(SEAT_HEX[seat], ART_TONES[f]));
+  });
+  node.removeAttribute('width');
+  node.removeAttribute('height');
+  node.removeAttribute('style');
+  wrap.appendChild(node);
+  wrap.title = name;
+  return wrap;
 }
 
 // The same fan the hand uses, at the size of the words around it. Counting the

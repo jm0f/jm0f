@@ -38,12 +38,13 @@ const PHOTOS: [(&str, &[u8]); 6] = [
     ("desert", include_bytes!("../../../art/desert.jpg")),
 ];
 
-const ART: [(&str, &str); 5] = [
+const ART: [(&str, &str); 6] = [
     ("road-30", include_str!("../../../art/road-30.svg")),
     ("road-90", include_str!("../../../art/road-90.svg")),
     ("road-150", include_str!("../../../art/road-150.svg")),
     ("settlement", include_str!("../../../art/settlement.svg")),
     ("city", include_str!("../../../art/city.svg")),
+    ("robber", include_str!("../../../art/robber.svg")),
 ];
 
 /// The two typefaces, carried in the binary like everything else.

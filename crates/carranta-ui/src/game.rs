@@ -546,19 +546,28 @@ impl Session {
             self.charged_to = owner;
         }
 
-        // A new turn is not only a new decider. The deal runs as a snake, so
-        // the player who places last in the first round places first in the
-        // second, and then moves first in play: the turn changes hands twice
-        // without the decider changing. Entering PreRoll marks the start of a
-        // turn of play, entering SetupSettlement the start of a placement, and
-        // each happens exactly once per turn.
+        // A turn is everything between one player ending theirs and the next
+        // player ending theirs, and a placement in the deal is a turn of its
+        // own. Nothing else starts one.
+        //
+        // A change of decider does not. Discarding on a seven, choosing whether
+        // to take an offer, being robbed: those are things the passive players
+        // do inside somebody else's turn, and counting them as turns split one
+        // turn into four and filed each player's discard under a turn of their
+        // own. The deal runs as a snake, so the turn also changes hands twice
+        // without the decider changing, which is the other half of why the
+        // decider cannot be the signal.
+        //
+        // Entering PreRoll marks the start of a turn of play, entering
+        // SetupSettlement the start of a placement, and each happens exactly
+        // once per turn.
         let deciding = self.state.decider();
         let preroll = matches!(self.state.phase, Phase::PreRoll);
         let placing = matches!(self.state.phase, Phase::SetupSettlement { .. });
         let starting_a_turn = (preroll && !self.was_preroll) || (placing && !self.was_placing);
         self.was_preroll = preroll;
         self.was_placing = placing;
-        if deciding != self.turn_holder || starting_a_turn {
+        if starting_a_turn {
             // Close the books on the turn that is ending before the next one
             // starts.
             // Milliseconds, not seconds. A bot answers in a fraction of one,
@@ -977,10 +986,13 @@ impl Session {
     /// while it is not, rather than either polling fast forever or letting a
     /// paced move sit unseen until the next lazy tick.
     pub fn bot_thinking(&self) -> bool {
-        self.pace != Pace::Instant
-            && !matches!(self.state.phase, Phase::GameOver { .. })
-            && self.state.decider() != HUMAN
-            && self.choices().is_empty()
+        if self.pace == Pace::Instant || matches!(self.state.phase, Phase::GameOver { .. }) {
+            return false;
+        }
+        // An offer on the table is a bot about to answer it, whoever's turn it
+        // is, so the page has to keep asking or the answer arrives whenever the
+        // idle poll next happens to land.
+        self.state.offer_count > 0 || (self.state.decider() != HUMAN && self.choices().is_empty())
     }
 
     /// Let a paced table move on when the wait for the next move is up.
@@ -993,6 +1005,29 @@ impl Session {
         if self.bot_thinking() {
             self.finish_move();
         }
+    }
+
+    /// Whether the next bot action may happen yet, arming the wait if it may.
+    ///
+    /// One gate for everything a bot does, because everything a bot does is
+    /// something a person is watching for. Making a move and taking somebody
+    /// else's offer are the same event to a reader.
+    fn beat_due(&mut self) -> bool {
+        let (lo, hi) = self.pace.window();
+        if hi == 0 {
+            return true;
+        }
+        let now = std::time::Instant::now();
+        if now < self.bot_ready {
+            return false;
+        }
+        let span = hi - lo + 1;
+        // Its own generator, so which stream it draws from does not matter:
+        // nothing else reads this one. The same convention the forfeit picker
+        // uses.
+        let wait = lo + self.tempo.below(Stream::Steal, span as u32) as u64;
+        self.bot_ready = now + std::time::Duration::from_millis(wait);
+        true
     }
 
     /// Advance until the human has something to decide, or the game ends.
@@ -1010,17 +1045,8 @@ impl Session {
             if self.state.decider() == HUMAN || !self.choices().is_empty() {
                 break;
             }
-            let (lo, hi) = self.pace.window();
-            if hi > 0 {
-                if std::time::Instant::now() < self.bot_ready {
-                    break;
-                }
-                let span = hi - lo + 1;
-                // Its own generator, so which stream it draws from does not
-                // matter: nothing else reads this one. The same convention the
-                // forfeit picker uses.
-                let wait = lo + self.tempo.below(Stream::Steal, span as u32) as u64;
-                self.bot_ready = std::time::Instant::now() + std::time::Duration::from_millis(wait);
+            if !self.beat_due() {
+                break;
             }
             self.state.legal_into(&mut buf);
             if buf.is_empty() {
@@ -1071,6 +1097,13 @@ impl Session {
             return;
         }
         for _ in 0..16 {
+            // A bot answering an offer waits the same beat it waits to move.
+            // Without this the table settled its own trades in the tick the
+            // offer was made, so an offer a person might have taken was gone
+            // before it had been drawn once.
+            if !self.beat_due() {
+                return;
+            }
             let mut acted = false;
             'outer: for i in 0..self.state.offer_count {
                 for seat in 1..self.state.players {
@@ -2022,6 +2055,40 @@ mod tests {
             "the sweep should reach most phases, saw {}",
             seen.len()
         );
+    }
+
+    #[test]
+    fn everything_between_two_turn_ends_is_one_turn() {
+        // A turn runs from one player ending theirs to the next ending theirs.
+        // A seven hands the decision round the table for discards, and a
+        // militia hands it round again, but all of that happens inside the turn
+        // it interrupted and has to be filed under it.
+        for seed in 0..60u64 {
+            let mut g = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..700 {
+                if g.choices().is_empty() {
+                    break;
+                }
+                let v = g.version();
+                let _ = g.act(0, v);
+            }
+            // Walk the record: between one "Ended the turn" and the next,
+            // every line has to carry the same turn number.
+            let mut current: Option<u32> = None;
+            for line in g.log().iter().filter(|l| !l.setup) {
+                match current {
+                    None => current = Some(line.turn),
+                    Some(n) => assert_eq!(
+                        line.turn, n,
+                        "seed {seed}: \"{}\" was filed under turn {} inside turn {n}",
+                        line.text, line.turn
+                    ),
+                }
+                if line.text == "Ended the turn" || line.text.contains("the turn was ended") {
+                    current = None;
+                }
+            }
+        }
     }
 
     #[test]
