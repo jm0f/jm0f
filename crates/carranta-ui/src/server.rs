@@ -232,10 +232,12 @@ impl Server {
                 let name = param(query, "name").unwrap_or_default();
                 let log_shown = param(query, "log").as_deref() != Some("off");
                 let public = wants_public(query);
+                let game = param(query, "game").unwrap_or_default();
                 *session = Session::new(seats, seed, mode)
                     .with_clock(clock)
                     .with_log(log_shown)
                     .with_public(public)
+                    .with_game(&decode(&game))
                     .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())

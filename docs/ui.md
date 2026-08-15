@@ -218,8 +218,9 @@ without one happens in a card that waits for you.**
 | Setup placement | Board, click the ghost |
 | Move the robber | Board, hexes light, click one |
 | Choose whom to rob | Card, by name. The robber is already on the hex |
-| Discard down to seven | Card |
+| Discard down to seven | Card, the whole hand at once |
 | Monopoly / invention resource pick | Card |
+| Bank and port trades | Card, inside the trade composer |
 | Incoming trade offer | Card |
 
 The card is a **real modal, centred over the board.** An earlier version put it
@@ -232,6 +233,12 @@ rather than part of the layout, so opening one leaves the seats, the board, the
 reserved column and the dock exactly where they were. That was already the rule
 when the card lived in a column, and it survives the move: a panel that
 resizes what the player is reading is worse than one that covers a corner.
+
+**A card belongs to the turn it was opened on.** If the clock runs the turn out
+from under you, the card goes with it: leaving a composer or a picker on screen
+invites you to answer something nobody is asking any more, and the click would
+be refused as stale anyway. The turn number is the signal, because that is what
+the server advances when it forces an end.
 
 Covering part of the board is the accepted cost. Every choice on that list is
 one you make against the position, so the card is the width of a question and
@@ -247,6 +254,18 @@ click it in the tray to take it back. Wanting is the same gesture against the
 five resources. The offer is built out of the cards you are already looking
 at, rather than in a disconnected panel of steppers.
 
+**One door for every trade.** The bank had its own button in the dock opening
+its own list of twenty sentences, which split trading in two and made the trade
+people make most often the one they could not simply say. **Trade** now opens
+the composer whether the other side is a person, a port or the bank.
+
+A bank or port trade is one resource in and one out, which is exactly the shape
+the composer already builds. Whenever what you have built is a trade the bank
+or a port will take, **the rate appears as a button under the composer**. When
+it is not, the card says what the bank would take instead, so the option is
+never invisible until you stumble onto the right count. A port's improved rate
+is named as a port rather than shown as an unexplained smaller number.
+
 **Receiving:** an offer arrives as a card that waits for an answer, accept,
 decline, or counter. It does not sit quietly in a panel to be missed.
 
@@ -257,6 +276,22 @@ Each offer carries **the waiting loader in the proposer's colour**, beside their
 name. It is the same animation an empty seat uses, and for the same reason:
 somebody is waiting on an answer. The motion walks the eye from who asked to
 the buttons that answer them.
+
+### Handing half of it back
+
+A seven is a decision about the **whole hand**, so the whole hand is on screen:
+every resource with what you hold and what you are choosing, a running count
+against what is owed, and a confirm that stays shut until the two agree.
+
+One button per resource discarded a card the instant it was pressed, which
+asked the player to make the decision one irreversible card at a time without
+ever seeing what it added up to. You also cannot choose more than is owed, which
+is what makes the confirm a yes or no rather than something to be talked down
+from.
+
+The engine discards one card at a time, so a chosen hand is played out as a run
+of single discards, **sequentially**: each one moves the version on, and firing
+them together would have every card after the first refused as stale.
 
 **Silence is a refusal.** An offer left on the table stops the bots, because
 they are waiting on you. That wait is charged to whoever owes the answer, not

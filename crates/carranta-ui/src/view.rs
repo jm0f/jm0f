@@ -179,8 +179,9 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.int("clockSecs", session.clock().secs() as i64);
     j.int("clockIncrement", session.clock().increment() as i64);
     j.str("youName", session.name());
+    j.str("game", session.game());
     j.int("turns", session.turn_no() as i64);
-    j.ints("turnSecs", session.turn_secs().iter().map(|&n| n as i64));
+    j.ints("turnMs", session.turn_ms().iter().map(|&n| n as i64));
     j.bool("inSetup", session.in_setup());
     j.bool("logShown", session.log_shown());
 
@@ -226,6 +227,22 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
                     o.str("card", "invention")
                         .int("res", x as i64)
                         .int("res2", y as i64);
+                }
+                // Which card this discards, so the page can lay the hand out
+                // and let you choose against it rather than offering one
+                // button per resource with no sense of the whole.
+                carranta_core::action::Action::Discard { resource, .. } => {
+                    o.int("res", resource as i64);
+                }
+                // A bank or port trade, in parts rather than only as a
+                // sentence. The composer matches what you have built against
+                // these, so it can offer the rate when what you are asking for
+                // happens to be one the bank will take.
+                carranta_core::action::Action::Trade { give, take } => {
+                    o.int("give", give as i64).int("take", take as i64).int(
+                        "rate",
+                        session.state().trade_rate(HUMAN as usize, give) as i64,
+                    );
                 }
                 _ => {}
             }
@@ -314,7 +331,55 @@ mod tests {
             let v = moved.version();
             let _ = moved.act(0, v);
         }
-        assert_eq!(before, render(&moved), "same game, same payload");
+        assert_eq!(
+            without_the_clock(&before),
+            without_the_clock(&render(&moved)),
+            "same game, same payload"
+        );
+
+        // The scrub must not be what makes them equal. It has to leave the
+        // substance behind, and two genuinely different games have to still
+        // come out different after it.
+        let scrubbed = without_the_clock(&before);
+        for kept in ["\"hexes\"", "\"seats\"", "\"yourHand\"", "\"buildings\""] {
+            assert!(scrubbed.contains(kept), "the scrub ate {kept}");
+        }
+        let elsewhere = Session::new(4, 5, TradeMode::Full);
+        assert_ne!(
+            scrubbed,
+            without_the_clock(&render(&elsewhere)),
+            "a different game must not survive the scrub as the same payload"
+        );
+    }
+
+    /// The payload with its wall-clock readings taken out.
+    ///
+    /// How long a turn took is a fact about the machine and the moment, not
+    /// about the position, so it differs between two runs of the same game and
+    /// would fail an equality this test does not mean to make. Everything that
+    /// describes the game itself stays in and is still compared.
+    fn without_the_clock(payload: &str) -> String {
+        let mut s = payload.to_string();
+        for key in ["\"turnMs\":", "\"elapsed\":", "\"timeLeft\":"] {
+            let mut out = String::with_capacity(s.len());
+            let mut rest = s.as_str();
+            while let Some(at) = rest.find(key) {
+                out.push_str(&rest[..at + key.len()]);
+                out.push_str("<clock>");
+                let after = &rest[at + key.len()..];
+                // An array carries commas of its own, so it ends at its
+                // bracket; a bare number ends at whatever comes after it.
+                let end = if after.starts_with('[') {
+                    after.find(']').map_or(after.len(), |i| i + 1)
+                } else {
+                    after.find([',', '}']).unwrap_or(after.len())
+                };
+                rest = &after[end..];
+            }
+            out.push_str(rest);
+            s = out;
+        }
+        s
     }
 
     #[test]

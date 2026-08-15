@@ -91,6 +91,20 @@
     --ring: var(--accent);
     --radius: 10px;
     --radius-sm: 6px; --radius-md: 8px; --radius-lg: 14px;
+    /* One noise, three weights. Baked rather than filtered live, see the
+       grain block below.
+
+       The colour matrix throws away the turbulence's own colour and keeps only
+       its red channel, as the alpha of a speckle: `0.66 R - 0.2`, which clips
+       the bottom of the range away and leaves fibre rather than a fog.
+       Desaturating the noise instead gave a mid-grey with almost no variance,
+       which is a layer that paints and cannot be seen.
+
+       The speckle is a warm brown, not black. Multiplying black into the paper
+       pulled it grey-green: the texture was right and the colour was somebody
+       else's. A dark warm shadow multiplies into warm paper and leaves it
+       warm. */
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42 0 0 0 0 0.32 0 0 0 0 0.19 0.66 0 0 0 -0.2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
   }
   * { box-sizing: border-box; }
   /* The hidden attribute is display: none from the user agent, at the weakest
@@ -120,6 +134,49 @@
       radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%),
       var(--bg);
   }
+
+  /* ---- grain, style.md §3.5 --------------------------------------------- */
+  /* Three weights of the same noise, so the surfaces separate by material
+     rather than only by colour: the table is heavily grained paper, a card
+     laid on it is smooth, and the tiles are cardboard, done on the board
+     itself in §board.
+
+     Baked into a data URI rather than run as a live `filter: url()`. A filter
+     on a full-viewport element is re-rasterized on every repaint; a tiled
+     background image is rasterized once and reused, and `stitchTiles` is what
+     lets the tile repeat without a seam.
+
+     `soft-light` rather than laying grey over the colour: the noise modulates
+     what is under it, lifting and dropping it around the midpoint, so the
+     paper keeps its warmth instead of drifting grey. */
+  body::after, .lobby::after, .panel::after {
+    content: ''; position: absolute; inset: 0;
+    pointer-events: none;
+    background-image: var(--grain);
+    background-size: 180px 180px;
+  }
+  /* The table itself, and the heaviest of the three. Multiplied, so the
+     speckles sit in the paper as shadow rather than being laid on top of it
+     as grey.
+
+     Behind the cards, not over them. A negative index puts it above the body's
+     own background and below everything in the flow, so the cards stay the
+     smooth things laid on the rough one rather than being grained twice. */
+  body::after, .lobby::after {
+    position: fixed; z-index: -1;
+    mix-blend-mode: multiply; opacity: .55;
+  }
+  /* The lobby paints its own ground over the body, so the table's grain would
+     be buried under it. Its card is lifted clear of it the same way. */
+  .lobby::after { z-index: 0; }
+  .lobbyCard { position: relative; z-index: 1; }
+  /* Minimal: a card is a smooth thing laid on a rough one. Enough tooth to
+     belong to the same world, not enough to sit between a reader and the
+     text, which is why this one stays on soft-light. */
+  .panel { position: relative; }
+  .panel::after {
+    mix-blend-mode: multiply; opacity: .13; border-radius: inherit;
+  }
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(251, 247, 239, .78);
@@ -127,12 +184,19 @@
     flex: none;
   }
   /* The wordmark is the one place the display face is allowed to be itself:
-     large optical size for the high contrast, wonk on for the flared leg. */
-  h1 {
+     large optical size for the high contrast, wonk on for the flared leg.
+     Keyed to the class rather than to `h1`, which is what it used to be: it
+     became a link to the homepage and quietly fell back to the browser's blue
+     underline, in the body face, next to a clock set in the display one. */
+  h1, .wordmark {
     font: 700 22px/1 var(--display); margin: 0; letter-spacing: .005em;
     font-variation-settings: 'opsz' 120, 'SOFT' 20, 'WONK' 1;
     color: var(--accent);
   }
+  /* A link, but the wordmark is the name of the thing rather than a phrase in
+     a sentence, so it is not underlined until you go for it. */
+  .wordmark { text-decoration: none; display: inline-block; }
+  .wordmark:hover { text-decoration: underline; text-underline-offset: 4px; }
   header .status { color: var(--dim); }
   header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
   .vid { font: 600 8px var(--sans); text-anchor: middle;
@@ -331,7 +395,10 @@
     font-weight: 600; color: var(--muted-foreground);
   }
   .logWho { color: var(--foreground); letter-spacing: .04em; font-weight: 700; }
+  /* The turn header is uppercased; the duration inside it is not, because a
+     unit is a unit. "10MS" is not a thing anyone writes. */
   .logTook { margin-left: .6em; font-weight: 400; opacity: .75;
+             text-transform: none;
              font-variant-numeric: tabular-nums; letter-spacing: .02em; }
   .logLine { padding: 1px 0; }
   /* Things the table did rather than a player: no colour on the edge. */
@@ -559,6 +626,16 @@
                color: var(--dim); margin: 0 0 10px; font-weight: 600;
                padding-right: 4.5em; }
   .prompt .buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* The hand, laid out to choose against. One column rather than the trade
+     composer's two: there is only one side to a discard. */
+  .discardGrid .row { justify-content: flex-start; }
+  .discardGrid .name { flex: 1; }
+  .discardTally { margin-top: 8px; color: var(--muted-foreground); font-size: 12px;
+                  text-transform: uppercase; letter-spacing: .06em; }
+  /* The bank and the ports, inside the composer rather than beside it. */
+  .bankRow { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); }
+  .bankRow .sideLabel { display: block; margin-bottom: 6px; }
+  .bankRow .buttons button { text-align: left; }
   .prompt .buttons button { text-align: left; }
   .toRow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .toRow select { flex: 1; }
@@ -592,6 +669,11 @@
 <div class="lobby" id="lobby" hidden>
   <div class="lobbyCard panel">
     <h1 class="lobbyTitle">Carranta</h1>
+
+    <div class="field">
+      <span class="fieldLabel" data-tip="What this table is called, for the people you invite to it." tabindex="0">Game</span>
+      <input id="lobbyGame" class="seed" type="text" maxlength="40" placeholder="name this game">
+    </div>
 
     <div class="field">
       <span class="fieldLabel">Mode</span>
@@ -647,6 +729,49 @@
     <button id="lobbyStart" class="btn-primary btn-block">Deal the board</button>
   </div>
 </div>
+
+<!-- The paint box, style.md §3.5. Filters and patterns are referenced by id
+     across the whole document, so they live here rather than inside the board,
+     which is emptied and redrawn on every change. -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <defs>
+    <!-- Cardboard. Coarser than the paper grain, and at several scales, which
+         is what separates pressed board from a printed sheet. -->
+    <filter id="cardboardNoise" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.5" numOctaves="4" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+    <!-- Filtered once into a tile and repeated, rather than a filter per hex.
+         Nineteen live filters is nineteen rasterizations on every redraw. -->
+    <pattern id="cardboard" width="120" height="120" patternUnits="userSpaceOnUse">
+      <rect width="120" height="120" filter="url(#cardboardNoise)"/>
+    </pattern>
+
+    <!-- Satin paint on wood. The highlight is read off the piece's own
+         silhouette, so it follows whatever shape is passed through it: blur
+         the alpha to round the edge over, light that, then clip the result
+         back inside the piece so no sheen spills onto the tile.
+
+         Satin rather than lacquer is the two constants: a low specular
+         constant keeps it dim, and a low exponent keeps it broad. Raising the
+         exponent tightens it to a gloss spot, which reads as plastic.
+
+         The light is warm and comes from the upper left, agreeing with the
+         faces the drawings already paint lightest, so the sheen lands on the
+         faces the art says are lit rather than fighting them. -->
+    <filter id="satin" x="-10%" y="-10%" width="120%" height="120%"
+            color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.6" result="round"/>
+      <feSpecularLighting in="round" surfaceScale="3" specularConstant="0.34"
+                          specularExponent="11" lighting-color="#FFF4E2" result="sheen">
+        <feDistantLight azimuth="225" elevation="58"/>
+      </feSpecularLighting>
+      <feComposite in="sheen" in2="SourceAlpha" operator="in" result="inside"/>
+      <feComposite in="inside" in2="SourceGraphic" operator="arithmetic"
+                   k1="0" k2="1" k3="1" k4="0"/>
+    </filter>
+  </defs>
+</svg>
 
 <main>
   <aside class="col left">
@@ -826,6 +951,13 @@ function place(svg, name, x, y, k, seat, anchor = 0.5) {
   node.setAttribute('x', x - (w * k) / 2);
   node.setAttribute('y', y - h * k * anchor);
   node.removeAttribute('style');
+  // Painted wood against pressed board: the pieces are the one thing on the
+  // table with a finish on it, which is also what lifts them off a tile whose
+  // grain runs right up to them. On the inner group, so the sheen is measured
+  // in the drawing's own units and does not change with how large the piece
+  // happens to be placed.
+  const faces = node.querySelector('g');
+  if (faces) faces.setAttribute('filter', 'url(#satin)');
   svg.appendChild(node);
   return node;
 }
@@ -862,6 +994,16 @@ function draw() {
       stroke: byHex[h.id] ? 'var(--accent)' : 'var(--panel)',
       'stroke-width': byHex[h.id] ? 4 : 3,
     }));
+    // The tile's tooth, laid over its colour rather than mixed into it: the
+    // same polygon again, filled with the noise and blended, so the grain
+    // modulates the terrain it is on instead of greying it. Stroked in the
+    // gap colour so it cannot creep over the seam between tiles.
+    const tooth = el('polygon', {
+      points: hexPoints(cx, cy), fill: 'url(#cardboard)', opacity: .45,
+    });
+    tooth.style.mixBlendMode = 'soft-light';
+    tooth.style.pointerEvents = 'none';
+    g.appendChild(tooth);
     if (h.number > 0) {
       // A white disc, borderless: the number needs its own ground to sit on,
       // and with no outline the disc is a shape rather than a badge. One ink
@@ -1070,6 +1212,9 @@ function render() {
   // the offer itself where its contents are visible, "Accept offer 0" says
   // considerably less than the offer does.
   clockFrom(v);
+  // Before anything draws, so a card belonging to a turn that is over never
+  // reaches the screen at all.
+  dismissStalePrompt(v);
   renderSeats(v);
   renderHand(v);
   renderActions(v);
@@ -1117,13 +1262,15 @@ function render() {
     n.textContent = g.turn === 0 ? 'new game'
       : g.setup ? `setup ${g.turn}` : `turn ${g.turn}`;
     // How long the turn took, from the clock that was already measuring it.
-    const took = (v.turnSecs || [])[g.turn - 1];
-    if (g.turn > 0 && took !== undefined && took > 0) {
+    // Every finished turn carries one, including the ones a bot answered in a
+    // few milliseconds: those used to truncate to zero seconds and then be
+    // hidden for being zero, which left the log looking like it was not
+    // measuring at all.
+    const took = (v.turnMs || [])[g.turn - 1];
+    if (g.turn > 0 && took !== undefined) {
       const d = document.createElement('span');
       d.className = 'logTook';
-      d.textContent = took >= 60
-        ? `${Math.floor(took / 60)}m ${took % 60}s`
-        : `${took}s`;
+      d.textContent = tookFor(took);
       n.appendChild(d);
     }
     h.appendChild(n);
@@ -1378,10 +1525,14 @@ function renderActions(v) {
     { g: 'buy', label: 'Buy card', c: buy,
       why: theirs || (v.devLeft === 0 ? 'the deck is empty'
         : missing(v, COSTS.dev) || (rolled ? '' : 'roll first')) },
-    { g: 'offer', label: 'Offer', open: v.canPropose ? 'compose' : null,
-      why: theirs || 'trading is closed in this game' },
-    { g: 'bank', label: 'Bank', list: banks,
-      why: theirs || (rolled ? 'nothing you hold reaches a bank or port rate' : 'roll first') },
+    // One door for every trade. The bank used to have its own button opening
+    // its own list of sentences, which split trading in two and made the most
+    // common trade in the game the one you could not simply compose. The rates
+    // live inside the composer now, so "Trade" opens it whether the other side
+    // is a person, a port or the bank.
+    { g: 'offer', label: 'Trade',
+      open: (v.canPropose || banks.length) ? 'compose' : null,
+      why: theirs || (rolled ? 'trading is closed in this game' : 'roll first') },
     { g: 'end', label: 'End turn', c: end,
       why: theirs || (rolled ? '' : 'roll first') },
   ];
@@ -1508,6 +1659,7 @@ const VISIBILITY_NOTE = {
 
 const lobby = {
   seats: 4,
+  game: '',
   roles: ['you', 'open', 'open', 'open'],
   visibility: 'private',
   clockKind: 'turn',
@@ -1742,6 +1894,10 @@ function renderLobby() {
     [[true, 'keep a log'], [false, 'play from memory']], lobby.log,
     v => { lobby.log = v; });
 
+  // Set rather than rebuilt, so a name being typed survives the re-render that
+  // adding a bot or changing the clock causes.
+  const game = document.getElementById('lobbyGame');
+  if (game.value !== lobby.game) game.value = lobby.game;
   document.getElementById('lobbySeed').value = lobby.seed;
   document.getElementById('lobbyLink').value = inviteLink();
 
@@ -1775,6 +1931,9 @@ function openLobby() {
   document.getElementById('lobbyName').focus();
 }
 
+document.getElementById('lobbyGame').oninput = (e) => {
+  lobby.game = e.target.value;
+};
 document.getElementById('lobbySeed').oninput = (e) => {
   lobby.seed = e.target.value.trim();
   document.getElementById('lobbyLink').value = inviteLink();
@@ -1791,6 +1950,7 @@ document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLi
 document.getElementById('lobbyStart').onclick = () => {
   if (document.getElementById('lobbyStart').getAttribute('aria-disabled')) return;
   lobby.name = (document.getElementById('lobbyName').value || '').trim();
+  lobby.game = (document.getElementById('lobbyGame').value || '').trim();
   lobby.seed = document.getElementById('lobbySeed').value.trim();
   lobby.clockSecs = Math.max(5, Number(document.getElementById('lobbyClockSecs').value) || 0);
   localStorage.setItem('carranta.name', lobby.name);
@@ -1804,6 +1964,7 @@ document.getElementById('lobbyStart').onclick = () => {
     name: lobby.name,
     log: lobby.log ? 'on' : 'off',
     visibility: lobby.visibility,
+    game: lobby.game,
   });
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
@@ -1829,12 +1990,14 @@ function renderDice(v) {
 }
 
 // ---- the card that waits for you -------------------------------------------
-// One place for every decision that has nowhere on the board to happen. It is
-// anchored above the dock rather than centred, so the position you are
-// deciding about is never behind it, docs/ui.md §5.
-const prompt = { mode: null, data: null };
+// One place for every decision that has nowhere on the board to happen. A real
+// modal centred over the board, docs/ui.md §5.
+const prompt = { mode: null, data: null, turn: null };
 function openPrompt(mode, data) {
   prompt.mode = mode; prompt.data = data || null;
+  // Which turn the question belongs to, so it can be dismissed when that turn
+  // stops being the one being played.
+  prompt.turn = view ? view.turns : null;
   renderPrompt(view); renderHand(view);
   // Move the caret into the card so a keyboard lands where the game is
   // waiting, the way a dialog primitive would. It is not aria-modal: the board
@@ -1843,7 +2006,26 @@ function openPrompt(mode, data) {
   const first = document.querySelector('#prompt button, #prompt select');
   if (first) first.focus();
 }
-function closePrompt() { prompt.mode = null; prompt.data = null; renderPrompt(view); renderHand(view); }
+function closePrompt() {
+  prompt.mode = null; prompt.data = null; prompt.turn = null;
+  renderPrompt(view); renderHand(view);
+}
+
+// A card you opened on your turn is a question about that turn. If the clock
+// runs the turn out from under you, the turn ends and the question goes with
+// it: leaving a trade composer or a resource picker on screen invites you to
+// answer something nobody is asking any more, and the click would be refused
+// as stale anyway.
+//
+// The turn number is the signal because it is the one the server advances when
+// it forces an end, and it moves whether the turn ran out on you or on anyone
+// else at the table.
+function dismissStalePrompt(v) {
+  if (!prompt.mode || prompt.turn === null) return;
+  if (v.turns !== prompt.turn) {
+    prompt.mode = null; prompt.data = null; prompt.turn = null;
+  }
+}
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   hideTip();
@@ -1886,6 +2068,20 @@ function hideTip() {
 ['mouseout', 'focusout'].forEach(ev => document.addEventListener(ev, (e) => {
   if (tipFor && !tipFor.contains(e.relatedTarget)) hideTip();
 }));
+
+// A turn's length, at whatever precision the number deserves. A person takes
+// tens of seconds and does not care about the tenths; a bot takes milliseconds
+// and rounding those to a whole second says nothing.
+function tookFor(ms) {
+  if (ms >= 60000) {
+    const s = Math.round(ms / 1000);
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+  if (ms >= 10000) return `${Math.round(ms / 1000)}s`;
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms >= 1) return `${ms}ms`;
+  return '<1ms';
+}
 
 function renderPrompt(v) {
   const host = document.getElementById('prompt');
@@ -1951,11 +2147,7 @@ function renderPrompt(v) {
     host.appendChild(b);
     return;
   }
-  if (mode === 'discard') {
-    head('A seven was rolled, hand half of it back', false);
-    buttonList(discard);
-    return;
-  }
+  if (mode === 'discard') { renderDiscard(v, host, head); return; }
   if (mode === 'pick') { renderPick(v, host, head, buttonList); return; }
   if (mode === 'rob') {
     const here = v.choices.filter(c => c.hex === prompt.data.hex && c.victim !== undefined);
@@ -2162,6 +2354,96 @@ function counter(o) {
   openPrompt('compose');
 }
 
+// ---- handing half of it back ------------------------------------------------
+// What you are giving up is a decision about the whole hand, so the whole hand
+// is on screen: every resource with what you hold and what you are choosing,
+// a running count against what is owed, and a confirm that stays shut until
+// the two agree. One button per resource discarded a card the instant it was
+// pressed, which asked you to make the decision one irreversible card at a
+// time without ever seeing what it added up to.
+let toss = [0, 0, 0, 0, 0];
+function renderDiscard(v, host, head) {
+  const owed = (v.seats.find(s => s.seat === v.you) || {}).discardsDue || 0;
+  const discard = v.choices.filter(c => c.group === 'discard');
+  head(`A seven was rolled, hand ${owed} back`, false);
+
+  // A hand that changed under the selection (a robber, another discard) would
+  // leave counts pointing at cards that are gone.
+  v.resourceNames.forEach(r => { toss[r.i] = Math.min(toss[r.i], v.yourHand[r.i]); });
+
+  const chosen = toss.reduce((a, b) => a + b, 0);
+  const grid = document.createElement('div');
+  grid.className = 'discardGrid';
+  v.resourceNames.forEach(r => {
+    const held = v.yourHand[r.i];
+    const row = document.createElement('div');
+    row.className = 'row ' + (toss[r.i] ? 'on' : 'off');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = r.name;
+    const have = document.createElement('span');
+    have.className = 'have';
+    have.textContent = held;
+    const minus = document.createElement('button');
+    minus.className = 'btn-sm btn-icon';
+    minus.textContent = '−';
+    minus.disabled = toss[r.i] === 0;
+    minus.onclick = () => { toss[r.i]--; renderPrompt(view); };
+    const n = document.createElement('span');
+    n.className = 'n';
+    n.textContent = toss[r.i];
+    const plus = document.createElement('button');
+    plus.className = 'btn-sm btn-icon';
+    plus.textContent = '+';
+    // You cannot give back more of a card than you hold, nor more cards than
+    // are owed: the second is what makes the confirm a yes-or-no rather than
+    // a thing to be talked down from.
+    plus.disabled = toss[r.i] >= held || chosen >= owed
+      || !discard.some(c => c.res === r.i);
+    plus.onclick = () => { toss[r.i]++; renderPrompt(view); };
+    row.append(name, have, minus, n, plus);
+    grid.appendChild(row);
+  });
+  host.appendChild(grid);
+
+  const tally = document.createElement('div');
+  tally.className = 'discardTally';
+  tally.textContent = `${chosen} of ${owed} chosen`;
+  host.appendChild(tally);
+
+  const go = document.createElement('button');
+  go.className = 'btn-primary btn-block';
+  go.style.cssText = 'margin-top:10px';
+  go.textContent = chosen === owed ? 'Hand them back' : `Choose ${owed - chosen} more`;
+  if (chosen !== owed) go.setAttribute('aria-disabled', 'true');
+  go.setAttribute('data-tip', chosen === owed
+    ? 'Discard the chosen cards'
+    : `${owed - chosen} still to choose`);
+  go.onclick = () => {
+    if (chosen !== owed) return;
+    handBack(toss.slice());
+  };
+  host.appendChild(go);
+}
+
+// The engine discards one card at a time, so a chosen hand is played out as a
+// run of single discards. Sequential rather than parallel: each one moves the
+// version on, and firing them together would have every card after the first
+// refused as stale.
+async function handBack(plan) {
+  toss = [0, 0, 0, 0, 0];
+  for (let r = 0; r < plan.length; r++) {
+    for (let k = 0; k < plan[r]; k++) {
+      const c = (view.choices || []).find(x => x.group === 'discard' && x.res === r);
+      if (!c) return;
+      await load('/api/act', {
+        method: 'POST',
+        body: JSON.stringify({ action: c.i, version: view.version }),
+      });
+    }
+  }
+}
+
 function renderCompose(v, host) {
   const h = document.createElement('h2');
   h.id = 'promptTitle';
@@ -2232,6 +2514,63 @@ function renderCompose(v, host) {
   host.appendChild(compose);
 
   const sum = a => a.reduce((p, q) => p + q, 0);
+
+  // Trading with the bank is trading, so it happens where trading happens.
+  // It used to be its own button in the dock opening its own list of twenty
+  // sentences, which meant the one trade you make most often was the one place
+  // you could not simply say what you wanted.
+  //
+  // A bank or port trade is one resource in and one out, so it is exactly the
+  // shape the composer already builds. Whenever what you have built is one the
+  // bank or a port will take, the rate appears here as a button.
+  const banks = v.choices.filter(c =>
+    c.group === 'trade' && c.give !== undefined && c.take !== undefined);
+  const gaveOne = v.resourceNames.filter(r => give[r.i] > 0);
+  const tookOne = v.resourceNames.filter(r => want[r.i] > 0);
+  if (banks.length) {
+    const row = document.createElement('div');
+    row.className = 'bankRow';
+    const label = document.createElement('span');
+    label.className = 'sideLabel';
+    // The best rate on offer for what is in the give column, so a port you
+    // hold is visible as a port rather than as an unexplained smaller number.
+    const matches = banks.filter(c =>
+      gaveOne.length === 1 && gaveOne[0].i === c.give
+      && give[c.give] === c.rate
+      && (tookOne.length === 0
+        || (tookOne.length === 1 && tookOne[0].i === c.take && want[c.take] === 1)));
+    if (matches.length) {
+      label.textContent = 'or take the rate';
+      row.appendChild(label);
+      const wrap = document.createElement('div');
+      wrap.className = 'buttons';
+      matches.forEach(c => {
+        const b = document.createElement('button');
+        b.className = 'btn-secondary';
+        b.textContent = `${c.rate} ${v.resourceNames[c.give].name} for 1 `
+          + `${v.resourceNames[c.take].name} ${c.rate === 4 ? 'with the bank' : 'at the port'}`;
+        b.onclick = () => { closePrompt(); act(c.i); };
+        wrap.appendChild(b);
+      });
+      row.appendChild(wrap);
+    } else {
+      // Say what it would take, rather than leaving the option invisible until
+      // you happen to stumble onto the right count.
+      const rates = {};
+      banks.forEach(c => {
+        rates[c.give] = Math.min(rates[c.give] === undefined ? 9 : rates[c.give], c.rate);
+      });
+      const say = v.resourceNames
+        .filter(r => rates[r.i] !== undefined)
+        .map(r => `${rates[r.i]} ${r.name}`);
+      label.textContent = say.length
+        ? `the bank takes ${say.join(', ')}, for 1 of anything`
+        : 'nothing you hold reaches a bank or port rate';
+      row.appendChild(label);
+    }
+    host.appendChild(row);
+  }
+
   const go = document.createElement('button');
   go.id = 'propose';
   go.className = 'btn-primary btn-block';

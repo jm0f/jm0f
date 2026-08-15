@@ -213,6 +213,66 @@ nothing.
 Never: photographic noise, film grain, scanlines, canvas weave, or anything
 that implies a lens.
 
+### 5.1 The three weights, as built
+
+The interface reads as a game on a table, so the surfaces separate by
+**material** and not only by colour. One noise, three strengths, heaviest at
+the bottom of the stack:
+
+| Surface | Weight | How |
+|---|---|---|
+| The table, behind everything | Substantial | `multiply`, opacity .55 |
+| A card laid on it | Minimal | `multiply`, opacity .13 |
+| A board tile | Most, and coarser | `soft-light`, opacity .45 |
+| A piece standing on a tile | None. It is painted, see §5.2 | |
+
+**The speckle is a warm brown, not black.** Multiplying black into the paper
+pulled it grey-green: the texture was right and the colour was somebody
+else's. A dark warm shadow multiplies into warm paper and leaves it warm.
+
+**The noise keys on alpha, not on lightness.** Desaturating turbulence gives a
+mid-grey with almost no variance, which is a layer that paints and cannot be
+seen. The red channel becomes the alpha of a coloured speckle instead, with
+the bottom of the range clipped away so what is left is fibre rather than fog.
+
+**The tiles are coarser than the paper** and run at several scales, which is
+what separates pressed board from a printed sheet. They are also the one
+surface on `soft-light`: the terrain is saturated, and multiplying into it
+would darken the palette rather than texture it.
+
+**Baked, not filtered live.** `filter: url()` on a full-viewport element is
+re-rasterized on every repaint. The page grain is a tiled background image,
+rasterized once; the board's is a `<pattern>` filtered once and reused by all
+nineteen tiles rather than nineteen live filters. `stitchTiles` is what lets
+either repeat without a seam.
+
+**Nothing grained twice.** The table's layer sits at a negative index, above
+the body's own background and below everything in the flow, so a card is the
+smooth thing laid on the rough one.
+
+### 5.2 Paint on the pieces
+
+Buildings and roads are the one thing on the table with a **finish**. They
+carry a satin sheen, which is what lifts them off a tile whose grain runs
+right up to them.
+
+**Satin, not lacquer.** A low specular constant keeps the highlight dim and a
+low exponent keeps it broad. Raising the exponent tightens it to a gloss spot,
+which reads as plastic rather than as paint on wood.
+
+**Static, never sweeping.** A looping shine is constant motion across a board
+people are trying to read. One light hangs over the table and stays there.
+
+**The highlight is read off the piece's own silhouette**, by blurring its
+alpha to round the edge over, lighting that, and clipping the result back
+inside the piece so no sheen spills onto the tile. It follows whatever shape
+is passed through it rather than a shape we guessed, and it is measured in the
+drawing's own units, so it does not change with how large the piece is placed.
+
+**The light agrees with the art.** Warm, from the upper left, matching the
+faces §3.4 already paints lightest, so the sheen lands where the drawing says
+the light is instead of fighting it.
+
 ---
 
 ## 6. Typography

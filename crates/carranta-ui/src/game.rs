@@ -275,7 +275,7 @@ pub struct Session {
     turns: u32,
     /// How long each finished turn took, indexed by turn number less one. The
     /// clock already knows; recording it lets the log say so afterwards.
-    turn_secs: Vec<u32>,
+    turn_ms: Vec<u32>,
     /// The phase at the last handover, for the two boundaries that a change of
     /// decider does not catch. Both are cases where the turn changes hands and
     /// comes back to the same person: the last player to place in the deal
@@ -285,6 +285,8 @@ pub struct Session {
     /// Whether the table keeps a visible record. A table rule rather than a
     /// personal setting: playing from memory only works if nobody has the log.
     log_shown: bool,
+    /// What this table is called, chosen in the lobby. Empty when unnamed.
+    game: String,
     /// Whether the table is listed for anyone to join. Private by default:
     /// listing a table is publishing it, and that should be asked for.
     public: bool,
@@ -321,9 +323,10 @@ impl Session {
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
             log_shown: true,
+            game: String::new(),
             public: false,
             turns: 1,
-            turn_secs: Vec::new(),
+            turn_ms: Vec::new(),
             was_preroll: false,
             // The game opens on a placement, which is turn one rather than a
             // boundary into it.
@@ -368,6 +371,19 @@ impl Session {
         self.log_shown
     }
 
+    /// What this table is called. Empty means it was never named, which is not
+    /// an error: a table of four people who all know each other needs no name,
+    /// and inventing one for them would put a label on the screen that nobody
+    /// chose.
+    pub fn with_game(mut self, game: &str) -> Self {
+        self.game = game.trim().chars().take(40).collect();
+        self
+    }
+
+    pub fn game(&self) -> &str {
+        &self.game
+    }
+
     /// Whether the table is listed for anyone to join, or reachable only by
     /// its invite link.
     ///
@@ -398,8 +414,8 @@ impl Session {
     }
 
     /// Seconds each finished turn took, oldest first.
-    pub fn turn_secs(&self) -> &[u32] {
-        &self.turn_secs
+    pub fn turn_ms(&self) -> &[u32] {
+        &self.turn_ms
     }
 
     /// Whether the board is still being dealt.
@@ -529,13 +545,16 @@ impl Session {
         if deciding != self.turn_holder || starting_a_turn {
             // Close the books on the turn that is ending before the next one
             // starts.
-            let took = (now - self.turn_at).as_secs() as u32;
+            // Milliseconds, not seconds. A bot answers in a fraction of one,
+            // and truncating that to zero left every turn but a slow human's
+            // with no duration at all against it.
+            let took = (now - self.turn_at).as_millis() as u32;
             let ending = self.turns as usize;
             if ending >= 1 {
-                while self.turn_secs.len() < ending {
-                    self.turn_secs.push(0);
+                while self.turn_ms.len() < ending {
+                    self.turn_ms.push(0);
                 }
-                self.turn_secs[ending - 1] = took;
+                self.turn_ms[ending - 1] = took;
             }
             // Finishing a turn credits the increment back, which is the whole
             // difference between a chess clock and a countdown: a player who
