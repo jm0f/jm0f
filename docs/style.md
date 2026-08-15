@@ -235,9 +235,11 @@ mid-grey with almost no variance, which is a layer that paints and cannot be
 seen. The red channel becomes the alpha of a coloured speckle instead, with
 the bottom of the range clipped away so what is left is fibre rather than fog.
 
-**The tiles are coarser than the paper** and run at several scales, which is
-what separates pressed board from a printed sheet. They are also the one
-surface on `soft-light`: the terrain is saturated, and multiplying into it
+**The tiles are a fine tooth, not a weave.** Their frequency is the highest of
+the three, because the board is drawn in its own units and then scaled to fit
+the panel: a low one gave visible clumps at the size a tile is actually seen
+at, and the largest octave was doing most of the clumping. They are also the
+one surface on `soft-light`: the terrain is saturated, and multiplying into it
 would darken the palette rather than texture it.
 
 **Baked, not filtered live.** `filter: url()` on a full-viewport element is
@@ -258,7 +260,10 @@ right up to them.
 
 **Satin, not lacquer.** A low specular constant keeps the highlight dim and a
 low exponent keeps it broad. Raising the exponent tightens it to a gloss spot,
-which reads as plastic rather than as paint on wood.
+which reads as plastic rather than as paint on wood. The constant is set well
+under half: the pieces are already faceted by §3.4, so the sheen only has to
+suggest a finish over lighting that is there. Turned up, the coloured pieces
+went neon.
 
 **Static, never sweeping.** A looping shine is constant motion across a board
 people are trying to read. One light hangs over the table and stays there.

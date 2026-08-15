@@ -509,10 +509,12 @@ would promise a tabpanel that is not there. Radio also arrives with the arrow
 keys already meaning the right thing: one tab stop for the group, then arrows,
 `Home` and `End` between the options.
 
-**The chosen option is raised onto `--card`, not `--background`.** shadcn's
-cards are lighter than its page, so `--background` reads as raised there.
-Ours are the other way round, and `--background` sits one shade off `--muted`,
-which left the chosen option carried by its shadow alone.
+**The chosen option is the accent, raised out of the track.** shadcn lifts it
+onto a paler surface instead, which works where the cards are lighter than the
+page. Ours are the other way round, so a paler surface left the choice leaning
+on its shadow: `--background` sits one shade off `--muted` and `--card` only a
+little further. Colour says it more plainly than a shade does, and it is the
+same orange that marks the live thing everywhere else.
 
 **A button is styled by its variant and by nothing else.** If a button needs to
 look different, it needs a variant, not a rule keyed to its id.
