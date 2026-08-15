@@ -285,6 +285,9 @@ pub struct Session {
     /// Whether the table keeps a visible record. A table rule rather than a
     /// personal setting: playing from memory only works if nobody has the log.
     log_shown: bool,
+    /// Whether the table is listed for anyone to join. Private by default:
+    /// listing a table is publishing it, and that should be asked for.
+    public: bool,
     /// Picks a move when the clock runs out in a phase that cannot be passed.
     /// Its own generator rather than the game's, so forfeits never disturb the
     /// dice or the deck.
@@ -318,6 +321,7 @@ impl Session {
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
             log_shown: true,
+            public: false,
             turns: 1,
             turn_secs: Vec::new(),
             was_preroll: false,
@@ -362,6 +366,21 @@ impl Session {
 
     pub fn log_shown(&self) -> bool {
         self.log_shown
+    }
+
+    /// Whether the table is listed for anyone to join, or reachable only by
+    /// its invite link.
+    ///
+    /// A property of the table rather than of the browser that dealt it: the
+    /// listing will be read from here, not from whoever happens to be looking.
+    /// Nothing lists tables yet, so nothing reads this yet either.
+    pub fn with_public(mut self, public: bool) -> Self {
+        self.public = public;
+        self
+    }
+
+    pub fn is_public(&self) -> bool {
+        self.public
     }
 
     /// Whole seconds since the game was dealt.

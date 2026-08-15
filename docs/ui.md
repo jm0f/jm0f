@@ -281,8 +281,26 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 A **setup screen before the game**, not a row of dropdowns above it. The board
 does not exist yet when you are on it.
 
-It carries: your name, the size of the table, who holds each seat, an invite
-link, the turn clock, whether the table keeps a log, and a seed. It stays configurable **while people join**, which is what makes it a lobby rather than a settings dialog.
+It carries: your name, the size of the table, who holds each seat, whether the
+table is listed, an invite link, the turn clock, whether the table keeps a log,
+and a seed. It stays configurable **while people join**, which is what makes it
+a lobby rather than a settings dialog.
+
+**A table is private unless it asks to be listed.** Listing is publishing, and
+publishing is the answer that cannot be taken back, so it is the one that has
+to be chosen rather than the one that happens by default. The server agrees
+independently: anything other than an explicit `public` leaves the table
+unlisted, so a missing or misspelled setting cannot publish a game by accident.
+
+Public is **shown but not selectable**, because there is no landing page for a
+listed table to appear on. Shown rather than removed: knowing the choice is
+coming is worth more than a row with nothing to compare, and the reason it is
+unavailable is on the option itself. It is `aria-disabled` and keeps its tab
+stop, so that reason stays reachable by keyboard and by touch.
+
+Visibility is stored on the session rather than in the browser that dealt it,
+since a listing will be read from the table and not from whoever is looking at
+it. Nothing lists tables yet, so nothing reads it yet either.
 
 A fresh server opens on the lobby. A reload part-way through a game does not:
 the board comes back instead, because the clock is running and dealing again
@@ -421,7 +439,24 @@ already the vermillion call to action and is load-bearing throughout
 Components: `.btn` with `-primary` / `-secondary` / `-ghost` variants and
 `-sm` / `-icon` / `-block` sizes; `.panel` as the card; `.tag` as the pill
 (shadcn calls it a badge, but `.badge` here is already the count on a pile);
-`.separator`; a tooltip; and the decision card as a dialog.
+`.separator`; `.tabs`; a tooltip; and the decision card as a dialog.
+
+**`.tabs` is shadcn's tabs shape with radio semantics underneath.** A sunken
+`--muted` track with the chosen option raised out of it. It replaced a row of
+filled buttons, which made every choice look like an action to take rather
+than a state the table was already in, and read as four things to press once
+there were four such rows stacked.
+
+The semantics are `radiogroup` and `radio`, not `tablist` and `tab`. These
+controls set a value; they do not swap a panel, and announcing them as tabs
+would promise a tabpanel that is not there. Radio also arrives with the arrow
+keys already meaning the right thing: one tab stop for the group, then arrows,
+`Home` and `End` between the options.
+
+**The chosen option is raised onto `--card`, not `--background`.** shadcn's
+cards are lighter than its page, so `--background` reads as raised there.
+Ours are the other way round, and `--background` sits one shade off `--muted`,
+which left the chosen option carried by its shadow alone.
 
 **A button is styled by its variant and by nothing else.** If a button needs to
 look different, it needs a variant, not a rule keyed to its id.

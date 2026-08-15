@@ -231,9 +231,11 @@ impl Server {
                 let clock = Clock::parse(param(query, "clock").as_deref(), secs, increment);
                 let name = param(query, "name").unwrap_or_default();
                 let log_shown = param(query, "log").as_deref() != Some("off");
+                let public = wants_public(query);
                 *session = Session::new(seats, seed, mode)
                     .with_clock(clock)
                     .with_log(log_shown)
+                    .with_public(public)
                     .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
@@ -241,6 +243,15 @@ impl Server {
             _ => respond(&mut stream, 404, "text/plain", b"not found"),
         }
     }
+}
+
+/// Whether the lobby asked for a listed table.
+///
+/// Anything other than an explicit "public" is private, because a missing or
+/// misspelled setting should leave the table unlisted rather than publish it by
+/// accident. Listing is the answer that cannot be taken back.
+fn wants_public(query: &str) -> bool {
+    param(query, "visibility").as_deref() == Some("public")
 }
 
 /// A refusal in words a player can act on.
@@ -336,5 +347,30 @@ mod tests {
         assert_eq!(param("seats=3", "seed"), None);
         assert_eq!(param("", "seats"), None);
         assert_eq!(param("broken", "seats"), None);
+    }
+
+    #[test]
+    fn a_table_is_private_unless_it_asks_to_be_listed() {
+        assert!(wants_public("seats=4&visibility=public"));
+        assert!(!wants_public("seats=4&visibility=private"));
+        // The cases that must not publish: absent, empty, misspelled, and the
+        // wrong case. Every one of them leaves the table unlisted.
+        assert!(!wants_public("seats=4"));
+        assert!(!wants_public(""));
+        assert!(!wants_public("visibility="));
+        assert!(!wants_public("visibility=publi"));
+        assert!(!wants_public("visibility=Public"));
+        assert!(!wants_public("visibility=true"));
+    }
+
+    #[test]
+    fn a_session_starts_unlisted() {
+        let s = Session::new(4, 7, TradeMode::Full);
+        assert!(!s.is_public());
+        assert!(
+            Session::new(4, 7, TradeMode::Full)
+                .with_public(true)
+                .is_public()
+        );
     }
 }

@@ -447,12 +447,34 @@
                 font-weight: 600; margin-bottom: .5em; }
   .fieldNote { margin: .5em 0 0; font-size: 12px; line-height: 1.45;
                color: var(--muted-foreground); }
-  .segmented { display: flex; flex-wrap: wrap; gap: 6px; }
-  .segmented button[aria-pressed="true"] {
-    background: var(--primary); border-color: transparent;
-    color: var(--primary-foreground); font-weight: 600;
+  /* The shadcn tabs shape: a sunken track holding the options, with the chosen
+     one raised out of it on the page colour. A row of filled buttons made
+     every choice look like an action to take rather than a state the table is
+     already in, and four of them stacked read as four things to press. */
+  .tabs {
+    display: inline-flex; flex-wrap: wrap; gap: 2px;
+    background: var(--muted); border-radius: var(--radius-md); padding: 3px;
+    max-width: 100%;
   }
-  .segmented button[aria-pressed="true"]:hover { background: var(--primary); filter: brightness(1.07); }
+  .tabs button {
+    background: transparent; border-color: transparent; box-shadow: none;
+    color: var(--muted-foreground); font-weight: 500;
+    padding: 4px 12px; border-radius: var(--radius-sm);
+  }
+  .tabs button:hover { background: rgba(251, 247, 239, .5); color: var(--foreground); }
+  /* The card colour rather than the page colour. shadcn raises the chosen tab
+     onto --background because its cards are lighter than the page; ours are
+     the other way round, and --background sat a shade off --muted, so the
+     chosen option was carried by its shadow alone. */
+  .tabs button[aria-checked="true"] {
+    background: var(--card); color: var(--foreground); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(51, 38, 27, .12);
+  }
+  .tabs button[aria-checked="true"]:hover { background: var(--card); }
+  /* An option that exists but cannot be taken yet. Not removed: knowing the
+     choice is coming is worth more than a row with nothing to compare. */
+  .tabs button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+  .tabs button[aria-disabled="true"]:hover { color: var(--muted-foreground); }
   .seatSlots { display: flex; flex-direction: column; gap: 6px; }
   /* A grid rather than a flex row, so the marker, the name and the control
      line up down the column. The control column is as wide as its widest
@@ -573,12 +595,17 @@
 
     <div class="field">
       <span class="fieldLabel">Mode</span>
-      <div class="segmented" id="lobbySeats"></div>
+      <div class="tabs" id="lobbySeats"></div>
     </div>
 
     <div class="field">
       <span class="fieldLabel" data-tip="Seats wait for people by default. The server cannot seat a person yet, so an open seat is played by a bot until it can." tabindex="0">Who is playing</span>
       <div class="seatSlots" id="lobbySlots"></div>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel" id="visibilityLabel" tabindex="0">Visibility</span>
+      <div class="tabs" id="lobbyVisibility"></div>
     </div>
 
     <div class="field">
@@ -591,7 +618,7 @@
 
     <div class="field">
       <span class="fieldLabel" id="clockLabel" tabindex="0">Turn clock</span>
-      <div class="segmented" id="lobbyClockKind"></div>
+      <div class="tabs" id="lobbyClockKind"></div>
       <div class="clockFields">
         <div class="copyRow" id="lobbyClockSecsRow">
           <input id="lobbyClockSecs" class="seed" type="number" min="5" max="7200" step="5">
@@ -606,7 +633,7 @@
 
     <div class="field">
       <span class="fieldLabel" data-tip="With the log off the server does not send one at all, so the table plays from memory." tabindex="0">Log</span>
-      <div class="segmented" id="lobbyLog"></div>
+      <div class="tabs" id="lobbyLog"></div>
     </div>
 
     <div class="field">
@@ -1469,9 +1496,20 @@ const CLOCK_NOTE = {
   off: 'Nobody is hurried.',
 };
 
+// Listing a table is publishing it, so the default is the quiet one: a table
+// is private unless somebody says otherwise. Public is held back until there
+// is a landing page for a public table to appear on, since an option that
+// promises a listing nobody can read would be a lie about where the game went.
+const VISIBILITY_NOTE = {
+  private: 'Reachable by the invite link alone.',
+  public: 'Listed on the landing page for anyone to join. Not yet: there is no '
+        + 'landing page to be listed on.',
+};
+
 const lobby = {
   seats: 4,
   roles: ['you', 'open', 'open', 'open'],
+  visibility: 'private',
   clockKind: 'turn',
   clockInc: INCREMENT_DEFAULT,
   log: true,
@@ -1547,20 +1585,58 @@ async function copyInto(button, text) {
   setTimeout(() => { button.textContent = said; }, 1400);
 }
 
-function segmented(host, options, current, pick) {
+// The shadcn tabs look, with radio semantics underneath. These choices set a
+// value rather than swap a panel, so announcing them as tabs would promise a
+// tabpanel that is not there; a radiogroup says what they actually do and
+// arrives with the arrow keys already meaning the right thing.
+//
+// Options are [value, label] or [value, label, {disabled, tip}].
+function tabs(host, options, current, pick) {
   host.textContent = '';
-  options.forEach(([value, label]) => {
+  host.setAttribute('role', 'radiogroup');
+  const buttons = [];
+  options.forEach(([value, label, opt]) => {
+    const o = opt || {};
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = label;
-    b.setAttribute('aria-pressed', String(value === current));
-    b.onclick = () => { pick(value); renderLobby(); };
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(value === current));
+    if (o.disabled) b.setAttribute('aria-disabled', 'true');
+    if (o.tip) b.setAttribute('data-tip', o.tip);
+    // One stop for the group, not one per option: tab into it, then arrow
+    // between the choices. A disabled option keeps its stop so the reason for
+    // it stays reachable by keyboard.
+    b.tabIndex = value === current ? 0 : -1;
+    b.onclick = () => {
+      if (o.disabled) return;
+      pick(value);
+      renderLobby();
+    };
+    buttons.push(b);
     host.appendChild(b);
   });
+  host.onkeydown = (e) => {
+    const at = buttons.indexOf(document.activeElement);
+    if (at < 0) return;
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    let to = null;
+    if (step) to = (at + step + buttons.length) % buttons.length;
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = buttons.length - 1;
+    else return;
+    e.preventDefault();
+    buttons[to].focus();
+    buttons[to].click();
+    // Choosing re-renders the lobby, which replaces these buttons, so the
+    // focus that arrived by arrow key has to be put back on the new one.
+    const now = host.children[to];
+    if (now) now.focus();
+  };
 }
 
 function renderLobby() {
-  segmented(document.getElementById('lobbySeats'),
+  tabs(document.getElementById('lobbySeats'),
     // Four first because four is the default, and the default belongs where
     // the eye lands rather than where the counting starts.
     [[4, '4 players'], [3, '3 players']], lobby.seats, v => {
@@ -1632,7 +1708,14 @@ function renderLobby() {
     slots.appendChild(row);
   }
 
-  segmented(document.getElementById('lobbyClockKind'), CLOCK_KINDS, lobby.clockKind,
+  tabs(document.getElementById('lobbyVisibility'),
+    [['private', 'private'],
+     ['public', 'public', { disabled: true, tip: VISIBILITY_NOTE.public }]],
+    lobby.visibility, v => { lobby.visibility = v; });
+  document.getElementById('visibilityLabel')
+    .setAttribute('data-tip', VISIBILITY_NOTE[lobby.visibility]);
+
+  tabs(document.getElementById('lobbyClockKind'), CLOCK_KINDS, lobby.clockKind,
     v => {
       lobby.clockKind = v;
       // Each kind measures a different thing, so carrying the number across
@@ -1655,7 +1738,7 @@ function renderLobby() {
   document.getElementById('lobbyClockInc').value = lobby.clockInc;
   document.getElementById('clockLabel').setAttribute('data-tip', CLOCK_NOTE[lobby.clockKind]);
 
-  segmented(document.getElementById('lobbyLog'),
+  tabs(document.getElementById('lobbyLog'),
     [[true, 'keep a log'], [false, 'play from memory']], lobby.log,
     v => { lobby.log = v; });
 
@@ -1720,6 +1803,7 @@ document.getElementById('lobbyStart').onclick = () => {
     clockInc: String(lobby.clockKind === 'chess' ? lobby.clockInc : 0),
     name: lobby.name,
     log: lobby.log ? 'on' : 'off',
+    visibility: lobby.visibility,
   });
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
