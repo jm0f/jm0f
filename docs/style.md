@@ -357,6 +357,11 @@ go on things that are looked at, not on things that are read at speed.
 Never centre body text. Never justify. Never use more than two weights on one
 surface.
 
+**Audiowide carries the mark and the clock**, and nothing else. Both are read
+as shapes rather than as prose: you recognise the name and you glance at the
+time. Everything that is actually read stays on Figtree and Fraunces. It ships
+with them under the SIL Open Font Licence, one weight, latin only.
+
 ---
 
 ## 7. Motion

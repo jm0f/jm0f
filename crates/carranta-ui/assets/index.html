@@ -22,9 +22,19 @@
     font-family: 'Figtree'; font-style: normal; font-weight: 300 900;
     font-display: swap; src: url(/font/figtree.woff2) format('woff2');
   }
+  /* Audiowide, by Astigmatic, under the SIL Open Font Licence like the other
+     two. One weight only, and one job: the wordmark and the clock. */
+  @font-face {
+    font-family: 'Audiowide'; font-style: normal; font-weight: 400;
+    font-display: swap; src: url(/font/audiowide.woff2) format('woff2');
+  }
   :root {
     --sans: 'Figtree', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    /* The name of the thing and the count of the time it is being played in.
+       Both are read as shapes rather than as prose, which is what this face is
+       for; everything that is actually read stays on the other two. */
+    --mark: 'Audiowide', 'Fraunces', Georgia, sans-serif;
     /* Ink on warm paper, not pixels on a screen, docs/style.md. Nothing is
        pure white because paper is not; nothing is pure black because ink is
        not. The one exception is the number discs, which need to punch. */
@@ -193,8 +203,7 @@
      became a link to the homepage and quietly fell back to the browser's blue
      underline, in the body face, next to a clock set in the display one. */
   h1, .wordmark {
-    font: 700 22px/1 var(--display); margin: 0; letter-spacing: .005em;
-    font-variation-settings: 'opsz' 120, 'SOFT' 20, 'WONK' 1;
+    font: 400 20px/1 var(--mark); margin: 0; letter-spacing: .01em;
     color: var(--accent);
   }
   /* A link, but the wordmark is the name of the thing rather than a phrase in
@@ -603,8 +612,8 @@
      every tick. Fixed boxes take the font out of it entirely. */
   .bigClock {
     display: flex; justify-content: center; align-items: baseline;
-    font-family: var(--display); font-size: 2.6em; line-height: 1;
-    font-weight: 600; color: var(--accent);
+    font-family: var(--mark); font-size: 2.3em; line-height: 1;
+    font-weight: 400; color: var(--accent);
   }
   .bigClock i { font-style: normal; width: 1ch; text-align: center; }
   .bigClock i.sep { width: .42ch; }
@@ -638,8 +647,8 @@
   @media (max-width: 720px) {
     .lobbyCols { grid-template-columns: 1fr; }
   }
-  .lobbyTitle { font-family: var(--display); font-size: 32px; margin: 0;
-                color: var(--accent); font-weight: 700; letter-spacing: .01em; }
+  .lobbyTitle { font-family: var(--mark); font-size: 28px; margin: 0;
+                color: var(--accent); font-weight: 400; letter-spacing: .01em; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
   .field { margin-bottom: 1.35em; }
   /* Sized to its words, not to the card. As a full-width block its hover area
