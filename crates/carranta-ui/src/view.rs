@@ -14,6 +14,13 @@ use crate::game::{HUMAN, Session, Target};
 use crate::json::Json;
 
 const RESOURCES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
+
+/// The order the five are shown in, as indices into [`RESOURCES`].
+///
+/// Wood before brick, then the engine's own order. The engine numbers them for
+/// its own reasons and that numbering is the wire format, so the display order
+/// is kept separately rather than by renumbering the game underneath it.
+const RESOURCE_ORDER: [usize; 5] = [1, 0, 2, 3, 4];
 const TERRAIN: [&str; 6] = [
     "hills",
     "forest",
@@ -256,13 +263,13 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     });
 
     // Names, so the page need not carry its own copy of the vocabulary.
-    j.array(
-        RESOURCE_KEY,
-        RESOURCES.iter().enumerate(),
-        |o, (i, name)| {
-            o.int("i", i as i64).str("name", name);
-        },
-    );
+    // Sent in the order they are shown, not the order the engine numbers them,
+    // each carrying its true index. Every list on the page walks this array, so
+    // one order here reorders the hand, the trade composer and the discard card
+    // together, and nothing downstream has to know it was reordered.
+    j.array(RESOURCE_KEY, RESOURCE_ORDER.iter().copied(), |o, i| {
+        o.int("i", i as i64).str("name", RESOURCES[i]);
+    });
     j.array("devNames", DEV_CARDS.iter().enumerate(), |o, (i, name)| {
         o.int("i", i as i64).str("name", name);
     });

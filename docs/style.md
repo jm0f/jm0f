@@ -166,10 +166,22 @@ resource is named rather than held.
 
 **A hand is fanned, one card per card held**, overlapped left to right, so the
 count is something you see before you read it. The fan stops at five and the
-badge carries the true number: past that, looking has stopped being enough,
-and a hand of twelve fanned out would push the dock wider than the board. Only
-the front card shows its face; the rest are edges, since a centred disc sliced
-by the card in front of it reads as a bite rather than as a card underneath.
+badge carries the true number: past that, looking has stopped being enough.
+Only the front card shows its face; the rest are edges, since a centred disc
+sliced by the card in front of it reads as a bite rather than as a card
+underneath.
+
+**The fan compresses rather than growing.** A card is two thirds the height of
+the dock, and the dock is only as wide as the board, so five stacks each
+spreading a card's width per extra card was wider than the space at every
+window size we render at. The whole fan gets a fixed budget and the cards
+share it, the way a real fan of cards does.
+
+**The five are shown wood, brick, wool, wheat, ore.** That is not the order the
+engine numbers them in, and it is not meant to be: the engine's numbering is
+the wire format. The display order is sent with the payload, each entry
+carrying its true index, so one order reorders the hand, the trade composer
+and the discard card together and nothing downstream has to know.
 
 ### 3.4 Pieces
 

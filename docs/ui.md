@@ -278,6 +278,11 @@ deliberately not `aria-modal`, see §9.
 
 ## 6. Trading
 
+**Starting:** click a card in your hand. The composer opens with that card
+already on the table, so wanting to trade a wheat and saying so are one
+gesture rather than two. `Trade` in the dock opens it empty, for when you know
+what you want before you know what you are giving.
+
 **Composing:** click a stack in your hand to move one card into *you give*;
 click it in the tray to take it back. Wanting is the same gesture against the
 five resources. The offer is built out of the cards you are already looking

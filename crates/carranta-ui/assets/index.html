@@ -426,7 +426,12 @@
 
   /* ---- the dock -------------------------------------------------------- */
   .dock {
-    display: flex; align-items: flex-end; gap: clamp(10px, 1.2vw, 26px);
+    /* Wrapping is the safety valve. The dock is only as wide as the board, and
+       a full hand at card size plus the actions can outgrow a narrow one; a
+       second row is worse than nothing overlapping but better than a row that
+       runs off the edge. */
+    display: flex; align-items: flex-end; flex-wrap: wrap;
+    gap: clamp(10px, 1.2vw, 26px);
     padding: clamp(8px, .8vw, 14px) clamp(12px, 1.1vw, 20px);
     font-size: clamp(11px, .8vw, 14px);
   }
@@ -434,20 +439,22 @@
   .dockGroup.spacer { flex: 1; }
   .dockLabel { color: var(--dim); font-size: .8em; text-transform: uppercase;
                letter-spacing: .08em; }
-  .stacks { display: flex; gap: .5em; align-items: flex-end; min-height: 3.4em; }
+  /* Tall enough for a card either way, so the two groups' labels sit on one
+     line instead of the shorter group's label drifting down to meet it. */
+  .stacks { display: flex; gap: .35em; align-items: flex-end; min-height: 7em; }
 
   /* A stack is a pile, not a number: its thickness is the count, so a hand
      getting dangerous to hold is something you see before you read it. */
   .stack { position: relative; border: 0; background: none; padding: 0; cursor: pointer;
-           width: 3.1em; height: 3.6em; box-shadow: none; }
+           width: 5.3em; height: 7em; box-shadow: none; }
   .stack:disabled { cursor: default; }
   .stack .layer {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 2.9em;
-    border: 1px solid var(--line); border-radius: .45em; background: var(--panel);
+    position: absolute; left: 0; right: 0; bottom: 0; height: 7em;
+    border: 1px solid var(--line); border-radius: .55em; background: var(--panel);
     box-shadow: 0 1px 2px rgba(51, 38, 27, .10);
   }
   .stack .face { display: flex; align-items: center; justify-content: center; }
-  .stack .face svg { width: 84%; height: 84%; }
+  .stack .face svg { width: 52%; height: 52%; }
   .stack.empty .layer { opacity: .4; }
   /* Bought this turn, so held but not yet playable. Dashed rather than dimmed:
      dim reads as "you have none", and you do have it. */
@@ -480,7 +487,7 @@
      well as by reading. The badge stays, because past the fan's limit looking
      stops being enough. */
   .resStack { position: relative; border: 0; background: none; padding: 0;
-              cursor: pointer; height: 3.6em; box-shadow: none;
+              cursor: pointer; height: 7em; box-shadow: none;
               transition: transform .12s ease-out; }
   /* A card you cannot click is not a card that is unavailable: it is the hand
      you are holding, and it has to read at full strength whether or not there
@@ -488,8 +495,8 @@
      which turned the terrain colours into pastels. */
   .resStack:disabled { cursor: default; opacity: 1; background: none; }
   .rcard {
-    position: absolute; bottom: 0; width: 2em; height: 2.9em;
-    border-radius: .3em; background: var(--face);
+    position: absolute; bottom: 0; width: 5.3em; height: 7em;
+    border-radius: .55em; background: var(--face);
     box-shadow: 0 1px 2px rgba(51, 38, 27, .18);
     overflow: hidden;
   }
@@ -501,7 +508,7 @@
   /* The face of the card, standing in for the drawing that will go here. */
   .rcard i {
     position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    width: 1.15em; height: 1.15em; border-radius: 50%; background: var(--panel);
+    width: 2.6em; height: 2.6em; border-radius: 50%; background: var(--panel);
   }
   /* Holding none still shows a card, so the row never changes width per
      resource and the slot you are reaching for does not move. Outlined rather
@@ -1508,6 +1515,9 @@ const RESOURCE_FACE = ['--hills', '--forest', '--pasture', '--fields', '--mounta
 // is doing the counting anyway, and a hand of twelve fanned out would push the
 // dock wider than the board.
 const FAN_MAX = 5;
+// The card, and how far a full fan may spread past it, both in em.
+const CARD_W = 5.3;
+const FAN_SPREAD = 1.8;
 
 function resStackEl(count, res, title, onClick) {
   const b = document.createElement('button');
@@ -1516,8 +1526,13 @@ function resStackEl(count, res, title, onClick) {
   b.disabled = !onClick;
   if (onClick) b.onclick = onClick;
   const shown = Math.max(1, Math.min(count, FAN_MAX));
-  const step = 0.62;
-  b.style.width = `${2 + (shown - 1) * step}em`;
+  // The fan compresses rather than growing without limit. Five stacks at the
+  // card's full size, each spreading a card's width per extra card, is wider
+  // than the dock the board sets the width of, so the whole fan is given a
+  // fixed budget and the cards share it. A real fan of cards does the same.
+  const spread = Math.min(FAN_SPREAD, (shown - 1) * 1.05);
+  const step = shown > 1 ? spread / (shown - 1) : 0;
+  b.style.width = `${CARD_W + spread}em`;
   for (let d = 0; d < shown; d++) {
     const card = document.createElement('span');
     card.className = 'rcard';
@@ -1541,15 +1556,28 @@ function renderHand(v) {
   hand.textContent = '';
   const total = v.yourHand.reduce((a, b) => a + b, 0);
   hand.parentElement.querySelector('.dockLabel').textContent =
-    total > 7 ? `your cards, ${total}, a seven costs you half` : 'your cards';
+    total > 7 ? `resources, ${total}, a seven costs you half` : 'resources';
+  // A trade starts where the cards are. Clicking one with the composer closed
+  // opens it with that card already on the table, so wanting to trade a wheat
+  // and saying so are the same gesture rather than two.
+  const canTrade = v.canPropose
+    || v.choices.some(c => c.group === 'trade' && c.give !== undefined);
   v.resourceNames.forEach(r => {
     const arming = prompt.mode === 'compose';
-    hand.appendChild(resStackEl(
-      v.yourHand[r.i], r.i,
-      arming ? `add a ${r.name} to your offer` : `${v.yourHand[r.i]} ${r.name}`,
-      arming && v.yourHand[r.i] > give[r.i] && !want[r.i]
-        ? () => { give[r.i]++; renderPrompt(view); renderHand(view); }
-        : null));
+    const held = v.yourHand[r.i];
+    let act = null, tip = `${held} ${r.name}`;
+    if (arming && held > give[r.i] && !want[r.i]) {
+      act = () => { give[r.i]++; renderPrompt(view); renderHand(view); };
+      tip = `add a ${r.name} to your offer`;
+    } else if (!arming && held > 0 && canTrade) {
+      act = () => {
+        give = [0, 0, 0, 0, 0]; want = [0, 0, 0, 0, 0]; to = '';
+        give[r.i] = 1;
+        openPrompt('compose');
+      };
+      tip = `${held} ${r.name}, click to offer one`;
+    }
+    hand.appendChild(resStackEl(held, r.i, tip, act));
   });
 
   const dev = document.getElementById('dev');
@@ -2296,7 +2324,12 @@ function renderPrompt(v) {
 // The engine enumerates every parameter combination, five monopolies and
 // fifteen inventions, which is the right action space for a search and the
 // wrong one for a person. The kinds are offered first and the resources after.
-const RES_ORDER = [0, 1, 2, 3, 4];
+// The order to show the five in, taken from the payload rather than written
+// here, so the display order lives in exactly one place.
+const resOrder = v => v.resourceNames.map(r => r.i);
+// The payload's array is in display order, so it cannot be indexed by the
+// engine's number for a resource. Look it up.
+const resName = (v, i) => (v.resourceNames.find(r => r.i === i) || {}).name;
 function renderPick(v, host, head, buttonList) {
   const kind = prompt.data.kind;
   if (kind === 'bank') {
@@ -2311,14 +2344,14 @@ function renderPick(v, host, head, buttonList) {
   const chosen = prompt.data.card;
   if (chosen === 'monopoly') {
     head('Monopoly, take every one of', true);
-    resourceButtons(v, host, RES_ORDER, r =>
+    resourceButtons(v, host, resOrder(v), r =>
       cards.find(c => c.card === 'monopoly' && c.res === r));
     return;
   }
   if (chosen === 'invention') {
     const first = prompt.data.first;
     head(first === undefined ? 'Invention, take two' : 'Invention, and', true);
-    resourceButtons(v, host, RES_ORDER, r => {
+    resourceButtons(v, host, resOrder(v), r => {
       if (first === undefined) return null;      // first click only records
       // The engine emits one ordering per pair, so match either way round.
       return cards.find(c => c.card === 'invention'
@@ -2358,7 +2391,7 @@ function resourceButtons(v, host, order, find, onFirst) {
   box.className = 'buttons';
   order.forEach(r => {
     const b = document.createElement('button');
-    b.textContent = v.resourceNames[r].name;
+    b.textContent = resName(v, r);
     const c = find(r);
     if (c) {
       b.className = 'btn-primary';
@@ -2659,8 +2692,8 @@ function renderCompose(v, host) {
       matches.forEach(c => {
         const b = document.createElement('button');
         b.className = 'btn-secondary';
-        b.textContent = `${c.rate} ${v.resourceNames[c.give].name} for 1 `
-          + `${v.resourceNames[c.take].name} ${c.rate === 4 ? 'with the bank' : 'at the port'}`;
+        b.textContent = `${c.rate} ${resName(v, c.give)} for 1 `
+          + `${resName(v, c.take)} ${c.rate === 4 ? 'with the bank' : 'at the port'}`;
         b.onclick = () => { closePrompt(); act(c.i); };
         wrap.appendChild(b);
       });
