@@ -287,6 +287,11 @@ pub struct Session {
     log_shown: bool,
     /// What this table is called, chosen in the lobby. Empty when unnamed.
     game: String,
+    /// How long bots wait between moves, and when the next one may go.
+    pace: Pace,
+    bot_ready: std::time::Instant,
+    /// Draws the waits. Its own generator, so pacing never disturbs the dice.
+    tempo: Rng,
     /// The position before a development card that opens a second decision,
     /// and how long the log was then, so an unfinished play can be put back.
     undo: Option<(State, usize)>,
@@ -326,6 +331,13 @@ impl Session {
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
             log_shown: true,
+            // A bare session runs at engine speed. Pacing is a table setting,
+            // asked for in the lobby and applied there; defaulting to it here
+            // would make every test that drives a session wait on a wall clock
+            // it has no reason to care about.
+            pace: Pace::Instant,
+            bot_ready: std::time::Instant::now(),
+            tempo: Rng::new(seed ^ 0x9E37_79B9_7F4A_7C15),
             undo: None,
             game: String::new(),
             public: false,
@@ -949,7 +961,46 @@ impl Session {
         self.hand_over_clock();
     }
 
+    /// How the bots are paced, and whether one is mid-thought right now.
+    pub fn pace(&self) -> Pace {
+        self.pace
+    }
+
+    pub fn with_pace(mut self, pace: Pace) -> Self {
+        self.pace = pace;
+        self
+    }
+
+    /// Whether a bot has a move to make and is still waiting to make it.
+    ///
+    /// The page uses this to poll quickly while the table is moving and slowly
+    /// while it is not, rather than either polling fast forever or letting a
+    /// paced move sit unseen until the next lazy tick.
+    pub fn bot_thinking(&self) -> bool {
+        self.pace != Pace::Instant
+            && !matches!(self.state.phase, Phase::GameOver { .. })
+            && self.state.decider() != HUMAN
+            && self.choices().is_empty()
+    }
+
+    /// Let a paced table move on when the wait for the next move is up.
+    ///
+    /// Bots are advanced from the human's move, which is fine when they answer
+    /// instantly and a deadlock when they do not: a paced bot breaks out of the
+    /// loop to wait, and without this nothing ever asks it again. The server
+    /// calls this on every poll, which is also the only clock this process has.
+    pub fn tick(&mut self) {
+        if self.bot_thinking() {
+            self.finish_move();
+        }
+    }
+
     /// Advance until the human has something to decide, or the game ends.
+    ///
+    /// A paced table stops as soon as the next move is not due yet and comes
+    /// back on the following request. The position is left exactly where the
+    /// bot found it, so a page that never asks again simply never sees the
+    /// move; nothing is half-applied while the wait runs.
     fn run_bots(&mut self) {
         let mut buf = Vec::new();
         for _ in 0..20_000 {
@@ -958,6 +1009,18 @@ impl Session {
             }
             if self.state.decider() == HUMAN || !self.choices().is_empty() {
                 break;
+            }
+            let (lo, hi) = self.pace.window();
+            if hi > 0 {
+                if std::time::Instant::now() < self.bot_ready {
+                    break;
+                }
+                let span = hi - lo + 1;
+                // Its own generator, so which stream it draws from does not
+                // matter: nothing else reads this one. The same convention the
+                // forfeit picker uses.
+                let wait = lo + self.tempo.below(Stream::Steal, span as u32) as u64;
+                self.bot_ready = std::time::Instant::now() + std::time::Duration::from_millis(wait);
             }
             self.state.legal_into(&mut buf);
             if buf.is_empty() {
@@ -1123,6 +1186,54 @@ pub enum Target {
 }
 
 const RESOURCE_NAMES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
+
+/// How long a bot waits before each move.
+///
+/// A bot decides in microseconds, and a table where three opponents take their
+/// whole turn between two of your frames is not a game anyone can follow. The
+/// wait is drawn from a range rather than fixed: a metronome reads as a machine
+/// working through a list, and the point of pacing is that it does not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pace {
+    /// No wait. The bots finish before the page has drawn.
+    Instant,
+    /// Quick enough to keep up with, slow enough to see what happened.
+    Fast,
+    /// Time to read each move as it lands.
+    Slow,
+}
+
+impl Pace {
+    pub fn parse(name: Option<&str>) -> Self {
+        match name {
+            Some("slow") => Pace::Slow,
+            Some("instant") => Pace::Instant,
+            _ => Pace::Fast,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Pace::Instant => "instant",
+            Pace::Fast => "fast",
+            Pace::Slow => "slow",
+        }
+    }
+
+    /// The window a single move's wait is drawn from, in milliseconds.
+    ///
+    /// Fast is a beat: long enough that a move is a thing that happened rather
+    /// than a thing that had already happened, short enough that a four-player
+    /// round is a couple of seconds. Slow is reading speed. The spread on each
+    /// is wide enough to break the rhythm without either overlapping the other.
+    fn window(self) -> (u64, u64) {
+        match self {
+            Pace::Instant => (0, 0),
+            Pace::Fast => (220, 620),
+            Pace::Slow => (850, 2100),
+        }
+    }
+}
 
 /// The order the five are listed in, as indices into [`RESOURCE_NAMES`].
 ///

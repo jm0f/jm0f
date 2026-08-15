@@ -193,6 +193,10 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.bool("logShown", session.log_shown());
     // Whether a development card is half played and can still be put back.
     j.bool("canCancel", session.can_cancel());
+    // How the bots are paced, and whether one is mid-thought, so the page can
+    // poll quickly while the table is moving and slowly while it is not.
+    j.str("pace", session.pace().name());
+    j.bool("botThinking", session.bot_thinking());
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {

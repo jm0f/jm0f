@@ -785,9 +785,19 @@
       <div class="seatSlots" id="lobbySlots"></div>
     </div>
 
+    <div class="field" id="paceField">
+      <span class="fieldLabel" id="paceLabel" tabindex="0">Bot speed</span>
+      <div class="tabs" id="lobbyPace"></div>
+    </div>
+
     <div class="field">
       <span class="fieldLabel" id="visibilityLabel" tabindex="0">Visibility</span>
       <div class="tabs" id="lobbyVisibility"></div>
+    </div>
+
+    <div class="field">
+      <span class="fieldLabel" id="chatLabel" tabindex="0">Chat</span>
+      <div class="tabs" id="lobbyChat"></div>
     </div>
 
     <div class="field">
@@ -1835,11 +1845,35 @@ const VISIBILITY_NOTE = {
         + 'landing page to be listed on.',
 };
 
+// What each speed is like to sit across from. Each is a range rather than a
+// number: a fixed wait reads as a machine working through a list, and the
+// point of pacing is that it does not.
+const PACE_NOTE = {
+  slow: 'A move every second or two, with room to read each one as it lands. '
+      + 'A four player round takes the better part of ten seconds.',
+  fast: 'A beat between moves, long enough to see what happened without '
+      + 'waiting on it. A round goes by in a couple of seconds.',
+  instant: 'No wait at all. The bots have finished before the board has '
+         + 'redrawn, which is what you want when you are testing rather than '
+         + 'playing.',
+};
+
+// Nothing here works yet, and none of it can until there are accounts: a table
+// of strangers needs someone to hold responsible for what is said on it.
+const CHAT_NOTE = {
+  none: 'Nobody can talk. The only option while there is nobody to be.',
+  text: 'Typed messages at the table. Needs accounts.',
+  voice: 'Talk to the table. Needs accounts.',
+  both: 'Typed and spoken together. Needs accounts.',
+};
+
 const lobby = {
   seats: 4,
   game: '',
   roles: ['you', 'open', 'open', 'open'],
   visibility: 'private',
+  pace: 'fast',
+  chat: 'none',
   clockKind: 'turn',
   clockInc: INCREMENT_DEFAULT,
   log: true,
@@ -2038,6 +2072,25 @@ function renderLobby() {
     slots.appendChild(row);
   }
 
+  // Only worth asking about once a bot is actually sitting down.
+  const anyBot = lobby.roles.some(r => r === 'bot');
+  document.getElementById('paceField').hidden = !anyBot;
+  if (anyBot) {
+    tabs(document.getElementById('lobbyPace'),
+      [['slow', 'slow'], ['fast', 'fast'], ['instant', 'instant']],
+      lobby.pace, v => { lobby.pace = v; });
+    document.getElementById('paceLabel')
+      .setAttribute('data-tip', PACE_NOTE[lobby.pace]);
+  }
+
+  tabs(document.getElementById('lobbyChat'),
+    [['none', 'no chat'],
+     ['text', 'text', { disabled: true, tip: CHAT_NOTE.text }],
+     ['voice', 'voice', { disabled: true, tip: CHAT_NOTE.voice }],
+     ['both', 'text & voice', { disabled: true, tip: CHAT_NOTE.both }]],
+    lobby.chat, v => { lobby.chat = v; });
+  document.getElementById('chatLabel').setAttribute('data-tip', CHAT_NOTE[lobby.chat]);
+
   tabs(document.getElementById('lobbyVisibility'),
     [['private', 'private'],
      ['public', 'public', { disabled: true, tip: VISIBILITY_NOTE.public }]],
@@ -2151,6 +2204,7 @@ document.getElementById('lobbyStart').onclick = () => {
     log: lobby.log ? 'on' : 'off',
     visibility: lobby.visibility,
     game: lobby.game,
+    pace: lobby.pace,
   });
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
@@ -2874,17 +2928,26 @@ loadArt()
 // the old one cannot re-render its way up to date. Watch the build stamp and
 // start over when it moves, so a pushed change reaches the board without
 // anyone reloading anything.
-setInterval(async () => {
+//
+// The interval is not fixed. A paced bot holds its move until its wait is up
+// and only makes it when asked again, so a three second poll would turn a
+// beat between moves into a beat between polls. While the table is moving the
+// page asks often; while it is waiting on a person it goes back to idling,
+// because a fast poll against a board nobody is touching is just traffic.
+const POLL_IDLE = 3000, POLL_MOVING = 150;
+(async function poll() {
   try {
     const next = await (await fetch('/api/state', { cache: 'no-store' })).json();
     if (view && next.build !== view.build) { location.reload(); return; }
     // The same poll enforces the clock: the server only wakes when asked, so
     // without this a turn that ran out of time would sit there until clicked.
     if (view && next.version !== view.version) { view = next; render(); }
+    else if (view) view.botThinking = next.botThinking;
   } catch (e) {
     // The server is mid-restart. Nothing to do but ask again shortly.
   }
-}, 3000);
+  setTimeout(poll, view && view.botThinking ? POLL_MOVING : POLL_IDLE);
+})();
 </script>
 </body>
 </html>

@@ -14,7 +14,7 @@ use carranta_core::state::TradeMode;
 
 use carranta_core::action::Illegal;
 
-use crate::game::{Clock, Refused, Session};
+use crate::game::{Clock, Pace, Refused, Session};
 use crate::json;
 use crate::view;
 
@@ -167,8 +167,10 @@ impl Server {
             }
             ("GET", "/api/state") => {
                 let mut session = self.session.lock().unwrap();
-                // A server only wakes when asked, so a turn that ran out of
-                // time ends on the next request rather than on the second.
+                // A server only wakes when asked, so this poll is the whole
+                // clock: it is what lets a paced bot's wait expire, and what
+                // ends a turn whose time ran out.
+                session.tick();
                 session.enforce_clock();
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
@@ -245,11 +247,13 @@ impl Server {
                 let log_shown = param(query, "log").as_deref() != Some("off");
                 let public = wants_public(query);
                 let game = param(query, "game").unwrap_or_default();
+                let pace = Pace::parse(param(query, "pace").as_deref());
                 *session = Session::new(seats, seed, mode)
                     .with_clock(clock)
                     .with_log(log_shown)
                     .with_public(public)
                     .with_game(&decode(&game))
+                    .with_pace(pace)
                     .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
