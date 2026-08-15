@@ -572,6 +572,13 @@ button leaves the tab order and stops emitting pointer events, so its
 explanation becomes unreachable by keyboard and by touch, precisely the
 audience that most needs it. The click handler guards instead.
 
+**A tab group's explanations sit on its options, not on its heading.** On the
+heading a tooltip can only describe whichever option is already selected, which
+is the one a reader least needs explained; on the option it answers the
+question actually being asked, which is what the other choices would do. Every
+value in every group carries one, and the roving tab stop means a keyboard gets
+them by arrowing through exactly as a pointer gets them by moving across.
+
 **A tooltip trigger is the size of its own words.** A field label was a
 full-width block, so its hover area was the whole row: a tooltip fired from
 empty space beside the label and then centred itself over the card rather than

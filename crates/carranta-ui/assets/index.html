@@ -804,17 +804,17 @@
     </div>
 
     <div class="field" id="paceField">
-      <span class="fieldLabel" id="paceLabel" tabindex="0">Bot speed</span>
+      <span class="fieldLabel">Bot speed</span>
       <div class="tabs" id="lobbyPace"></div>
     </div>
 
     <div class="field">
-      <span class="fieldLabel" id="visibilityLabel" tabindex="0">Visibility</span>
+      <span class="fieldLabel">Visibility</span>
       <div class="tabs" id="lobbyVisibility"></div>
     </div>
 
     <div class="field">
-      <span class="fieldLabel" id="chatLabel" tabindex="0">Chat</span>
+      <span class="fieldLabel">Chat</span>
       <div class="tabs" id="lobbyChat"></div>
     </div>
 
@@ -827,7 +827,7 @@
     </div>
 
     <div class="field">
-      <span class="fieldLabel" id="clockLabel" tabindex="0">Turn clock</span>
+      <span class="fieldLabel">Turn clock</span>
       <div class="tabs" id="lobbyClockKind"></div>
       <div class="clockFields">
         <div class="copyRow" id="lobbyClockSecsRow">
@@ -842,7 +842,7 @@
     </div>
 
     <div class="field">
-      <span class="fieldLabel" data-tip="With the log off the server does not send one at all, so the table plays from memory." tabindex="0">Log</span>
+      <span class="fieldLabel">Log</span>
       <div class="tabs" id="lobbyLog"></div>
     </div>
 
@@ -1168,7 +1168,7 @@ function draw() {
       const n = pips(h.number);
       for (let i = 0; i < n; i++) {
         g.appendChild(el('circle', {
-          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 9, r: 1.6,
+          cx: cx + (i - (n - 1) / 2) * 4.5, cy: cy + 7, r: 1.6,
           class: hot ? 'red' : 'pip',
         }));
       }
@@ -1225,21 +1225,24 @@ function draw() {
     // does. The label is then free to be the thing the letters never said: the
     // rate. A general port has no resource to wear and keeps the paper.
     const res = port.kind === 0 ? null : port.kind - 1;
+    // The same radius as a number disc. Two kinds of disc on one board reading
+    // as two different sizes made the board look like it had been assembled
+    // from two sets.
     base.appendChild(el('circle', {
-      cx: ox, cy: oy, r: 12,
+      cx: ox, cy: oy, r: 17,
       fill: res === null ? 'var(--panel)' : `var(${RESOURCE_FACE[res]})`,
       stroke: 'var(--line)',
     }));
     if (res !== null) {
       const tooth = el('circle', {
-        cx: ox, cy: oy, r: 12, fill: 'url(#cardboard)', opacity: .45,
+        cx: ox, cy: oy, r: 17, fill: 'url(#cardboard)', opacity: .45,
       });
       tooth.style.mixBlendMode = 'soft-light';
       tooth.style.pointerEvents = 'none';
       base.appendChild(tooth);
     }
     const t = el('text', {
-      x: ox, y: oy, class: 'hexnum', 'font-size': 9,
+      x: ox, y: oy, class: 'hexnum', 'font-size': 12,
       fill: res === null ? 'var(--dim)' : onColour(RESOURCE_HEX[res]),
     });
     // The rate, which is what the port is for. It used to carry two letters of
@@ -1894,11 +1897,25 @@ setInterval(tickClock, 1000);
 // Seats wait for people unless told otherwise, and the market is always open:
 // a table of humans that cannot trade freely is not the game anyone came for,
 // so it is not offered as a setting.
+// Paired with their descriptions below, so a value explains itself where it is
+// chosen. On the heading the tooltip could only describe whichever option was
+// already selected, which is the one a reader least needs explained.
 const CLOCK_KINDS = [
   ['turn', 'per turn'],
   ['chess', 'chess clock'],
   ['off', 'no clock'],
 ];
+const LOG_NOTE = {
+  on: 'The table keeps a record of every public move, readable back to the '
+    + 'first turn.',
+  off: 'No record. The server does not send one at all, so nothing is sitting '
+     + 'in the response for anyone who opens the network tab.',
+};
+const MODE_NOTE = {
+  4: 'Four seats. The full board and the standard piece counts.',
+  3: 'Three seats. The same board, one fewer opponent, and more of it left '
+   + 'open.',
+};
 const CLOCK_DEFAULT = { turn: 60, chess: 120 };
 const INCREMENT_DEFAULT = 45;
 const CLOCK_NOTE = {
@@ -2080,7 +2097,8 @@ function renderLobby() {
   tabs(document.getElementById('lobbySeats'),
     // Four first because four is the default, and the default belongs where
     // the eye lands rather than where the counting starts.
-    [[4, '4 players'], [3, '3 players']], lobby.seats, v => {
+    [[4, '4 players', { tip: MODE_NOTE[4] }],
+     [3, '3 players', { tip: MODE_NOTE[3] }]], lobby.seats, v => {
       lobby.seats = v;
       lobby.roles = lobby.roles.slice(0, v);
       while (lobby.roles.length < v) lobby.roles.push('open');
@@ -2154,28 +2172,27 @@ function renderLobby() {
   document.getElementById('paceField').hidden = !anyBot;
   if (anyBot) {
     tabs(document.getElementById('lobbyPace'),
-      [['slow', 'slow'], ['fast', 'fast'], ['instant', 'instant']],
+      [['slow', 'slow', { tip: PACE_NOTE.slow }],
+       ['fast', 'fast', { tip: PACE_NOTE.fast }],
+       ['instant', 'instant', { tip: PACE_NOTE.instant }]],
       lobby.pace, v => { lobby.pace = v; });
-    document.getElementById('paceLabel')
-      .setAttribute('data-tip', PACE_NOTE[lobby.pace]);
   }
 
   tabs(document.getElementById('lobbyChat'),
-    [['none', 'no chat'],
+    [['none', 'no chat', { tip: CHAT_NOTE.none }],
      ['text', 'text', { disabled: true, tip: CHAT_NOTE.text }],
      ['voice', 'voice', { disabled: true, tip: CHAT_NOTE.voice }],
      ['both', 'text & voice', { disabled: true, tip: CHAT_NOTE.both }]],
     lobby.chat, v => { lobby.chat = v; });
-  document.getElementById('chatLabel').setAttribute('data-tip', CHAT_NOTE[lobby.chat]);
 
   tabs(document.getElementById('lobbyVisibility'),
-    [['private', 'private'],
+    [['private', 'private', { tip: VISIBILITY_NOTE.private }],
      ['public', 'public', { disabled: true, tip: VISIBILITY_NOTE.public }]],
     lobby.visibility, v => { lobby.visibility = v; });
-  document.getElementById('visibilityLabel')
-    .setAttribute('data-tip', VISIBILITY_NOTE[lobby.visibility]);
 
-  tabs(document.getElementById('lobbyClockKind'), CLOCK_KINDS, lobby.clockKind,
+  tabs(document.getElementById('lobbyClockKind'),
+    CLOCK_KINDS.map(([v, label]) => [v, label, { tip: CLOCK_NOTE[v] }]),
+    lobby.clockKind,
     v => {
       lobby.clockKind = v;
       // Each kind measures a different thing, so carrying the number across
@@ -2196,10 +2213,10 @@ function renderLobby() {
   // when one is chosen.
   document.getElementById('lobbyClockIncRow').hidden = lobby.clockKind !== 'chess';
   document.getElementById('lobbyClockInc').value = lobby.clockInc;
-  document.getElementById('clockLabel').setAttribute('data-tip', CLOCK_NOTE[lobby.clockKind]);
 
   tabs(document.getElementById('lobbyLog'),
-    [[true, 'keep a log'], [false, 'play from memory']], lobby.log,
+    [[true, 'keep a log', { tip: LOG_NOTE.on }],
+     [false, 'play from memory', { tip: LOG_NOTE.off }]], lobby.log,
     v => { lobby.log = v; });
 
   // Set rather than rebuilt, so a name being typed survives the re-render that
