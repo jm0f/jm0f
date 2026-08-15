@@ -177,6 +177,15 @@ spreading a card's width per extra card was wider than the space at every
 window size we render at. The whole fan gets a fixed budget and the cards
 share it, the way a real fan of cards does.
 
+**The card appears wherever a resource is chosen**, not only in the dock: the
+trade composer carries it at reading size beside each name, so the thing you
+are holding and the word for it are never two objects to translate between.
+
+**A staged offer comes off the count.** While a trade is being composed the
+hand shows what is left after it, not what the turn started with, because
+planning the next move against a number already spoken for is planning against
+a number that is wrong.
+
 **The five are shown wood, brick, wool, wheat, ore.** That is not the order the
 engine numbers them in, and it is not meant to be: the engine's numbering is
 the wire format. The display order is sent with the payload, each entry

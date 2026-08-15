@@ -191,6 +191,8 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.ints("turnMs", session.turn_ms().iter().map(|&n| n as i64));
     j.bool("inSetup", session.in_setup());
     j.bool("logShown", session.log_shown());
+    // Whether a development card is half played and can still be put back.
+    j.bool("canCancel", session.can_cancel());
 
     // ---- The market ----
     j.array("offers", 0..v.offer_count as usize, |o, i| {

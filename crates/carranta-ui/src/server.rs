@@ -186,6 +186,18 @@ impl Server {
                 };
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
+            // Put back a development card whose action was never finished.
+            ("POST", "/api/cancel") => {
+                let mut session = self.session.lock().unwrap();
+                let payload = match json::read_u64(&body, "version") {
+                    Some(v) => match session.cancel(v) {
+                        Ok(()) => view::render(&session),
+                        Err(e) => view::render_with_note(&session, &refusal(&e)),
+                    },
+                    None => view::render_with_note(&session, "malformed request"),
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
             ("POST", "/api/propose") => {
                 let mut session = self.session.lock().unwrap();
                 let give = json::read_u8_array(&body, "give", 5);

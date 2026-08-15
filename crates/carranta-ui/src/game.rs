@@ -194,7 +194,7 @@ fn rolled(state: &State) -> String {
 /// card it was is not something the table gets to know.
 fn gains(before: &[[u8; 5]; MAX_PLAYERS], after: &[[u8; 5]; MAX_PLAYERS], seat: usize) -> String {
     let mut parts = Vec::new();
-    for r in 0..5 {
+    for r in LISTING_ORDER {
         let up = after[seat][r].saturating_sub(before[seat][r]);
         if up > 0 {
             parts.push(format!("{up} {}", RESOURCE_NAMES[r]));
@@ -287,6 +287,9 @@ pub struct Session {
     log_shown: bool,
     /// What this table is called, chosen in the lobby. Empty when unnamed.
     game: String,
+    /// The position before a development card that opens a second decision,
+    /// and how long the log was then, so an unfinished play can be put back.
+    undo: Option<(State, usize)>,
     /// Whether the table is listed for anyone to join. Private by default:
     /// listing a table is publishing it, and that should be asked for.
     public: bool,
@@ -323,6 +326,7 @@ impl Session {
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
             log_shown: true,
+            undo: None,
             game: String::new(),
             public: false,
             turns: 1,
@@ -814,6 +818,7 @@ impl Session {
 
         match choice {
             Choice::Decline => {
+                self.undo = None;
                 for i in self.open_offers() {
                     self.declined[i as usize] = true;
                 }
@@ -825,7 +830,13 @@ impl Session {
                 let phrase = log_phrase(&action, &self.state, HUMAN as usize);
                 let at = self.stamp();
                 let purse = self.state.hand;
+                // A militia is not one decision but two, and the card is spent
+                // on the first of them. Keep the position from before it so the
+                // half-made move can be put back, see `cancel`.
+                let mark =
+                    matches!(action, Action::PlayMilitia).then(|| (self.state, self.log.len()));
                 self.state.apply(action).map_err(Refused::Illegal)?;
+                self.undo = mark;
                 self.version += 1;
                 let phrase = match action {
                     Action::Roll => rolled(&self.state),
@@ -840,6 +851,45 @@ impl Session {
             }
         }
         self.finish_move();
+        Ok(())
+    }
+
+    /// Whether the half-made move on the table can still be put back.
+    ///
+    /// Having a snapshot is not enough: the position has to still be the one it
+    /// was taken for. Checking that here rather than clearing the snapshot at
+    /// every place a move can come from means a path nobody thought of cannot
+    /// leave a stale offer to undo something else.
+    pub fn can_cancel(&self) -> bool {
+        self.undo.is_some()
+            && self.state.decider() == HUMAN
+            && matches!(self.state.phase, Phase::MoveRobber { from_militia: true })
+    }
+
+    /// Put back a development card whose action was never finished.
+    ///
+    /// A militia spends the card the moment it is played, and only then asks
+    /// where the robber goes. Between those two things the player has committed
+    /// to nothing and learned nothing, so the position from before is restored
+    /// whole, along with the log line that announced it.
+    ///
+    /// The snapshot is the entire `State`, which carries its own generator, so
+    /// this cannot be used to fish for a different roll or a different steal:
+    /// what comes back is the same position down to the next random number.
+    /// It is dropped the moment anything else happens, so there is never more
+    /// than the current half-move to take back.
+    pub fn cancel(&mut self, version: u64) -> Result<(), Refused> {
+        if version != self.version {
+            return Err(Refused::Stale);
+        }
+        if !self.can_cancel() {
+            self.undo = None;
+            return Err(Refused::NoSuchChoice);
+        }
+        let (state, lines) = self.undo.take().ok_or(Refused::NoSuchChoice)?;
+        self.state = state;
+        self.log.truncate(lines);
+        self.version += 1;
         Ok(())
     }
 
@@ -1074,12 +1124,18 @@ pub enum Target {
 
 const RESOURCE_NAMES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
 
+/// The order the five are listed in, as indices into [`RESOURCE_NAMES`].
+///
+/// Wood before brick, matching the hand and every list on the page. The engine
+/// numbers them for its own reasons and that numbering is the wire format, so
+/// the reading order is kept here rather than by renumbering the game.
+const LISTING_ORDER: [usize; 5] = [1, 0, 2, 3, 4];
+
 fn cards(counts: &[u8; 5]) -> String {
-    let parts: Vec<String> = counts
+    let parts: Vec<String> = LISTING_ORDER
         .iter()
-        .enumerate()
-        .filter(|&(_, &n)| n > 0)
-        .map(|(r, &n)| format!("{n} {}", RESOURCE_NAMES[r]))
+        .filter(|&&r| counts[r] > 0)
+        .map(|&r| format!("{} {}", counts[r], RESOURCE_NAMES[r]))
         .collect();
     if parts.is_empty() {
         "nothing".to_string()
@@ -1854,6 +1910,77 @@ mod tests {
             "the sweep should reach most phases, saw {}",
             seen.len()
         );
+    }
+
+    #[test]
+    fn a_militia_can_be_put_back_before_the_robber_moves() {
+        // Find a position where the human can play a militia.
+        let mut s = None;
+        for seed in 0..60u64 {
+            let mut g = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..400 {
+                if g.choices().is_empty() {
+                    break;
+                }
+                if let Some(i) = g
+                    .choices()
+                    .iter()
+                    .position(|c| c.label(g.state()) == "Play Militia")
+                {
+                    let v = g.version();
+                    let before = *g.state();
+                    let lines = g.log().len();
+                    g.act(i, v).unwrap();
+                    s = Some((g, before, lines));
+                    break;
+                }
+                let buy = g
+                    .choices()
+                    .iter()
+                    .position(|c| c.label(g.state()) == "Buy a development card");
+                let v = g.version();
+                let _ = g.act(buy.unwrap_or(0), v);
+            }
+            if s.is_some() {
+                break;
+            }
+        }
+        let (mut g, before, lines) = s.expect("no militia ever became playable");
+
+        // The card is spent and the robber is waiting to be placed.
+        assert!(
+            g.can_cancel(),
+            "a half-played militia should be takeable back"
+        );
+        assert_ne!(*g.state(), before, "the play did nothing");
+        assert!(g.log().len() > lines, "the play was not logged");
+
+        let v = g.version();
+        g.cancel(v).unwrap();
+        // Everything back, the generator included: this cannot be used to fish
+        // for a different steal by playing the card again.
+        assert_eq!(*g.state(), before, "the position did not come back whole");
+        assert_eq!(g.log().len(), lines, "the log line did not come back");
+        assert!(!g.can_cancel(), "there is nothing left to take back");
+        assert_eq!(g.cancel(g.version()), Err(Refused::NoSuchChoice));
+    }
+
+    #[test]
+    fn nothing_else_can_be_taken_back() {
+        // Only a militia arms the undo. Rolling, building and ending a turn
+        // are done when they are done.
+        let mut g = Session::new(4, 3, TradeMode::Full);
+        for _ in 0..120 {
+            if g.choices().is_empty() {
+                break;
+            }
+            let v = g.version();
+            let _ = g.act(0, v);
+            assert!(
+                !g.can_cancel(),
+                "an ordinary move offered itself to be undone"
+            );
+        }
     }
 
     #[test]

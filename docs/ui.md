@@ -263,6 +263,28 @@ reserved column and the dock exactly where they were. That was already the rule
 when the card lived in a column, and it survives the move: a panel that
 resizes what the player is reading is worse than one that covers a corner.
 
+### Taking back a half-played card
+
+A development card that opens a second decision is spent on the first of them,
+and between the two the player has committed to nothing and learned nothing.
+That gap can be undone.
+
+- **A card that only asks a question** (monopoly, invention) has spent nothing
+  when its picker opens, so closing it changes nothing.
+- **A militia** is already played by the time the board is asking where the
+  robber goes. Clicking anywhere that is not a hex puts the card back, which is
+  the only way out of a placement with no button of its own. Escape does the
+  same.
+- **A card that arrived because something was already played** says `put the
+  card back` rather than `close`, because that is what pressing it does.
+
+The engine keeps the whole position from before the play, its generator
+included, so what comes back is the same position down to the next random
+number: this cannot be used to fish for a different steal by playing the card
+again. The snapshot is guarded on the live position rather than cleared at
+every place a move can come from, so no path nobody thought of can leave a
+stale offer to undo something else.
+
 **A card belongs to the turn it was opened on.** If the clock runs the turn out
 from under you, the card goes with it: leaving a composer or a picker on screen
 invites you to answer something nobody is asking any more, and the click would
