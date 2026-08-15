@@ -1402,6 +1402,13 @@ function renderSeats(v) {
     html += `<span class="left" data-tip="pieces still to place" tabindex="0">`
       + `<b>${s.settlementsLeft}</b> settlements · <b>${s.citiesLeft}</b> cities`
       + ` · <b>${s.roadsLeft}</b> roads left</span>`;
+    // The two numbers the bonuses are awarded on, for everyone rather than
+    // only for whoever currently holds them. The tags above say who has the
+    // award; this says how close the rest of the table is to taking it, which
+    // is the thing you actually play against.
+    html += `<span class="left tally" data-tip="militia played, and the longest`
+      + ` unbroken road. The two counts the bonuses are decided on" tabindex="0">`
+      + `<b>${s.militia}</b> militia · <b>${s.road}</b> longest road</span>`;
     counts.innerHTML = html;
     row.append(dot, who, vp, counts);
     // A rule between rows, but never against the boxed one: its border is
@@ -1463,10 +1470,16 @@ function renderHand(v) {
   v.devNames.forEach(c => {
     const n = v.yourDev[c.i];
     if (!n) return;
+    // A victory point card is never played (R-9.11). It counts the moment it
+    // is bought, it is yours alone until the game ends, and there is no action
+    // behind it at all. Treating it like the rest offered to play it and told
+    // you it was "playable next", which described a card that does not exist.
+    const scores = c.name === 'victory point';
     // A card bought this turn cannot be played until the next one (R-9.4).
     // The engine already refuses it, but a refusal you cannot see in your own
-    // hand reads as the interface being broken.
-    const fresh = v.yourFresh[c.i];
+    // hand reads as the interface being broken. The rule has nothing to say
+    // about a card that is never played, so the badge stays off those.
+    const fresh = scores ? 0 : v.yourFresh[c.i];
     const note = fresh ? `, ${fresh} bought this turn and playable next` : '';
     // A card you can play is played by clicking it. A button elsewhere that
     // opened a list of the same cards was a second way to reach the thing you
@@ -1479,7 +1492,11 @@ function renderHand(v) {
         act(mine[0].i);
       }
     } : null;
-    const pile = stackEl(n, devIcon(), play ? `Play ${c.name}` : `${n} ${c.name}${note}`, play);
+    const title = scores
+      ? `${n} victory point, already counted in your total and hidden from `
+        + 'everyone else until the game ends'
+      : (play ? `Play ${c.name}` : `${n} ${c.name}${note}`);
+    const pile = stackEl(n, devIcon(), title, play);
     if (play) pile.classList.add('playable');
     if (fresh) {
       pile.classList.add('fresh');

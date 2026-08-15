@@ -82,12 +82,21 @@ The depth is the point: it tells you a fat hand is coming before the
 discard-on-seven rule bites, and it does it without you reading a number.
 Fixed slots mean the thing you want never moves under the cursor.
 
-Development cards sit in their own group beside the resources.
+Development cards sit in their own group beside the resources. **You play one
+by clicking it**, so there is no separate button opening a list of the cards
+you are already looking at. A card bought this turn is marked `new` and cannot
+be played until the next one (R-9.4): the engine refuses it either way, but a
+refusal you cannot see in your own hand reads as the interface being broken.
+
+**A victory point card is the exception, and is not a card you play.** It
+scores the moment it is bought, it is yours alone until the game ends, and no
+action exists behind it (R-9.11). It carried the `new` badge and offered
+itself as playable next turn, which described a card that does not exist. Its
+pile is inert now and says what it is instead.
 
 ### Actions
 
-A fixed grid: **roll, buy a development card, play one, offer a trade, trade
-with the bank, end turn.**
+A fixed grid: **roll, buy a development card, trade, end turn.**
 
 **Building is not here.** You build by clicking a ghost piece on the board.
 The grid is for actions with no place; the board is for actions with one.
@@ -105,12 +114,19 @@ Two dice objects beside the actions, showing the last roll. Clicking rolls.
 ## 4. Seat rows
 
 Every row carries, in this order: colour, name, public victory points, cards
-in hand, development cards held, settlements / cities / roads remaining, and a
-badge when that seat holds the longest road or the largest militia.
+in hand, development cards held, a badge when that seat holds the longest road
+or the largest militia, settlements / cities / roads remaining, and militia
+played / longest road.
 
 Pieces remaining is on the row because it is a real signal. A player down to
 their last settlements is close to winning, and it is the one the raw numbers
 hide.
+
+**The bonus counts are shown for everyone, not only for whoever holds them.**
+The badge says who has the award; the numbers say how close the rest of the
+table is to taking it, which is the thing you actually play against. A seat one
+road short of the longest is a different position from a seat four short, and
+the badge alone cannot tell them apart.
 
 ### The log can be turned off
 

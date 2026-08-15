@@ -410,6 +410,44 @@ mod tests {
     }
 
     #[test]
+    fn a_victory_point_card_is_never_offered_as_something_to_play() {
+        // R-9.11: it scores the moment it is bought and is never played. The
+        // dock relies on that to decide a pile is not clickable, so the
+        // guarantee is checked where the payload leaves the process.
+        let mut seen_one = false;
+        for seed in 0..40 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..600 {
+                if s.choices().is_empty() {
+                    break;
+                }
+                let out = render(&s);
+                assert!(
+                    !out.contains("\"card\":\"victory point\""),
+                    "a victory point card was offered as a play"
+                );
+                if s.view().own.is_some_and(|o| o.dev_held[1] > 0) {
+                    seen_one = true;
+                }
+                // Buy whenever the deck allows it, otherwise take whatever is
+                // first. Always taking the first choice never bought a card at
+                // all, so the human never came to hold one and the assertion
+                // above was never reached.
+                let buy = s
+                    .choices()
+                    .iter()
+                    .position(|c| c.label(s.state()) == "Buy a development card");
+                let v = s.version();
+                let _ = s.act(buy.unwrap_or(0), v);
+            }
+            if seen_one {
+                break;
+            }
+        }
+        assert!(seen_one, "the human never held one, so nothing was proven");
+    }
+
+    #[test]
     fn a_note_reaches_the_page() {
         let s = Session::new(4, 2, TradeMode::Disabled);
         assert!(render_with_note(&s, "Stale").contains("\"note\":\"Stale\""));
