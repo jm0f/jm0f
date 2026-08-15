@@ -427,6 +427,16 @@
                         margin-right: 0; vertical-align: -.28em; }
   .logRes .rcard.mini i { width: .42em; height: .42em; }
   .logRes b { font-weight: 600; color: var(--foreground); }
+  /* The bank, one row per resource: the card, its name, and what is left. */
+  .bankRows { display: flex; flex-direction: column; gap: .1em; }
+  .bankRow { display: flex; align-items: center; justify-content: space-between;
+             gap: .6em; padding: .05em 0; }
+  .bankRow .name { display: flex; align-items: center;
+                   color: var(--muted-foreground); }
+  .bankRow .much { font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* A stack that has run out is the one worth noticing. */
+  .bankRow.out .much { color: var(--accent); }
+  .bankRow.out .name { opacity: .55; }
   /* A piece in the log, sized to the line it sits on. */
   .logPiece { display: inline-block; width: 1.15em; height: 1.35em;
               vertical-align: -.32em; margin: 0 .1em; }
@@ -846,6 +856,11 @@
     </div>
 
     <div class="field">
+      <span class="fieldLabel">Bank</span>
+      <div class="tabs" id="lobbyBank"></div>
+    </div>
+
+    <div class="field">
       <span class="fieldLabel">Log</span>
       <div class="tabs" id="lobbyLog"></div>
     </div>
@@ -913,6 +928,10 @@
     <div class="panel clockPanel">
       <div class="bigClock" id="clock">0:00</div>
       <div class="clockUnder"><span id="turnCount"></span></div>
+    </div>
+    <div class="panel">
+      <h2>Bank</h2>
+      <div id="bank" class="bankRows"></div>
     </div>
     <div class="panel">
       <h2>Players</h2>
@@ -1432,6 +1451,7 @@ function render() {
   // Before anything draws, so a card belonging to a turn that is over never
   // reaches the screen at all.
   dismissStalePrompt(v);
+  renderBank(v);
   renderSeats(v);
   renderHand(v);
   renderActions(v);
@@ -1564,6 +1584,41 @@ const GLYPH = {
 };
 
 // ---- seat rows -------------------------------------------------------------
+// What the bank still holds. Either the count, which the rules already let
+// anybody work out (R-5.6), or only how full the stack looks, for a table that
+// would rather judge than tally.
+//
+// The bands are thirds of a full stack rather than round numbers, so they mean
+// the same thing whatever the stack started at.
+const BANK_FULL = 19;
+function bankSize(n) {
+  if (n === 0) return 'empty';
+  if (n <= BANK_FULL / 3) return 'small';
+  if (n <= (BANK_FULL * 2) / 3) return 'middle';
+  return 'big';
+}
+function renderBank(v) {
+  const host = document.getElementById('bank');
+  host.textContent = '';
+  v.resourceNames.forEach(r => {
+    const n = v.supply[r.i];
+    const row = document.createElement('div');
+    row.className = 'bankRow' + (n === 0 ? ' out' : '');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.append(miniCard(r.i), r.name);
+    const much = document.createElement('span');
+    much.className = 'much';
+    much.textContent = v.bankExact === false ? bankSize(n) : n;
+    row.setAttribute('data-tip', v.bankExact === false
+      ? `the ${r.name} stack looks ${bankSize(n)}`
+      : `${n} ${r.name} left in the bank`);
+    row.tabIndex = 0;
+    row.append(name, much);
+    host.appendChild(row);
+  });
+}
+
 function renderSeats(v) {
   const host = document.getElementById('seatRows');
   host.textContent = '';
@@ -1935,6 +1990,16 @@ const LOG_NOTE = {
   off: 'No record. The server does not send one at all, so nothing is sitting '
      + 'in the response for anyone who opens the network tab.',
 };
+// What the bank panel shows. Counting the stacks is what the rules already
+// allow anybody to do, so it is the default; sizing them by eye is the house
+// rule for a table that would rather judge than tally.
+const BANK_NOTE = {
+  exact: 'The bank shows how many of each resource are left, to the card. '
+       + 'Supply counts are public, so this is what a player could work out '
+       + 'anyway by watching.',
+  rough: 'The bank shows only how full each stack looks: big, middle, small '
+       + 'or empty. You can see a run coming without being handed the number.',
+};
 const MODE_NOTE = {
   4: 'Four seats. The full board and the standard piece counts.',
   3: 'Three seats. The same board, one fewer opponent, and more of it left '
@@ -1992,6 +2057,7 @@ const lobby = {
   visibility: 'private',
   pace: 'fast',
   chat: 'none',
+  bank: 'exact',
   clockKind: 'turn',
   clockInc: INCREMENT_DEFAULT,
   log: true,
@@ -2202,6 +2268,11 @@ function renderLobby() {
       lobby.pace, v => { lobby.pace = v; });
   }
 
+  tabs(document.getElementById('lobbyBank'),
+    [['exact', 'exact count', { tip: BANK_NOTE.exact }],
+     ['rough', 'stack size', { tip: BANK_NOTE.rough }]],
+    lobby.bank, v => { lobby.bank = v; });
+
   tabs(document.getElementById('lobbyChat'),
     [['none', 'no chat', { tip: CHAT_NOTE.none }],
      ['text', 'text', { disabled: true, tip: CHAT_NOTE.text }],
@@ -2323,6 +2394,7 @@ document.getElementById('lobbyStart').onclick = () => {
     visibility: lobby.visibility,
     game: lobby.game,
     pace: lobby.pace,
+    bank: lobby.bank,
   });
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;

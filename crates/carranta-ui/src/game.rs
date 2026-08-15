@@ -295,6 +295,8 @@ pub struct Session {
     /// The position before a development card that opens a second decision,
     /// and how long the log was then, so an unfinished play can be put back.
     undo: Option<(State, usize)>,
+    /// Whether the bank's stacks are counted exactly or only sized.
+    bank_exact: bool,
     /// Whether the table is listed for anyone to join. Private by default:
     /// listing a table is publishing it, and that should be asked for.
     public: bool,
@@ -331,6 +333,9 @@ impl Session {
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
             log_shown: true,
+            // Supply counts are public and may be checked (R-5.6), so counting
+            // them is the default and judging them by eye is the house rule.
+            bank_exact: true,
             // A bare session runs at engine speed. Pacing is a table setting,
             // asked for in the lobby and applied there; defaulting to it here
             // would make every test that drives a session wait on a wall clock
@@ -398,6 +403,16 @@ impl Session {
 
     pub fn game(&self) -> &str {
         &self.game
+    }
+
+    /// Show the bank as exact counts, or only as how big each stack looks.
+    pub fn with_bank_exact(mut self, exact: bool) -> Self {
+        self.bank_exact = exact;
+        self
+    }
+
+    pub fn bank_exact(&self) -> bool {
+        self.bank_exact
     }
 
     /// Whether the table is listed for anyone to join, or reachable only by

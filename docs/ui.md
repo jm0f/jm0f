@@ -141,6 +141,19 @@ table is to taking it, which is the thing you actually play against. A seat one
 road short of the longest is a different position from a seat four short, and
 the badge alone cannot tell them apart.
 
+## 4a. The bank
+
+Under the clock, one row per resource: the card, its name, and what is left of
+that stack. A resource the bank has run out of is marked, because that is the
+one worth noticing: it stops production for everybody until something is spent.
+
+**Two modes, set in the lobby.** `exact count` shows the number, and is the
+default because supply counts are public and any player could work them out by
+watching (R-5.6). `stack size` shows only how full the stack looks, big,
+middle, small or empty, for a table that would rather judge than tally. The
+bands are thirds of a full stack rather than round numbers, so they mean the
+same thing whatever the stack started at.
+
 ### The log can be turned off
 
 A table rule, not a personal setting: playing from memory only works if nobody

@@ -249,12 +249,16 @@ impl Server {
                 let public = wants_public(query);
                 let game = param(query, "game").unwrap_or_default();
                 let pace = Pace::parse(param(query, "pace").as_deref());
+                // Anything but an explicit "rough" counts the stacks, since
+                // that is what the rules already let anybody do (R-5.6).
+                let bank_exact = param(query, "bank").as_deref() != Some("rough");
                 *session = Session::new(seats, seed, mode)
                     .with_clock(clock)
                     .with_log(log_shown)
                     .with_public(public)
                     .with_game(&decode(&game))
                     .with_pace(pace)
+                    .with_bank_exact(bank_exact)
                     .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
