@@ -330,7 +330,9 @@
     font-size: .8em; text-transform: uppercase; letter-spacing: .09em;
     font-weight: 600; color: var(--muted-foreground);
   }
-  .logWho { color: var(--foreground); letter-spacing: .04em; }
+  .logWho { color: var(--foreground); letter-spacing: .04em; font-weight: 700; }
+  .logTook { margin-left: .6em; font-weight: 400; opacity: .75;
+             font-variant-numeric: tabular-nums; letter-spacing: .02em; }
   .logLine { padding: 1px 0; }
   /* Things the table did rather than a player: no colour on the edge. */
   .logGroup.logTable { border-color: var(--border); }
@@ -365,6 +367,10 @@
   /* Bought this turn, so held but not yet playable. Dashed rather than dimmed:
      dim reads as "you have none", and you do have it. */
   .stack.fresh .layer { border-style: dashed; border-color: var(--accent); }
+  /* A card that can be played says so by lifting when pointed at. */
+  .stack.playable .layer { border-color: var(--accent); }
+  .stack.playable:hover { transform: translateY(-2px); }
+  .stack { transition: transform .12s ease-out; }
   .freshTag {
     position: absolute; bottom: -.15em; left: 50%; transform: translateX(-50%);
     z-index: 3; padding: 0 .35em; border-radius: 999px;
@@ -514,19 +520,19 @@
 
   /* ---- the card that waits for you -------------------------------------- */
   /* It takes the decision and never the board. Rather than float over the
-     island, it takes over the column already held for chat. That column is a
-     fixed width and stays one whether the card is open or not: a panel that
-     resizes the board underneath it moves everything the player is reading,
-     which is worse than covering a corner would have been. */
+     island, it is a card centred over it. Fixed rather than in the flow, so
+     opening one moves nothing: the board keeps its size and its position, and
+     the card covers a part of it rather than pushing it around. */
   .prompt[hidden] { display: none; }
   .prompt {
-    position: relative; min-height: 0; overflow-y: auto;
+    position: fixed; z-index: 50;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(460px, calc(100vw - 32px)); max-height: 72vh; overflow-y: auto;
     background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 6px 14px rgba(51, 38, 27, .10), 0 26px 60px rgba(51, 38, 27, .20);
     outline: 2px solid var(--rule, var(--accent)); outline-offset: -2px;
   }
-  main.prompting .reserved { display: none; }
   .prompt h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
                color: var(--dim); margin: 0 0 10px; font-weight: 600;
                padding-right: 4.5em; }
@@ -549,13 +555,12 @@
 </style>
 </head>
 <body>
+<!-- The wordmark, and nothing else. Whose turn it is, the turn number, the
+     dice and the seed are all already on the screen where they belong; a
+     second copy of them along the top was a status bar for a game that does
+     not need one. The name links home. -->
 <header>
-  <h1>Carranta</h1>
-  <span class="status" id="status">loading…</span>
-  <span class="build" id="build"></span>
-  <span class="spacer"></span>
-  <label class="toggle"><input type="checkbox" id="labels"> ids</label>
-  <button id="new" class="btn-primary">New game</button>
+  <a class="wordmark" href="/">Carranta</a>
 </header>
 
 <!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
@@ -565,7 +570,6 @@
 <div class="lobby" id="lobby" hidden>
   <div class="lobbyCard panel">
     <h1 class="lobbyTitle">Carranta</h1>
-    <p class="lobbyLead">Set the table, then deal.</p>
 
     <div class="field">
       <span class="fieldLabel">Mode</span>
@@ -643,7 +647,6 @@
       <h2>Table talk</h2>
       <p>Chat lands here once the open seats have people in them.</p>
     </div>
-    <div class="prompt" id="prompt" hidden></div>
   </aside>
 
   <!-- Everything you do, in one place under the board, docs/ui.md §3. A card
@@ -670,10 +673,18 @@
   </footer>
 </main>
 
+<!-- Decisions that are not spatial happen here, docs/ui.md §4: a card centred
+     over the board rather than a panel in the flow, so opening one moves
+     nothing else on the page. -->
+<div class="prompt" id="prompt" hidden></div>
+
 <script>
 const COLOURS = ['var(--p0)','var(--p1)','var(--p2)','var(--p3)'];
 const SIZE = 62;                 // hex radius in svg units
 let view = null;
+// Intersection numbers are a debugging aid, reached with ?ids on the address
+// rather than by a control on screen for everyone who never wants them.
+const SHOW_IDS = new URLSearchParams(location.search).has('ids');
 
 // Pointy-top axial to pixel. A vertex arrives as the *sum* of the three
 // lattice positions meeting there, so dividing by three lands on its centroid.
@@ -852,7 +863,10 @@ function draw() {
     if (byHex[h.id]) g.onclick = () => {
       const cs = byHex[h.id];
       if (cs.length === 1) act(cs[0].i);
-      else openPrompt('pick', { title: 'Rob which seat?', choices: cs });
+      // The robber is already where you put it; all that is left is who it
+      // takes from. Recomputed from the live view rather than captured, so a
+      // refresh between the click and the answer cannot stale the indices.
+      else openPrompt('rob', { hex: h.id });
     };
     base.appendChild(g);
   });
@@ -964,7 +978,10 @@ function draw() {
   // "the port between 8 and 16" rather than "the one at the top left". The
   // coastal ones are picked out, since those are the only ones a port can sit
   // on. Drawn last so nothing covers them.
-  if (document.getElementById('labels').checked) {
+  // Intersection numbers are a debugging aid rather than part of the game, so
+  // they are reached by adding ?ids to the address instead of by a control
+  // sitting on screen for everybody who never wants them.
+  if (SHOW_IDS) {
     const coastal = new Set();
     view.ports.forEach(code => coastal.add(Math.floor(code / 8)));
     view.vertices.forEach(v => {
@@ -1012,8 +1029,7 @@ function render() {
     ? (v.winner === v.you ? `You won${how}` : `${seatName(v, v.winner)} won${how}`)
     : (v.yourTurn ? `Your move, ${v.phase}` : `${seatName(v, v.toAct)} is playing`);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
-  document.getElementById('status').textContent = `${turn}${dice} · seed ${v.seed}`;
-  document.getElementById('build').textContent = `build ${v.build}`;
+  document.title = `${turn} · Carranta`;
   document.getElementById('note').textContent = v.note || '';
 
   draw();
@@ -1042,6 +1058,11 @@ function render() {
   // every poll made the history unreadable: scroll up and it yanked you back
   // three seconds later.
   const atTail = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+  // Emptying the box collapses its height and takes scrollTop to zero with it,
+  // so reading turn four threw you back to turn one every three seconds. Keep
+  // the distance from the bottom instead: new lines land below where you are
+  // and the place you were reading stays where you left it.
+  const fromTail = log.scrollHeight - log.scrollTop;
   log.textContent = '';
   // Gather first, so a turn that logged nothing does not leave an empty box.
   const groups = [];
@@ -1057,12 +1078,27 @@ function render() {
     const owner = g.lines.find(x => x.seat !== null && x.seat !== undefined);
     const box = document.createElement('div');
     box.className = 'logGroup' + (owner ? '' : ' logTable');
-    if (owner) box.style.setProperty('--rule', COLOURS[owner.seat]);
+    if (owner) {
+      box.style.setProperty('--rule', COLOURS[owner.seat]);
+      // Filled the way the acting player's row is filled, from the same
+      // colour at the same weight, so the two read as one idea.
+      box.style.background = tintOf(SEAT_HEX[owner.seat]);
+    }
     const h = document.createElement('div');
     h.className = 'logTurn';
     const n = document.createElement('span');
     n.textContent = g.turn === 0 ? 'new game'
       : g.setup ? `setup ${g.turn}` : `turn ${g.turn}`;
+    // How long the turn took, from the clock that was already measuring it.
+    const took = (v.turnSecs || [])[g.turn - 1];
+    if (g.turn > 0 && took !== undefined && took > 0) {
+      const d = document.createElement('span');
+      d.className = 'logTook';
+      d.textContent = took >= 60
+        ? `${Math.floor(took / 60)}m ${took % 60}s`
+        : `${took}s`;
+      n.appendChild(d);
+    }
     h.appendChild(n);
     if (owner) {
       const who = document.createElement('span');
@@ -1074,14 +1110,24 @@ function render() {
     g.lines.forEach(l => {
       const d = document.createElement('div');
       d.className = 'logLine';
+      // A turn box belongs to one player, but not every line in it does: a
+      // roll pays everybody, so "Collected 1 wool" sitting in someone else's
+      // box said nothing about whose wool it was. Lines by anyone other than
+      // the turn's owner are named, in their own colour.
+      if (owner && l.seat !== null && l.seat !== undefined && l.seat !== owner.seat) {
+        const who = document.createElement('strong');
+        who.textContent = seatName(v, l.seat);
+        who.style.color = COLOURS[l.seat];
+        d.append(who, ' ');
+      }
       // The engine writes seat numbers because that is what it knows. Naming
       // happens here, so the log calls people what the rows call them.
-      d.textContent = l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x));
+      d.append(l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x)));
       box.appendChild(d);
     });
     log.appendChild(box);
   });
-  if (atTail) log.scrollTop = log.scrollHeight;
+  log.scrollTop = atTail ? log.scrollHeight : log.scrollHeight - fromTail;
 }
 
 // --- the trade composer ---
@@ -1238,6 +1284,8 @@ function renderHand(v) {
 
   const dev = document.getElementById('dev');
   dev.textContent = '';
+  // What each kind of card can actually do right now, straight from the view.
+  const plays = v.choices.filter(c => c.group === 'card');
   v.devNames.forEach(c => {
     const n = v.yourDev[c.i];
     if (!n) return;
@@ -1246,7 +1294,19 @@ function renderHand(v) {
     // hand reads as the interface being broken.
     const fresh = v.yourFresh[c.i];
     const note = fresh ? `, ${fresh} bought this turn and playable next` : '';
-    const pile = stackEl(n, devIcon(), `${n} ${c.name}${note}`, null);
+    // A card you can play is played by clicking it. A button elsewhere that
+    // opened a list of the same cards was a second way to reach the thing you
+    // were already looking at.
+    const mine = plays.filter(x => x.card === c.name);
+    const play = mine.length ? () => {
+      if (c.name === 'monopoly' || c.name === 'invention') {
+        openPrompt('pick', { kind: 'card', card: c.name });
+      } else {
+        act(mine[0].i);
+      }
+    } : null;
+    const pile = stackEl(n, devIcon(), play ? `Play ${c.name}` : `${n} ${c.name}${note}`, play);
+    if (play) pile.classList.add('playable');
     if (fresh) {
       pile.classList.add('fresh');
       const tag = document.createElement('span');
@@ -1291,9 +1351,6 @@ function renderActions(v) {
     { g: 'buy', label: 'Buy card', c: buy,
       why: theirs || (v.devLeft === 0 ? 'the deck is empty'
         : missing(v, COSTS.dev) || (rolled ? '' : 'roll first')) },
-    { g: 'play', label: 'Play card', list: cards,
-      why: theirs || (v.yourDev.every(n => !n) ? 'you hold no development cards'
-        : 'every card you hold was bought this turn') },
     { g: 'offer', label: 'Offer', open: v.canPropose ? 'compose' : null,
       why: theirs || 'trading is closed in this game' },
     { g: 'bank', label: 'Bank', list: banks,
@@ -1439,6 +1496,12 @@ function onColour(hex) {
   const lin = (c) => { c /= 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; };
   const l = .2126 * lin((n >> 16) & 255) + .7152 * lin((n >> 8) & 255) + .0722 * lin(n & 255);
   return (1.05 / (l + .05)) >= ((l + .05) / .0823) ? '#FFF7EE' : '#33261B';
+}
+
+// The same colour at the same weight as the acting row's fill.
+function tintOf(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, .07)`;
 }
 
 function pixelLoader(colour) {
@@ -1757,12 +1820,10 @@ function renderPrompt(v) {
   // out of your reach, including the button to turn it down.
   const incoming = v.offers.filter(o => !o.mine);
   let mode = prompt.mode;
-  if (discard.length) mode = 'discard';
+  if (v.winner !== null) mode = 'over';
+  else if (discard.length) mode = 'discard';
   else if (!mode && incoming.length && (decline || answerable.some(o => !o.mine))) mode = 'offers';
 
-  // Opening the card widens its column, which narrows the board rather than
-  // covering it.
-  document.querySelector('main').classList.toggle('prompting', !!mode);
   host.style.removeProperty('--rule');
   if (!mode) { host.hidden = true; return; }
   host.hidden = false;
@@ -1795,12 +1856,41 @@ function renderPrompt(v) {
     host.appendChild(box);
   };
 
+  if (mode === 'over') {
+    // The header no longer carries a new game button, so the offer to start
+    // one belongs where every other decision does.
+    head(v.winner === v.you ? 'You won' : `${seatName(v, v.winner)} won`, false);
+    const b = document.createElement('button');
+    b.className = 'btn-primary btn-block';
+    b.textContent = 'New game';
+    b.onclick = openLobby;
+    host.appendChild(b);
+    return;
+  }
   if (mode === 'discard') {
     head('A seven was rolled, hand half of it back', false);
     buttonList(discard);
     return;
   }
-  if (mode === 'pick') { head(prompt.data.title, true); buttonList(prompt.data.choices); return; }
+  if (mode === 'pick') { renderPick(v, host, head, buttonList); return; }
+  if (mode === 'rob') {
+    const here = v.choices.filter(c => c.hex === prompt.data.hex && c.victim !== undefined);
+    if (!here.length) { closePrompt(); return; }
+    head('Take a card from', true);
+    const box = document.createElement('div');
+    box.className = 'buttons';
+    here.forEach(c => {
+      const b = document.createElement('button');
+      b.textContent = seatName(v, c.victim);
+      b.style.background = COLOURS[c.victim];
+      b.style.color = onColour(SEAT_HEX[c.victim]);
+      b.className = 'seatBtn';
+      b.onclick = () => { prompt.mode = null; act(c.i); };
+      box.appendChild(b);
+    });
+    host.appendChild(box);
+    return;
+  }
   if (mode === 'offers') {
     // One person waiting on you means the card can wear their colour. Several
     // means it cannot belong to any of them, so it stays the accent.
@@ -1811,6 +1901,89 @@ function renderPrompt(v) {
     return;
   }
   if (mode === 'compose') { renderCompose(v, host); return; }
+}
+
+// Picking a development card, and then its subject if it has one.
+//
+// The engine enumerates every parameter combination, five monopolies and
+// fifteen inventions, which is the right action space for a search and the
+// wrong one for a person. The kinds are offered first and the resources after.
+const RES_ORDER = [0, 1, 2, 3, 4];
+function renderPick(v, host, head, buttonList) {
+  const kind = prompt.data.kind;
+  if (kind === 'bank') {
+    head('Trade with the bank', true);
+    buttonList(v.choices.filter(c => c.group === 'trade' && /^Trade /.test(c.label)));
+    return;
+  }
+  const cards = v.choices.filter(c => c.group === 'card');
+  if (!cards.length) { closePrompt(); return; }
+
+  // A subject still to choose for the card already picked.
+  const chosen = prompt.data.card;
+  if (chosen === 'monopoly') {
+    head('Monopoly, take every one of', true);
+    resourceButtons(v, host, RES_ORDER, r =>
+      cards.find(c => c.card === 'monopoly' && c.res === r));
+    return;
+  }
+  if (chosen === 'invention') {
+    const first = prompt.data.first;
+    head(first === undefined ? 'Invention, take two' : 'Invention, and', true);
+    resourceButtons(v, host, RES_ORDER, r => {
+      if (first === undefined) return null;      // first click only records
+      // The engine emits one ordering per pair, so match either way round.
+      return cards.find(c => c.card === 'invention'
+        && ((c.res === first && c.res2 === r) || (c.res === r && c.res2 === first)));
+    }, r => {
+      if (first === undefined) { prompt.data.first = r; renderPrompt(view); }
+    });
+    return;
+  }
+
+  head('Play a development card', true);
+  const box = document.createElement('div');
+  box.className = 'buttons';
+  const seen = new Set();
+  cards.forEach(c => {
+    if (!c.card || seen.has(c.card)) return;
+    seen.add(c.card);
+    const b = document.createElement('button');
+    b.textContent = c.card.replace(/^./, m => m.toUpperCase());
+    b.onclick = () => {
+      // Militia and road building take no subject, so they go straight off.
+      if (c.card === 'monopoly' || c.card === 'invention') {
+        prompt.data = { kind: 'card', card: c.card };
+        renderPrompt(view);
+      } else {
+        prompt.mode = null;
+        act(c.i);
+      }
+    };
+    box.appendChild(b);
+  });
+  host.appendChild(box);
+}
+
+function resourceButtons(v, host, order, find, onFirst) {
+  const box = document.createElement('div');
+  box.className = 'buttons';
+  order.forEach(r => {
+    const b = document.createElement('button');
+    b.textContent = v.resourceNames[r].name;
+    const c = find(r);
+    if (c) {
+      b.className = 'btn-primary';
+      b.onclick = () => { prompt.mode = null; act(c.i); };
+    } else if (onFirst) {
+      b.onclick = () => onFirst(r);
+    } else {
+      b.setAttribute('aria-disabled', 'true');
+      b.setAttribute('data-tip', 'not available');
+    }
+    box.appendChild(b);
+  });
+  host.appendChild(box);
 }
 
 function renderOffers(v, host, offers, decline) {
@@ -1827,8 +2000,10 @@ function renderOffers(v, host, offers, decline) {
     const addressed = o.to === null ? '' : (o.to === v.you ? ' → you' : ` → ${seatName(v, o.to)}`);
     // "Ines: 1 wood for 2 wheat" left it to the reader to work out which side
     // was which. "Offers A for B" says who is handing over what.
-    const from = o.mine ? 'You offer' : `${seatName(v, o.from)} offers`;
-    who.textContent = `${from} ${names(o.give)} for ${names(o.want)}`;
+    const strong = document.createElement('strong');
+    strong.textContent = o.mine ? 'You' : seatName(v, o.from);
+    who.append(strong, ` ${o.mine ? 'offer' : 'offers'} `
+      + `${names(o.give)} for ${names(o.want)}`);
     if (addressed) {
       const tag = document.createElement('span');
       tag.className = 'addressed';
@@ -2008,10 +2183,8 @@ function act(i) {
     body: JSON.stringify({ action: i, version: view.version }),
   });
 }
-document.getElementById('labels').onchange = () => { if (view) { draw(); } };
 // New game goes through the lobby rather than restarting on the spot: the
 // settings are the point of pressing it.
-document.getElementById('new').onclick = openLobby;
 // A game nobody has touched yet gets the lobby; one already in progress does
 // not, so reloading the page mid-game returns you to the board rather than
 // making you deal a new one.

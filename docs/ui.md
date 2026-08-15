@@ -28,7 +28,7 @@ Four, fixed. Nothing moves between them as the position changes.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  header, name · whose turn · new game                       │
+│  header, the name, linking home                             │
 ├────────────┬────────────────────────────────┬────────────────┤
 │  seats     │                                │   reserved     │
 │   you      │                                │                │
@@ -154,7 +154,15 @@ number that means nothing to them.
 
 **Scrolling up stays up.** The log followed its own tail on every poll, so
 reading anything older than three seconds was impossible. It only follows the
-tail if you were already at it.
+tail if you were already at it, and it keeps its distance from the bottom
+across a poll: emptying the box to redraw it collapses the height and takes
+`scrollTop` to zero, which threw a reader back to the opening deal every three
+seconds.
+
+**The whole record is sent, not a tail of it.** The payload used to carry the
+last forty lines, which meant scrolling back far enough simply ran out of
+game. A log you cannot follow to turn one is a log that misrepresents the
+match, and the page has no other source for what happened there.
 
 ### The deal is made of turns too
 
@@ -209,19 +217,26 @@ without one happens in a card that waits for you.**
 | Build a road, settlement, city | Board, click the ghost |
 | Setup placement | Board, click the ghost |
 | Move the robber | Board, hexes light, click one |
-| Choose whom to rob | Board. The seats you may rob light up |
+| Choose whom to rob | Card, by name. The robber is already on the hex |
 | Discard down to seven | Card |
 | Monopoly / invention resource pick | Card |
 | Incoming trade offer | Card |
 
-The card **captures the decision but does not cover the board.** It takes over
-the column already held for chat, because every one of these choices is one you
-should make while looking at the position.
+The card is a **real modal, centred over the board.** An earlier version put it
+in the column held for chat, which read as a side panel rather than as a
+question: it sat where a running conversation would sit, at the edge of where
+anyone was looking, and it competed with the log for the same glance.
 
-**That column is a fixed width and never changes.** An earlier version widened
-it while a card was open, which shifted the board and everything on it. A panel
-that resizes what the player is reading is worse than one that covers a corner:
-nothing should move because a question arrived.
+**Nothing moves because a question arrived.** The card is `position: fixed`
+rather than part of the layout, so opening one leaves the seats, the board, the
+reserved column and the dock exactly where they were. That was already the rule
+when the card lived in a column, and it survives the move: a panel that
+resizes what the player is reading is worse than one that covers a corner.
+
+Covering part of the board is the accepted cost. Every choice on that list is
+one you make against the position, so the card is the width of a question and
+not of a page, and the board stays live behind it: it is `role="dialog"` but
+deliberately not `aria-modal`, see §9.
 
 ---
 

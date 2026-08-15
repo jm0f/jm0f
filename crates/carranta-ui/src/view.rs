@@ -180,6 +180,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.int("clockIncrement", session.clock().increment() as i64);
     j.str("youName", session.name());
     j.int("turns", session.turn_no() as i64);
+    j.ints("turnSecs", session.turn_secs().iter().map(|&n| n as i64));
     j.bool("inSetup", session.in_setup());
     j.bool("logShown", session.log_shown());
 
@@ -200,6 +201,35 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
         o.int("i", i as i64)
             .str("label", &c.label(session.state()))
             .str("group", c.group());
+        // Development card plays carry their parameters in the action, so the
+        // engine enumerates every combination: five monopolies and fifteen
+        // inventions. That is the right action space for a search and the
+        // wrong one for a person, so the parts are named here and the page
+        // builds a picker out of them rather than listing twenty buttons.
+        if let crate::game::Choice::Play(a) = c {
+            match *a {
+                carranta_core::action::Action::MoveRobber {
+                    victim: Some(seat), ..
+                } => {
+                    o.int("victim", seat as i64);
+                }
+                carranta_core::action::Action::PlayMilitia => {
+                    o.str("card", "militia");
+                }
+                carranta_core::action::Action::PlayRoadBuilding => {
+                    o.str("card", "road building");
+                }
+                carranta_core::action::Action::PlayMonopoly(r) => {
+                    o.str("card", "monopoly").int("res", r as i64);
+                }
+                carranta_core::action::Action::PlayInvention([x, y]) => {
+                    o.str("card", "invention")
+                        .int("res", x as i64)
+                        .int("res2", y as i64);
+                }
+                _ => {}
+            }
+        }
         match c.target() {
             Target::Vertex(x) => o.int("vertex", x as i64),
             Target::Edge(x) => o.int("edge", x as i64),
@@ -228,21 +258,15 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     } else {
         &[]
     };
-    j.array(
-        "log",
-        log.iter()
-            .rev()
-            .take(40)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev(),
-        |o, line| {
-            o.str("t", &line.text)
-                .int("turn", line.turn as i64)
-                .bool("setup", line.setup)
-                .opt_int("seat", line.seat.map(|x| x as i64));
-        },
-    );
+    // The whole record, not a tail of it. A log you cannot scroll to the start
+    // of is a log that lies about the game, and the page has no other source
+    // for what happened in turn one.
+    j.array("log", log.iter(), |o, line| {
+        o.str("t", &line.text)
+            .int("turn", line.turn as i64)
+            .bool("setup", line.setup)
+            .opt_int("seat", line.seat.map(|x| x as i64));
+    });
     let _ = MAX_PLAYERS;
     j.finish()
 }
@@ -291,6 +315,33 @@ mod tests {
             let _ = moved.act(0, v);
         }
         assert_eq!(before, render(&moved), "same game, same payload");
+    }
+
+    #[test]
+    fn the_page_is_sent_the_whole_log_not_a_tail_of_it() {
+        // Scrolling the log back to the opening deal only works if the opening
+        // deal was sent. Play far past any plausible window and count.
+        let mut s = Session::new(4, 11, TradeMode::Full);
+        for _ in 0..400 {
+            if s.choices().is_empty() {
+                break;
+            }
+            let v = s.version();
+            let _ = s.act(0, v);
+        }
+        assert!(
+            s.log().len() > 60,
+            "need a long game, got {}",
+            s.log().len()
+        );
+        let out = render(&s);
+        assert_eq!(
+            out.matches("\"turn\":").count(),
+            s.log().len(),
+            "every line the session kept should reach the page"
+        );
+        // And specifically the first one, which is what a player scrolls for.
+        assert!(out.contains(&format!("\"t\":\"{}\"", s.log()[0].text)));
     }
 
     #[test]

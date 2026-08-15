@@ -127,19 +127,49 @@ pub struct LogLine {
 /// road went, and "Build road at 68" asks the reader to hold a number that
 /// means nothing to them.
 fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
-    // The dice are read after the roll, so the caller rewrites that one; see
-    // `rolled`.
     match *a {
-        Action::PlaceSettlement(_) => "Place a settlement".to_string(),
-        Action::PlaceRoad(_) => "Place a road".to_string(),
-        Action::BuildRoad(_) => "Build a road".to_string(),
-        Action::BuildSettlement(_) => "Build a settlement".to_string(),
-        Action::BuildCity(_) => "Upgrade to a city".to_string(),
+        Action::PlaceSettlement(_) => "Placed a settlement".to_string(),
+        Action::PlaceRoad(_) => "Placed a road".to_string(),
+        // The dice are read after the roll, so the caller rewrites this one;
+        // see `rolled`.
+        Action::Roll => "Rolled".to_string(),
+        Action::Discard { resource, .. } => {
+            format!("Discarded {}", RESOURCE_NAMES[resource as usize])
+        }
         Action::MoveRobber { victim, .. } => match victim {
-            Some(v) => format!("Move the robber onto seat {v}"),
-            None => "Move the robber".to_string(),
+            Some(v) => format!("Moved the robber onto seat {v}"),
+            None => "Moved the robber".to_string(),
         },
-        ref other => describe(other, state, seat),
+        Action::BuildRoad(_) => "Built a road".to_string(),
+        Action::BuildSettlement(_) => "Built a settlement".to_string(),
+        Action::BuildCity(_) => "Upgraded to a city".to_string(),
+        Action::BuyDev => "Bought a development card".to_string(),
+        Action::PlayMilitia => "Played Militia".to_string(),
+        Action::PlayRoadBuilding => "Played Road Building".to_string(),
+        Action::PlayInvention([a, b]) => format!(
+            "Played Invention, took {} and {}",
+            RESOURCE_NAMES[a as usize], RESOURCE_NAMES[b as usize]
+        ),
+        Action::PlayMonopoly(r) => format!("Played Monopoly on {}", RESOURCE_NAMES[r as usize]),
+        Action::Trade { give, take } => {
+            let rate = state.trade_rate(seat, give);
+            let with = if rate == 4 {
+                "with the bank"
+            } else {
+                "at the port"
+            };
+            format!(
+                "Traded {rate} {} for 1 {} {with}",
+                RESOURCE_NAMES[give as usize], RESOURCE_NAMES[take as usize]
+            )
+        }
+        Action::ProposeTrade { to, give, want, .. } => match to {
+            Some(s) => format!("Offered seat {s} {} for {}", cards(&give), cards(&want)),
+            None => format!("Offered {} for {}", cards(&give), cards(&want)),
+        },
+        Action::AcceptTrade { .. } => "Accepted an offer".to_string(),
+        Action::WithdrawTrade { .. } => "Withdrew an offer".to_string(),
+        Action::EndTurn => "Ended the turn".to_string(),
     }
 }
 
@@ -221,10 +251,18 @@ pub struct Session {
     turn_began: std::time::Instant,
     /// When time was last charged to anyone. Moves on at every settle.
     last_settle: std::time::Instant,
-    /// Whose clock is running. Not always the decider: bots resolve inside the
-    /// request that hands them the turn, so the seat being charged is whoever
-    /// the clock was last handed to.
+    /// Whose clock is running. Not the same question as whose turn it is: an
+    /// unanswered offer stops the game on the person who owes the answer, and
+    /// that wait is theirs even though the turn is not.
     charged_to: u8,
+    /// Whose turn it is, which is what the turn counter and the log group by.
+    /// Keeping this apart from `charged_to` is what stops answering an offer
+    /// from being filed as a turn of its own in the middle of someone else's.
+    turn_holder: u8,
+    /// When the current turn began, for reporting how long it took. Distinct
+    /// from `turn_began`, which is the allowance and restarts whenever the
+    /// clock changes hands.
+    turn_at: std::time::Instant,
     /// Time each seat has already used, settled at each handover.
     spent: [std::time::Duration; MAX_PLAYERS],
     /// What this player calls themselves. Editable while nobody is signed in;
@@ -235,6 +273,9 @@ pub struct Session {
     /// Counted here because the engine has no notion of a turn: it tracks whose
     /// move it is, not how many have gone by.
     turns: u32,
+    /// How long each finished turn took, indexed by turn number less one. The
+    /// clock already knows; recording it lets the log say so afterwards.
+    turn_secs: Vec<u32>,
     /// The phase at the last handover, for the two boundaries that a change of
     /// decider does not catch. Both are cases where the turn changes hands and
     /// comes back to the same person: the last player to place in the deal
@@ -263,10 +304,7 @@ impl Session {
                 turn: 0,
                 setup: true,
                 seat: None,
-                text: format!(
-                    "{seats} players, {mode:?} market, seed {}",
-                    seed_code(seed)
-                ),
+                text: format!("{seats} players, {mode:?} market, seed {}", seed_code(seed)),
             }],
             declined: [false; MAX_OFFERS],
             seed,
@@ -275,10 +313,13 @@ impl Session {
             turn_began: std::time::Instant::now(),
             last_settle: std::time::Instant::now(),
             charged_to: HUMAN,
+            turn_holder: HUMAN,
+            turn_at: std::time::Instant::now(),
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
             name: "you".to_string(),
             log_shown: true,
             turns: 1,
+            turn_secs: Vec::new(),
             was_preroll: false,
             // The game opens on a placement, which is turn one rather than a
             // boundary into it.
@@ -294,6 +335,8 @@ impl Session {
         self.turn_began = now;
         self.last_settle = now;
         self.charged_to = self.on_clock();
+        self.turn_holder = self.state.decider();
+        self.turn_at = now;
         self
     }
 
@@ -333,6 +376,11 @@ impl Session {
     /// The turn number to show.
     pub fn turn_no(&self) -> u32 {
         self.turns
+    }
+
+    /// Seconds each finished turn took, oldest first.
+    pub fn turn_secs(&self) -> &[u32] {
+        &self.turn_secs
     }
 
     /// Whether the board is still being dealt.
@@ -386,7 +434,7 @@ impl Session {
         for seat in 0..self.state.players as usize {
             let got = gains(before, &after, seat);
             if !got.is_empty() {
-                self.note_at(at, Some(seat as u8), format!("Collect {got}"));
+                self.note_at(at, Some(seat as u8), format!("Collected {got}"));
             }
         }
     }
@@ -406,7 +454,11 @@ impl Session {
             return;
         };
         if took_a_card(before, &self.state.hand, seat as usize) {
-            self.note_at(at, Some(seat), format!("Take a card, unseen, from seat {from}"));
+            self.note_at(
+                at,
+                Some(seat),
+                format!("Took a card, unseen, from seat {from}"),
+            );
         }
     }
 
@@ -432,38 +484,54 @@ impl Session {
             self.spent[owner] += now - self.last_settle;
         }
         self.last_settle = now;
-        // A new turn is not only a new decider. The player who places last in
-        // the deal is the player who moves first, so the turn changes with the
-        // decider unchanged, and their first real turn used to inherit whatever
-        // was left of their setup allowance. Entering PreRoll is the other
-        // boundary, and it happens exactly once per turn.
+        // Two questions, kept apart. Who is being charged, and whose turn it
+        // is. They differ whenever somebody owes an answer on another player's
+        // turn: the clock follows the answerer, but the turn does not, and
+        // conflating them filed every decline as a turn of its own in the
+        // middle of the turn it interrupted.
+        let owner = self.on_clock();
+        if owner != self.charged_to {
+            self.turn_began = now;
+            self.charged_to = owner;
+        }
+
         // A new turn is not only a new decider. The deal runs as a snake, so
         // the player who places last in the first round places first in the
         // second, and then moves first in play: the turn changes hands twice
-        // without the decider changing, and both were being missed. Entering
-        // PreRoll marks the start of a turn of play, entering SetupSettlement
-        // the start of a placement, and each happens exactly once per turn.
-        let deciding = self.on_clock();
+        // without the decider changing. Entering PreRoll marks the start of a
+        // turn of play, entering SetupSettlement the start of a placement, and
+        // each happens exactly once per turn.
+        let deciding = self.state.decider();
         let preroll = matches!(self.state.phase, Phase::PreRoll);
         let placing = matches!(self.state.phase, Phase::SetupSettlement { .. });
-        let starting_a_turn =
-            (preroll && !self.was_preroll) || (placing && !self.was_placing);
+        let starting_a_turn = (preroll && !self.was_preroll) || (placing && !self.was_placing);
         self.was_preroll = preroll;
         self.was_placing = placing;
-        if deciding != self.charged_to || starting_a_turn {
+        if deciding != self.turn_holder || starting_a_turn {
+            // Close the books on the turn that is ending before the next one
+            // starts.
+            let took = (now - self.turn_at).as_secs() as u32;
+            let ending = self.turns as usize;
+            if ending >= 1 {
+                while self.turn_secs.len() < ending {
+                    self.turn_secs.push(0);
+                }
+                self.turn_secs[ending - 1] = took;
+            }
             // Finishing a turn credits the increment back, which is the whole
             // difference between a chess clock and a countdown: a player who
             // keeps moving keeps playing, and the game is decided on the board.
             let inc = self.clock.increment();
             if inc > 0 {
-                let prev = self.charged_to as usize;
+                let prev = self.turn_holder as usize;
                 if prev < MAX_PLAYERS {
-                    self.spent[prev] = self.spent[prev]
-                        .saturating_sub(std::time::Duration::from_secs(inc));
+                    self.spent[prev] =
+                        self.spent[prev].saturating_sub(std::time::Duration::from_secs(inc));
                 }
             }
+            self.turn_holder = deciding;
+            self.turn_at = now;
             self.turn_began = now;
-            self.charged_to = deciding;
             self.turns += 1;
         }
     }
@@ -560,10 +628,20 @@ impl Session {
                 return;
             }
             self.version += 1;
+            let lower = |t: String| {
+                let mut c = t.chars();
+                match c.next() {
+                    Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
+                    None => t,
+                }
+            };
             let what = match forced {
-                Action::EndTurn => "turn ended".to_string(),
-                Action::Roll => format!("{} for you", rolled(&self.state)),
-                other => format!("{} for you", log_phrase(&other, &self.state, HUMAN as usize)),
+                Action::EndTurn => "the turn was ended".to_string(),
+                Action::Roll => format!("{} for you", lower(rolled(&self.state))),
+                other => format!(
+                    "{} for you",
+                    lower(log_phrase(&other, &self.state, HUMAN as usize))
+                ),
             };
             self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
             self.forget_declines();
@@ -863,8 +941,8 @@ impl Session {
                             let got = gains(&purse, &self.state.hand, seat as usize);
                             let gave = gains(&purse, &self.state.hand, from);
                             self.note(
-                                Some(seat as u8),
-                                format!("Take {got} from seat {from} for {gave}"),
+                                Some(seat),
+                                format!("Took {got} from seat {from} for {gave}"),
                             );
                             self.forget_declines();
                         }
@@ -1042,11 +1120,15 @@ fn pays_out(a: &Action) -> bool {
     )
 }
 
-fn worth_logging(a: &Action) -> bool {
-    !matches!(
-        a,
-        Action::ProposeTrade { .. } | Action::WithdrawTrade { .. } | Action::Discard { .. }
-    )
+/// Everything a player does is public and goes in the log.
+///
+/// Offers used to be left out, which was a mistake carried over from the
+/// choice list: the engine enumerates roughly a hundred and eighty possible
+/// offers and none of them belong in front of a person, but an offer that was
+/// actually made is one line and is on the table for everyone to see. The same
+/// goes for withdrawing one, and for a discard.
+fn worth_logging(_a: &Action) -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -1447,8 +1529,15 @@ mod tests {
         let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::PerTurn(60));
         std::thread::sleep(std::time::Duration::from_millis(1_100));
         // Seat 0 is deciding, so seat 0 is being charged.
-        assert!(s.time_left(0).is_some_and(|t| t < 60), "the mover is charged");
-        assert_eq!(s.time_left(1), Some(60), "everyone else still has the full turn");
+        assert!(
+            s.time_left(0).is_some_and(|t| t < 60),
+            "the mover is charged"
+        );
+        assert_eq!(
+            s.time_left(1),
+            Some(60),
+            "everyone else still has the full turn"
+        );
         assert_eq!(s.time_left(2), Some(60));
     }
 
@@ -1462,7 +1551,10 @@ mod tests {
         });
         std::thread::sleep(std::time::Duration::from_millis(2_100));
         let before = s.time_left(HUMAN).expect("a bank");
-        assert!(before <= 58, "two seconds of thinking are gone, left {before}");
+        assert!(
+            before <= 58,
+            "two seconds of thinking are gone, left {before}"
+        );
         // Half a turn is not a finished turn: placing the settlement leaves
         // the road still owed, so nothing is credited yet.
         let v = s.version();
@@ -1492,10 +1584,20 @@ mod tests {
 
     #[test]
     fn a_chess_bank_drains_only_while_it_is_your_move() {
-        let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::Chess { bank: 600, increment: 0 });
+        let s = Session::new(4, 1, TradeMode::Full).with_clock(Clock::Chess {
+            bank: 600,
+            increment: 0,
+        });
         std::thread::sleep(std::time::Duration::from_millis(1_100));
-        assert!(s.time_left(0).is_some_and(|t| t < 600), "the mover's bank drains");
-        assert_eq!(s.time_left(1), Some(600), "a seat not moving spends nothing");
+        assert!(
+            s.time_left(0).is_some_and(|t| t < 600),
+            "the mover's bank drains"
+        );
+        assert_eq!(
+            s.time_left(1),
+            Some(600),
+            "a seat not moving spends nothing"
+        );
     }
 
     #[test]
@@ -1530,11 +1632,13 @@ mod tests {
         assert!(
             s.log()
                 .iter()
-                .any(|l| l.text.contains("Rolled ") && l.text.contains("for you")),
+                .any(|l| l.text.contains("rolled ") && l.text.contains("for you")),
             "rolling came first, because a turn cannot be ended before the dice"
         );
         assert!(
-            s.log().iter().any(|l| l.text.contains("turn ended")),
+            s.log()
+                .iter()
+                .any(|l| l.text.contains("the turn was ended")),
             "and the turn ended in the same sweep, rolling must not refill the \
              allowance, or a clock could roll for you forever"
         );
@@ -1572,7 +1676,7 @@ mod tests {
         let setup_pay: Vec<_> = s
             .log()
             .iter()
-            .filter(|l| l.setup && l.text.starts_with("Collect "))
+            .filter(|l| l.setup && l.text.starts_with("Collected "))
             .collect();
         assert!(
             !setup_pay.is_empty(),
@@ -1590,7 +1694,7 @@ mod tests {
         s.act(0, v).expect("the roll");
         let produced = s.log()[before..]
             .iter()
-            .filter(|l| l.text.starts_with("Collect "))
+            .filter(|l| l.text.starts_with("Collected "))
             .count();
         let [a, b] = s.state.dice;
         if a + b != 7 {
@@ -1639,7 +1743,11 @@ mod tests {
     fn a_seed_code_round_trips_and_reads_in_groups() {
         for seed in [0u64, 1, 42, 1 << 32, u64::MAX, 12614495042559003205] {
             let code = seed_code(seed);
-            assert_eq!(code.len(), 15, "{code} is thirteen characters and two hyphens");
+            assert_eq!(
+                code.len(),
+                15,
+                "{code} is thirteen characters and two hyphens"
+            );
             assert_eq!(code.matches('-').count(), 2);
             assert_eq!(parse_seed(&code), Some(seed), "{code} should read back");
         }
@@ -1676,8 +1784,7 @@ mod tests {
                     if !seen.contains(&d) {
                         seen.push(d);
                     }
-                    let passable =
-                        buf.contains(&Action::EndTurn) || buf.contains(&Action::Roll);
+                    let passable = buf.contains(&Action::EndTurn) || buf.contains(&Action::Roll);
                     if !passable {
                         // A forfeit here is a random legal move, so every
                         // option has to be applicable.
@@ -1704,7 +1811,11 @@ mod tests {
                 }
             }
         }
-        assert!(seen.len() >= 5, "the sweep should reach most phases, saw {}", seen.len());
+        assert!(
+            seen.len() >= 5,
+            "the sweep should reach most phases, saw {}",
+            seen.len()
+        );
     }
 
     #[test]
@@ -1811,7 +1922,11 @@ mod tests {
         // The human acts four times, a settlement and a road in each round;
         // the bots take theirs inside the same calls.
         assert_eq!(placements, 4);
-        assert_eq!(s.turn_no(), 9, "eight placement turns, then the first of play");
+        assert_eq!(
+            s.turn_no(),
+            9,
+            "eight placement turns, then the first of play"
+        );
     }
 
     #[test]
@@ -1851,7 +1966,11 @@ mod tests {
         let mut s = found.expect("some seed reaches an offer on a bot's turn");
 
         // The wait is the human's, so the human's clock is the one running.
-        assert_eq!(s.on_clock(), HUMAN, "the hold-up belongs to whoever must answer");
+        assert_eq!(
+            s.on_clock(),
+            HUMAN,
+            "the hold-up belongs to whoever must answer"
+        );
 
         s = s.with_clock(Clock::PerTurn(1));
         let before = s.version();
@@ -1889,7 +2008,9 @@ mod tests {
     fn a_name_is_kept_trimmed_and_falls_back_when_blank() {
         assert_eq!(Session::new(4, 1, TradeMode::Full).name(), "you");
         assert_eq!(
-            Session::new(4, 1, TradeMode::Full).with_name("  Robin  ").name(),
+            Session::new(4, 1, TradeMode::Full)
+                .with_name("  Robin  ")
+                .name(),
             "Robin"
         );
         assert_eq!(
