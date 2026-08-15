@@ -445,14 +445,9 @@
   .bankFan .rcard.mini { width: 1.5em; height: 2em; border-radius: .24em;
                          margin: 0; vertical-align: 0; }
   .bankFan .rcard.mini i { width: .7em; height: .7em; }
-  /* The deck sits a little apart: it is the bank's sixth stack but not one of
-     the five, and it is counted out of a different number. */
-  .bankCell.dev { margin-left: .5em; padding-left: .7em;
-                  border-left: 1px solid var(--border); }
-  .devcard { background: var(--card); border-color: var(--border); }
-  .devcard::after { opacity: 0; }
-  .devcard svg { position: absolute; left: 50%; top: 50%;
-                 transform: translate(-50%, -50%); width: 68%; height: 68%; }
+  /* The deck stands with the five rather than apart from them: it is the same
+     bank, and a rule between made it look like a different panel. */
+  .bankCell.dev { margin-left: .35em; }
   .bankCell .much { font-weight: 600; font-size: .95em;
                     font-variant-numeric: tabular-nums; }
   /* A stack that has run out is the one worth noticing: an empty outline where
@@ -526,6 +521,12 @@
   .stack.armed .layer { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .badge {
     position: absolute; top: -.25em; right: -.35em; z-index: 20;
+  }
+  /* Centred on the front card rather than hung off the right end of the fan,
+     which put the count over the back of the pile and out towards the next
+     resource along. */
+  .resStack .badge {
+    left: 2.65em; right: auto; transform: translateX(-50%);
     min-width: 1.5em; height: 1.5em; padding: 0 .3em; border-radius: 999px;
     background: var(--ink); color: var(--panel);
     font-size: .82em; font-weight: 600; line-height: 1.5em; text-align: center;
@@ -1728,12 +1729,15 @@ function bankDev(v, exact) {
   for (let d = 0; d < Math.max(shown, 1); d++) {
     // Not a terrain colour, because a development card is not a resource: the
     // card back and its mark, on paper, the way the dock draws them.
+    // The card back: the brand orange and the same white disc every other card
+    // carries. A development card is still a card, so it is drawn as one.
     const card = document.createElement('span');
     card.className = 'rcard mini devcard' + (shown === 0 ? ' ghost' : '');
+    card.style.setProperty('--face', 'var(--accent)');
     card.style.position = 'absolute';
     card.style.left = `${d * step}em`;
     card.style.zIndex = shown - d;
-    if (d === 0) card.innerHTML = devIcon();
+    if (d === 0) card.appendChild(document.createElement('i'));
     fan.appendChild(card);
   }
   cell.appendChild(fan);
