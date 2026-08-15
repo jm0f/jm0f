@@ -105,6 +105,10 @@
        else's. A dark warm shadow multiplies into warm paper and leaves it
        warm. */
     --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42 0 0 0 0 0.32 0 0 0 0 0.19 0.66 0 0 0 -0.2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+    /* The board's own tooth, for the resource cards. Same turbulence as the
+       tiles' `#cardboardNoise`, in the form CSS can use: a card is the same
+       pressed board as the hex it came off, so it is the same grain. */
+    --grain-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23g)'/%3E%3C/svg%3E");
   }
   * { box-sizing: border-box; }
   /* The hidden attribute is display: none from the user agent, at the weakest
@@ -469,6 +473,48 @@
     font-variant-numeric: tabular-nums;
   }
   .badge.warn { background: var(--accent); }
+
+  /* A resource card is a piece of the board you are holding: the terrain's own
+     colour, and the same tooth as the tile it came off. Laid side by side and
+     overlapped, one card per card held, so a hand is counted by looking as
+     well as by reading. The badge stays, because past the fan's limit looking
+     stops being enough. */
+  .resStack { position: relative; border: 0; background: none; padding: 0;
+              cursor: pointer; height: 3.6em; box-shadow: none;
+              transition: transform .12s ease-out; }
+  /* A card you cannot click is not a card that is unavailable: it is the hand
+     you are holding, and it has to read at full strength whether or not there
+     is anything to do with it. The button reset dims disabled controls to half,
+     which turned the terrain colours into pastels. */
+  .resStack:disabled { cursor: default; opacity: 1; background: none; }
+  .rcard {
+    position: absolute; bottom: 0; width: 2em; height: 2.9em;
+    border-radius: .3em; background: var(--face);
+    box-shadow: 0 1px 2px rgba(51, 38, 27, .18);
+    overflow: hidden;
+  }
+  .rcard::after {
+    content: ''; position: absolute; inset: 0;
+    background-image: var(--grain-tile); background-size: 90px 90px;
+    mix-blend-mode: soft-light; opacity: .45; pointer-events: none;
+  }
+  /* The face of the card, standing in for the drawing that will go here. */
+  .rcard i {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 1.15em; height: 1.15em; border-radius: 50%; background: var(--panel);
+  }
+  /* Holding none still shows a card, so the row never changes width per
+     resource and the slot you are reaching for does not move. Outlined rather
+     than filled: the colour is what says you have some. */
+  .resStack.empty .rcard {
+    background: transparent; box-shadow: none;
+    border: 1px dashed var(--line);
+  }
+  .resStack.empty .rcard::after { opacity: 0; }
+  .resStack.empty .rcard i { background: var(--line); opacity: .5; }
+  .resStack.empty .badge { opacity: .45; }
+  .resStack.armed .rcard { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .resStack:not(:disabled):hover { transform: translateY(-2px); }
 
   /* ---- actions --------------------------------------------------------- */
   /* Fixed places. A button you cannot use greys and stays put, because a
@@ -1343,31 +1389,11 @@ const BOT_NAMES = ['Ada', 'Bram', 'Ines', 'Odd'];
 const seatName = (v, s) => (s === v.you ? (v.youName || 'you') : BOT_NAMES[s]);
 
 // ---- placeholder art -------------------------------------------------------
-// Isometric solids in the piece idiom, three flat faces, light from the upper
-// left (style.md §3.3). Stand-ins until the drawn set arrives; the silhouettes
-// differ by proportion so the five are told apart by shape as well as by hue,
-// and each takes the colour of the terrain that produces it.
-const RES_LOOK = [
-  { hue: '#C2492A', w: 1.00, h: 0.30 },  // brick, hills
-  { hue: '#1B5637', w: 0.50, h: 0.92 },  // wood, forest
-  { hue: '#A8C64A', w: 0.86, h: 0.56 },  // wool, pasture
-  { hue: '#E8A020', w: 0.38, h: 1.00 },  // wheat, fields
-  { hue: '#566373', w: 0.60, h: 0.44 },  // ore, mountains
-];
-function isoSolid(hue, w, h) {
-  const cx = 20, cy = 23, X = 15 * w, Y = X * 0.5, H = 17 * h;
-  const top = cy - H / 2, bot = cy + H / 2;
-  const pts = (...p) => p.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  return `<svg viewBox="0 0 40 46" aria-hidden="true">`
-    + `<polygon fill="${tone(hue, .26)}" points="${pts(
-        [cx, top - Y], [cx + X, top], [cx, top + Y], [cx - X, top])}"/>`
-    + `<polygon fill="${tone(hue, -.06)}" points="${pts(
-        [cx - X, top], [cx, top + Y], [cx, bot + Y], [cx - X, bot])}"/>`
-    + `<polygon fill="${tone(hue, -.24)}" points="${pts(
-        [cx, top + Y], [cx + X, top], [cx + X, bot], [cx, bot + Y])}"/>`
-    + `</svg>`;
-}
-const resIcon = i => isoSolid(RES_LOOK[i].hue, RES_LOOK[i].w, RES_LOOK[i].h);
+// The five resources used to be isometric solids on a paper card, each in the
+// colour of the terrain that produces it. The card is the terrain's colour
+// itself now, so a solid in that same colour would have nothing to sit
+// against; the face is a plain disc standing in for the drawing to come.
+//
 // Development cards are cards, not objects, so they carry a mark rather than a
 // solid. One ring, in the accent, the way the study's card backs do.
 const devIcon = () =>
@@ -1475,6 +1501,41 @@ function stackEl(count, icon, title, onClick) {
   return b;
 }
 
+// A resource card wears the colour of the land it comes off, so a card and the
+// hex that pays it are the same thing seen twice.
+const RESOURCE_FACE = ['--hills', '--forest', '--pasture', '--fields', '--mountains'];
+// How many cards are drawn before the fan stops growing. Past this the badge
+// is doing the counting anyway, and a hand of twelve fanned out would push the
+// dock wider than the board.
+const FAN_MAX = 5;
+
+function resStackEl(count, res, title, onClick) {
+  const b = document.createElement('button');
+  b.className = 'resStack' + (count ? '' : ' empty');
+  b.setAttribute('data-tip', title);
+  b.disabled = !onClick;
+  if (onClick) b.onclick = onClick;
+  const shown = Math.max(1, Math.min(count, FAN_MAX));
+  const step = 0.62;
+  b.style.width = `${2 + (shown - 1) * step}em`;
+  for (let d = 0; d < shown; d++) {
+    const card = document.createElement('span');
+    card.className = 'rcard';
+    card.style.left = `${d * step}em`;
+    card.style.setProperty('--face', `var(${RESOURCE_FACE[res]})`);
+    // Only the front card shows its face. The ones behind it are edges, and a
+    // centred disc sliced by the card in front of it read as a bite taken out
+    // rather than as a card underneath.
+    if (d === shown - 1) card.appendChild(document.createElement('i'));
+    b.appendChild(card);
+  }
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  badge.textContent = count;
+  b.appendChild(badge);
+  return b;
+}
+
 function renderHand(v) {
   const hand = document.getElementById('hand');
   hand.textContent = '';
@@ -1483,8 +1544,8 @@ function renderHand(v) {
     total > 7 ? `your cards, ${total}, a seven costs you half` : 'your cards';
   v.resourceNames.forEach(r => {
     const arming = prompt.mode === 'compose';
-    hand.appendChild(stackEl(
-      v.yourHand[r.i], resIcon(r.i),
+    hand.appendChild(resStackEl(
+      v.yourHand[r.i], r.i,
       arming ? `add a ${r.name} to your offer` : `${v.yourHand[r.i]} ${r.name}`,
       arming && v.yourHand[r.i] > give[r.i] && !want[r.i]
         ? () => { give[r.i]++; renderPrompt(view); renderHand(view); }

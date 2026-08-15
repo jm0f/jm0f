@@ -157,6 +157,20 @@ pieces were dimensional. The board carried two visual languages for no reason
 anyone could state. Objects won because the pieces were already objects and
 they are the larger commitment.
 
+**A resource in hand is a card, not an icon on paper.** It is the terrain's
+own colour with the tiles' own tooth over it (§5.1), so a card and the hex
+that pays it are the same thing seen twice. That leaves nothing for a
+terrain-coloured solid to sit against, so the face carries a plain disc
+standing in for the drawing to come. The solids remain the rule everywhere a
+resource is named rather than held.
+
+**A hand is fanned, one card per card held**, overlapped left to right, so the
+count is something you see before you read it. The fan stops at five and the
+badge carries the true number: past that, looking has stopped being enough,
+and a hand of twelve fanned out would push the dock wider than the board. Only
+the front card shows its face; the rest are edges, since a centred disc sliced
+by the card in front of it reads as a bite rather than as a card underneath.
+
 ### 3.4 Pieces
 
 Chunky, solid, physically plausible. They should look like objects **placed on**
