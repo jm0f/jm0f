@@ -1061,6 +1061,15 @@
 <script>
 const COLOURS = ['var(--p0)','var(--p1)','var(--p2)','var(--p3)'];
 const SIZE = 62;                 // hex radius in svg units
+// The tile is cut a little inside the lattice, and the board shows through the
+// difference. That gap used to be a fat stroke of the panel's colour laid over
+// the lattice line, which put pale paint 1.5 units *inside* the terrain and so
+// over the top of the tile's own pale edge, leaving the tiles with no edge at
+// all. Shrinking the face instead leaves the same gap and gives the edge
+// somewhere to be: on the outline of the colour, which is where a card's is.
+// Pieces are placed from the lattice, not from this, so roads and settlements
+// still sit on the seam between tiles.
+const TILE = 1 - 1.5 / SIZE;     // face radius, as a fraction of the lattice
 let view = null;
 // Intersection numbers are a debugging aid, reached with ?ids on the address
 // rather than by a control on screen for everyone who never wants them.
@@ -1224,35 +1233,30 @@ function draw() {
   view.hexes.forEach(h => {
     const [cx, cy] = px(h.q, h.r);
     const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
+    // The tile's own outline, drawn where a card's is: at the edge of the
+    // colour, with the board showing through outside it.
+    const face = hexPoints(cx, cy, TILE);
     g.appendChild(el('polygon', {
-      points: hexPoints(cx, cy), fill: `var(--${h.terrain})`,
-      // The outline is drawn in the panel's own colour, so it reads as a gap
-      // between tiles rather than a line around them. The board separates
-      // into pieces without anything being added to it. Taken from the
-      // stylesheet rather than written here, so it follows the theme.
+      points: face, fill: `var(--${h.terrain})`,
       // Every hex is a candidate while the robber is being placed, so ringing
       // them all said nothing and set the whole board on fire. The card says
       // what to do instead, and the hexes keep their ordinary edge.
-      stroke: (byHex[h.id] && !placingRobber) ? 'var(--accent)' : 'var(--panel)',
-      'stroke-width': (byHex[h.id] && !placingRobber) ? 4 : 3,
+      stroke: (byHex[h.id] && !placingRobber) ? 'var(--accent)' : 'none',
+      'stroke-width': (byHex[h.id] && !placingRobber) ? 4 : 0,
     }));
     // The tile's tooth, laid over its colour rather than mixed into it: the
     // same polygon again, filled with the noise and blended, so the grain
-    // modulates the terrain it is on instead of greying it. Stroked in the
-    // gap colour so it cannot creep over the seam between tiles.
+    // modulates the terrain it is on instead of greying it.
     const tooth = el('polygon', {
-      points: hexPoints(cx, cy), fill: 'url(#cardboard)', opacity: .45,
+      points: face, fill: 'url(#cardboard)', opacity: .45,
     });
     tooth.style.mixBlendMode = 'soft-light';
     tooth.style.pointerEvents = 'none';
     g.appendChild(tooth);
-    // The cards' pale inner edge, on the tile the card came off. Drawn just
-    // inside the outline rather than as a border, because the hex's own stroke
-    // is the gap between tiles and has to stay that.
+    // The cards' edge, on the tile the card came off, drawn on the face's own
+    // outline so it lands exactly where a card's border does.
     const lip = el('polygon', {
-      // Hard against the inside of the gap stroke, so it sits where a card's
-      // border sits rather than floating a little way in from the edge.
-      points: hexPoints(cx, cy, 0.976), fill: 'none',
+      points: face, fill: 'none',
       stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1,
       // The same one pixel the card's border is, at any board size. A stroke
       // measured in board units is thicker than the card's whenever the board
@@ -1337,11 +1341,6 @@ function draw() {
     base.appendChild(el('circle', {
       cx: ox, cy: oy, r: 17,
       fill: res === null ? 'var(--panel)' : `var(${RESOURCE_FACE[res]})`,
-      // A resource port is a card, and a card has one edge: the pale rule
-      // added below. The grey ring on top of that made two, which is the
-      // double outline the tiles never had. A general port is paper on paper
-      // and has no colour to separate it, so that one keeps the ring.
-      stroke: res === null ? 'var(--line)' : 'none',
     }));
     if (res !== null) {
       const tooth = el('circle', {
@@ -1350,16 +1349,21 @@ function draw() {
       tooth.style.mixBlendMode = 'soft-light';
       tooth.style.pointerEvents = 'none';
       base.appendChild(tooth);
-      // The cards' edge, the same one the tiles carry. A port is a piece of
-      // the same board and should be cut from the same stock.
-      const lip = el('circle', {
-        cx: ox, cy: oy, r: 16.5, fill: 'none',
-        stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1,
-        'vector-effect': 'non-scaling-stroke',
-      });
-      lip.style.pointerEvents = 'none';
-      base.appendChild(lip);
     }
+    // The cards' edge, the same one the tiles carry, on the port's own outline.
+    // A port is a piece of the same board and is cut from the same stock.
+    //
+    // Except when it deals in nothing: a general port has no colour for a pale
+    // rule to sit against, and one drawn on paper is not there at all. That is
+    // the empty card's case, and the empty card answers it the same way, with
+    // the ink rule instead of the pale one.
+    const lip = el('circle', {
+      cx: ox, cy: oy, r: 17, fill: 'none',
+      stroke: res === null ? 'var(--line)' : 'rgba(255, 250, 242, .5)',
+      'stroke-width': 1, 'vector-effect': 'non-scaling-stroke',
+    });
+    lip.style.pointerEvents = 'none';
+    base.appendChild(lip);
     const t = el('text', {
       x: ox, y: oy, class: 'hexnum', 'font-size': 12,
       fill: res === null ? 'var(--dim)' : onColour(RESOURCE_HEX[res]),

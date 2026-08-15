@@ -251,17 +251,15 @@ pub struct Session {
     turn_began: std::time::Instant,
     /// When time was last charged to anyone. Moves on at every settle.
     last_settle: std::time::Instant,
-    /// Whose clock is running. Not the same question as whose turn it is: an
-    /// unanswered offer stops the game on the person who owes the answer, and
-    /// that wait is theirs even though the turn is not.
-    charged_to: u8,
-    /// Whose turn it is, which is what the turn counter and the log group by.
-    /// Keeping this apart from `charged_to` is what stops answering an offer
-    /// from being filed as a turn of its own in the middle of someone else's.
+    /// Whose turn it is: what the turn counter and the log group by, and whose
+    /// clock is running. There used to be a second field beside this one for
+    /// the clock's owner, on the theory that an unanswered offer is charged to
+    /// whoever owes the answer. It is not, so the two collapsed into one; see
+    /// `on_clock` for why.
     turn_holder: u8,
     /// When the current turn began, for reporting how long it took. Distinct
     /// from `turn_began`, which is the allowance and restarts whenever the
-    /// clock changes hands.
+    /// turn changes hands.
     turn_at: std::time::Instant,
     /// Time each seat has already used, settled at each handover.
     spent: [std::time::Duration; MAX_PLAYERS],
@@ -327,7 +325,6 @@ impl Session {
             clock: Clock::Off,
             turn_began: std::time::Instant::now(),
             last_settle: std::time::Instant::now(),
-            charged_to: HUMAN,
             turn_holder: HUMAN,
             turn_at: std::time::Instant::now(),
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
@@ -362,7 +359,6 @@ impl Session {
         let now = std::time::Instant::now();
         self.turn_began = now;
         self.last_settle = now;
-        self.charged_to = self.on_clock();
         self.turn_holder = self.state.decider();
         self.turn_at = now;
         self
@@ -457,21 +453,22 @@ impl Session {
         )
     }
 
-    /// Whose clock should be running.
+    /// Whose clock is running: whoever's turn it is, and nobody else.
     ///
-    /// Usually whoever is deciding, but not always: an offer left on the table
-    /// stops the bots until the human answers it, and that wait belongs to the
-    /// human even though the turn is somebody else's. Charging it to the seat
-    /// whose turn it is meant their clock drained while they were not the one
-    /// holding anybody up, and meant nothing was ever forced, because the
-    /// enforcement only ever looked at the decider. The game simply stopped.
+    /// What the passive players do inside that turn, answering an offer,
+    /// discarding on a seven, being robbed, is their business and costs them
+    /// nothing. If none of them reacts, the turn simply runs out and the next
+    /// one starts.
+    ///
+    /// This used to hand the clock to whoever owed an answer, on the reasoning
+    /// that the wait belongs to whoever is holding everyone up. That put a
+    /// player's own expired allowance onto somebody else's turn, with two
+    /// consequences: their clock read a stuck 0:00 through turns that were not
+    /// theirs, and every offer that arrived afterwards was declined by the
+    /// clock on the same request that created it, so the trade card never got
+    /// drawn once.
     pub fn on_clock(&self) -> u8 {
-        let deciding = self.state.decider();
-        if deciding != HUMAN && !self.choices().is_empty() {
-            HUMAN
-        } else {
-            deciding
-        }
+        self.turn_holder
     }
 
     /// Which turn it is right now, to be read *before* an action is applied.
@@ -545,21 +542,14 @@ impl Session {
     /// whoever is deciding now. Called after anything that could move the turn.
     fn hand_over_clock(&mut self) {
         let now = std::time::Instant::now();
-        let owner = self.charged_to as usize;
+        // Charged to whoever's turn it is, which is the only seat a clock ever
+        // runs against. Read before the turn changes hands below, so the time
+        // lands on the player who spent it rather than on the next one.
+        let owner = self.turn_holder as usize;
         if owner < MAX_PLAYERS {
             self.spent[owner] += now - self.last_settle;
         }
         self.last_settle = now;
-        // Two questions, kept apart. Who is being charged, and whose turn it
-        // is. They differ whenever somebody owes an answer on another player's
-        // turn: the clock follows the answerer, but the turn does not, and
-        // conflating them filed every decline as a turn of its own in the
-        // middle of the turn it interrupted.
-        let owner = self.on_clock();
-        if owner != self.charged_to {
-            self.turn_began = now;
-            self.charged_to = owner;
-        }
 
         // A turn is everything between one player ending theirs and the next
         // player ending theirs, and a placement in the deal is a turn of its
@@ -617,7 +607,7 @@ impl Session {
     /// Time a seat has used, including the stretch not yet settled.
     fn used(&self, seat: u8) -> std::time::Duration {
         let mut d = self.spent[seat as usize];
-        if seat == self.charged_to {
+        if seat == self.turn_holder {
             d += self.last_settle.elapsed();
         }
         d
@@ -631,7 +621,7 @@ impl Session {
     pub fn time_left(&self, seat: u8) -> Option<i64> {
         match self.clock {
             Clock::Off => None,
-            Clock::PerTurn(n) => Some(if seat == self.charged_to {
+            Clock::PerTurn(n) => Some(if seat == self.turn_holder {
                 n as i64 - self.turn_began.elapsed().as_secs() as i64
             } else {
                 n as i64
@@ -645,7 +635,7 @@ impl Session {
         self.time_left(seat).is_some_and(|t| t <= 0)
     }
 
-    /// End the human's turn when their clock has run out.
+    /// End a turn whose clock has run out.
     ///
     /// Enforced lazily, on the way in to a request, because a server that only
     /// wakes when asked cannot end a turn at the exact second. Only ever ends a
@@ -659,20 +649,31 @@ impl Session {
         // every turn the moment it starts, and that should play out across
         // requests instead of inside one of them.
         for _ in 0..8 {
-            if self.on_clock() != HUMAN || !self.out_of_time(HUMAN) {
+            // The clock belongs to the turn, so it is the turn holder's
+            // allowance that says whether time is up, whoever happens to be
+            // deciding at this instant.
+            let holder = self.on_clock();
+            if !self.out_of_time(holder) {
                 return;
             }
-            // The turn is someone else's and the only thing owed is an answer
-            // to what is on the table. Silence is a refusal: waiting cannot be
-            // allowed to hold up three other people indefinitely.
-            if self.state.decider() != HUMAN {
-                if self.open_offers().is_empty() {
-                    return;
-                }
+            // An offer nobody took before the turn ran out is an offer refused.
+            // Clearing it is what lets the turn end rather than standing open
+            // on a passive player who never clicked, and it is the only thing a
+            // turn's clock does to a seat that is not holding the turn.
+            if !self.open_offers().is_empty() {
                 self.decline_open_offers();
                 self.note(Some(HUMAN), "Time ran out, declined the offers".to_string());
                 self.finish_move();
                 continue;
+            }
+            // What is left to force is a turn, and only the human's turns need
+            // forcing: a bot moves the moment it is asked to, so its allowance
+            // runs out only while something blocks it, which the offers above
+            // are the only thing that can. A mandatory answer owed by a passive
+            // player, discarding on a seven, is not the clock's to skip, since
+            // the position would be illegal without it. That turn waits.
+            if holder != HUMAN || self.state.decider() != HUMAN {
+                return;
             }
             let mut buf = Vec::new();
             self.state.legal_into(&mut buf);
@@ -1112,14 +1113,16 @@ impl Session {
             return;
         }
         for _ in 0..16 {
-            // A bot answering an offer waits the same beat it waits to move.
-            // Without this the table settled its own trades in the tick the
-            // offer was made, so an offer a person might have taken was gone
-            // before it had been drawn once.
-            if !self.beat_due() {
-                return;
-            }
-            let mut acted = false;
+            // Who would take what, worked out *before* the wait is armed.
+            //
+            // Arming it first spent the beat whether or not there was anything
+            // to spend it on, and an offer nobody wants stays on the table for
+            // the rest of the turn. So every tick went on a trade that was
+            // never going to happen, `run_bots` was told to wait each time it
+            // was reached, and the table stopped dead: the turn holder's clock
+            // ran to zero with nobody able to move and the next turn never
+            // began.
+            let mut taker = None;
             'outer: for i in 0..self.state.offer_count {
                 for seat in 1..self.state.players {
                     if self.state.offers[i as usize].from == seat {
@@ -1131,28 +1134,37 @@ impl Session {
                         continue;
                     }
                     if self.bots[seat as usize].accepts(&self.state, seat as usize, i as usize) {
-                        let from = self.state.offers[i as usize].from as usize;
-                        let purse = self.state.hand;
-                        if self.state.apply(take).is_ok() {
-                            self.version += 1;
-                            // Both halves, because a trade is two public
-                            // transfers and "took an offer" said neither.
-                            let got = gains(&purse, &self.state.hand, seat as usize);
-                            let gave = gains(&purse, &self.state.hand, from);
-                            self.note(
-                                Some(seat),
-                                format!("Took {got} from seat {from} for {gave}"),
-                            );
-                            self.forget_declines();
-                        }
-                        acted = true;
+                        taker = Some((i, seat));
                         break 'outer;
                     }
                 }
             }
-            if !acted {
-                break;
+            let Some((i, seat)) = taker else {
+                return;
+            };
+            // A bot answering an offer waits the same beat it waits to move.
+            // Without this the table settled its own trades in the tick the
+            // offer was made, so an offer a person might have taken was gone
+            // before it had been drawn once.
+            if !self.beat_due() {
+                return;
             }
+            let take = Action::AcceptTrade { offer: i, by: seat };
+            let from = self.state.offers[i as usize].from as usize;
+            let purse = self.state.hand;
+            if self.state.apply(take).is_err() {
+                return;
+            }
+            self.version += 1;
+            // Both halves, because a trade is two public transfers and "took an
+            // offer" said neither.
+            let got = gains(&purse, &self.state.hand, seat as usize);
+            let gave = gains(&purse, &self.state.hand, from);
+            self.note(
+                Some(seat),
+                format!("Took {got} from seat {from} for {gave}"),
+            );
+            self.forget_declines();
         }
     }
 
@@ -2301,9 +2313,10 @@ mod tests {
     #[test]
     fn an_unanswered_offer_is_declined_rather_than_stopping_the_game() {
         // An offer waiting on the human halts the bots, because the human owes
-        // an answer. The turn belongs to somebody else, though, so the clock
-        // used to be charged to them and enforcement never ran: the game stood
-        // still for as long as nobody clicked.
+        // an answer. Nothing about that is charged to the human: it is the
+        // turn holder's own allowance running down while they wait, and when
+        // it runs out the offer dies with the turn rather than the game
+        // standing still for as long as nobody clicks.
         let mut found = None;
         'seeds: for seed in 0..200u64 {
             let mut s = Session::new(4, seed, TradeMode::Full);
@@ -2324,19 +2337,35 @@ mod tests {
         }
         let mut s = found.expect("some seed reaches an offer on a bot's turn");
 
-        // The wait is the human's, so the human's clock is the one running.
-        assert_eq!(
-            s.on_clock(),
-            HUMAN,
-            "the hold-up belongs to whoever must answer"
-        );
+        // The turn is not the human's, so neither is the clock, however much
+        // the table is waiting on them.
+        let holder = s.on_clock();
+        assert_ne!(holder, HUMAN, "the clock stays with the turn");
 
         s = s.with_clock(Clock::PerTurn(1));
         let before = s.version();
         let offers = s.open_offers().len();
         assert!(offers > 0);
+        // The human is not on the clock, so their own allowance is untouched
+        // and reads full while somebody else's turn runs down.
+        assert_eq!(
+            s.time_left(HUMAN),
+            Some(1),
+            "a passive seat is never charged for thinking"
+        );
+        // Reported as "the trade card never popped up at all". An expired
+        // allowance of the human's used to carry onto the next player's turn,
+        // and enforcement ran on the same request that opened the offer, so
+        // the clock refused it before the page had drawn it once. While the
+        // turn that made the offer has time left, the offer stands.
+        s.enforce_clock();
+        assert_eq!(
+            s.open_offers().len(),
+            offers,
+            "an offer is answerable while the turn that made it has time"
+        );
         std::thread::sleep(std::time::Duration::from_millis(1_100));
-        assert!(s.out_of_time(HUMAN));
+        assert!(s.out_of_time(holder), "the turn holder's time is what runs");
         s.enforce_clock();
 
         assert!(
@@ -2347,6 +2376,67 @@ mod tests {
         assert!(
             s.log().iter().any(|l| l.text.contains("declined")),
             "and the log says the clock did it"
+        );
+    }
+
+    #[test]
+    fn an_offer_nobody_wants_does_not_stop_a_paced_table() {
+        // Reported as "why did the clock stop there and not start the new
+        // turn?". A bot offered something no other bot would take and the
+        // human could not afford, so the offer simply sat there. Settling the
+        // market armed the pace wait on every tick regardless, which left no
+        // beat for the seat whose turn it actually was, and the table stopped
+        // with the clock at zero on a turn nobody could move in.
+        let mut found = None;
+        'seeds: for seed in 0..40u64 {
+            // Dealt at speed, because the deal is not what is being tested,
+            // then paced from the first turn of play so a bot's turn is left
+            // part-played the way the browser finds it.
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            while s.in_setup() {
+                let v = s.version();
+                if s.act(0, v).is_err() {
+                    continue 'seeds;
+                }
+            }
+            s = s.with_pace(Pace::Fast);
+            for _ in 0..400 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                // An offer stands that the human is not being asked about,
+                // which is the position the report came from.
+                if s.state.offer_count > 0 && s.state.decider() != HUMAN && s.choices().is_empty() {
+                    found = Some(s);
+                    break 'seeds;
+                }
+                if s.state.decider() == HUMAN || !s.choices().is_empty() {
+                    let v = s.version();
+                    if s.act(0, v).is_err() {
+                        break;
+                    }
+                } else {
+                    // The bots owe a move and are waiting out their beat, so
+                    // give them one the way the page's poll does.
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    s.tick();
+                }
+            }
+        }
+        let mut s = found.expect("some seed leaves an offer nobody is answering");
+
+        let before = s.version();
+        // Poll the way the page does, over more than one pace window.
+        for _ in 0..40 {
+            s.tick();
+            if s.version() > before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+        assert!(
+            s.version() > before,
+            "the table moves on rather than waiting out a trade nobody wants"
         );
     }
 

@@ -381,9 +381,18 @@ of single discards, **sequentially**: each one moves the version on, and firing
 them together would have every card after the first refused as stale.
 
 **Silence is a refusal.** An offer left on the table stops the bots, because
-they are waiting on you. That wait is charged to whoever owes the answer, not
-to whoever holds the turn, and when their clock runs out the offers are
-declined for them.
+they are waiting on you. Nothing about that wait is charged to you: it runs
+against the clock of whoever holds the turn, and when their turn runs out the
+offers die with it (§8).
+
+**A beat is spent on a move, never on looking for one.** Bots share one pace
+gate for everything they do, moving and answering the market alike, so the two
+read as one table thinking at one speed. That means settling the market has to
+work out who would take what *before* it arms the wait. Arming it first spent
+the beat whether or not there was a trade to make, and an offer nobody wants
+sits on the table for the rest of the turn: every tick went on a trade that was
+never going to happen, the seat whose turn it was never got a beat to move in,
+and the table stopped dead with its clock at zero.
 
 ---
 
@@ -518,12 +527,28 @@ fails the suite rather than quietly stalling a game.
 separate from it, so a forced move never disturbs the dice or the deck, and the
 same seed with the same timings forfeits the same way.
 
+### The clock belongs to the turn
+
+**Whoever's turn it is, and nobody else.** What the passive players do inside
+that turn, answering an offer, discarding on a seven, being robbed, is their
+business and costs them nothing. If none of them reacts, the turn runs out and
+the next player's begins.
+
 **An unanswered offer is a refusal.** An offer left on the table stops the bots,
-because they are waiting on an answer. That wait belongs to whoever owes the
-answer, not to whoever holds the turn, so the clock charges it to them and
-declines for them when it runs out. Getting this wrong stopped the game dead:
-the clock ran against the seat whose turn it was, and enforcement only ever
-looked at the decider, so nothing was ever forced and nothing ever moved.
+because they are waiting on an answer. Nothing about that wait is charged to the
+person who owes it: it is the turn holder's own allowance draining while they
+wait, and when it runs out the offer dies with the turn. That is the one thing a
+turn's clock does to a seat that is not holding the turn, and it is what stops
+the game standing still for as long as nobody clicks.
+
+This was the other way round for a while: the clock followed whoever owed an
+answer, on the reasoning that the wait belongs to whoever is holding everyone up.
+It broke two things at once. A player's expired allowance carried off their own
+turn and onto the next one, so their clock read a stuck `0:00` through turns that
+were not theirs; and enforcement ran on the same request that opened an offer, so
+the clock refused every incoming offer before the page had drawn it once. There
+is now one field for both questions, `turn_holder`, because they turned out to be
+the same question.
 
 ### One clock, above the players
 

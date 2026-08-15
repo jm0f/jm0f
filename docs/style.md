@@ -132,6 +132,34 @@ therefore look like members of one family at any size.
 Two exceptions: the hexagons of the board are sharp, and the number discs are
 true circles.
 
+### 3.1a One edge, everywhere
+
+**Everything cut from card carries the same edge:** a 1px rule in
+`rgba(255, 250, 242, .5)` on the shape's own outline, with the board or the panel
+showing through outside it. Resource cards, development cards, board tiles and
+ports are all the same stock, so they are all cut the same way. The rule is
+always **one screen pixel** (`vector-effect: non-scaling-stroke` in SVG), never
+one board unit, so a tile's edge is the same weight as a card's whatever size
+the board is drawn at.
+
+A shape with **no face colour** is the one exception, because a near-white rule
+on paper is not there at all. That is the empty card's case, and it is answered
+the same way everywhere: the ink rule, `--line`, instead of the pale one. An
+empty resource card and a general port both take it.
+
+Two ways of getting this wrong, both of which happened:
+
+- **A second edge.** Ports carried the ink ring *and* the pale rule, which is a
+  double outline nothing else on the board has.
+- **An edge with something painted over it.** Board tiles used to be full-size
+  hexagons stroked 3 units wide in the panel's colour, so the gap between tiles
+  was a fat pale line straddling the outline. That put pale paint 1.5 units
+  *inside* the terrain, exactly on top of the tile's own pale rule, and the tiles
+  read as having no edge at all. The gap is now cut out of the tile instead: the
+  face is drawn at `1 - 1.5/SIZE` of the lattice radius, the board shows through
+  the difference, and the edge has the outline to itself. Same gap, same board,
+  and the rule is finally visible.
+
 ### 3.2 The badge
 
 The recurring container is a **lozenge**. A rectangle with fully rounded ends,
