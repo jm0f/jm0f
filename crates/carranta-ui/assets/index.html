@@ -445,6 +445,14 @@
   .bankFan .rcard.mini { width: 1.5em; height: 2em; border-radius: .24em;
                          margin: 0; vertical-align: 0; }
   .bankFan .rcard.mini i { width: .7em; height: .7em; }
+  /* The deck sits a little apart: it is the bank's sixth stack but not one of
+     the five, and it is counted out of a different number. */
+  .bankCell.dev { margin-left: .5em; padding-left: .7em;
+                  border-left: 1px solid var(--border); }
+  .devcard { background: var(--card); border-color: var(--border); }
+  .devcard::after { opacity: 0; }
+  .devcard svg { position: absolute; left: 50%; top: 50%;
+                 transform: translate(-50%, -50%); width: 68%; height: 68%; }
   .bankCell .much { font-weight: 600; font-size: .95em;
                     font-variant-numeric: tabular-nums; }
   /* A stack that has run out is the one worth noticing: an empty outline where
@@ -1645,19 +1653,19 @@ const GLYPH = {
 // The bands are thirds of a full stack rather than round numbers, so they mean
 // the same thing whatever the stack started at.
 const BANK_FULL = 19;
-function bankSize(n) {
+function bankSize(n, full = BANK_FULL) {
   if (n === 0) return 'empty';
-  if (n <= BANK_FULL / 3) return 'small';
-  if (n <= (BANK_FULL * 2) / 3) return 'middle';
+  if (n <= full / 3) return 'small';
+  if (n <= (full * 2) / 3) return 'middle';
   return 'big';
 }
 // How many cards to draw for a stack that is only being judged: three for a
 // full one, then two, one, none. Four steps, so the difference between them is
 // something you see rather than something you measure.
-function bankCards(n) {
+function bankCards(n, full = BANK_FULL) {
   if (n === 0) return 0;
-  if (n <= BANK_FULL / 3) return 1;
-  if (n <= (BANK_FULL * 2) / 3) return 2;
+  if (n <= full / 3) return 1;
+  if (n <= (full * 2) / 3) return 2;
   return 3;
 }
 function renderBank(v) {
@@ -1697,6 +1705,45 @@ function renderBank(v) {
     cell.tabIndex = 0;
     host.appendChild(cell);
   });
+  // The development deck is the bank's sixth stack. It is finite and never
+  // refilled (R-9.6), so running down is the whole story of it, and a table
+  // that cannot see it coming is guessing.
+  host.appendChild(bankDev(v, exact));
+}
+
+const DEV_DECK = 25;
+function bankDev(v, exact) {
+  const n = v.devLeft;
+  const cell = document.createElement('div');
+  cell.className = 'bankCell dev' + (n === 0 ? ' out' : '');
+  const shown = exact ? 1 : bankCards(n, DEV_DECK);
+  const step = 0.34;
+  const fan = document.createElement('span');
+  fan.className = 'bankFan';
+  fan.style.width = `${1.5 + Math.max(shown - 1, 0) * step}em`;
+  for (let d = 0; d < Math.max(shown, 1); d++) {
+    // Not a terrain colour, because a development card is not a resource: the
+    // card back and its mark, on paper, the way the dock draws them.
+    const card = document.createElement('span');
+    card.className = 'rcard mini devcard' + (shown === 0 ? ' ghost' : '');
+    card.style.position = 'absolute';
+    card.style.left = `${d * step}em`;
+    card.style.zIndex = shown - d;
+    if (d === 0) card.innerHTML = devIcon();
+    fan.appendChild(card);
+  }
+  cell.appendChild(fan);
+  if (exact) {
+    const much = document.createElement('span');
+    much.className = 'much';
+    much.textContent = n;
+    cell.appendChild(much);
+  }
+  cell.setAttribute('data-tip', exact
+    ? `${n} development cards left in the deck`
+    : `the development deck looks ${bankSize(n, DEV_DECK)}`);
+  cell.tabIndex = 0;
+  return cell;
 }
 
 function renderSeats(v) {

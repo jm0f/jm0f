@@ -147,6 +147,13 @@ Under the clock, one row per resource: the card, its name, and what is left of
 that stack. A resource the bank has run out of is marked, because that is the
 one worth noticing: it stops production for everybody until something is spent.
 
+**The development deck is the sixth stack**, set a little apart by a rule: it
+belongs to the bank but is not one of the five and is counted out of a
+different number, twenty-five rather than nineteen. It is finite and never
+refilled (R-9.6), so running down is the whole story of it, and a table that
+cannot see that coming is guessing. It wears the card back and its mark rather
+than a terrain colour, because a development card is not a resource.
+
 **Two modes, set in the lobby.** `exact count` shows the number, and is the
 default because supply counts are public and any player could work them out by
 watching (R-5.6). `stack size` shows only how full the stack looks, big,
