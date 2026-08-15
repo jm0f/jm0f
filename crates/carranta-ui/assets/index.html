@@ -529,15 +529,19 @@
   .resStack.armed .rcard { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* On a line of text rather than in the dock, so it is positioned by the flow
      and sized to the line it sits on. */
+  /* In the flow rather than laid out by the fan, but still positioned: the
+     face is absolute, and a static card sent it off to the nearest positioned
+     ancestor instead, which left the mini cards as plain colour. */
   .rcard.mini {
-    position: static; width: 1.35em; height: 1.8em; border-radius: .22em;
+    position: relative; width: 1.35em; height: 1.8em; border-radius: .22em;
     display: inline-block; vertical-align: -.45em; margin-right: .5em;
     box-shadow: 0 1px 1px rgba(51, 38, 27, .18); flex: none;
   }
   .rcard.mini i { width: .62em; height: .62em; }
-  /* The tile is 90px and the card is a fraction of that, so at this size the
-     grain is a few coarse blotches rather than a tooth. Dial it back to a hint. */
-  .rcard.mini::after { opacity: .22; }
+  /* The same noise squeezed into a much smaller tile. At the dock's tile size
+     a card this small caught a few coarse blotches rather than a tooth, which
+     read as damage rather than as stock. */
+  .rcard.mini::after { background-size: 20px 20px; opacity: .4; }
   .compose .name { display: flex; align-items: center; }
   .resStack:not(:disabled):hover { transform: translateY(-2px); }
 
