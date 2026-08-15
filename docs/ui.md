@@ -176,6 +176,14 @@ are named explicitly rather than inferred from a hand changing.
 the board answers to; the two dice follow. `Roll 4 and 5, 9` read as three
 numbers of equal standing, which is not what a roll is.
 
+**Resources are drawn, not named.** A line carries the card and a count where
+it used to carry a noun, so a reader scanning a turn sees colours rather than a
+wall of words. The roll shows its two dice instead of writing them in brackets.
+
+**A handful of discards is one line.** The engine discards one card at a time,
+so handing four back was four lines saying almost the same thing; what happened
+was a single decision about a hand, and it reads as one.
+
 **No board indices.** A button has to tell two otherwise identical choices
 apart and so carries the vertex or edge; the log does not. The board already
 shows where the road went, and "Build road at 68" asks the reader to hold a
@@ -560,6 +568,13 @@ look different, it needs a variant, not a rule keyed to its id.
 button leaves the tab order and stops emitting pointer events, so its
 explanation becomes unreachable by keyboard and by touch, precisely the
 audience that most needs it. The click handler guards instead.
+
+**A tooltip trigger is the size of its own words.** A field label was a
+full-width block, so its hover area was the whole row: a tooltip fired from
+empty space beside the label and then centred itself over the card rather than
+over the thing it explains. Tooltips also prefer to sit below their trigger and
+flip above only when there is no room, since a long explanation placed above
+covers the rows over the thing being explained.
 
 **Explanations use a real tooltip, not `title`.** `title` never appears on
 touch, never on keyboard focus, and waits a second on hover. Anything carrying

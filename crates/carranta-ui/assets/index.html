@@ -419,6 +419,17 @@
              text-transform: none;
              font-variant-numeric: tabular-nums; letter-spacing: .02em; }
   .logLine { padding: 1px 0; }
+  /* A resource in the log: the card, then how many of it. */
+  .logRes { display: inline-flex; align-items: center; gap: .15em; }
+  .logRes .rcard.mini { width: .95em; height: 1.25em; border-radius: .16em;
+                        margin-right: .1em; vertical-align: -.28em; }
+  .logRes .rcard.mini i { width: .42em; height: .42em; }
+  .logRes b { font-weight: 600; color: var(--foreground); }
+  /* The dice of a roll, at the size of the words around them. */
+  .logDie { width: 1.05em; height: 1.05em; vertical-align: -.2em;
+            margin-right: .2em; color: var(--muted-foreground);
+            border: 1px solid var(--border); border-radius: .22em;
+            background: var(--panel); }
   /* Things the table did rather than a player: no colour on the edge. */
   .logGroup.logTable { border-color: var(--border); }
   .logGroup.logTable .logLine { color: var(--foreground); font-weight: 500; }
@@ -604,7 +615,12 @@
                 color: var(--accent); font-weight: 700; letter-spacing: .01em; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
   .field { margin-bottom: 1.35em; }
-  .fieldLabel { display: block; font-size: 11px; text-transform: uppercase;
+  /* Sized to its words, not to the card. As a full-width block its hover area
+     was the whole row, so a tooltip fired from empty space beside the label and
+     then centred itself over the card rather than over the thing it explains.
+     Every other trigger here is a control the size of its own content. */
+  .fieldLabel { display: block; width: fit-content; font-size: 11px;
+                text-transform: uppercase;
                 letter-spacing: .08em; color: var(--muted-foreground);
                 font-weight: 600; margin-bottom: .5em; }
   .fieldNote { margin: .5em 0 0; font-size: 12px; line-height: 1.45;
@@ -958,11 +974,12 @@ function px(q, r) {
 }
 function vertexXY(v) { const [x, y] = px(v.q3 / 3, v.r3 / 3); return [x, y]; }
 
-function hexPoints(cx, cy) {
+function hexPoints(cx, cy, k = 1) {
   const pts = [];
+  const r = SIZE * k;
   for (let i = 0; i < 6; i++) {
     const a = Math.PI / 180 * (60 * i - 30);
-    pts.push(`${(cx + SIZE * Math.cos(a)).toFixed(1)},${(cy + SIZE * Math.sin(a)).toFixed(1)}`);
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`);
   }
   return pts.join(' ');
 }
@@ -1083,6 +1100,10 @@ function draw() {
   // every time a piece appeared outside the previous extent, which is the one
   // thing a board must never do.
   const base = el('g', {});
+  // The cards' shadow, cast once for the whole island rather than nineteen
+  // times. Per hex it would fall on the neighbouring tile and read as a gap
+  // that is not there.
+  base.style.filter = 'drop-shadow(0 2px 3px rgba(51, 38, 27, .16))';
   svg.appendChild(base);
   const vxy = {};
   view.vertices.forEach(v => { vxy[v.id] = vertexXY(v); });
@@ -1117,6 +1138,15 @@ function draw() {
     tooth.style.mixBlendMode = 'soft-light';
     tooth.style.pointerEvents = 'none';
     g.appendChild(tooth);
+    // The cards' pale inner edge, on the tile the card came off. Drawn just
+    // inside the outline rather than as a border, because the hex's own stroke
+    // is the gap between tiles and has to stay that.
+    const lip = el('polygon', {
+      points: hexPoints(cx, cy, 0.965), fill: 'none',
+      stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1.6,
+    });
+    lip.style.pointerEvents = 'none';
+    g.appendChild(lip);
     if (h.number > 0) {
       // A white disc, borderless: the number needs its own ground to sit on,
       // and with no outline the disc is a shape rather than a badge. One ink
@@ -1400,7 +1430,7 @@ function render() {
       h.appendChild(who);
     }
     box.appendChild(h);
-    g.lines.forEach(l => {
+    mergeDiscards(g.lines).forEach(l => {
       const d = document.createElement('div');
       d.className = 'logLine';
       // A turn box belongs to one player, but not every line in it does: a
@@ -1415,7 +1445,7 @@ function render() {
       }
       // The engine writes seat numbers because that is what it knows. Naming
       // happens here, so the log calls people what the rows call them.
-      d.append(l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x)));
+      d.append(...logParts(v, l.t.replace(/\bseat (\d)\b/gi, (m, x) => seatName(v, +x))));
       box.appendChild(d);
     });
     log.appendChild(box);
@@ -2304,8 +2334,11 @@ function showTip(el) {
   tip.setAttribute('data-show', '');
   el.setAttribute('aria-describedby', 'tip');
   const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
-  const above = r.top - t.height - 8 > 4;
-  tip.style.top = `${above ? r.top - t.height - 8 : r.bottom + 8}px`;
+  // Below by preference, above only when there is no room for it there. It
+  // used to prefer above, which put a long explanation over the rows above the
+  // thing being explained and left the reader looking for what it belonged to.
+  const below = r.bottom + t.height + 8 < window.innerHeight - 4;
+  tip.style.top = `${below ? r.bottom + 8 : r.top - t.height - 8}px`;
   tip.style.left = `${Math.max(6, Math.min(window.innerWidth - t.width - 6,
     r.left + r.width / 2 - t.width / 2))}px`;
 }
@@ -2321,6 +2354,69 @@ function hideTip() {
 ['mouseout', 'focusout'].forEach(ev => document.addEventListener(ev, (e) => {
   if (tipFor && !tipFor.contains(e.relatedTarget)) hideTip();
 }));
+
+// The engine discards one card at a time, so handing four back was four lines
+// saying almost the same thing. They are one line here, counted, because what
+// happened was a single decision about a hand.
+function mergeDiscards(lines) {
+  const out = [];
+  lines.forEach(l => {
+    const m = /^Discarded (\w+)$/.exec(l.t);
+    const last = out[out.length - 1];
+    if (m && last && last.seat === l.seat && last.discard) {
+      last.discard[m[1]] = (last.discard[m[1]] || 0) + 1;
+      last.t = 'Discarded ' + RESOURCE_FACE
+        .map((_, i) => i)
+        .filter(i => last.discard[RESOURCE_WORDS[i]])
+        .map(i => `${last.discard[RESOURCE_WORDS[i]]} ${RESOURCE_WORDS[i]}`)
+        .join(', ');
+      return;
+    }
+    out.push(m ? { ...l, discard: { [m[1]]: 1 } } : l);
+  });
+  return out;
+}
+
+// A log line, with the resources drawn rather than named and the dice shown
+// rather than written. The words are the engine's; what changes here is that a
+// reader scanning a turn sees colours where it used to be a wall of nouns.
+const RESOURCE_WORDS = ['brick', 'wood', 'wool', 'wheat', 'ore'];
+function logParts(v, text) {
+  // "Rolled 8 (5, 3)": the bracket is the two dice, so draw them.
+  const roll = /^Rolled (\d+) \((\d), (\d)\)$/.exec(text);
+  if (roll) {
+    return [`Rolled ${roll[1]} `, logDie(+roll[2]), logDie(+roll[3])];
+  }
+  const out = [];
+  let at = 0;
+  const re = /(\d+)\s+(brick|wood|wool|wheat|ore)\b|\b(brick|wood|wool|wheat|ore)\b/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > at) out.push(text.slice(at, m.index));
+    const word = m[2] || m[3];
+    const chip = document.createElement('span');
+    chip.className = 'logRes';
+    chip.append(miniCard(RESOURCE_WORDS.indexOf(word)));
+    if (m[1]) {
+      const n = document.createElement('b');
+      n.textContent = m[1];
+      chip.appendChild(n);
+    }
+    chip.title = m[1] ? `${m[1]} ${word}` : word;
+    out.push(chip);
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return out.length ? out : [text];
+}
+
+function logDie(n) {
+  const svg = el('svg', { viewBox: '-14 -14 28 28', class: 'logDie' });
+  (PIPS[n] || []).forEach(([x, y]) => {
+    svg.appendChild(el('circle', { cx: x * 6.5, cy: y * 6.5, r: 2.2, fill: 'currentColor' }));
+  });
+  return svg;
+}
 
 // A turn's length, at whatever precision the number deserves. A person takes
 // tens of seconds and does not care about the tenths; a bot takes milliseconds
