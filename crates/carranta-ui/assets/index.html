@@ -1321,7 +1321,11 @@ function draw() {
     base.appendChild(el('circle', {
       cx: ox, cy: oy, r: 17,
       fill: res === null ? 'var(--panel)' : `var(${RESOURCE_FACE[res]})`,
-      stroke: 'var(--line)',
+      // A resource port is a card, and a card has one edge: the pale rule
+      // added below. The grey ring on top of that made two, which is the
+      // double outline the tiles never had. A general port is paper on paper
+      // and has no colour to separate it, so that one keeps the ring.
+      stroke: res === null ? 'var(--line)' : 'none',
     }));
     if (res !== null) {
       const tooth = el('circle', {
@@ -1333,7 +1337,7 @@ function draw() {
       // The cards' edge, the same one the tiles carry. A port is a piece of
       // the same board and should be cut from the same stock.
       const lip = el('circle', {
-        cx: ox, cy: oy, r: 15.6, fill: 'none',
+        cx: ox, cy: oy, r: 16.5, fill: 'none',
         stroke: 'rgba(255, 250, 242, .5)', 'stroke-width': 1,
         'vector-effect': 'non-scaling-stroke',
       });
