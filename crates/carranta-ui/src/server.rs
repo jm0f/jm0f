@@ -63,7 +63,10 @@ const ART: [(&str, &str); 6] = [
 const FONTS: [(&str, &[u8]); 3] = [
     ("figtree", include_bytes!("../assets/fonts/figtree.woff2")),
     ("fraunces", include_bytes!("../assets/fonts/fraunces.woff2")),
-    ("audiowide", include_bytes!("../assets/fonts/audiowide.woff2")),
+    (
+        "audiowide",
+        include_bytes!("../assets/fonts/audiowide.woff2"),
+    ),
 ];
 
 /// Largest request body accepted. A click is a few dozen bytes; anything
