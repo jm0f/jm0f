@@ -436,16 +436,24 @@
                         margin-right: 0; vertical-align: -.28em; }
   .logRes .rcard.mini i { width: .42em; height: .42em; }
   .logRes b { font-weight: 600; color: var(--foreground); }
-  /* The bank, one row per resource: the card, its name, and what is left. */
-  .bankRows { display: flex; flex-direction: column; gap: .1em; }
-  .bankRow { display: flex; align-items: center; justify-content: space-between;
-             gap: .6em; padding: .05em 0; }
-  .bankRow .name { display: flex; align-items: center;
-                   color: var(--muted-foreground); }
-  .bankRow .much { font-weight: 600; font-variant-numeric: tabular-nums; }
-  /* A stack that has run out is the one worth noticing. */
-  .bankRow.out .much { color: var(--accent); }
-  .bankRow.out .name { opacity: .55; }
+  /* The bank reads across, not down: five stacks side by side, the size of
+     the clock panel above it rather than a list five rows tall. */
+  .bankRows { display: flex; justify-content: space-around; align-items: flex-end;
+              gap: .3em; }
+  .bankCell { display: flex; flex-direction: column; align-items: center; gap: .3em; }
+  .bankFan { position: relative; display: inline-block; height: 2em; }
+  .bankFan .rcard.mini { width: 1.5em; height: 2em; border-radius: .24em;
+                         margin: 0; vertical-align: 0; }
+  .bankFan .rcard.mini i { width: .7em; height: .7em; }
+  .bankCell .much { font-weight: 600; font-size: .95em;
+                    font-variant-numeric: tabular-nums; }
+  /* A stack that has run out is the one worth noticing: an empty outline where
+     the cards were, and the count in the accent. */
+  .rcard.mini.ghost { background: transparent; box-shadow: none;
+                      border: 1px dashed var(--line); }
+  .rcard.mini.ghost::after { opacity: 0; }
+  .rcard.mini.ghost i { background: var(--line); opacity: .5; }
+  .bankCell.out .much { color: var(--accent); }
   /* A piece in the log, sized to the line it sits on. */
   .logPiece { display: inline-block; width: 1.15em; height: 1.35em;
               vertical-align: -.32em; margin: 0 .1em; }
@@ -643,9 +651,17 @@
   .lobbyCols { display: grid; grid-template-columns: 1fr 1fr;
                gap: 0 clamp(20px, 3vw, 44px); margin-top: 1.2em; }
   .lobbyCol { min-width: 0; }
+  /* The rule the split is about. On the second column rather than as an
+     element of its own, so it is exactly as tall as the columns are and
+     disappears with them when there is only one. */
+  .lobbyCol + .lobbyCol {
+    border-left: 1px solid var(--border);
+    padding-left: clamp(20px, 3vw, 44px);
+  }
   .lobbyCol .field:last-child { margin-bottom: 0; }
   @media (max-width: 720px) {
     .lobbyCols { grid-template-columns: 1fr; }
+    .lobbyCol + .lobbyCol { border-left: 0; padding-left: 0; }
   }
   .lobbyTitle { font-family: var(--mark); font-size: 28px; margin: 0;
                 color: var(--accent); font-weight: 400; letter-spacing: .01em; }
@@ -777,6 +793,9 @@
                color: var(--dim); margin: 0 0 10px; font-weight: 600;
                padding-right: 4.5em; }
   .prompt .buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* A card that only says what to do next, so it stays out of the way of the
+     board it is asking you to click. */
+  .promptSay { margin: 0; color: var(--muted-foreground); }
   /* The hand, laid out to choose against. One column rather than the trade
      composer's two: there is only one side to a discard. */
   .discardGrid .row { justify-content: flex-start; }
@@ -1169,6 +1188,7 @@ function draw() {
   // the temporal dead zone of a loop that runs earlier and threw on the first
   // hex holding it, taking the rest of the board with it.
   let robberAt = null;
+  const placingRobber = view.phase === 'move the robber';
   // Which board features are clickable this move.
   const byVertex = {}, byEdge = {}, byHex = {};
   view.choices.forEach(c => {
@@ -1186,8 +1206,11 @@ function draw() {
       // between tiles rather than a line around them. The board separates
       // into pieces without anything being added to it. Taken from the
       // stylesheet rather than written here, so it follows the theme.
-      stroke: byHex[h.id] ? 'var(--accent)' : 'var(--panel)',
-      'stroke-width': byHex[h.id] ? 4 : 3,
+      // Every hex is a candidate while the robber is being placed, so ringing
+      // them all said nothing and set the whole board on fire. The card says
+      // what to do instead, and the hexes keep their ordinary edge.
+      stroke: (byHex[h.id] && !placingRobber) ? 'var(--accent)' : 'var(--panel)',
+      'stroke-width': (byHex[h.id] && !placingRobber) ? 4 : 3,
     }));
     // The tile's tooth, laid over its colour rather than mixed into it: the
     // same polygon again, filled with the noise and blended, so the grain
@@ -1628,25 +1651,51 @@ function bankSize(n) {
   if (n <= (BANK_FULL * 2) / 3) return 'middle';
   return 'big';
 }
+// How many cards to draw for a stack that is only being judged: three for a
+// full one, then two, one, none. Four steps, so the difference between them is
+// something you see rather than something you measure.
+function bankCards(n) {
+  if (n === 0) return 0;
+  if (n <= BANK_FULL / 3) return 1;
+  if (n <= (BANK_FULL * 2) / 3) return 2;
+  return 3;
+}
 function renderBank(v) {
   const host = document.getElementById('bank');
   host.textContent = '';
+  const exact = v.bankExact !== false;
   v.resourceNames.forEach(r => {
     const n = v.supply[r.i];
-    const row = document.createElement('div');
-    row.className = 'bankRow' + (n === 0 ? ' out' : '');
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.append(miniCard(r.i), r.name);
-    const much = document.createElement('span');
-    much.className = 'much';
-    much.textContent = v.bankExact === false ? bankSize(n) : n;
-    row.setAttribute('data-tip', v.bankExact === false
-      ? `the ${r.name} stack looks ${bankSize(n)}`
-      : `${n} ${r.name} left in the bank`);
-    row.tabIndex = 0;
-    row.append(name, much);
-    host.appendChild(row);
+    const cell = document.createElement('div');
+    cell.className = 'bankCell' + (n === 0 ? ' out' : '');
+    // Counting shows one card and the number under it; judging shows the
+    // stack and no number, since a number is the thing that mode withholds.
+    const shown = exact ? 1 : bankCards(n);
+    const fan = document.createElement('span');
+    fan.className = 'bankFan';
+    const step = 0.34;
+    fan.style.width = `${1.5 + Math.max(shown - 1, 0) * step}em`;
+    for (let d = 0; d < Math.max(shown, 1); d++) {
+      const card = miniCard(r.i);
+      card.style.position = 'absolute';
+      card.style.left = `${d * step}em`;
+      card.style.zIndex = shown - d;
+      if (d > 0) card.textContent = '';
+      if (shown === 0) card.classList.add('ghost');
+      fan.appendChild(card);
+    }
+    cell.appendChild(fan);
+    if (exact) {
+      const much = document.createElement('span');
+      much.className = 'much';
+      much.textContent = n;
+      cell.appendChild(much);
+    }
+    cell.setAttribute('data-tip', exact
+      ? `${n} ${r.name} left in the bank`
+      : `the ${r.name} stack looks ${bankSize(n)}`);
+    cell.tabIndex = 0;
+    host.appendChild(cell);
   });
 }
 
@@ -2288,16 +2337,16 @@ function renderLobby() {
     slots.appendChild(row);
   }
 
-  // Only worth asking about once a bot is actually sitting down.
+  // Always shown, inert until a bot is sitting down. A setting that appears
+  // and disappears as seats fill moves everything below it and reads as the
+  // lobby rearranging itself; one that greys says the same thing and stays put.
   const anyBot = lobby.roles.some(r => r === 'bot');
-  document.getElementById('paceField').hidden = !anyBot;
-  if (anyBot) {
-    tabs(document.getElementById('lobbyPace'),
-      [['slow', 'slow', { tip: PACE_NOTE.slow }],
-       ['fast', 'fast', { tip: PACE_NOTE.fast }],
-       ['instant', 'instant', { tip: PACE_NOTE.instant }]],
-      lobby.pace, v => { lobby.pace = v; });
-  }
+  const idle = anyBot ? null : 'Nothing to pace yet. Add a bot to a seat.';
+  tabs(document.getElementById('lobbyPace'),
+    [['slow', 'slow', { tip: idle || PACE_NOTE.slow, disabled: !anyBot }],
+     ['fast', 'fast', { tip: idle || PACE_NOTE.fast, disabled: !anyBot }],
+     ['instant', 'instant', { tip: idle || PACE_NOTE.instant, disabled: !anyBot }]],
+    lobby.pace, v => { lobby.pace = v; });
 
   tabs(document.getElementById('lobbyBank'),
     [['exact', 'exact count', { tip: BANK_NOTE.exact }],
@@ -2700,6 +2749,10 @@ function renderPrompt(v) {
   let mode = prompt.mode;
   if (v.winner !== null) mode = 'over';
   else if (discard.length) mode = 'discard';
+  // Placing the robber happens on the board, so the card only says so. It used
+  // to be said by ringing every hex in the accent, which is the whole board
+  // shouting the same thing at once.
+  else if (v.phase === 'move the robber') mode = 'place';
   else if (!mode && incoming.length && (decline || answerable.some(o => !o.mine))) mode = 'offers';
 
   host.style.removeProperty('--rule');
@@ -2751,6 +2804,16 @@ function renderPrompt(v) {
     return;
   }
   if (mode === 'discard') { renderDiscard(v, host, head); return; }
+  if (mode === 'place') {
+    // A militia was already spent to get here and can still be taken back; a
+    // seven cannot, so that one has no way out and is not offered one.
+    head(v.canCancel ? 'Place the militia' : 'Move the robber', !!v.canCancel);
+    const p = document.createElement('p');
+    p.className = 'promptSay';
+    p.textContent = 'Click a hex on the board.';
+    host.appendChild(p);
+    return;
+  }
   if (mode === 'pick') { renderPick(v, host, head, buttonList); return; }
   if (mode === 'rob') {
     const here = v.choices.filter(c => c.hex === prompt.data.hex && c.victim !== undefined);
