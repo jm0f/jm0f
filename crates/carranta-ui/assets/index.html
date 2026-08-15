@@ -198,6 +198,19 @@
      display face set at this size reads as a mistake rather than as an
      affordance, and the cursor already says it is a link. */
   .wordmark { text-decoration: none; display: inline-block; }
+  /* What this table is called, beside the mark rather than instead of it. In
+     the body face and a quieter colour, so the mark stays the mark and the
+     name reads as the answer to "which game is this". */
+  .gameName {
+    font: 500 14px/1 var(--sans); color: var(--muted-foreground);
+    letter-spacing: .01em; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .gameName::before {
+    content: ''; display: inline-block; width: 1px; height: 1em;
+    background: var(--border); margin-right: 12px;
+    vertical-align: -.15em;
+  }
   header .status { color: var(--dim); }
   header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
   .vid { font: 600 8px var(--sans); text-anchor: middle;
@@ -665,6 +678,7 @@
      not need one. The name links home. -->
 <header>
   <a class="wordmark" href="/">Carranta</a>
+  <span class="gameName" id="gameName" hidden></span>
 </header>
 
 <!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
@@ -770,7 +784,7 @@
     <filter id="satin" x="-10%" y="-10%" width="120%" height="120%"
             color-interpolation-filters="sRGB">
       <feGaussianBlur in="SourceAlpha" stdDeviation="1.6" result="round"/>
-      <feSpecularLighting in="round" surfaceScale="2" specularConstant="0.2"
+      <feSpecularLighting in="round" surfaceScale="1.5" specularConstant="0.13"
                           specularExponent="11" lighting-color="#FFF4E2" result="sheen">
         <feDistantLight azimuth="225" elevation="58"/>
       </feSpecularLighting>
@@ -1220,6 +1234,12 @@ function render() {
   // the offer itself where its contents are visible, "Accept offer 0" says
   // considerably less than the offer does.
   clockFrom(v);
+  // An unnamed table shows nothing rather than a placeholder: a name nobody
+  // chose is worse than no name, and the separator would be a rule leading to
+  // an empty space.
+  const named = document.getElementById('gameName');
+  named.textContent = v.game || '';
+  named.hidden = !v.game;
   // Before anything draws, so a card belonging to a turn that is over never
   // reaches the screen at all.
   dismissStalePrompt(v);

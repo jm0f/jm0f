@@ -28,7 +28,7 @@ Four, fixed. Nothing moves between them as the position changes.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  header, the name, linking home                             │
+│  header, the mark linking home · this game's name           │
 ├────────────┬────────────────────────────────┬────────────────┤
 │  seats     │                                │   reserved     │
 │   you      │                                │                │
@@ -54,6 +54,14 @@ alone, which do not change for the life of a game. Measuring everything drawn
 meant that a piece placed past the previous extent shifted and rescaled the
 whole board, which is the one thing a board must never do. The only thing that
 resizes it is the window.
+
+**The header is the mark and the table's name, and nothing else.** Whose turn
+it is, the turn number and the seed all belong to panels that already say
+them, and repeating them at the top made the one strip that never changes the
+busiest thing on screen. The mark links home; the name sits beside it in the
+body face and a quieter colour, so the mark stays the mark and the name reads
+as the answer to "which game is this". An unnamed table shows nothing rather
+than a placeholder, since a name nobody chose is worse than no name.
 
 **Right: reserved, empty for now.** It is where chat goes when there are real
 players. Held open deliberately rather than reclaimed and re-cut later.
