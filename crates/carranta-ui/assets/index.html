@@ -666,13 +666,10 @@
   }
   .dockGroup { display: flex; flex-direction: column; gap: .45em; }
   .dockGroup.spacer { flex: 1; }
-  /* The dice are the right edge of the dock, so the controls are held off them
-     by more than the gap between two groups: run together they read as one
-     block of controls, and the dice are not a control.
-     A gap that gives way rather than a margin that does not. It is the first
-     thing to go when the dock runs out of room, because a row that fits with
-     less air in it beats a row that wraps to keep the air. */
-  .dockGroup.airGap { flex: 0 1 clamp(10px, 1.6vw, 34px); }
+  /* One gap between every group in the dock, the dock's own. The dice used to
+     be held off the controls by more than that, on the reasoning that a die is
+     not a control; side by side with building and actions a group apart, the
+     odd one out read as a mistake rather than as an argument. */
   .dockLabel { color: var(--dim); font-size: .8em; text-transform: uppercase;
                letter-spacing: .08em; }
   /* Tall enough for a card either way, so the two groups' labels sit on one
@@ -1392,7 +1389,6 @@
     <span class="dockLabel">actions <span id="note"></span></span>
     <div class="actionGrid" id="actions"></div>
   </div>
-  <div class="dockGroup airGap"></div>
   <div class="dockGroup">
     <span class="dockLabel">dice</span>
     <div class="dice" id="dice"></div>
@@ -1504,6 +1500,19 @@ function disarm() {
 // The bar inside every road drawing is this long, in the drawing's own units.
 // All three orientations are the same prism, so one number serves them all.
 const ROAD_LENGTH = 79;
+// How much of its edge a road covers, by drawing. The two diagonals take 70%,
+// which leaves a gap at each end so two roads meeting at an intersection do not
+// run into each other. The vertical one takes a tenth less: it is the only
+// drawing whose bar runs straight down the screen, with nothing foreshortening
+// it, so at the same share of its edge it read as the long one of the three.
+const ROAD_FILL = { 'road-30': 0.70, 'road-90': 0.63, 'road-150': 0.70 };
+// Where along its own height the drawing sits on the edge. The vertical one
+// carries its front face below the bar, so it balances differently from the
+// diagonals. Its figure is scaled with the shortening above, so the bar stays
+// on the same line rather than rising off it: the offset from the edge is
+// `height x scale x (anchor - 0.5)`, and holding that constant while the
+// height drops a tenth means dividing the offset by the same tenth.
+const ROAD_ANCHOR = { 'road-30': 0.62, 'road-90': 0.5444, 'road-150': 0.62 };
 
 const ART_TONES = {
   '#FFACD5': 0.26,   // top faces, catching the light
@@ -1779,13 +1788,13 @@ function draw() {
     // Scaled by the bar's own length rather than the drawing's box, which for
     // a diagonal piece is far bigger than the bar inside it. The mistake that
     // made the roads overshoot their edges.
-    const k = Math.hypot(x2 - x1, y2 - y1) * 0.70 / ROAD_LENGTH;
+    const k = Math.hypot(x2 - x1, y2 - y1) * ROAD_FILL[name] / ROAD_LENGTH;
     // Lifted so the piece's underside sits on the edge rather than its middle.
     // Centring the drawing puts half the thickness below the line, which reads
     // as the road having slid off it.
     // The vertical drawing carries its front face below the bar, so it needs
     // a different balance point from the diagonals to sit on the same line.
-    const anchor = name === 'road-90' ? 0.54 : 0.62;
+    const anchor = ROAD_ANCHOR[name];
     solids.push({ art: name, seat, x: (x1 + x2) / 2, y: (y1 + y2) / 2, k, anchor });
   });
 
@@ -1839,8 +1848,8 @@ function draw() {
     const deg = ((Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI) % 180 + 180) % 180;
     const name = deg < 60 ? 'road-30' : (deg < 120 ? 'road-90' : 'road-150');
     ghost(name, (x1 + x2) / 2, (y1 + y2) / 2,
-          Math.hypot(x2 - x1, y2 - y1) * 0.70 / ROAD_LENGTH,
-          name === 'road-90' ? 0.54 : 0.62, byEdge[e][0].i);
+          Math.hypot(x2 - x1, y2 - y1) * ROAD_FILL[name] / ROAD_LENGTH,
+          ROAD_ANCHOR[name], byEdge[e][0].i);
   }
   for (const v in byVertex) {
     const [x, y] = vxy[v];

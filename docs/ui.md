@@ -56,6 +56,13 @@ which is a lift rather than a nudge, because a nudge would reveal nothing. It is
 slower than the tiles' own hover, since this is a deliberate look and not a
 pointing cue.
 
+**A road covers 70% of its edge**, which leaves a gap at each end so two roads
+meeting at an intersection do not run into each other. The vertical drawing
+takes a tenth less. It is the only one whose bar runs straight down the screen
+with nothing foreshortening it, so at the same share of its edge it read as the
+long one of the three. Its balance point is scaled with the shortening, so the
+bar stays on the same line rather than rising off it.
+
 **The board never moves.** Its frame is measured from the land and the ports
 alone, which do not change for the life of a game. Measuring everything drawn
 meant that a piece placed past the previous extent shifted and rescaled the
@@ -286,11 +293,10 @@ actions off the middle of the dock; stacked and stretched, the pair is one die
 wide and as deep as the dock is, which is the whole point of a die being an
 object rather than a number.
 
-They are held off the controls by more than the gap between two groups, since
-run together they read as one block of things to press and a die is not one.
-That separation is a flexible gap rather than a margin: it is the first thing to
-give when the dock runs out of room, because a row that fits with less air in it
-beats a row that wraps to keep the air.
+**One gap between every group**, the dock's own. The dice were held off the
+controls by more than that for a while, on the reasoning that a die is not
+something to press; side by side with building and actions a group apart, the
+odd one out read as a mistake rather than as an argument.
 
 ### The labels sit on one line
 
