@@ -122,6 +122,21 @@ say so rather than simply declining to click. It is the one card whose timing
 changes anything, since moving the robber before production decides which
 hexes pay this turn.
 
+**Every pile's tooltip says what the card does**, in one sentence taken from
+the rule it implements (R-9.7 to R-9.11). The face carries a name and a number,
+which says what you are holding and not what happens when you play it, and
+there is nowhere else on the screen the effect is written down. The awkward
+corners are named rather than smoothed over, since they are exactly what a
+tooltip is for: two roads come out as one on a board with room for one
+(R-9.10a), and a monopoly may name a resource nobody holds and yield nothing
+(R-9.9).
+
+The sentence is followed by why the pile will or will not click, and there are
+three reasons it will not, told apart so the tooltip never explains a refusal
+that is not the one in force: bought this turn (R-9.4), before the roll and not
+a militia (R-9.5), and a card already played this turn (R-9.3). The third had
+nothing on the card to show for it and used to say nothing at all.
+
 **A victory point card is the exception, and is not a card you play.** It
 scores the moment it is bought, it is yours alone until the game ends, and no
 action exists behind it (R-9.11). It carried the `new` badge and offered

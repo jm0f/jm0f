@@ -2170,6 +2170,29 @@ const devFace = (name) => {
   return src ? src.outerHTML : '';
 };
 
+// What each card actually does, in one sentence, from the rules it implements:
+// R-9.7 to R-9.11. The faces carry a name and a number, which says what you are
+// holding and not what happens when you play it, and there is nowhere else on
+// the screen the effect is written down.
+//
+// The awkward corners are named rather than smoothed over, because they are
+// exactly what a tooltip is for: two roads may come out as one on a blocked
+// board (R-9.10a), a monopoly may name a resource nobody holds and yield
+// nothing (R-9.9), and a victory point is already in your total (R-9.11) rather
+// than something you play later.
+const DEV_RULES = {
+  militia: 'Move the robber to another hex, then take one card, unseen, from a '
+    + 'player with a building on it',
+  'road building': 'Build two roads for nothing. Every placement rule still '
+    + 'applies, so a board with room for one gives you one',
+  invention: 'Take any two resource cards from the bank, two of a kind or one '
+    + 'of each',
+  monopoly: 'Name one resource. Every opponent hands you every card of it they '
+    + 'hold, which may be none',
+  'victory point': 'Worth one point, already counted in your total and hidden '
+    + 'from everyone else until the game ends',
+};
+
 // Action glyphs stay flat silhouettes. They are marks, not objects, and the
 // study draws its own the same way.
 const GLYPH = {
@@ -2514,8 +2537,18 @@ function renderHand(v) {
     // broken; the rule is short enough to just state.
     const early = !scores && c.name !== 'militia' && v.yourTurn
       && v.phase === 'before the roll';
-    const note = fresh ? `, ${fresh} bought this turn and playable next`
-      : (early ? ', roll first. Only the militia is played before the dice' : '');
+    // Sentences rather than clauses, because the effect above them already
+    // contains a full stop of its own: comma-joining onto it read as one
+    // sentence that had lost its way.
+    const note = fresh ? `${fresh} bought this turn, playable next turn.`
+      : (early ? 'Roll first: only the militia is played before the dice.' : '');
+    // A card already played this turn is the third reason a pile will not
+    // click (R-9.3), and the only one with nothing on the card to show for it.
+    // Told apart from "it is not your turn" and from the two above, so the
+    // tooltip never explains a refusal that is not the one in force.
+    const spent = !scores && v.yourTurn && !fresh && !early
+      && (v.phase === 'build and trade' || v.phase === 'before the roll')
+      && !v.choices.some(x => x.group === 'card');
     // A card you can play is played by clicking it. A button elsewhere that
     // opened a list of the same cards was a second way to reach the thing you
     // were already looking at.
@@ -2527,10 +2560,14 @@ function renderHand(v) {
         act(mine[0].i);
       }
     } : null;
-    const title = scores
-      ? `${n} victory point, already counted in your total and hidden from `
-        + 'everyone else until the game ends'
-      : (play ? `Play ${c.name}` : `${n} ${c.name}${note}`);
+    // Held, what it does, and why it will or will not click. The face carries
+    // the card's name and its number and nothing else, which says what you have
+    // but not what happens when you play it; the rule is two lines long and
+    // there is nowhere else on the screen it is written down.
+    const state = play ? 'Click to play.'
+      : (note || (spent ? 'One card a turn, and you have played yours.' : ''));
+    const title = `${n} ${c.name}. ${DEV_RULES[c.name]}.`
+      + (state ? ` ${state}` : '');
     const pile = devStackEl(n, c.name, title, play);
     if (play) pile.classList.add('playable');
     if (fresh) {
