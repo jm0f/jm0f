@@ -177,6 +177,13 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.bool("canPropose", session.can_propose());
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);
+    // Roads still owed by a played road building card (R-9.10). Public: the
+    // card was played face up and everyone can count what has gone down since.
+    //
+    // The page needs it because those roads are not offered, they are owed: the
+    // dock asks before it shows you where to build, and a placement the rules
+    // will not let you leave has nothing to ask about.
+    j.int("freeRoads", v.free_roads as i64);
     j.ints("dice", v.dice.iter().map(|&n| n as i64));
     // The clock is read from the server rather than kept by the page, so a
     // reload shows how long the game has actually been going. A timed game

@@ -656,14 +656,23 @@
     display: flex; align-items: flex-start; flex-wrap: wrap;
     gap: clamp(10px, 1.2vw, 26px);
     padding: clamp(8px, .8vw, 14px) clamp(12px, 1.1vw, 20px);
-    font-size: clamp(11px, .8vw, 14px);
+    /* The dock sizes itself off the window, and so does the space it has to fit
+       into, so between the clamp's two ends the two grow together and whether
+       the row fits is very nearly a constant. A fifth section pushed that
+       constant just over one, which wrapped the dock on every laptop rather
+       than on small windows only. The coefficient comes down instead: a few
+       per cent smaller through that band, and one row again. */
+    font-size: clamp(11px, .74vw, 14px);
   }
   .dockGroup { display: flex; flex-direction: column; gap: .45em; }
   .dockGroup.spacer { flex: 1; }
-  /* The dice are the right edge of the dock, so the actions are held off it by
-     more than the gap between two groups: run together they read as one block
-     of controls, and the dice are not a control. */
-  .dockGroup.acts { margin-right: clamp(10px, 1.6vw, 34px); }
+  /* The dice are the right edge of the dock, so the controls are held off them
+     by more than the gap between two groups: run together they read as one
+     block of controls, and the dice are not a control.
+     A gap that gives way rather than a margin that does not. It is the first
+     thing to go when the dock runs out of room, because a row that fits with
+     less air in it beats a row that wraps to keep the air. */
+  .dockGroup.airGap { flex: 0 1 clamp(10px, 1.6vw, 34px); }
   .dockLabel { color: var(--dim); font-size: .8em; text-transform: uppercase;
                letter-spacing: .08em; }
   /* Tall enough for a card either way, so the two groups' labels sit on one
@@ -801,11 +810,34 @@
     font-size: .86em;
   }
   .act svg { width: 1.5em; height: 1.5em; fill: currentColor; }
-  /* One above the other. Side by side they were the widest thing in the corner
-     and pushed the actions off the middle of the dock; stacked, the pair is one
-     die wide and as tall as the two rows of buttons beside it. */
-  .dice { display: flex; flex-direction: column; gap: .4em; }
-  .die { width: 2.6em; height: 2.6em; border-radius: .5em; border: 1px solid var(--border);
+  /* A column of three, not a row: three named buttons side by side are wider
+     than the dock has to give at a laptop's width, and a fifth section that
+     wraps the whole dock onto a second row every turn is a bad trade. Stacked,
+     the section is narrower than the row would have been, keeps its labels, and
+     stands the full height of the cards beside it. */
+  .buildGrid { display: grid; grid-template-rows: repeat(3, 1fr); gap: .35em;
+               height: 7em; width: 7.4em; }
+  .act.build { width: auto; flex-direction: row; justify-content: flex-start;
+               gap: .5em; padding: .2em .55em; text-align: left; }
+  /* A fixed box for the drawing, not a fixed height: a road lying at thirty
+     degrees is half again as wide as a settlement, and sized by height alone
+     the three labels would start at three different places. The drawing fits
+     itself into the box and centres there, which is what a viewBox does. */
+  .act.build svg { width: 2.1em; height: 1.7em; flex: none; }
+  /* Armed. The board is showing this piece's spots, and pressing again puts it
+     down, so the button has to look pressed while that is true. */
+  .act.build.armed {
+    border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset;
+    background: rgba(232, 84, 47, .07);
+  }
+  /* One above the other, and as tall as the dock is deep. Side by side they
+     were the widest thing in the corner and pushed the actions off the middle
+     of the dock; stacked and stretched, the pair is one die wide and stands the
+     full height of the cards beside it, which is the whole point of a die being
+     an object rather than a number. */
+  .dice { display: flex; flex-direction: column; gap: .4em; height: 7em; }
+  .die { flex: 1; aspect-ratio: 1; height: auto; width: auto;
+         border-radius: .5em; border: 1px solid var(--border);
          background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
   .die circle { fill: var(--foreground); }
   /* One clock, large, above the players. It was a figure on every row, which
@@ -1325,10 +1357,18 @@
     <div class="stacks" id="dev"></div>
   </div>
   <div class="dockGroup spacer"></div>
-  <div class="dockGroup acts">
+  <!-- Building is asked for here and answered on the board, docs/ui.md §3.
+       The button arms a kind of piece; the spots for that kind are what the
+       board then shows. -->
+  <div class="dockGroup">
+    <span class="dockLabel">building</span>
+    <div class="buildGrid" id="building"></div>
+  </div>
+  <div class="dockGroup">
     <span class="dockLabel">actions <span id="note"></span></span>
     <div class="actionGrid" id="actions"></div>
   </div>
+  <div class="dockGroup airGap"></div>
   <div class="dockGroup">
     <span class="dockLabel">dice</span>
     <div class="dice" id="dice"></div>
@@ -1408,6 +1448,30 @@ function portGroups() {
 // drawn in several tones of one colour and they have to be computed.
 const SEAT_HEX = ['#2CA7BA', '#3C2EB8', '#C065D2', '#C1256B'];
 const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
+
+// ---- what you are about to build -------------------------------------------
+// One kind of piece at a time, or nothing. The board draws build spots only for
+// what is armed here, so asking to build and seeing where are the same gesture.
+let building = null;
+// Which piece a build choice would put down, read off the choice's own shape
+// rather than off its wording: an edge is a road, and a vertex is an upgrade or
+// a new settlement depending on which the engine called it.
+const pieceOf = (c) => {
+  if (c.group !== 'build') return null;
+  if (c.edge !== undefined) return 'road';
+  if (c.vertex === undefined) return null;
+  return /city/i.test(c.label || '') ? 'city' : 'settlement';
+};
+// Put the board down again. Called from anywhere that changes what is armed.
+function arm(kind) {
+  building = building === kind ? null : kind;
+  render();
+}
+function disarm() {
+  if (building === null) return;
+  building = null;
+  render();
+}
 
 // The palette the drawings are in, and how light each tone is relative to the
 // piece's base colour. Recolouring by lookup rather than by measuring the
@@ -1503,8 +1567,22 @@ function draw() {
   let robberAt = null;
   const placingRobber = view.phase === 'move the robber';
   // Which board features are clickable this move.
+  //
+  // Building is asked for before it is shown. Every spot you could afford used
+  // to be lit the whole time, which turned an ordinary turn into a board
+  // covered in pieces you had not asked about; now the dock's building buttons
+  // arm one kind at a time and only that kind's spots are drawn. Setup and the
+  // robber are not armed by anything, because they are phases the rules do not
+  // let you leave: their spots are the only move there is.
+  //
+  // The roads a played road building card owes you are the exception among
+  // build choices: they are not offered, they are owed, and the rules give no
+  // way to leave the position without placing them. So they show like setup
+  // does, without being asked for.
+  const owed = (view.freeRoads || 0) > 0;
   const byVertex = {}, byEdge = {}, byHex = {};
   view.choices.forEach(c => {
+    if (c.group === 'build' && !owed && pieceOf(c) !== building) return;
     if (c.vertex !== undefined) (byVertex[c.vertex] = byVertex[c.vertex] || []).push(c);
     if (c.edge !== undefined) (byEdge[c.edge] = byEdge[c.edge] || []).push(c);
     if (c.hex !== undefined) (byHex[c.hex] = byHex[c.hex] || []).push(c);
@@ -2046,8 +2124,10 @@ function render() {
   named.textContent = v.game || '';
   named.hidden = !v.game;
   // Before anything draws, so a card belonging to a turn that is over never
-  // reaches the screen at all.
+  // reaches the screen at all, and so the board and the building buttons agree
+  // about what is armed in the same frame.
   dismissStalePrompt(v);
+  dropStaleArming(v);
   renderBank(v);
   renderSeats(v);
   renderHand(v);
@@ -2585,7 +2665,14 @@ function renderHand(v) {
 }
 
 // ---- actions ---------------------------------------------------------------
-const COSTS = { dev: [0, 0, 1, 1, 1] };
+// The engine's own costs, R-8.1 to R-8.3 and R-9.1. Repeated here only to say
+// what is missing when a button is dead: the engine decides what is legal.
+const COSTS = {
+  dev: [0, 0, 1, 1, 1],
+  road: [1, 1, 0, 0, 0],
+  settlement: [1, 1, 1, 1, 0],
+  city: [0, 0, 0, 2, 3],
+};
 function missing(v, cost) {
   const short = v.resourceNames
     .filter(r => v.yourHand[r.i] < cost[r.i])
@@ -2628,6 +2715,8 @@ function renderActions(v) {
       why: theirs || (rolled ? '' : 'roll first') },
   ];
 
+  renderBuilding(v, theirs, rolled);
+
   const host = document.getElementById('actions');
   host.textContent = '';
   spec.forEach(s => {
@@ -2650,6 +2739,87 @@ function renderActions(v) {
     };
     host.appendChild(b);
   });
+}
+
+// ---- building --------------------------------------------------------------
+// Three pieces, in the order they cost: road, settlement, city. Pressing one
+// arms it and the board answers with the spots for that kind; pressing it again
+// puts the board down. Nothing is committed by arming, so nothing is spent
+// until a spot is clicked.
+//
+// A button is live when the engine is offering at least one spot for that
+// piece, which is stricter than being able to pay for it: a hand that can cover
+// a road on a board with nowhere legal to put one would arm to an empty board,
+// and that reads as the click having missed. Why it is dead goes in the
+// tooltip, the same bargain every other dead button in the dock makes.
+const BUILD_ORDER = [
+  { kind: 'road', label: 'Road', art: 'road-30' },
+  { kind: 'settlement', label: 'Settlement', art: 'settlement' },
+  { kind: 'city', label: 'City', art: 'city' },
+];
+// How many of each you have left to place, by the name the view gives it.
+const LEFT_FIELD = { road: 'roadsLeft', settlement: 'settlementsLeft', city: 'citiesLeft' };
+
+function renderBuilding(v, theirs, rolled) {
+  const host = document.getElementById('building');
+  host.textContent = '';
+  const you = v.seats.find(s => s.seat === v.you);
+  BUILD_ORDER.forEach(({ kind, label, art }) => {
+    const spots = v.choices.filter(c => pieceOf(c) === kind);
+    const live = spots.length > 0;
+    // In the order the player would hit them: whose turn it is, then the dice,
+    // then the pieces in the box, then the cost, and only then the board. Each
+    // one is a different thing to go and do about it.
+    const left = you ? you[LEFT_FIELD[kind]] : 1;
+    const why = theirs
+      || (!rolled ? 'roll first'
+        : (left === 0 ? `no ${kind}s left in your supply`
+          : missing(v, COSTS[kind]) || `nowhere legal to put a ${kind}`));
+    const b = document.createElement('button');
+    b.className = 'act build' + (building === kind ? ' armed' : '');
+    b.innerHTML = buildGlyph(art) + `<span>${label}</span>`;
+    if (!live) b.setAttribute('aria-disabled', 'true');
+    const places = `${spots.length} place${spots.length === 1 ? '' : 's'}`;
+    b.setAttribute('data-tip', live
+      ? (building === kind
+        ? `${label}: ${places} to put one, click again to put the board down`
+        : `${label}: build one, ${places} for it`)
+      : `${label}: ${why}`);
+    b.onclick = () => { if (live) arm(kind); };
+    host.appendChild(b);
+  });
+}
+
+// The board's own piece, drawn at button size in greys instead of a seat's
+// colour. The same three tones the drawing already carries, so it keeps its
+// solid shape: a flat silhouette of a settlement and a flat silhouette of a
+// city are nearly the same mark.
+// A warm grey, since everything else on this table is warm. Run through the
+// drawings' own lighting ramp rather than picked face by face, so the piece on
+// the button is lit exactly like the piece on the board.
+//
+// Not `pieceGlyph`: the log already has one of those, drawing the same pieces
+// in a seat's colour for a line of text. Two function declarations of one name
+// are not two functions, they are the later one, and this was silently calling
+// the log's with no seat to colour by.
+const BUILD_GREY = '#9C8E7C';
+function buildGlyph(name) {
+  const src = art[name];
+  if (!src) return '<svg viewBox="0 0 24 24"></svg>';
+  const node = src.cloneNode(true);
+  node.querySelectorAll('[fill]').forEach((n) => {
+    const f = (n.getAttribute('fill') || '').toUpperCase();
+    if (f in ART_TONES) n.setAttribute('fill', tone(BUILD_GREY, ART_TONES[f]));
+  });
+  // Sized by the box it goes in rather than by its own dimensions, so the three
+  // pieces come out at one height however tall each drawing happens to be.
+  const w = parseFloat(node.getAttribute('width'));
+  const h = parseFloat(node.getAttribute('height'));
+  node.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  node.removeAttribute('width');
+  node.removeAttribute('height');
+  node.removeAttribute('style');
+  return node.outerHTML;
 }
 
 // ---- the clock -------------------------------------------------------------
@@ -3249,6 +3419,18 @@ function dismissStalePrompt(v) {
     prompt.mode = null; prompt.data = null; prompt.turn = null;
   }
 }
+
+// An armed piece stays armed while it is still something you could build, so
+// laying two roads is two clicks on the board rather than four clicks in all.
+// It stops being armed the moment the engine stops offering that piece: the
+// last one you could afford has gone down, or the spots have run out, or the
+// turn has ended and it is not yours to build in. Read off the choices rather
+// than tracked, so there is no second idea of what is buildable to fall out of
+// step with the engine's.
+function dropStaleArming(v) {
+  if (building === null) return;
+  if (!v.choices.some(c => pieceOf(c) === building)) building = null;
+}
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   hideTip();
@@ -3286,6 +3468,24 @@ document.addEventListener('click', (e) => {
   if (prompt.mode !== 'compose') return;
   if (e.target.closest('#tradeBar, .dock, #prompt')) return;
   closePrompt();
+}, true);
+
+// Clicking anything that is not a place to build puts the board down. Arming
+// costs nothing and commits to nothing, so turning your attention elsewhere is
+// an answer, the same bargain the composer makes.
+//
+// Two things are not "elsewhere". A spot is the click the arming was for, and
+// it leaves the arming alone so the next one can go down without asking again.
+// The building buttons are how you change your mind about which piece, and a
+// listener that disarmed on the way to `arm` would fight it.
+//
+// Capture phase, for the reason the composer's is: the board is redrawn by the
+// click, so a bubbling listener would be walking up from a node that had
+// already been thrown away.
+document.addEventListener('click', (e) => {
+  if (building === null) return;
+  if (e.target.closest('#building, .spot')) return;
+  disarm();
 }, true);
 
 // ---- tooltip ---------------------------------------------------------------

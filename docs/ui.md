@@ -171,19 +171,71 @@ A fixed grid: **roll, buy a development card, trade, end turn.** Four of them,
 so the grid is **two by two**. In a row of three, the fourth hung alone
 underneath and read as a leftover rather than as one of a set.
 
-**Building is not here.** You build by clicking a ghost piece on the board.
-The grid is for actions with no place; the board is for actions with one.
+**Building is not here.** It has a section of its own, next door. The grid is
+for actions with no place on the board; building has one.
 
 A button that is unavailable **stays put and greys**, the layout is learnable
 only if it never changes. **The reason appears on hover**, so a quiet dock
 does not cost you the explanation.
 
+### Building
+
+Three buttons, one per piece, in the order they cost: road, settlement, city.
+Each carries the board's own drawing of that piece, in a warm grey run through
+the same lighting ramp a placed piece uses, so the button and the thing it puts
+down are the same object seen twice.
+
+**Pressing one arms it; the board answers with the spots for that piece.** Every
+spot you could afford used to be lit the whole time, which turned an ordinary
+turn into a board covered in pieces nobody had asked about. Arming commits to
+nothing and spends nothing, so it costs nothing to press.
+
+**It stays armed while that piece is still something you could build.** Two
+roads is two clicks on the board rather than four clicks in all. It disarms by
+pressing the button again, by clicking anything that is not a spot, or on its
+own the moment the engine stops offering that piece: the last one you could
+afford has gone down, the spots have run out, or the turn has ended. That last
+one is read off the choices rather than tracked, so there is no second idea of
+what is buildable to fall out of step with the engine's.
+
+**A button is live when there is a spot, not when you can pay.** Holding a
+road's worth of cards on a board with nowhere legal to put one would arm to an
+empty board, which reads as the click having missed. Why a dead one is dead goes
+in the tooltip, in the order you would go and do something about it: whose turn
+it is, then the dice, then the pieces left in your supply, then the cost, then
+the board.
+
+**Two placements are not asked for, because they are owed.** Setup, and the
+roads a played road building card still has to put down (R-9.10): the rules give
+no way to leave either position, so their spots show without a button. That is
+the same argument the decision cards make about a forced question.
+
+**A column of three, not a row.** Three named buttons side by side are wider
+than the dock has to give at a laptop's width, and a fifth section that wraps
+the whole dock onto a second row every turn is a bad trade for one row of
+buttons. Stacked, the section is narrower than the row would have been, keeps
+its labels, and stands the full height of the cards beside it.
+
+The dock's type scale came down with it, from `.8vw` to `.74vw`. The dock sizes
+itself off the window and so does the space it has to fit into, so between the
+clamp's two ends the two grow together and whether the row fits is very nearly a
+constant. A fifth section pushed that constant just over one, which wrapped the
+dock on every laptop rather than on small windows only.
+
 ### Dice
 
 Two dice objects showing the last roll, **one above the other** in the dock's
-right corner. Clicking rolls. Side by side they were the widest thing in that
-corner and pushed the actions off the middle of the dock; stacked, the pair is
-one die wide and exactly as tall as the two rows of buttons beside it.
+right corner, standing **the full height of the cards beside them**. Clicking
+rolls. Side by side they were the widest thing in that corner and pushed the
+actions off the middle of the dock; stacked and stretched, the pair is one die
+wide and as deep as the dock is, which is the whole point of a die being an
+object rather than a number.
+
+They are held off the controls by more than the gap between two groups, since
+run together they read as one block of things to press and a die is not one.
+That separation is a flexible gap rather than a margin: it is the first thing to
+give when the dock runs out of room, because a row that fits with less air in it
+beats a row that wraps to keep the air.
 
 ### The labels sit on one line
 
@@ -366,8 +418,9 @@ without one happens in a card that waits for you.**
 
 | Moment | Where |
 |---|---|
-| Build a road, settlement, city | Board, click the ghost |
+| Build a road, settlement, city | Dock, press the piece; then board, click the ghost |
 | Setup placement | Board, click the ghost |
+| The roads a road building card owes | Board, click the ghost |
 | Move the robber | Board, hexes light, click one |
 | Choose whom to rob | Card, by name. The robber is already on the hex |
 | Discard down to seven | Card, the whole hand at once |
