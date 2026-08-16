@@ -77,12 +77,8 @@ const FONTS: [(&str, &[u8]); 3] = [
 ///
 /// MP3 rather than the OGG originals, because every browser plays MP3 and the
 /// difference is a couple of kilobytes on a file already under six.
-const SOUNDS: [(&str, &[u8]); 9] = [
+const SOUNDS: [(&str, &[u8]); 8] = [
     ("error-008", include_bytes!("../../../audio/error-008.mp3")),
-    (
-        "jingles-hit-01",
-        include_bytes!("../../../audio/jingles-hit-01.mp3"),
-    ),
     (
         "jingles-hit-10",
         include_bytes!("../../../audio/jingles-hit-10.mp3"),
@@ -431,7 +427,6 @@ mod tests {
         // renaming a file without renaming its use fails here.
         for name in [
             "error-008",
-            "jingles-hit-01",
             "jingles-hit-10",
             "jingles-hit-15",
             "confirmation-001",

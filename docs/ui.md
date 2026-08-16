@@ -620,24 +620,25 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 
 ## 7a. Sound
 
-**Nine sounds, and each one names an event rather than an interaction.**
+**Eight sounds, and each one names an event rather than an interaction.**
 
 | Sound | Plays when |
 |---|---|
-| `jingles-hit-01` | The table is dealt |
-| `confirmation-001` | Your turn begins, and a trade is taken |
+| `confirmation-001` | The table is dealt · your turn begins · a trade is taken |
 | `dice-throw-3` | The dice are rolled, by anyone |
 | `impact-generic-light-002` | A piece goes down on the board |
-| `card-place-1` | Cards are dealt into a hand |
+| `card-place-1` | Cards are dealt into a hand, or moved in the composer |
 | `drop-002` | An offer goes on the table |
 | `error-008` | An offer is turned down |
 | `jingles-hit-10` | The game ends and you won |
 | `jingles-hit-15` | The game ends and somebody else did |
 
-`confirmation-001` is deliberately doing two jobs, which is worth watching: a
-cue that means two things is a cue that means neither. The two are far enough
-apart in context that it reads as "something went your way" both times, but if
-it ever gets confusing the turn cue is the one to move.
+`confirmation-001` carries three of the eight, which is worth watching: a cue
+that means three things is a cue that means none of them. What holds it together
+is that all three are the same message, *you are up*: the table is ready, the
+turn is yours, the trade went through. The three contexts are far enough apart
+that none of them is ambiguous in the moment. If it ever does get
+confusing, the turn cue is the one to move.
 
 **The deal is the one cue that is not about you at all.** Every page plays it
 when its game begins, so when the other seats have people in them the whole

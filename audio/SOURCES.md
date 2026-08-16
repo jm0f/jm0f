@@ -1,13 +1,12 @@
 # Where the sounds came from
 
-Nine sounds, all by [Kenney](https://kenney.nl), all **CC0**. That licence is
+Eight sounds, all by [Kenney](https://kenney.nl), all **CC0**. That licence is
 why they can live in this repository at all: the files are redistributed inside
 the binary, and the page makes no external requests to fetch them.
 
 | File | Kenney pack | Original |
 |---|---|---|
 | `confirmation-001.mp3` | Interface Sounds | `confirmation_001.ogg` |
-| `jingles-hit-01.mp3` | Music Jingles | `jingles_HIT01.ogg` |
 | `dice-throw-3.mp3` | Casino Audio | `dice-throw-3.ogg` |
 | `card-place-1.mp3` | Casino Audio | `card-place-1.ogg` |
 | `impact-generic-light-002.mp3` | Impact Sounds | `impactGeneric_light_002.ogg` |
@@ -18,7 +17,7 @@ the binary, and the page makes no external requests to fetch them.
 
 Kenney numbers these from zero, so "Light 2" is the file called `002`, the one
 soundcn titles *Impact Generic Light 002*, and not the second of the five. The
-jingles are numbered `00` to `16` in two digits, so "Jingles Hit 001" is `01`.
+jingles are numbered `00` to `16` in two digits.
 
 Taken by way of [soundcn](https://github.com/kapishdima/soundcn), which is a
 registry of these packs cut into named, individually installable sounds. Its own

@@ -1714,9 +1714,11 @@ function fit(svg, frame) {
 //
 // Kenney's, CC0, carried in the binary. See `audio/SOURCES.md`.
 const SOUNDS = {
-  begin: '/sound/jingles-hit-01.mp3',
   won: '/sound/jingles-hit-10.mp3',
   lost: '/sound/jingles-hit-15.mp3',
+  // The table being dealt and your turn beginning are the same note. Both say
+  // "you are up", one to everybody at once and one to you alone.
+  begin: '/sound/confirmation-001.mp3',
   yours: '/sound/confirmation-001.mp3',
   roll: '/sound/dice-throw-3.mp3',
   place: '/sound/impact-generic-light-002.mp3',
