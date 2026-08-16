@@ -680,6 +680,43 @@
   .stack.empty .badge { opacity: .45; }
   .stack:not(:disabled):hover .layer { border-color: #D3C6AE; }
   .stack.armed .layer { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  /* ---- a development card wearing its own face ------------------------- */
+  /* A card you hold is a card you have read, so the pile is the card rather
+     than a slot with a mark on it. The whole pile takes the card's ground, the
+     way a resource fan takes its terrain's, and the front one carries the
+     drawing. The edge is the resource card's edge, because every card on the
+     table has that one. */
+  .stack.faced .layer,
+  .stack.faced:not(:disabled):hover .layer,
+  .stack.faced.playable .layer,
+  .stack.faced.fresh .layer {
+    background: var(--accent); border: 1px solid rgba(255, 250, 242, .5);
+  }
+  /* The cards under the front one are edges, and an edge of the same orange as
+     the face is not one: two cards and three looked identical. A shade of the
+     accent, so the sliver showing above and to the right reads as the card
+     behind rather than as a smudge on the card in front. */
+  .stack.faced .layer:not(.face) { background: #C5471F; }
+  .stack.faced .face { overflow: hidden; }
+  .stack.faced .face svg { width: 100%; height: 100%; display: block; }
+  /* The same tooth as every other card, so the five faces sit on stock rather
+     than on flat ink. */
+  .stack.faced .face::after {
+    content: ''; position: absolute; inset: 0;
+    background-image: var(--grain-tile); background-size: 90px 90px;
+    mix-blend-mode: soft-light; opacity: .45; pointer-events: none;
+  }
+  /* Accent on accent is not an edge, so the two states that used to colour the
+     border say it another way. Playable rings the card from outside, which is
+     what an armed resource card already does. */
+  .stack.faced.playable .face { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Bought this turn: the card's own edge goes dashed, the way an empty slot's
+     does. A second ring outside the card, in a colour it is already made of,
+     spilled over the card beside it and read as a glow rather than as a state. */
+  .stack.faced.fresh .layer {
+    border-style: dashed; border-color: rgba(255, 250, 242, .85);
+  }
   .badge {
     position: absolute; top: -.25em; right: -.35em; z-index: 20;
   }
@@ -1391,7 +1428,9 @@ function tone(hex, amount) {
 // The drawings, fetched once and kept as parsed nodes to clone per piece.
 const art = {};
 async function loadArt() {
-  for (const name of ['road-30', 'road-90', 'road-150', 'settlement', 'city', 'robber']) {
+  for (const name of ['road-30', 'road-90', 'road-150', 'settlement', 'city', 'robber',
+                      'dev-militia', 'dev-victory-point', 'dev-monopoly',
+                      'dev-road-building', 'dev-invention']) {
     const text = await (await fetch(`/art/${name}.svg`)).text();
     art[name] = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
   }
@@ -2104,12 +2143,23 @@ const seatName = (v, s) => (s === v.you ? (v.youName || 'you') : BOT_NAMES[s]);
 // itself now, so a solid in that same colour would have nothing to sit
 // against; the face is a plain disc standing in for the drawing to come.
 //
-// Development cards are cards, not objects, so they carry a mark rather than a
-// solid. One ring, in the accent, the way the study's card backs do.
-const devIcon = () =>
+// A development card in your own hand is one you have already read, so the pile
+// shows the card's own face. The drawing comes from `art/` like the pieces do,
+// so the file on disk stays the only copy of it.
+//
+// The mark below is what a face falls back to. `loadArt` is asynchronous and
+// the dock renders before it finishes, so for the first frame or two there is a
+// card with nothing on it; a ring in the accent is that card rather than a
+// blank. Everything the bank and the log draw is a card *back*, and stays one:
+// those are cards nobody has read.
+const devMark = () =>
   `<svg viewBox="0 0 40 46" aria-hidden="true">`
   + `<circle cx="20" cy="23" r="9" fill="none" stroke="#6B3FA0" stroke-width="3.4"/>`
   + `<circle cx="20" cy="23" r="3.2" fill="#6B3FA0"/></svg>`;
+const devFace = (name) => {
+  const src = art[`dev-${name.replace(/ /g, '-')}`];
+  return src ? src.outerHTML : '';
+};
 
 // Action glyphs stay flat silhouettes. They are marks, not objects, and the
 // study draws its own the same way.
@@ -2469,7 +2519,9 @@ function renderHand(v) {
       ? `${n} victory point, already counted in your total and hidden from `
         + 'everyone else until the game ends'
       : (play ? `Play ${c.name}` : `${n} ${c.name}${note}`);
-    const pile = stackEl(n, devIcon(), title, play);
+    const face = devFace(c.name);
+    const pile = stackEl(n, face || devMark(), title, play);
+    if (face) pile.classList.add('faced');
     if (play) pile.classList.add('playable');
     if (fresh) {
       pile.classList.add('fresh');

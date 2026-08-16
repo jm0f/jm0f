@@ -123,6 +123,21 @@ action exists behind it (R-9.11). It carried the `new` badge and offered
 itself as playable next turn, which described a card that does not exist. Its
 pile is inert now and says what it is instead.
 
+**A card in your hand shows its own face**, from `art/dev-*.svg`: the card's
+name, its drawing, and what it is worth. It stood for a while as a ring on a
+blank card, which is a card back, and a card back in your own hand says the one
+thing that is never true of it, that you have not read it. Everywhere the card
+is genuinely unknown it stays a back: the deck in the bank, and the line in the
+log that says somebody bought one.
+
+Three details follow from putting a face on it, and all three are the same
+argument. The pile takes the card's orange, so the whole stack is the card
+rather than a slot with a mark in it. The cards *behind* the front one take a
+shade of that orange, because an edge in the same colour as the face is not an
+edge and two cards looked exactly like three. And the `new` state dashes the
+card's own edge rather than ringing it in the accent, since accent on accent is
+a glow, not a state.
+
 ### Actions
 
 A fixed grid: **roll, buy a development card, trade, end turn.**
@@ -1027,6 +1042,16 @@ One number per card, in the same place: `+1` militia, `+2` roads, `+2`
 resources, `ALL` of one resource, `+1` point. The drawing sits in the same band
 on all five, which was measured rather than eyed: they centre between y 68 and
 70.5 on a 132-unit card.
+
+The two roads on road building are offset **across** the road's own axis rather
+than along it. End to end they read as one long road with a joint in it, which
+is not what `+2` means. They sit close enough together to read as a single mark,
+and the pair is moved symmetrically about its midpoint so tightening the gap
+does not walk the drawing off centre.
+
+`art/dev-cards.py` is where all five come from. The template is the source and
+the SVGs are its output, so a change made to one file rather than to the script
+is undone by the next run.
 
 Needed, and not yet drawn: five resource objects (brick, wood, wool, wheat,
 ore), the robber as a piece rather than a marker, and tokens for the longest

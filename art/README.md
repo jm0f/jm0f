@@ -11,6 +11,7 @@ them. Useful names, though nothing depends on them yet:
 | `hills.svg`, `forest.svg`, `pasture.svg`, `fields.svg`, `mountains.svg`, `desert.svg` | the six terrains, one hex each |
 | `settlement.svg`, `city.svg`, `road.svg`, `robber.svg` | the pieces |
 | `port.svg` | the marker off the coast |
+| `dev-*.svg` | the five development card faces, one per card |
 
 Two things that save a round trip:
 
@@ -52,3 +53,22 @@ geometry rather than drawn once and reused.
 
 So `road.svg` is the specification: proportions, colours, and how the three
 tones fall. The renderer generates the pieces from it.
+
+## The development card faces
+
+`dev-cards.py` writes the five `dev-*.svg` files and is the source they come
+from. Edit the script and re-run it, rather than editing an SVG, or the next run
+puts it back. The five share a template and their drawings are arithmetic on the
+pieces already in this folder, so keeping them in step by hand was the thing
+worth avoiding. It is a tool: nothing in the Rust workspace runs it, and the
+files it writes are what the binary carries.
+
+A card is 100 by 132, which is the shape the dock draws one in, and the drawing
+sits centred at roughly x 50, y 68, between the name at the top and the number
+at the bottom. Text is Audiowide, the wordmark's face, at one weight, because
+that is the only weight there is: asking for a bolder one gets a synthetic
+smear that reads as a second typeface.
+
+The classes inside are `devName`, `devVal`, `devArt` rather than something
+shorter. These files are inlined into the page, where a rule called `.n` is a
+rule aimed at every element on it.

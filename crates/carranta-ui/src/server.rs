@@ -38,13 +38,30 @@ const PHOTOS: [(&str, &[u8]); 6] = [
     ("desert", include_bytes!("../../../art/desert.jpg")),
 ];
 
-const ART: [(&str, &str); 6] = [
+const ART: [(&str, &str); 11] = [
     ("road-30", include_str!("../../../art/road-30.svg")),
     ("road-90", include_str!("../../../art/road-90.svg")),
     ("road-150", include_str!("../../../art/road-150.svg")),
     ("settlement", include_str!("../../../art/settlement.svg")),
     ("city", include_str!("../../../art/city.svg")),
     ("robber", include_str!("../../../art/robber.svg")),
+    // The five development card faces. One per card in `DEV_CARDS`, named for
+    // it, so the page asks for the face of the card it is holding rather than
+    // keeping a table that maps one to the other.
+    ("dev-militia", include_str!("../../../art/dev-militia.svg")),
+    (
+        "dev-victory-point",
+        include_str!("../../../art/dev-victory-point.svg"),
+    ),
+    ("dev-monopoly", include_str!("../../../art/dev-monopoly.svg")),
+    (
+        "dev-road-building",
+        include_str!("../../../art/dev-road-building.svg"),
+    ),
+    (
+        "dev-invention",
+        include_str!("../../../art/dev-invention.svg"),
+    ),
 ];
 
 /// The two typefaces, carried in the binary like everything else.
@@ -447,6 +464,38 @@ mod tests {
             );
             assert!(
                 PAGE.contains(&format!("/sound/{name}.mp3")),
+                "{name} is the name the page asks for"
+            );
+        }
+    }
+
+    #[test]
+    fn every_development_card_has_a_face_the_page_asks_for() {
+        // One face per card in `DEV_CARDS`, named for it. The page fetches them
+        // by name at start-up and there is nowhere else to get them, so a
+        // renamed file is a card with nothing on it and no error anywhere.
+        for card in [
+            "militia",
+            "victory-point",
+            "monopoly",
+            "road-building",
+            "invention",
+        ] {
+            let name = format!("dev-{card}");
+            let (_, svg) = ART
+                .iter()
+                .find(|(n, _)| *n == name)
+                .unwrap_or_else(|| panic!("{name} is served"));
+            assert!(svg.starts_with("<svg"), "{name} is a drawing");
+            // The page inlines these, so a rule inside one is a rule aimed at
+            // the whole document. They style themselves through their own
+            // names and nothing shorter.
+            assert!(
+                svg.contains("class=\"devName\""),
+                "{name} names its classes"
+            );
+            assert!(
+                PAGE.contains(&format!("'{name}'")),
                 "{name} is the name the page asks for"
             );
         }
