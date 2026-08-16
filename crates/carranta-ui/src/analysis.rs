@@ -103,9 +103,52 @@ impl Movement {
     }
 }
 
+/// Where a seat's points came from (R-11.3).
+///
+/// The five things that score and nothing else: settlements one each, cities
+/// two, the two tiles two apiece, and a victory point card one. Roads score
+/// nothing and neither does a militia played, however many of either there are.
+///
+/// Read off the final position rather than counted from what was built, which
+/// is a different number: a settlement upgraded to a city stopped being a
+/// settlement, and was still built.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Points {
+    pub settlements: u32,
+    pub cities: u32,
+    pub cards: u32,
+    pub longest_road: u32,
+    pub largest_militia: u32,
+}
+
+impl Points {
+    /// What they add to, which has to be the seat's true total.
+    pub fn total(&self) -> u32 {
+        self.settlements + self.cities + self.cards + self.longest_road + self.largest_militia
+    }
+}
+
+/// Break the final position into what scored, seat by seat.
+fn points_of(state: &carranta_core::state::State, seats: usize) -> [Points; MAX_PLAYERS] {
+    use carranta_core::state::DevCard;
+    let mut out = [Points::default(); MAX_PLAYERS];
+    for (p, slot) in out.iter_mut().enumerate().take(seats) {
+        *slot = Points {
+            settlements: state.settlements[p].count_ones(),
+            cities: 2 * state.cities[p].count_ones(),
+            cards: state.dev_held[p][DevCard::VictoryPoint as usize] as u32,
+            longest_road: if state.longest_road == Some(p as u8) { 2 } else { 0 },
+            largest_militia: if state.largest_militia == Some(p as u8) { 2 } else { 0 },
+        };
+    }
+    out
+}
+
 /// Everything the analytics page says about one game.
 pub struct Study {
     pub report: Report,
+    /// Where each seat's points came from, off the final position.
+    pub points: [Points; MAX_PLAYERS],
     pub production: production::Report,
     pub dice: dice::GameDice,
     /// Where this game's dice sit against every other game recorded here, as a
@@ -135,6 +178,7 @@ const SIMS: u32 = 10_000;
 pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let log = to_log(saved)?;
     let report = game::analyse(&log).ok()?;
+    let points = points_of(&log.replay().ok()?, report.players as usize);
     let production = production::analyse(&log).ok()?;
     let rolls = dice::rolls(&log);
     let this = dice::analyse_game(&rolls, SIMS, saved.seed);
@@ -191,6 +235,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
 
     Some(Study {
         report,
+        points,
         production,
         dice: this,
         dice_percentile,
@@ -298,6 +343,58 @@ mod tests {
         // believe the number, and it counts the games before this one.
         assert_eq!(study.movement[0].unwrap().games, 2);
         assert_eq!(study.corpus_games, 3);
+    }
+
+    #[test]
+    fn what_scored_adds_up_to_the_score() {
+        // The whole claim the result table makes. If these ever disagree, the
+        // page is showing a decomposition of something else.
+        for seed in 0..10u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            for seat in 0..s.report.players as usize {
+                assert_eq!(
+                    s.points[seat].total(),
+                    s.report.vp[seat],
+                    "seed {seed}, seat {seat}: {:?}",
+                    s.points[seat]
+                );
+            }
+            // And exactly one seat holds each tile, or nobody does.
+            let with = |f: fn(&Points) -> u32| {
+                (0..s.report.players as usize)
+                    .filter(|&i| f(&s.points[i]) > 0)
+                    .count()
+            };
+            assert!(with(|p| p.longest_road) <= 1, "one longest road at most");
+            assert!(with(|p| p.largest_militia) <= 1, "one largest militia at most");
+        }
+    }
+
+    #[test]
+    fn a_settlement_upgraded_is_not_a_settlement_any_more() {
+        // Why the breakdown is read off the final position: the built count
+        // keeps a settlement that has been a city for eighty turns, and scoring
+        // it would put the table's arithmetic out by one per upgrade.
+        let mut found = false;
+        for seed in 0..10u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            for seat in 0..s.report.players as usize {
+                let built = s.report.builds[seat].settlements;
+                let standing = s.points[seat].settlements;
+                let cities = s.points[seat].cities / 2;
+                if cities > 0 {
+                    found = true;
+                    assert_eq!(
+                        standing + cities,
+                        built,
+                        "seed {seed}, seat {seat}: every city was a settlement first"
+                    );
+                }
+            }
+        }
+        assert!(found, "some game in the range built a city");
     }
 
     #[test]

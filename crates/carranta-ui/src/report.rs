@@ -98,6 +98,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
 
     // ---- the result ---------------------------------------------------------
+    // The five things that score (R-11.3), as the points they scored, so the
+    // row adds across to the total beside it.
     b.push_str("<section><h2>The result</h2><table><thead>");
     b.push_str(&row(
         &[
@@ -105,11 +107,15 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             "points".into(),
             "settlements".into(),
             "cities".into(),
-            "roads".into(),
+            "victory cards".into(),
+            "longest road".into(),
+            "largest militia".into(),
         ],
         true,
     ));
     b.push_str("</thead><tbody>");
+    // A zero in a column of scores is nothing rather than a number to read.
+    let some = |v: u32| if v == 0 { "&middot;".to_string() } else { v.to_string() };
     for s in 0..seats {
         let win = r.winner == Some(s as u8);
         let name = if win {
@@ -117,21 +123,30 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         } else {
             esc(&who[s])
         };
+        let p = study.points[s];
         b.push_str(&row(
             &[
                 name,
-                r.vp[s].to_string(),
-                r.builds[s].settlements.to_string(),
-                r.builds[s].cities.to_string(),
-                r.builds[s].roads.to_string(),
+                format!("<strong>{}</strong>", r.vp[s]),
+                some(p.settlements),
+                some(p.cities),
+                some(p.cards),
+                some(p.longest_road),
+                some(p.largest_militia),
             ],
             false,
         ));
     }
     b.push_str("</tbody></table>");
     b.push_str(
-        "<p class=\"note\">Points are the true total, hidden cards included \
-         (R-11.3), which is not what the table could see while it was playing.</p></section>",
+        "<p class=\"note\">Points, not pieces: a settlement scores one and a \
+         city two, each tile two, each victory point card one, and a road \
+         nothing however many there are (R-11.3). So the columns add across to \
+         the total. They are counted off the final position rather than off \
+         what was built, which is a different number: a settlement upgraded to \
+         a city stopped being a settlement and was still built. The total is the \
+         true one, hidden cards included, which is not what the table could see \
+         while it was playing.</p></section>",
     );
 
     // ---- ratings ------------------------------------------------------------
@@ -518,6 +533,11 @@ mod tests {
             assert!(html.contains(name), "{name} is on the page");
         }
         assert!(html.contains(&format!("/{}/", history[1].id)));
+        // The result table is a decomposition of the score, so it names the
+        // five things that score and not the things that do not.
+        assert!(html.contains("victory cards"));
+        assert!(html.contains("largest militia"));
+        assert!(!html.contains(">roads<"), "roads score nothing (R-11.3)");
         // The sections that were asked for, by their headings.
         for heading in [
             "The result",
