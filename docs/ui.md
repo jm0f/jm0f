@@ -421,6 +421,14 @@ at the table yet and there is no line for a cue to hang on, so they are the one
 exception to sounds being played off the log (§7a). A card you pick up should
 sound like the cards that get dealt to you.
 
+**The recipient sits against the words it belongs to**, beside *you offer*
+rather than pushed to the far end of the caption, where it read as an unrelated
+control that happened to share a line. The select is drawn by the page and not
+by the platform: the colours and the border were being set while the browser
+still painted its own control over the top, a grey ramp and a pair of stacked
+chevrons, which made the one select on the screen the one thing that looked like
+it came from another program.
+
 **The two trays are one pair and sit at the same height.** The ask side carries
 a row of five beneath it and the offer side does not, so the offer side is given
 that row back as an invisible copy of it. A calculated height was two pixels
