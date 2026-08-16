@@ -978,13 +978,19 @@ seat whenever anything happens, but the turn's own clock restarts only when the
 turn changes hands. Getting this wrong made a clock roll for the player and
 then hand them a fresh minute for it.
 
-### The panel holds two clocks
+### Two clocks, two panels
 
-Split down the middle: **the turn on the left, the whole game on the right**,
-each with its caption underneath. Two different questions, "how long have I
-got" and "how long has this taken", and one figure cannot mean both.
+**The turn on the left, the whole game on the right**, each with its caption
+underneath. Two different questions, "how long have I got" and "how long has
+this taken", and one figure cannot mean both.
 
-The turn is the accent, because the accent in this panel means *this is running
+**Two panels rather than one panel split by a rule.** They were halves of a
+single card for a while, divided by the hairline the bank uses to fence off its
+development deck. That line says "these are two parts of one reading", which is
+what it means in the bank and not what it means here. Equal widths, in the same
+row, the same gap apart as every other pair of panels in that column.
+
+The turn is the accent, because the accent on a clock means *this is running
 out*. The game's own time is the same clock in the text's colour: it is not
 something to act on, and two accents would say "running out" twice when only one
 of them is true.
@@ -992,8 +998,8 @@ of them is true.
 Both count on the same second, so they can never disagree by a tick.
 
 **An untimed game shows one clock, not two.** With no turn allowance the left
-half is already counting the game up, and the same second printed twice reads as
-two clocks that happen to agree.
+panel is already counting the game up, and the same second printed twice reads
+as two clocks that happen to agree. The one that is left takes the full width.
 
 ---
 
