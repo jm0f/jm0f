@@ -1451,13 +1451,16 @@ is paired with an effect size.
   game in order and reading the pool either side of this one: a rating is a
   function of everything before it, so what a result did cannot be worked out
   from the result alone.
-- **The dice**, as a roll histogram against the theoretical one and a KL
-  divergence in bits, then placed against every other game recorded here as a
-  percentile. **No p-value**, deliberately (§10.1): across enough games one in
-  twenty clears p<0.05 by construction, and those are precisely the games
-  somebody screenshots as proof of rigging. Until there is a second game the
-  percentile is withheld and says so, because a percentile of one game is not a
-  percentile.
+- **Dice**, as a chart of what was rolled with the fair-pair expectation marked
+  across each bar, over a table of both figures. The chart is a row of that same
+  table, so a bar and its column are aligned by the table rather than by a
+  number kept in step by hand, and bars and marks share one axis, the tallest of
+  either. Beneath it, the deviation as a KL divergence in bits, the percentile
+  against every other finished game here, and how many games that was. **No
+  p-value**, deliberately (§10.1): across enough games one in twenty clears
+  p<0.05 by construction, and those are precisely the games somebody screenshots
+  as proof of rigging. Until there is a second game the percentile is blank and
+  the column says why, because a percentile of one game is not a percentile.
 - **What the board paid**, decomposed (§10.2): expected production, what the
   robber cost, what the supply denied, and the dice term, which is the only
   genuinely random one. The dice term is also given in standard deviations,

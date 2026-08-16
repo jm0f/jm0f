@@ -417,7 +417,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     let total: u32 = r.rolls.iter().sum();
     b.push_str("<section>");
     b.push_str(&card_head(
-        "The dice",
+        "Dice",
         "No p-value, deliberately (§10.1). Across enough games one in twenty \
          clears p<0.05 by construction, and those are precisely the games \
          somebody screenshots as proof of rigging. The percentile carries the \
@@ -426,27 +426,48 @@ pub fn page(saved: &Saved, study: &Study) -> String {
          not a percentile. Whether the generator itself is fair is a different \
          question asked of millions of pooled rolls, never of one game.",
     ));
+    // What a fair pair owes each number, at this many rolls.
+    let expect = |n: u32| total as f64 * (6 - (n as i32 - 7).abs()) as f64 / 36.0;
     b.push_str("<div class=\"tw\"><table class=\"rolls\"><thead>");
-    let mut heads = vec![("", "")];
+    // The rolls as bars, with the fair-dice expectation marked across them.
+    //
+    // Drawn as a row of the table rather than as a chart above it, so the
+    // alignment between a bar and its column is the table's own and cannot come
+    // apart: eleven columns lined up by hand would need lining up again every
+    // time a padding changed.
+    //
+    // Both scaled to the tallest thing either of them reaches, so the bars and
+    // the marks are on one axis. Without that the marks would sit at heights
+    // that mean nothing next to the bars.
+    let tallest = (2..=12u32)
+        .map(|n| expect(n).max(f64::from(r.rolls[n as usize - 2])))
+        .fold(0.0, f64::max);
+    if tallest > 0.0 {
+        b.push_str("<tr class=\"chart\"><td></td>");
+        for n in 2..=12u32 {
+            let got = r.rolls[n as usize - 2];
+            let _ = write!(
+                b,
+                "<td><div class=\"col\" title=\"{n}: rolled {got}, expected {e}\">\
+                 <div class=\"stem\" style=\"height:{h:.1}%\"></div>\
+                 <div class=\"owed\" style=\"bottom:{m:.1}%\"></div></div></td>",
+                e = n1(expect(n)),
+                h = 100.0 * f64::from(got) / tallest,
+                m = 100.0 * expect(n) / tallest,
+            );
+        }
+        b.push_str("</tr>");
+    }
     let labels: Vec<String> = (2..=12).map(|n: u32| n.to_string()).collect();
+    let mut heads = vec![("", "")];
     heads.extend(labels.iter().map(|s| (s.as_str(), "")));
-    heads.push((
-        "total",
-        "Every roll in the game. The two rows have to add to the same number: \
-         one is how the rolls fell and the other is how they should have.",
-    ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
     let mut actual = vec!["rolled".to_string()];
     actual.extend(r.rolls.iter().map(u32::to_string));
-    actual.push(format!("<strong>{total}</strong>"));
     b.push_str(&row(&actual, false));
     let mut expected = vec!["expected".to_string()];
-    for n in 2..=12u32 {
-        let ways = 6 - (n as i32 - 7).abs();
-        expected.push(n1(total as f64 * ways as f64 / 36.0));
-    }
-    expected.push(format!("<strong>{}</strong>", n1(total as f64)));
+    expected.extend((2..=12u32).map(|n| n1(expect(n))));
     b.push_str(&row(&expected, false));
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
@@ -962,6 +983,18 @@ tbody tr { transition: background .12s ease; }
 tbody tr:hover { background: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
 .rolls th, .rolls td { padding: .7em .45em; }
+
+/* ---- the roll chart ----
+   A row of the table, so a bar and its column are aligned by the table rather
+   than by a number kept in step by hand. Bars are what was rolled; the mark
+   across each is what a fair pair owed it. Both on one axis, the tallest of
+   either. */
+.chart td { padding: .9em .45em .35em; vertical-align: bottom; border-bottom: 0; }
+.col { position: relative; height: 84px; display: flex; align-items: flex-end; }
+.stem { width: 100%; min-height: 1px; background: var(--muted-foreground);
+        border-radius: 3px 3px 0 0; }
+.owed { position: absolute; left: -3px; right: -3px; height: 2px;
+        margin-bottom: -1px; background: var(--primary); border-radius: 1px; }
 /* Anything that explains itself on hover says so, quietly. */
 thead th[title], .card-head h2[title] { cursor: help;
                   text-decoration: underline dotted #BFAF9C;
@@ -1058,7 +1091,7 @@ mod tests {
             "Result",
             "Turns",
             "Ratings",
-            "The dice",
+            "Dice",
             "What the board paid",
             "The robber",
             "The market",
@@ -1145,6 +1178,45 @@ mod tests {
         // Including the corpus card, where the rows are seats rather than
         // people, and they are the same seats.
         assert!(html.contains("<span class=\"dot s0\"></span>seat 0"));
+    }
+
+    #[test]
+    fn the_rolls_are_drawn_against_what_was_owed() {
+        let g = played(3);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        let r = &s.report;
+        // A bar and a mark for each of the eleven numbers, and no total column
+        // on the table under them.
+        assert_eq!(html.matches("class=\"stem\"").count(), 11);
+        // `owed`, not `mark`: `.mark` is the header wordmark, and a second rule
+        // of that name was quietly absolutely-positioning it.
+        assert_eq!(html.matches("class=\"owed\"").count(), 11);
+        assert_eq!(html.matches("class=\"mark\"").count(), 1, "the wordmark");
+        assert!(!html.contains(">total<"));
+        // Both scaled to the same axis, so the tallest thing on it is full
+        // height and everything else is its true fraction of that.
+        let total: u32 = r.rolls.iter().sum();
+        let expect = |n: u32| total as f64 * (6 - (n as i32 - 7).abs()) as f64 / 36.0;
+        let tallest = (2..=12u32)
+            .map(|n| expect(n).max(f64::from(r.rolls[n as usize - 2])))
+            .fold(0.0, f64::max);
+        assert!(tallest > 0.0);
+        assert!(
+            html.contains("height:100.0%"),
+            "the tallest bar or mark is full"
+        );
+        for n in 2..=12u32 {
+            let got = f64::from(r.rolls[n as usize - 2]);
+            assert!(
+                html.contains(&format!("height:{:.1}%", 100.0 * got / tallest)),
+                "{n} is drawn at its true height"
+            );
+            assert!(
+                html.contains(&format!("bottom:{:.1}%", 100.0 * expect(n) / tallest)),
+                "{n}'s mark sits at what a fair pair owed it"
+            );
+        }
     }
 
     #[test]
