@@ -257,8 +257,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("<section>");
     b.push_str(&card_head(
         "The result",
-        "Where every point came from, read off the final position. Hover a \
-         column for the rule behind it.",
+        "Where every point came from, read off the final position.",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -277,9 +276,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ),
         ("cities", "Cities at the end, two points each."),
         (
-            "victory cards",
+            "victory points",
             "Victory point cards held. One point each, never played, and hidden \
-             until the game ends (R-9.11).",
+             until the game ends (R-9.11). Not the score beside it: that is \
+             every point from every source, this is the cards alone.",
         ),
         (
             "longest road",
@@ -841,7 +841,7 @@ mod tests {
         assert!(html.contains(&format!("/{}/", history[1].id)));
         // The result table is a decomposition of the score, so it names the
         // five things that score and not the things that do not.
-        assert!(html.contains("victory cards"));
+        assert!(html.contains("victory points"));
         assert!(html.contains("largest militia"));
         assert!(!html.contains(">roads<"), "roads score nothing (R-11.3)");
         // The sections that were asked for, by their headings.
