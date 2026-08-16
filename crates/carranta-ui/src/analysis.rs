@@ -39,7 +39,11 @@ pub fn seat_player(seat: usize) -> u64 {
 pub fn seat_name(seat: usize, human: &str) -> String {
     if seat == 0 {
         let name = human.trim();
-        if name.is_empty() { "you".to_string() } else { name.to_string() }
+        if name.is_empty() {
+            "you".to_string()
+        } else {
+            name.to_string()
+        }
     } else {
         BOT_NAMES[seat.min(BOT_NAMES.len() - 1)].to_string()
     }
@@ -80,10 +84,9 @@ pub fn to_log(saved: &Saved) -> Option<Log> {
 /// Folded rather than parsed, since nothing reads it back: it exists so two
 /// games in one corpus are two games.
 fn game_number(id: &str) -> u64 {
-    id.bytes()
-        .fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
-            (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
-        })
+    id.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// What a seat's rating did across one game.
@@ -114,17 +117,52 @@ impl Movement {
 /// settlement, and was still built.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Points {
-    pub settlements: u32,
-    pub cities: u32,
-    pub cards: u32,
-    pub longest_road: u32,
-    pub largest_militia: u32,
+    pub settlements: Scored,
+    pub cities: Scored,
+    pub cards: Scored,
+    pub longest_road: Scored,
+    pub largest_militia: Scored,
+}
+
+/// One of the five, as how many and as what they were worth.
+///
+/// Both, because they are different numbers and the page wants each: three
+/// cities is three things and six points, and printing either alone loses the
+/// other.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Scored {
+    /// How many stood at the end. One or nought for the two tiles, which are
+    /// held rather than counted.
+    pub held: u32,
+    /// What those were worth.
+    pub points: u32,
+}
+
+impl Scored {
+    /// `held` of a thing worth `each`.
+    fn each(held: u32, each: u32) -> Self {
+        Scored {
+            held,
+            points: held * each,
+        }
+    }
 }
 
 impl Points {
+    /// The five, in the order the result table reads them.
+    pub fn parts(&self) -> [Scored; 5] {
+        [
+            self.settlements,
+            self.cities,
+            self.cards,
+            self.longest_road,
+            self.largest_militia,
+        ]
+    }
+
     /// What they add to, which has to be the seat's true total.
     pub fn total(&self) -> u32 {
-        self.settlements + self.cities + self.cards + self.longest_road + self.largest_militia
+        self.parts().iter().map(|s| s.points).sum()
     }
 }
 
@@ -134,12 +172,64 @@ fn points_of(state: &carranta_core::state::State, seats: usize) -> [Points; MAX_
     let mut out = [Points::default(); MAX_PLAYERS];
     for (p, slot) in out.iter_mut().enumerate().take(seats) {
         *slot = Points {
-            settlements: state.settlements[p].count_ones(),
-            cities: 2 * state.cities[p].count_ones(),
-            cards: state.dev_held[p][DevCard::VictoryPoint as usize] as u32,
-            longest_road: if state.longest_road == Some(p as u8) { 2 } else { 0 },
-            largest_militia: if state.largest_militia == Some(p as u8) { 2 } else { 0 },
+            settlements: Scored::each(state.settlements[p].count_ones(), 1),
+            cities: Scored::each(state.cities[p].count_ones(), 2),
+            cards: Scored::each(state.dev_held[p][DevCard::VictoryPoint as usize] as u32, 1),
+            longest_road: Scored::each((state.longest_road == Some(p as u8)) as u32, 2),
+            largest_militia: Scored::each((state.largest_militia == Some(p as u8)) as u32, 2),
         };
+    }
+    out
+}
+
+/// One turn of the game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Turn {
+    /// Whose turn it was.
+    pub seat: usize,
+    /// Decisions taken while it was theirs, everybody's included: a discard, an
+    /// accepted offer and a robbery all happen inside somebody's turn, and the
+    /// length of a turn is how much happened in it.
+    pub actions: u32,
+}
+
+/// Cut a game into its turns.
+///
+/// A turn is what falls between two `EndTurn`s, and the setup placements are
+/// not one: they are dealt before anybody has a turn to take, so counting them
+/// would hand the first seat a turn several times the size of any other.
+///
+/// Length is measured in decisions rather than in seconds. A saved game is a
+/// seed and a list of moves (see `store`), which is everything needed to
+/// rebuild the position and nothing about when it was made, so wall-clock
+/// duration is not in the record to read.
+fn turns_of(log: &Log) -> Vec<Turn> {
+    use carranta_core::action::Action;
+    use carranta_core::state::Phase;
+    use carranta_record::Payload;
+
+    let mut state = *log.created.opening;
+    let mut out = Vec::new();
+    let mut actions = 0u32;
+    let mut playing = false;
+    for event in &log.events {
+        let Payload::Decision { action, resolved } = event.payload else {
+            continue;
+        };
+        let seat = state.to_act as usize;
+        if state.apply_scripted(action, resolved).is_err() {
+            break;
+        }
+        if playing {
+            actions += 1;
+            if action == Action::EndTurn {
+                out.push(Turn { seat, actions });
+                actions = 0;
+            }
+        }
+        // Setup ends the first time play reaches a pre-roll phase, which is the
+        // same line `game::analyse` draws.
+        playing |= matches!(state.phase, Phase::PreRoll);
     }
     out
 }
@@ -149,6 +239,8 @@ pub struct Study {
     pub report: Report,
     /// Where each seat's points came from, off the final position.
     pub points: [Points; MAX_PLAYERS],
+    /// The game turn by turn, in the order they were taken.
+    pub turns: Vec<Turn>,
     pub production: production::Report,
     pub dice: dice::GameDice,
     /// Where this game's dice sit against every other game recorded here, as a
@@ -179,6 +271,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let log = to_log(saved)?;
     let report = game::analyse(&log).ok()?;
     let points = points_of(&log.replay().ok()?, report.players as usize);
+    let turns = turns_of(&log);
     let production = production::analyse(&log).ok()?;
     let rolls = dice::rolls(&log);
     let this = dice::analyse_game(&rolls, SIMS, saved.seed);
@@ -200,9 +293,8 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     // Out of a hundred, not out of one. `deviation_percentile` answers with a
     // share, which read as "these dice deviated more than 1% of games" on a
     // page where it meant all of them.
-    let dice_percentile = (!deviations.is_empty()).then(|| {
-        dice::Corpus::from_games(deviations).deviation_percentile(this.kl_bits) * 100.0
-    });
+    let dice_percentile = (!deviations.is_empty())
+        .then(|| dice::Corpus::from_games(deviations).deviation_percentile(this.kl_bits) * 100.0);
     let seat_wins = (others > 0).then(|| games.seat_win_rate());
 
     // Ratings, in the order the games were played, stopping either side of this
@@ -236,6 +328,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     Some(Study {
         report,
         points,
+        turns,
         production,
         dice: this,
         dice_percentile,
@@ -311,7 +404,10 @@ mod tests {
             assert_eq!(counted, declines, "seed {seed}");
             refused += declines;
         }
-        assert!(refused > 0, "some game in the range had an offer turned down");
+        assert!(
+            refused > 0,
+            "some game in the range had an offer turned down"
+        );
     }
 
     #[test]
@@ -330,10 +426,7 @@ mod tests {
         assert!(deltas.iter().any(|d| *d > 0.0), "somebody gained");
         assert!(deltas.iter().any(|d| *d < 0.0), "somebody lost");
         if let Some(w) = study.report.winner {
-            let best = deltas
-                .iter()
-                .cloned()
-                .fold(f64::NEG_INFINITY, f64::max);
+            let best = deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             assert!(
                 (deltas[w as usize] - best).abs() < 1e-9,
                 "the winner gains the most"
@@ -361,13 +454,16 @@ mod tests {
                 );
             }
             // And exactly one seat holds each tile, or nobody does.
-            let with = |f: fn(&Points) -> u32| {
+            let with = |f: fn(&Points) -> Scored| {
                 (0..s.report.players as usize)
-                    .filter(|&i| f(&s.points[i]) > 0)
+                    .filter(|&i| f(&s.points[i]).held > 0)
                     .count()
             };
             assert!(with(|p| p.longest_road) <= 1, "one longest road at most");
-            assert!(with(|p| p.largest_militia) <= 1, "one largest militia at most");
+            assert!(
+                with(|p| p.largest_militia) <= 1,
+                "one largest militia at most"
+            );
         }
     }
 
@@ -382,8 +478,8 @@ mod tests {
             let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
             for seat in 0..s.report.players as usize {
                 let built = s.report.builds[seat].settlements;
-                let standing = s.points[seat].settlements;
-                let cities = s.points[seat].cities / 2;
+                let standing = s.points[seat].settlements.held;
+                let cities = s.points[seat].cities.held;
                 if cities > 0 {
                     found = true;
                     assert_eq!(
@@ -398,6 +494,35 @@ mod tests {
     }
 
     #[test]
+    fn the_turns_are_the_game_after_the_setup() {
+        for seed in 0..6u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            let seats = s.report.players as usize;
+            // One turn per `EndTurn`, which is what the report counts as well.
+            assert_eq!(s.turns.len() as u32, s.report.turns, "seed {seed}");
+            let total: u32 = s.turns.iter().map(|t| t.actions).sum();
+            // Every action in a turn is an action in the game, and the setup
+            // placements are the ones left over.
+            assert!(total > 0 && total < s.report.actions, "seed {seed}");
+            for t in &s.turns {
+                assert!(t.seat < seats, "seed {seed}: a turn belongs to a seat");
+                // A turn contains at least its own end.
+                assert!(t.actions > 0, "seed {seed}: no empty turns");
+            }
+            // And play goes round the table, which is what makes a bar of them
+            // readable as a sequence rather than a heap.
+            for pair in s.turns.windows(2) {
+                assert_eq!(
+                    pair[1].seat,
+                    (pair[0].seat + 1) % seats,
+                    "seed {seed}: turns go round in seat order"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_order_games_were_played_in_is_the_order_they_are_rated_in() {
         // A rating is a function of every game before it, so the history's
         // order is load-bearing rather than cosmetic. Read at the end of the
@@ -405,7 +530,11 @@ mod tests {
         let history: Vec<Saved> = (30..34u64).map(played).collect();
         let first = study(&history[0], &history).expect("it studies");
         let last = study(&history[3], &history).expect("it studies");
-        assert_eq!(first.movement[0].unwrap().games, 0, "nothing before the first");
+        assert_eq!(
+            first.movement[0].unwrap().games,
+            0,
+            "nothing before the first"
+        );
         assert_eq!(last.movement[0].unwrap().games, 3, "three before the last");
         // And the belief narrows as the games accumulate, which is the whole
         // reason the count is printed beside the figure.
@@ -450,6 +579,9 @@ mod tests {
         let history: Vec<Saved> = (11..14u64).map(played).collect();
         let among = study(&history[0], &history).expect("it studies");
         let p = among.dice_percentile.expect("with others there is one");
-        assert!((0.0..=100.0).contains(&p), "a percentile is a percentile: {p}");
+        assert!(
+            (0.0..=100.0).contains(&p),
+            "a percentile is a percentile: {p}"
+        );
     }
 }

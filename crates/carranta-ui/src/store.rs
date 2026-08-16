@@ -67,10 +67,13 @@ pub fn game_id(mut n: u64) -> String {
 /// URL, and a URL is somebody else's text until it has been looked at.
 pub fn is_game_id(s: &str) -> bool {
     s.len() == 14
-        && s.as_bytes()
-            .iter()
-            .enumerate()
-            .all(|(i, c)| if i % 5 == 4 { *c == b'-' } else { c.is_ascii_alphanumeric() })
+        && s.as_bytes().iter().enumerate().all(|(i, c)| {
+            if i % 5 == 4 {
+                *c == b'-'
+            } else {
+                c.is_ascii_alphanumeric()
+            }
+        })
 }
 
 fn res_code(r: Resource) -> char {
@@ -84,7 +87,10 @@ fn res_code(r: Resource) -> char {
 }
 
 fn res_of(c: &str) -> Option<Resource> {
-    RESOURCES.iter().copied().find(|r| res_code(*r).to_string() == c)
+    RESOURCES
+        .iter()
+        .copied()
+        .find(|r| res_code(*r).to_string() == c)
 }
 
 fn seat_code(v: Option<u8>) -> String {
@@ -119,7 +125,12 @@ fn step_of(line: &str) -> Option<Step> {
 
 /// One move, as a line.
 fn move_line(a: &Action) -> String {
-    let five = |v: &[u8; 5]| v.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
+    let five = |v: &[u8; 5]| {
+        v.iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     match *a {
         Action::PlaceSettlement(v) => format!("ps {v}"),
         Action::PlaceRoad(e) => format!("pr {e}"),
@@ -137,12 +148,9 @@ fn move_line(a: &Action) -> String {
         Action::PlayInvention([a, b]) => format!("inv {} {}", res_code(a), res_code(b)),
         Action::PlayMonopoly(r) => format!("mon {}", res_code(r)),
         Action::Trade { give, take } => format!("tr {} {}", res_code(give), res_code(take)),
-        Action::ProposeTrade {
-            by,
-            to,
-            give,
-            want,
-        } => format!("off {by} {} {} {}", seat_code(to), five(&give), five(&want)),
+        Action::ProposeTrade { by, to, give, want } => {
+            format!("off {by} {} {} {}", seat_code(to), five(&give), five(&want))
+        }
         Action::AcceptTrade { offer, by } => format!("acc {offer} {by}"),
         Action::WithdrawTrade { offer, by } => format!("wd {offer} {by}"),
         Action::EndTurn => "end".to_string(),

@@ -62,9 +62,142 @@ fn row(cells: &[String], head: bool) -> String {
     out
 }
 
+/// A head row whose columns carry their own explanation.
+///
+/// The rules behind a column belong on the column rather than in a paragraph
+/// under the table: a reader who wants to know what "cities" counts is looking
+/// at the word "cities", and a reader who does not should not have to scroll
+/// past the answer.
+fn head_row(cells: &[(&str, &str)]) -> String {
+    let mut out = String::from("<tr>");
+    for (label, why) in cells {
+        if why.is_empty() {
+            let _ = write!(out, "<th>{label}</th>");
+        } else {
+            let _ = write!(out, "<th title=\"{}\">{label}</th>", esc(why));
+        }
+    }
+    out.push_str("</tr>");
+    out
+}
+
+/// One scoring column: how many, and what they were worth.
+///
+/// Nought is a dot, since a zero in a column of scores is nothing rather than a
+/// number to read.
+fn scored(s: crate::analysis::Scored) -> String {
+    if s.held == 0 {
+        "&middot;".to_string()
+    } else {
+        format!("{} <span class=\"worth\">({})</span>", s.held, s.points)
+    }
+}
+
 /// Everybody at the table, in seat order, named.
 fn names(saved: &Saved, seats: usize) -> Vec<String> {
     (0..seats).map(|s| seat_name(s, &saved.name)).collect()
+}
+
+/// The game as one bar: a segment per turn, sized by what happened in it and
+/// coloured by whose it was.
+///
+/// The bar is always the full width, so it says nothing about how long the game
+/// took and everything about how it was divided. A turn that reads twice as
+/// wide as its neighbour had twice as much in it.
+fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
+    let mut b = String::from("<section><h2>The turns</h2>");
+    let turns = &study.turns;
+    if turns.is_empty() {
+        b.push_str("<p class=\"note\">Nobody finished a turn in this game.</p></section>");
+        return b;
+    }
+
+    let total: u32 = turns.iter().map(|t| t.actions).sum();
+    let (at, longest) = turns
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, t)| t.actions)
+        .expect("there is at least one turn");
+    let _ = write!(
+        b,
+        "<p>{n} turns, {total} moves between them. The busiest was turn {at}, \
+         {name}'s, with {most}.</p>",
+        n = turns.len(),
+        at = at + 1,
+        name = esc(&who[longest.seat]),
+        most = plural(longest.actions, "move"),
+    );
+
+    b.push_str("<div class=\"bar\">");
+    for (i, t) in turns.iter().enumerate() {
+        let _ = write!(
+            b,
+            "<span class=\"seg s{seat}\" style=\"flex-grow:{grow}\" \
+             title=\"Turn {n}, {name}: {moves}\"></span>",
+            seat = t.seat.min(MAX_PLAYERS - 1),
+            grow = t.actions,
+            n = i + 1,
+            name = esc(&who[t.seat]),
+            moves = plural(t.actions, "move"),
+        );
+    }
+    b.push_str("</div>");
+
+    b.push_str("<table><thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        ("turns", "Turns this seat took."),
+        ("moves", "Decisions taken while it was their turn."),
+        (
+            "longest",
+            "The most that happened in any one of their turns.",
+        ),
+        (
+            "share of the bar",
+            "How much of the game's width is theirs, which is their share of \
+             its moves rather than of its turns.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for s in 0..seats {
+        let mine: Vec<&crate::analysis::Turn> = turns.iter().filter(|t| t.seat == s).collect();
+        let moves: u32 = mine.iter().map(|t| t.actions).sum();
+        b.push_str(&row(
+            &[
+                format!("<span class=\"dot s{s}\"></span>{}", esc(&who[s])),
+                mine.len().to_string(),
+                moves.to_string(),
+                mine.iter()
+                    .map(|t| t.actions)
+                    .max()
+                    .unwrap_or(0)
+                    .to_string(),
+                format!("{:.0}%", 100.0 * moves as f64 / total as f64),
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody></table>");
+    b.push_str(
+        "<p class=\"note\">Length is measured in moves, not in seconds: a saved \
+         game is a seed and a list of moves, which is everything needed to \
+         rebuild the position and nothing about when each one was made. A turn \
+         is wide because a lot happened in it, and what happened need not have \
+         been the turn holder's doing, since a discard, a robbery and an \
+         accepted offer all land inside somebody's turn. The setup placements \
+         are not counted: they come before anybody has a turn to \
+         take.</p></section>",
+    );
+    b
+}
+
+/// `1 move`, `4 moves`.
+fn plural(n: u32, thing: &str) -> String {
+    if n == 1 {
+        format!("{n} {thing}")
+    } else {
+        format!("{n} {thing}s")
+    }
 }
 
 pub fn page(saved: &Saved, study: &Study) -> String {
@@ -98,56 +231,59 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
 
     // ---- the result ---------------------------------------------------------
-    // The five things that score (R-11.3), as the points they scored, so the
-    // row adds across to the total beside it.
+    // The five things that score (R-11.3), each as how many were held and, in
+    // brackets, what they were worth. The bracketed figures add across to the
+    // total beside them.
     b.push_str("<section><h2>The result</h2><table><thead>");
-    b.push_str(&row(
-        &[
-            "".into(),
-            "points".into(),
-            "settlements".into(),
-            "cities".into(),
-            "victory cards".into(),
-            "longest road".into(),
-            "largest militia".into(),
-        ],
-        true,
-    ));
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "points",
+            "The true final score, hidden victory point cards included, which is \
+             not what the table could see while it was playing (R-11.3).",
+        ),
+        (
+            "settlements",
+            "Settlements still standing at the end, one point each. A settlement \
+             upgraded to a city stopped being a settlement, so this is fewer \
+             than the number built.",
+        ),
+        ("cities", "Cities at the end, two points each."),
+        (
+            "victory cards",
+            "Victory point cards held. One point each, never played, and hidden \
+             until the game ends (R-9.11).",
+        ),
+        (
+            "longest road",
+            "Whether they held the longest road tile at the end. Two points, and \
+             the roads themselves score nothing however many there are.",
+        ),
+        (
+            "largest militia",
+            "Whether they held the largest militia tile at the end. Two points, \
+             and a militia played scores nothing on its own.",
+        ),
+    ]));
     b.push_str("</thead><tbody>");
-    // A zero in a column of scores is nothing rather than a number to read.
-    let some = |v: u32| if v == 0 { "&middot;".to_string() } else { v.to_string() };
     for s in 0..seats {
         let win = r.winner == Some(s as u8);
         let name = if win {
-            format!("<strong>{}</strong> <span class=\"tag\">won</span>", esc(&who[s]))
+            format!(
+                "<strong>{}</strong> <span class=\"tag\">won</span>",
+                esc(&who[s])
+            )
         } else {
             esc(&who[s])
         };
-        let p = study.points[s];
-        b.push_str(&row(
-            &[
-                name,
-                format!("<strong>{}</strong>", r.vp[s]),
-                some(p.settlements),
-                some(p.cities),
-                some(p.cards),
-                some(p.longest_road),
-                some(p.largest_militia),
-            ],
-            false,
-        ));
+        let mut cells = vec![name, format!("<strong>{}</strong>", r.vp[s])];
+        cells.extend(study.points[s].parts().iter().map(|p| scored(*p)));
+        b.push_str(&row(&cells, false));
     }
-    b.push_str("</tbody></table>");
-    b.push_str(
-        "<p class=\"note\">Points, not pieces: a settlement scores one and a \
-         city two, each tile two, each victory point card one, and a road \
-         nothing however many there are (R-11.3). So the columns add across to \
-         the total. They are counted off the final position rather than off \
-         what was built, which is a different number: a settlement upgraded to \
-         a city stopped being a settlement and was still built. The total is the \
-         true one, hidden cards included, which is not what the table could see \
-         while it was playing.</p></section>",
-    );
+    b.push_str("</tbody></table></section>");
+
+    // ---- the turns ----------------------------------------------------------
+    b.push_str(&turn_bar(study, &who, seats));
 
     // ---- ratings ------------------------------------------------------------
     b.push_str("<section><h2>What it did to the ratings</h2>");
@@ -420,10 +556,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         b.push_str("</thead><tbody>");
         for s in 0..seats.min(MAX_PLAYERS) {
             b.push_str(&row(
-                &[
-                    format!("seat {s}"),
-                    format!("{:.0}%", wins[s] * 100.0),
-                ],
+                &[format!("seat {s}"), format!("{:.0}%", wins[s] * 100.0)],
                 false,
             ));
         }
@@ -448,6 +581,9 @@ const CSS: &str = "
 :root {
   --bg: #F3EDE1; --panel: #FBF7EF; --line: #E2D9C8;
   --ink: #33261B; --dim: #6B5B4C; --accent: #E8542F; --good: #1B5637;
+  /* The seat colours the board plays in, so a bar segment is recognisably
+     the same player who sat there. */
+  --p0: #2CA7BA; --p1: #3C2EB8; --p2: #C065D2; --p3: #C1256B;
 }
 @font-face { font-family: Figtree; src: url('/font/figtree.woff2') format('woff2');
              font-weight: 300 900; font-display: swap; }
@@ -488,6 +624,26 @@ tbody tr:last-child td { border-bottom: 0; }
 .up { color: var(--good); font-weight: 600; }
 .down { color: var(--accent); font-weight: 600; }
 .note { color: var(--dim); font-size: 14px; margin: 1rem 0 0; }
+/* A column that explains itself on hover says so, quietly. */
+thead th[title] { cursor: help; text-decoration: underline dotted #BFAF9C;
+                  text-underline-offset: 4px; }
+/* What a thing was worth, beside how many of it there were. */
+.worth { color: var(--dim); }
+
+/* ---- the turn bar ----
+   Always the full width: every segment grows from a basis of nothing, so the
+   widths are shares of the game and never of a scale the reader cannot see.
+   No gaps between the segments: play goes round the table, so neighbours are
+   never the same colour and a gap would only spend width on nothing. */
+.bar { display: flex; width: 100%; height: 2.4rem;
+       margin: 0 0 1.2rem; border-radius: 8px; overflow: hidden;
+       background: var(--line); }
+.seg { flex: 1 1 0; min-width: 1px; background: var(--dim); }
+.seg:hover { filter: brightness(1.15); }
+.dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%;
+       margin-right: .5em; background: var(--dim); vertical-align: baseline; }
+.s0 { background: var(--p0); } .s1 { background: var(--p1); }
+.s2 { background: var(--p2); } .s3 { background: var(--p3); }
 ";
 
 #[cfg(test)]
@@ -541,6 +697,7 @@ mod tests {
         // The sections that were asked for, by their headings.
         for heading in [
             "The result",
+            "The turns",
             "What it did to the ratings",
             "The dice",
             "What the board paid",
@@ -554,6 +711,52 @@ mod tests {
         // And the thing §10.1 forbids is not on it.
         assert!(!html.contains("p-value ="), "no significance claim");
         assert!(html.contains("bits"), "an effect size instead");
+    }
+
+    #[test]
+    fn a_scoring_column_says_how_many_and_what_they_were_worth() {
+        let g = played(2);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        // Every column of the result table carries its own rule rather than a
+        // paragraph under the table carrying all five.
+        assert!(
+            html.contains("<th title="),
+            "the columns explain themselves"
+        );
+        assert!(!html.contains("Points, not pieces"), "and the note is gone");
+        // A city held reads as the count with its two points in brackets.
+        let cities = s.points[..s.report.players as usize]
+            .iter()
+            .map(|p| p.cities)
+            .find(|c| c.held > 0)
+            .expect("somebody built a city");
+        assert_eq!(cities.points, cities.held * 2);
+        assert!(
+            html.contains(&format!(
+                "{} <span class=\"worth\">({})</span>",
+                cities.held, cities.points
+            )),
+            "the count, then what it was worth"
+        );
+        assert_eq!(scored(crate::analysis::Scored::default()), "&middot;");
+    }
+
+    #[test]
+    fn the_bar_is_one_segment_per_turn() {
+        let g = played(4);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        assert_eq!(
+            html.matches("class=\"seg s").count(),
+            s.turns.len(),
+            "a segment for every turn and no more"
+        );
+        // Sized by what happened, not by an axis the reader cannot see.
+        for t in &s.turns {
+            assert!(html.contains(&format!("flex-grow:{}", t.actions)));
+        }
+        assert!(html.contains("not in seconds"), "it says what it measures");
     }
 
     #[test]

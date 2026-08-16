@@ -1326,13 +1326,28 @@ n makes p-values invalid, large n makes them uninformative**, so every figure
 is paired with an effect size.
 
 - **The result**, broken into what scored. The five things that do (R-11.3),
-  as the points they scored rather than as pieces, so the row adds across to
-  the total: a settlement one, a city two, each tile two, each victory point
-  card one, and a road nothing however many there are. Counted off the final
-  position rather than off what was built, which is a different number, since a
-  settlement upgraded to a city stopped being a settlement and was still built.
-  The total is the true one, hidden cards included, which is not what the table
-  could see while it was playing.
+  each as how many were held with what they were worth in brackets, so the
+  bracketed figures add across to the total: a settlement one, a city two, each
+  tile two, each victory point card one, and a road nothing however many there
+  are. Counted off the final position rather than off what was built, which is
+  a different number, since a settlement upgraded to a city stopped being a
+  settlement and was still built. The total is the true one, hidden cards
+  included, which is not what the table could see while it was playing. The
+  rule behind each column is on the column, as a tooltip, rather than in a
+  paragraph under the table: a reader who wants to know what "cities" counts is
+  looking at the word "cities", and a reader who does not should not have to
+  scroll past the answer.
+- **The turns**, as one bar across the full width, a segment per turn, sized by
+  what happened in it and coloured by whose it was. The bar is always full, so
+  it says nothing about how long the game took and everything about how it was
+  divided; a turn twice as wide as its neighbour had twice as much in it. There
+  are no gaps between segments because play goes round the table, so no two
+  neighbours share a colour. **Length is in moves, not seconds**: a saved game
+  is a seed and a list of moves, which is everything needed to rebuild the
+  position and nothing about when each one was made. A turn counts everything
+  that landed inside it, the turn holder's or not, since a discard, a robbery
+  and an accepted offer all happen in somebody's turn. Setup placements are not
+  counted: they come before anybody has a turn to take.
 - **What it did to the ratings**, which is the section this page exists for.
   Before, after, and the change, per seat. A Weng-Lin Plackett-Luce update over
   the whole finishing order rather than just the winner (A-1). The figure shown

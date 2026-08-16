@@ -15,8 +15,8 @@ use carranta_core::state::TradeMode;
 use carranta_core::action::Illegal;
 
 use crate::game::{Clock, DEFAULT_DISCARD_SECS, Pace, Refused, Session};
-use crate::store::{Saved, Store, game_id, is_game_id};
 use crate::json;
+use crate::store::{Saved, Store, game_id, is_game_id};
 use crate::view;
 
 const PAGE: &str = include_str!("../assets/index.html");
@@ -54,7 +54,10 @@ const ART: [(&str, &str); 13] = [
         "dev-victory-point",
         include_str!("../../../art/dev-victory-point.svg"),
     ),
-    ("dev-monopoly", include_str!("../../../art/dev-monopoly.svg")),
+    (
+        "dev-monopoly",
+        include_str!("../../../art/dev-monopoly.svg"),
+    ),
     (
         "dev-road-building",
         include_str!("../../../art/dev-road-building.svg"),
@@ -583,7 +586,14 @@ fn split_game(path: &str) -> (Option<String>, &str) {
     if !is_game_id(head) {
         return (None, path);
     }
-    (Some(head.to_string()), if tail.is_empty() { "/" } else { &path[head.len() + 1..] })
+    (
+        Some(head.to_string()),
+        if tail.is_empty() {
+            "/"
+        } else {
+            &path[head.len() + 1..]
+        },
+    )
 }
 
 /// Send somebody somewhere else.

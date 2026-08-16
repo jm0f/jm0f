@@ -3294,14 +3294,19 @@ mod tests {
                     .position(|c| *c == Choice::Play(Action::PlayMilitia))
                 {
                     let v = s.version();
-                    s.act(i, v).expect("a militia offered is a militia playable");
+                    s.act(i, v)
+                        .expect("a militia offered is a militia playable");
                     found = Some(s);
                     break 'seeds;
                 }
                 let pick = choices
                     .iter()
                     .position(|c| *c == Choice::Play(Action::BuyDev))
-                    .or_else(|| choices.iter().position(|c| *c == Choice::Play(Action::Roll)))
+                    .or_else(|| {
+                        choices
+                            .iter()
+                            .position(|c| *c == Choice::Play(Action::Roll))
+                    })
                     .or_else(|| {
                         choices
                             .iter()
@@ -3318,7 +3323,8 @@ mod tests {
         assert_eq!(s.moves().last(), Some(&Step::Move(Action::PlayMilitia)));
         let before = s.moves().len();
         let v = s.version();
-        s.cancel(v).expect("a half-played militia can be taken back");
+        s.cancel(v)
+            .expect("a half-played militia can be taken back");
         assert_eq!(s.moves().len(), before - 1, "the move goes back with it");
         // The count and the replay, not the absence of every militia ever
         // played: a bot may well have played one earlier and that one stands.
@@ -3373,7 +3379,9 @@ mod tests {
         let hands = s.state.hand;
         let paid = {
             let mut probe = s.state;
-            probe.apply(Action::Roll).expect("the roll is the only move");
+            probe
+                .apply(Action::Roll)
+                .expect("the roll is the only move");
             probe.hand
         };
         let lines = s.log().len();
