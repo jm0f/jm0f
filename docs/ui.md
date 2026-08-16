@@ -49,6 +49,13 @@ seat row answer the same question: who did what.
 
 **Centre: the board.** It is also an input device, see §5.
 
+**The robber lifts to be looked under.** It stands over the number disc almost
+exactly, so the one thing worth knowing about the hex it has shut down is the
+one thing it hides. Hovering it raises it clear of the disc: 31 board units,
+which is a lift rather than a nudge, because a nudge would reveal nothing. It is
+slower than the tiles' own hover, since this is a deliberate look and not a
+pointing cue.
+
 **The board never moves.** Its frame is measured from the land and the ports
 alone, which do not change for the life of a game. Measuring everything drawn
 meant that a piece placed past the previous extent shifted and rescaled the
