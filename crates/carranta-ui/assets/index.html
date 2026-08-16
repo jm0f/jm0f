@@ -622,13 +622,22 @@
        a full hand at card size plus the actions can outgrow a narrow one; a
        second row is worse than nothing overlapping but better than a row that
        runs off the edge. */
-    display: flex; align-items: flex-end; flex-wrap: wrap;
+    /* Groups hang from the top, so every label in the dock sits on one line.
+       Bottom-aligned, the two short groups had their labels pushed down to wherever
+       their own contents ended, which put four headings at three heights and
+       read as three separate strips rather than one dock. The cards inside a
+       group still sit on the floor of it. */
+    display: flex; align-items: flex-start; flex-wrap: wrap;
     gap: clamp(10px, 1.2vw, 26px);
     padding: clamp(8px, .8vw, 14px) clamp(12px, 1.1vw, 20px);
     font-size: clamp(11px, .8vw, 14px);
   }
   .dockGroup { display: flex; flex-direction: column; gap: .45em; }
   .dockGroup.spacer { flex: 1; }
+  /* The dice are the right edge of the dock, so the actions are held off it by
+     more than the gap between two groups: run together they read as one block
+     of controls, and the dice are not a control. */
+  .dockGroup.acts { margin-right: clamp(10px, 1.6vw, 34px); }
   .dockLabel { color: var(--dim); font-size: .8em; text-transform: uppercase;
                letter-spacing: .08em; }
   /* Tall enough for a card either way, so the two groups' labels sit on one
@@ -757,14 +766,19 @@
   /* Fixed places. A button you cannot use greys and stays put, because a
      layout you can learn is worth more than a layout with nothing dead in it.
      Why it is dead goes in the tooltip rather than on the face. */
-  .actionGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4em; }
+  /* Two by two. Four actions in a row of three left one hanging alone under the
+     others, which read as a leftover rather than as the fourth of four. */
+  .actionGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .4em; }
   .act {
     display: flex; flex-direction: column; align-items: center; gap: .15em;
     width: 5.2em; padding: .4em .2em .3em; border-radius: .55em; line-height: 1.2;
     font-size: .86em;
   }
   .act svg { width: 1.5em; height: 1.5em; fill: currentColor; }
-  .dice { display: flex; gap: .4em; }
+  /* One above the other. Side by side they were the widest thing in the corner
+     and pushed the actions off the middle of the dock; stacked, the pair is one
+     die wide and as tall as the two rows of buttons beside it. */
+  .dice { display: flex; flex-direction: column; gap: .4em; }
   .die { width: 2.6em; height: 2.6em; border-radius: .5em; border: 1px solid var(--border);
          background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
   .die circle { fill: var(--foreground); }
@@ -1259,7 +1273,7 @@
     <div class="stacks" id="dev"></div>
   </div>
   <div class="dockGroup spacer"></div>
-  <div class="dockGroup">
+  <div class="dockGroup acts">
     <span class="dockLabel">actions <span id="note"></span></span>
     <div class="actionGrid" id="actions"></div>
   </div>

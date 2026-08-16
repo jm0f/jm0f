@@ -152,7 +152,9 @@ read as three piles rather than one that is live.
 
 ### Actions
 
-A fixed grid: **roll, buy a development card, trade, end turn.**
+A fixed grid: **roll, buy a development card, trade, end turn.** Four of them,
+so the grid is **two by two**. In a row of three, the fourth hung alone
+underneath and read as a leftover rather than as one of a set.
 
 **Building is not here.** You build by clicking a ghost piece on the board.
 The grid is for actions with no place; the board is for actions with one.
@@ -163,7 +165,20 @@ does not cost you the explanation.
 
 ### Dice
 
-Two dice objects beside the actions, showing the last roll. Clicking rolls.
+Two dice objects showing the last roll, **one above the other** in the dock's
+right corner. Clicking rolls. Side by side they were the widest thing in that
+corner and pushed the actions off the middle of the dock; stacked, the pair is
+one die wide and exactly as tall as the two rows of buttons beside it.
+
+### The labels sit on one line
+
+Every group in the dock hangs from the top, so `resources`, `development`,
+`actions` and `dice` all start at the same height. They used to be aligned to
+the floor of the dock, which is right for the cards and wrong for the headings:
+a group with less in it had its label pushed down to wherever its own contents
+happened to end, so four headings sat at three different heights and the dock
+read as three strips rather than one. Inside a group the cards still stand on
+the floor.
 
 ---
 
