@@ -839,77 +839,6 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
 
-    // What the board *should* have paid, which no ledger can hold: it is a
-    // counterfactual rather than a card that moved (§10.2).
-    b.push_str(T_OPEN);
-    b.push_str("<thead>");
-    b.push_str(&head_row(&[
-        ("", ""),
-        (
-            "expected",
-            "What the buildings standing at each roll should have paid at the \
-             dice's true odds. Not a card that moved, which is why it cannot \
-             sit in the ledger above.",
-        ),
-        (
-            "the robber",
-            "Cards the robber cost them by sitting on their hexes. Not chance: \
-             somebody chose that hex.",
-        ),
-        (
-            "the supply",
-            "Cards a stack that had run dry could not pay (R-5.6). Not chance \
-             either: the table emptied it.",
-        ),
-        (
-            "the dice",
-            "What is left once the other two are taken out, which is the only \
-             genuinely random term of the three.",
-        ),
-        (
-            "luck",
-            "The dice term in standard deviations, which is the one to read: a \
-             card is worth more on a small board than a large one. A spread, so \
-             it has no total.",
-        ),
-    ]));
-    b.push_str("</thead><tbody>");
-    let mut sums = [0.0f64; 4];
-    for s in 0..seats {
-        let d = study.production.decompose(s);
-        for (slot, v) in
-            sums.iter_mut()
-                .zip([d.e_raw, -d.robber_cost, -d.supply_denial, d.dice_luck])
-        {
-            *slot += v;
-        }
-        b.push_str(&row(
-            &[
-                placed(s, &who[s], place[s]),
-                n1(d.e_raw),
-                signed(-d.robber_cost),
-                signed(-d.supply_denial),
-                format!(
-                    "<span class=\"{}\">{}</span>",
-                    if d.dice_luck >= 0.0 { "up" } else { "down" },
-                    signed(d.dice_luck)
-                ),
-                format!("{:+.2}&sigma;", d.luck_z),
-            ],
-            false,
-        ));
-    }
-    b.push_str("</tbody>");
-    b.push_str(&totals(&[
-        "the board".to_string(),
-        n1(sums[0]),
-        signed(sums[1]),
-        signed(sums[2]),
-        signed(sums[3]),
-        // A z-score is a position on a spread. Four of them add to nothing.
-        NONE.to_string(),
-    ]));
-    b.push_str(T_CLOSE);
     b.push_str("</section>");
 
     // ---- the militia --------------------------------------------------------
@@ -1060,14 +989,16 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         (
             "resources",
             "How many of the five the opening touches at all. A placement can \
-             be rich and still be missing something it will need.",
+             be rich and still be missing something it will need. A count per \
+             placement, so it has no total.",
         ),
         ("ports", "Ports the starting settlements sit on."),
         (
             "biggest hand",
             "The most cards this seat ever held at once, anywhere in the game. \
              Not an opening figure, and here because it is the other half of \
-             the same question: what the placement turned into.",
+             the same question: what the placement turned into. A maximum, so \
+             it has no total.",
         ),
     ]));
     b.push_str("</thead><tbody>");
@@ -1543,12 +1474,11 @@ mod tests {
             html.matches("<tfoot>").count(),
             html.matches("</tfoot>").count()
         );
-        assert!(html.matches("<tfoot>").count() >= 5, "the summable tables");
+        assert!(html.matches("<tfoot>").count() >= 4, "the summable tables");
         // The turns add across: the seats' turns are the game's turns.
         assert!(html.contains(&format!("<td>{}</td>", s.turns.len())));
-        // A z-score is a position on a spread, so it is not totalled, and the
-        // column that carries it says why.
-        assert!(html.contains("A spread, so it has no total."));
+        // A maximum is not totalled, and the column that carries it says why.
+        assert!(html.contains("A maximum, so it has no total."));
     }
 
     #[test]
@@ -1564,7 +1494,6 @@ mod tests {
             "dots on every number",
             "Played, not held",
             "Counted for both sides",
-            "What the buildings standing at each roll",
             "No p-value, deliberately",
             "Seat, not player",
         ] {

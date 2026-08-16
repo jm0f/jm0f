@@ -1474,9 +1474,9 @@ is paired with an effect size.
   from the action, and that match is exhaustive, so a new action cannot be added
   without deciding where its cards belong. Gross rather than net, per resource:
   two wheat for one ore is one card in and two out, and a net hand size would
-  call it one card out and lose both figures. Beneath it, the §10.2
-  decomposition, which no ledger can hold because expected production is a
-  counterfactual rather than a card that moved.
+  call it one card out and lose both figures. The §10.2 decomposition is not on
+  this card: expected production is a counterfactual rather than a card that
+  moved, and it belongs with the per-turn view rather than beside a ledger.
 - **Militia**, as a sankey: thieves down the left, victims down the right, a
   ribbon between each pair as thick as the cards that moved along it. Laid out
   on the server like everything else here, since every position is a fraction of
