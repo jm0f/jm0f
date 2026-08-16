@@ -429,6 +429,17 @@ them add, and a copy of the thing is exactly as tall as the thing. The captions
 are a fixed height for the same reason: one carries a select and the other
 carries nothing.
 
+**Putting an offer up leaves the composer open.** An offer to the table is the
+start of something rather than the end of it: the answers come back one at a
+time, and a counter or a second offer is the commonest next thing to do, so the
+tool for making one should still be in your hands. The trays empty themselves,
+because proposing moves the version on and a composition is about the position
+it was built in.
+
+**A bank or port trade does close it.** That one is finished the moment it is
+pressed: the supply always takes it, there is nobody to answer, and there is
+nothing left to say.
+
 **Clicking away puts it away.** Nothing has been committed while it is open, so
 turning your attention to the board is an answer. The dock is not "away":
 clicking your hand is how the offer gets built, and the composer sits directly
