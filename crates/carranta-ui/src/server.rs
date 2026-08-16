@@ -69,6 +69,26 @@ const FONTS: [(&str, &[u8]); 3] = [
     ),
 ];
 
+/// Three sounds, carried in the binary like everything else.
+///
+/// All by Kenney and all CC0, which is why they can be in the repository: the
+/// files are redistributed, and the page makes no external request to fetch
+/// one. `audio/SOURCES.md` says which pack each came from and by what route.
+///
+/// MP3 rather than the OGG originals, because every browser plays MP3 and the
+/// difference is a couple of kilobytes on a file already under six.
+const SOUNDS: [(&str, &[u8]); 3] = [
+    (
+        "dice-throw-3",
+        include_bytes!("../../../audio/dice-throw-3.mp3"),
+    ),
+    (
+        "card-place-1",
+        include_bytes!("../../../audio/card-place-1.mp3"),
+    ),
+    ("drop-002", include_bytes!("../../../audio/drop-002.mp3")),
+];
+
 /// Largest request body accepted. A click is a few dozen bytes; anything
 /// larger is a mistake or a probe, and is refused rather than buffered.
 const MAX_BODY: usize = 4 * 1024;
@@ -167,6 +187,13 @@ impl Server {
                 let name = p.trim_start_matches("/font/").trim_end_matches(".woff2");
                 match FONTS.iter().find(|(n, _)| *n == name) {
                     Some((_, bytes)) => respond(&mut stream, 200, "font/woff2", bytes),
+                    None => respond(&mut stream, 404, "text/plain", b"not found"),
+                }
+            }
+            ("GET", p) if p.starts_with("/sound/") => {
+                let name = p.trim_start_matches("/sound/").trim_end_matches(".mp3");
+                match SOUNDS.iter().find(|(n, _)| *n == name) {
+                    Some((_, bytes)) => respond(&mut stream, 200, "audio/mpeg", bytes),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
             }
@@ -366,6 +393,30 @@ fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &[u8]) -> std:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_sound_the_page_asks_for_is_carried_in_the_binary() {
+        // The page names these three and there is nowhere else to get them:
+        // no external request loads a sound, so a missing one is silence with
+        // no error anywhere. Names checked against the page itself, so
+        // renaming a file without renaming its use fails here.
+        for name in ["dice-throw-3", "card-place-1", "drop-002"] {
+            let (_, bytes) = SOUNDS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .unwrap_or_else(|| panic!("{name} is served"));
+            // ID3 or a bare MPEG frame. Either way it is audio and not an
+            // empty file or a stray text asset.
+            assert!(
+                bytes.starts_with(b"ID3") || bytes.starts_with(&[0xFF]),
+                "{name} is an mp3"
+            );
+            assert!(
+                PAGE.contains(&format!("/sound/{name}.mp3")),
+                "{name} is the name the page asks for"
+            );
+        }
+    }
 
     #[test]
     fn query_parameters_are_read_or_ignored() {

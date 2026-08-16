@@ -467,6 +467,52 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 
 ---
 
+## 7a. Sound
+
+**Three sounds, and each one names an event rather than an interaction.**
+
+| Sound | Plays when |
+|---|---|
+| `dice-throw-3` | The dice are rolled, by anyone |
+| `card-place-1` | Cards are dealt into a hand |
+| `drop-002` | An offer goes on the table |
+
+**They are played off the log, not off the clicks.** The log is the record of
+everything that happened, including everything three bots did while nobody was
+looking, so hanging the cues on it makes a move sound the same whoever made it.
+Hanging them on the click would have made the whole table silent except for you,
+which is the opposite of the point: the sounds are here so a player can tell
+what is going on without watching every corner of the board.
+
+So a "dealt card" is any line that puts cards into a hand: production, a card
+bought, a card stolen, a trade landing. To the ear they are one event, and one
+sound saying "cards moved" is worth more than four saying which kind.
+
+**At most one of each kind per payload.** A roll that pays four players writes
+four lines and is still one thing to listen to; four card sounds landing on each
+other is a noise rather than a cue. They fire in table order when several land
+together: the dice, then what they paid out, then anything put up afterwards.
+
+**The first read is silent.** Reloading mid-game arrives with the whole history
+in hand, and playing it back would be a minute of dice.
+
+**On by default, off in one click, and the click sticks.** A cue nobody switches
+on is a cue nobody gets, so the default is on; a game that makes a noise you did
+not ask for should be one press from stopping, so the control is in the header
+and not in a settings page. Turning it back on plays one, because that press is
+also the only way to find out whether this machine makes a sound at all.
+
+A browser refuses to play anything before the page has been interacted with, and
+refuses by rejecting a promise rather than by throwing. The lobby's own buttons
+are that interaction in practice. A refusal is caught and dropped either way: the
+board should never notice that the audio did not work.
+
+The files are Kenney's, CC0, carried in the binary like the fonts and served
+from `/sound/`. `audio/SOURCES.md` records which pack each came from and how it
+got here.
+
+---
+
 ## 8. The lobby
 
 A **setup screen before the game**, not a row of dropdowns above it. The board

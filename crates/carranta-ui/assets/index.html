@@ -231,6 +231,11 @@
   .vid.coast { fill: #1E7E96; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
+  /* Pushed to the far end, so the wordmark and the game name stay together as
+     the one thing the header is for and the switch is not part of the title. */
+  .sndBtn { margin-left: auto; color: var(--dim); line-height: 0; padding: 5px 7px; }
+  .sndBtn svg { width: 17px; height: 17px; display: block; }
+  .sndBtn[aria-pressed="false"] { opacity: .55; }
   /* ---- button ----------------------------------------------------------
      shadcn's anatomy: one base, variants that change only surface and border,
      sizes that change only padding and height. Nothing else may restyle a
@@ -890,6 +895,11 @@
 <header>
   <a class="wordmark" href="/" id="wordmark">Carranta</a>
   <span class="gameName" id="gameName" hidden></span>
+  <!-- Sound can always be turned off, and the control is on the screen rather
+       than in a settings page: a game making a noise you did not ask for should
+       be one click from stopping, not one click plus a search. -->
+  <button class="btn-ghost btn-sm sndBtn" id="sound" type="button"
+          aria-pressed="true" data-tip="Sound"></button>
 </header>
 
 <!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
@@ -1541,8 +1551,126 @@ function fit(svg, frame) {
   );
 }
 
+// ---- sound ------------------------------------------------------------------
+// Three sounds, played off the log rather than off the clicks. The log is the
+// record of everything that happened, including everything three bots did while
+// nobody was looking, so hanging the sounds on it means a move sounds the same
+// whoever made it. Hanging them on the click would have made the table silent.
+//
+// Kenney's, CC0, carried in the binary. See `audio/SOURCES.md`.
+const SOUNDS = {
+  roll: '/sound/dice-throw-3.mp3',
+  deal: '/sound/card-place-1.mp3',
+  offer: '/sound/drop-002.mp3',
+};
+// What each sound is for, as a test against a line of the log. A dealt card is
+// any line that puts cards into a hand: production, a card bought, a card
+// stolen, a trade landing. They are all the same event to the ear.
+const SOUND_FOR = [
+  [/^Rolled /, 'roll'],
+  [/^Time ran out, rolled /, 'roll'],
+  [/^Offered /, 'offer'],
+  [/^Collected /, 'deal'],
+  [/^Bought a development card/, 'deal'],
+  [/^Took /, 'deal'],
+  [/^Drew /, 'deal'],
+];
+
+const sound = {
+  // On unless it has been turned off, and the choice is remembered between
+  // games. On by default because the sounds are here to say what happened, and
+  // a cue nobody switches on is a cue nobody gets; off is one click away and
+  // the click sticks.
+  on: localStorage.getItem('carranta.sound') !== 'off',
+  clips: {},
+  heard: null,
+};
+for (const k in SOUNDS) {
+  const a = new Audio(SOUNDS[k]);
+  a.preload = 'auto';
+  sound.clips[k] = a;
+}
+
+// Play one, without ever letting the audio break the render.
+//
+// A browser refuses to play before the page has been interacted with, and
+// returns a rejected promise rather than throwing. The lobby's own buttons are
+// that interaction in practice, but a refusal is still not something a board
+// should notice.
+function playSound(name) {
+  if (!sound.on) return;
+  const a = sound.clips[name];
+  if (!a) return;
+  try {
+    // Cloned, so two of the same landing together are two sounds rather than
+    // one restarting. Production on a roll is often several at once.
+    const shot = a.cloneNode();
+    shot.volume = .55;
+    const p = shot.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* no audio here, and nothing to do about it */ }
+}
+
+// Sound whatever the log has gained since it was last read.
+//
+// At most one of each kind per payload. A roll that pays four players writes
+// four lines and is one event to listen to; four card sounds on top of each
+// other is a noise rather than a cue.
+//
+// The first read is silent and only takes the mark. Reloading the page mid-game
+// arrives with the whole history in hand, and playing it back would be a minute
+// of dice.
+function soundTheLog(v) {
+  const log = v.log || [];
+  if (sound.heard === null || log.length < sound.heard) {
+    sound.heard = log.length;
+    return;
+  }
+  const fresh = log.slice(sound.heard);
+  sound.heard = log.length;
+  const heard = new Set();
+  for (const l of fresh) {
+    for (const [pattern, name] of SOUND_FOR) {
+      if (pattern.test(l.t)) { heard.add(name); break; }
+    }
+  }
+  // In the order they happen at a table: the dice, then what they paid out,
+  // then anything put on the table after.
+  ['roll', 'deal', 'offer'].forEach(n => { if (heard.has(n)) playSound(n); });
+}
+
+// A speaker, with the waves on or struck through. One drawing rather than two
+// files, because the difference between them is one path.
+function drawSoundBtn() {
+  const b = document.getElementById('sound');
+  if (!b) return;
+  b.setAttribute('aria-pressed', String(sound.on));
+  b.dataset.tip = sound.on ? 'Sound on, click to mute' : 'Muted, click for sound';
+  const cone = '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/>';
+  const waves = sound.on
+    ? '<path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none"'
+      + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+    : '<path d="M16.5 9.5l5 5M21.5 9.5l-5 5" fill="none"'
+      + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
+  b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${cone}${waves}</svg>`;
+}
+document.getElementById('sound').onclick = () => {
+  sound.on = !sound.on;
+  localStorage.setItem('carranta.sound', sound.on ? 'on' : 'off');
+  drawSoundBtn();
+  // The tip is open, because the pointer is on the button that was just
+  // pressed, and it says what the button did a moment ago. Redraw it.
+  const b = document.getElementById('sound');
+  if (tipFor === b) { hideTip(); showTip(b); }
+  // A sound when you switch it on, because the switch is also the test: it is
+  // the one press whose whole point is to find out whether this makes a noise.
+  if (sound.on) playSound('deal');
+};
+drawSoundBtn();
+
 function render() {
   const v = view;
+  soundTheLog(v);
   const how = v.calledOnTime ? ' on time, most points showing' : '';
   const turn = v.winner !== null
     ? (v.winner === v.you ? `You won${how}` : `${seatName(v, v.winner)} won${how}`)
