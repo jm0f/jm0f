@@ -810,20 +810,21 @@
     font-size: .86em;
   }
   .act svg { width: 1.5em; height: 1.5em; fill: currentColor; }
-  /* A column of three, not a row: three named buttons side by side are wider
-     than the dock has to give at a laptop's width, and a fifth section that
-     wraps the whole dock onto a second row every turn is a bad trade. Stacked,
-     the section is narrower than the row would have been, keeps its labels, and
-     stands the full height of the cards beside it. */
-  .buildGrid { display: grid; grid-template-rows: repeat(3, 1fr); gap: .35em;
-               height: 7em; width: 7.4em; }
-  .act.build { width: auto; flex-direction: row; justify-content: flex-start;
-               gap: .5em; padding: .2em .55em; text-align: left; }
-  /* A fixed box for the drawing, not a fixed height: a road lying at thirty
-     degrees is half again as wide as a settlement, and sized by height alone
-     the three labels would start at three different places. The drawing fits
-     itself into the box and centres there, which is what a viewBox does. */
-  .act.build svg { width: 2.1em; height: 1.7em; flex: none; }
+  /* Two by two, the same block the actions beside it make, and the same button
+     in it. Three pieces in four places leaves one empty, which is the price of
+     the two sections reading as one pair of blocks rather than as a column and
+     a grid that happen to be next to each other. */
+  .buildGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .4em; }
+  /* No word under it, so the drawing takes the whole button: the height an icon
+     and its label came to together, which is what keeps these the same size as
+     the buttons next door. The name is in the tooltip. */
+  .act.build { justify-content: center; }
+  /* 2.85em is what an icon, its gap and a line of label come to on the buttons
+     next door, measured rather than guessed, so a build button and an action
+     button are the same box with different things in it. In em, so it holds
+     through the dock's type scale. The box is wider than it is tall because a
+     road lying at thirty degrees is. */
+  .act.build svg { width: 3.4em; height: 2.85em; }
   /* Armed. The board is showing this piece's spots, and pressing again puts it
      down, so the button has to look pressed while that is true. */
   .act.build.armed {
@@ -2777,7 +2778,10 @@ function renderBuilding(v, theirs, rolled) {
           : missing(v, COSTS[kind]) || `nowhere legal to put a ${kind}`));
     const b = document.createElement('button');
     b.className = 'act build' + (building === kind ? ' armed' : '');
-    b.innerHTML = buildGlyph(art) + `<span>${label}</span>`;
+    b.innerHTML = buildGlyph(art);
+    // The name is carried here rather than on the face, so it is on the button
+    // for a screen reader and for anyone who does not recognise the drawing.
+    b.setAttribute('aria-label', label);
     if (!live) b.setAttribute('aria-disabled', 'true');
     const places = `${spots.length} place${spots.length === 1 ? '' : 's'}`;
     b.setAttribute('data-tip', live

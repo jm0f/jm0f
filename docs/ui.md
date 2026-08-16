@@ -210,11 +210,21 @@ roads a played road building card still has to put down (R-9.10): the rules give
 no way to leave either position, so their spots show without a button. That is
 the same argument the decision cards make about a forced question.
 
-**A column of three, not a row.** Three named buttons side by side are wider
-than the dock has to give at a laptop's width, and a fifth section that wraps
-the whole dock onto a second row every turn is a bad trade for one row of
-buttons. Stacked, the section is narrower than the row would have been, keeps
-its labels, and stands the full height of the cards beside it.
+**Two by two, and no words on them.** The same block the actions beside it
+make, out of the same button: measured, a build button and an action button are
+the same box to the pixel, which is what makes the two sections read as a pair
+rather than as two different ideas that happen to be adjacent. Three pieces in
+four places leaves one empty, and that is the price of the pairing.
+
+The drawing takes the whole button, at the height an icon and a line of label
+come to next door. The name is in the tooltip and on the button as its
+accessible name, so it is there for a screen reader and for anyone who does not
+recognise the piece.
+
+Named buttons were tried first, three across and then stacked in a column. Three
+across are wider than the dock has to give at a laptop's width, and a fifth
+section that wraps the whole dock onto a second row every turn is a bad trade
+for three words.
 
 The dock's type scale came down with it, from `.8vw` to `.74vw`. The dock sizes
 itself off the window and so does the space it has to fit into, so between the
