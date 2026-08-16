@@ -635,87 +635,11 @@
      line instead of the shorter group's label drifting down to meet it. */
   .stacks { display: flex; gap: .35em; align-items: flex-end; min-height: 7em; }
 
-  /* A stack is a pile, not a number: its thickness is the count, so a hand
-     getting dangerous to hold is something you see before you read it. */
-  .stack { position: relative; border: 0; background: none; padding: 0; cursor: pointer;
-           width: 5.3em; height: 7em; box-shadow: none; }
-  /* A card you cannot click is not a card that is unavailable, and an empty
-     slot is not a faded one. The button reset dims disabled controls to half,
-     which put the whole development pile at 50% against resource slots that
-     already opt out of it, so the two sat side by side at different weights.
-     The same argument the dashed "new" card makes: dim reads as "you have
-     none", and either you do have it or the slot is saying where one goes. */
-  .stack:disabled { cursor: default; opacity: 1; background: none; }
-  .stack .layer {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 7em;
-    border: 1px solid var(--line); border-radius: .55em; background: var(--panel);
-    box-shadow: 0 1px 2px rgba(51, 38, 27, .10);
-  }
-  .stack .face { display: flex; align-items: center; justify-content: center; }
-  .stack .face svg { width: 52%; height: 52%; }
-  /* Holding none is drawn the way holding no resources is drawn: the slot stays,
-     outlined and empty, with the disc every card carries showing through it. A
-     dimmed card back with its symbol still on it said "here is a faint card",
-     which is not the same as "here is where a card would go". */
-  .stack.empty .layer {
-    background: transparent; box-shadow: none; border-style: dashed;
-  }
-  .stack.empty .face::before {
-    content: ''; width: 2.6em; height: 2.6em; border-radius: 50%;
-    background: var(--line); opacity: .5;
-  }
-  /* Bought this turn, so held but not yet playable. Dashed rather than dimmed:
-     dim reads as "you have none", and you do have it. */
-  .stack.fresh .layer { border-style: dashed; border-color: var(--accent); }
-  /* A card that can be played says so by lifting when pointed at. */
-  .stack.playable .layer { border-color: var(--accent); }
-  .stack.playable:hover { transform: translateY(-2px); }
-  .stack { transition: transform .12s ease-out; }
   .freshTag {
     position: absolute; bottom: -.15em; left: 50%; transform: translateX(-50%);
     z-index: 3; padding: 0 .35em; border-radius: 999px;
     background: var(--accent); color: var(--primary-foreground);
     font-size: .66em; font-weight: 600; letter-spacing: .04em; line-height: 1.5;
-  }
-  .stack.empty .badge { opacity: .45; }
-  .stack:not(:disabled):hover .layer { border-color: #D3C6AE; }
-  .stack.armed .layer { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-
-  /* ---- a development card wearing its own face ------------------------- */
-  /* A card you hold is a card you have read, so the pile is the card rather
-     than a slot with a mark on it. The whole pile takes the card's ground, the
-     way a resource fan takes its terrain's, and the front one carries the
-     drawing. The edge is the resource card's edge, because every card on the
-     table has that one. */
-  .stack.faced .layer,
-  .stack.faced:not(:disabled):hover .layer,
-  .stack.faced.playable .layer,
-  .stack.faced.fresh .layer {
-    background: var(--accent); border: 1px solid rgba(255, 250, 242, .5);
-  }
-  /* The cards under the front one are edges, and an edge of the same orange as
-     the face is not one: two cards and three looked identical. A shade of the
-     accent, so the sliver showing above and to the right reads as the card
-     behind rather than as a smudge on the card in front. */
-  .stack.faced .layer:not(.face) { background: #C5471F; }
-  .stack.faced .face { overflow: hidden; }
-  .stack.faced .face svg { width: 100%; height: 100%; display: block; }
-  /* The same tooth as every other card, so the five faces sit on stock rather
-     than on flat ink. */
-  .stack.faced .face::after {
-    content: ''; position: absolute; inset: 0;
-    background-image: var(--grain-tile); background-size: 90px 90px;
-    mix-blend-mode: soft-light; opacity: .45; pointer-events: none;
-  }
-  /* Accent on accent is not an edge, so the two states that used to colour the
-     border say it another way. Playable rings the card from outside, which is
-     what an armed resource card already does. */
-  .stack.faced.playable .face { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* Bought this turn: the card's own edge goes dashed, the way an empty slot's
-     does. A second ring outside the card, in a colour it is already made of,
-     spilled over the card beside it and read as a glow rather than as a state. */
-  .stack.faced.fresh .layer {
-    border-style: dashed; border-color: rgba(255, 250, 242, .85);
   }
   .badge {
     position: absolute; top: -.25em; right: -.35em; z-index: 20;
@@ -728,7 +652,7 @@
      the card it was supposed to be centred on: it sat a third of the way in,
      over the face, reading as a label stuck on the card rather than a count of
      the pile. */
-  .resStack .badge, .stack .badge {
+  .resStack .badge {
     min-width: 1.5em; height: 1.5em; padding: 0 .3em; border-radius: 999px;
     background: var(--ink); color: var(--panel);
     font-size: .82em; font-weight: 600; line-height: 1.5em; text-align: center;
@@ -785,6 +709,29 @@
   .resStack.empty .rcard i { background: var(--line); opacity: .5; }
   .resStack.empty .badge { opacity: .45; }
   .resStack.armed .rcard { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---- a development card wearing its own face ------------------------- */
+  /* Same fan, same card, different ground: the card's own orange instead of a
+     terrain's colour, and the front one carrying its face rather than the disc.
+     Everything else about a card, the edge, the tooth, the shadow the card
+     behind casts, is already right and is left alone. */
+  .resStack.faced .rcard > svg { position: absolute; inset: 0;
+                                 width: 100%; height: 100%; display: block; }
+  /* Bought this turn: the card's own edge goes dashed, the way an empty slot's
+     does. Ringing it in the accent instead put orange on orange, which is a
+     glow rather than a state, and spilled over the card beside it.
+     The front card only. Dashing every card in the fan chopped the slivers
+     behind it into a row of ticks, which reads as texture, not as a state. */
+  .resStack.faced.fresh .rcard:first-child {
+    border-style: dashed; border-color: rgba(255, 250, 242, .85);
+  }
+  /* Playable rings the pile, which is what an armed resource card does one card
+     at a time. Here it goes on the button, because the fan's silhouette is
+     exactly the button's box: a ring per card drew one around the front one and
+     another around each sliver behind it, which read as three piles. */
+  .resStack.faced.playable {
+    outline: 2px solid var(--accent); outline-offset: 1px; border-radius: .6em;
+  }
   /* On a line of text rather than in the dock, so it is positioned by the flow
      and sized to the line it sits on. */
   /* In the flow rather than laid out by the fan, but still positioned: the
@@ -2147,15 +2094,11 @@ const seatName = (v, s) => (s === v.you ? (v.youName || 'you') : BOT_NAMES[s]);
 // shows the card's own face. The drawing comes from `art/` like the pieces do,
 // so the file on disk stays the only copy of it.
 //
-// The mark below is what a face falls back to. `loadArt` is asynchronous and
-// the dock renders before it finishes, so for the first frame or two there is a
-// card with nothing on it; a ring in the accent is that card rather than a
-// blank. Everything the bank and the log draw is a card *back*, and stays one:
-// those are cards nobody has read.
-const devMark = () =>
-  `<svg viewBox="0 0 40 46" aria-hidden="true">`
-  + `<circle cx="20" cy="23" r="9" fill="none" stroke="#6B3FA0" stroke-width="3.4"/>`
-  + `<circle cx="20" cy="23" r="3.2" fill="#6B3FA0"/></svg>`;
+// Nothing until `loadArt` finishes, which is a frame or two after the dock
+// first draws: the card falls back to the disc every other card carries, so
+// what is there in the meantime is a card rather than a blank. Everything the
+// bank and the log draw is a card *back*, and stays one: those are cards
+// nobody has read.
 const devFace = (name) => {
   const src = art[`dev-${name.replace(/ /g, '-')}`];
   return src ? src.outerHTML : '';
@@ -2372,29 +2315,6 @@ function renderSeats(v) {
 // ---- the hand --------------------------------------------------------------
 // Depth is the count. A pile getting thick is the warning that a seven will
 // cost you half of it, and it arrives before you have read a single number.
-function stackEl(count, icon, title, onClick) {
-  const b = document.createElement('button');
-  b.className = 'stack' + (count ? '' : ' empty');
-  b.setAttribute('data-tip', title);
-  b.disabled = !onClick;
-  if (onClick) b.onclick = onClick;
-  for (let d = Math.min(count, 5); d >= 2; d--) {
-    const l = document.createElement('span');
-    l.className = 'layer';
-    l.style.transform = `translate(${(d - 1) * 0.09}em, ${-(d - 1) * 0.15}em)`;
-    b.appendChild(l);
-  }
-  const face = document.createElement('span');
-  face.className = 'layer face';
-  face.innerHTML = icon;
-  b.appendChild(face);
-  const badge = document.createElement('span');
-  badge.className = 'badge';
-  badge.textContent = count;
-  b.appendChild(badge);
-  return b;
-}
-
 // A resource card wears the colour of the land it comes off, so a card and the
 // hex that pays it are the same thing seen twice.
 const RESOURCE_FACE = ['--hills', '--forest', '--pasture', '--fields', '--mountains'];
@@ -2409,9 +2329,15 @@ const FAN_MAX = 5;
 const CARD_W = 5.3;
 const FAN_SPREAD = 1.8;
 
-function resStackEl(count, res, title, onClick) {
+// One fan, whatever is in it. A hand of one kind of card, drawn as cards: one
+// per card held, up to a limit, with the count on the top right corner. Both
+// groups in the dock are built from this, because both are a hand of cards and
+// two ways of drawing that meant a hand that changed shape halfway along the
+// row. `paint` is the only difference: it is handed each card and told whether
+// it is the front one.
+function fanEl(count, title, onClick, paint, extra = '') {
   const b = document.createElement('button');
-  b.className = 'resStack' + (count ? '' : ' empty');
+  b.className = 'resStack' + (count ? '' : ' empty') + (extra ? ` ${extra}` : '');
   b.setAttribute('data-tip', title);
   b.disabled = !onClick;
   if (onClick) b.onclick = onClick;
@@ -2427,16 +2353,12 @@ function resStackEl(count, res, title, onClick) {
     const card = document.createElement('span');
     card.className = 'rcard';
     card.style.left = `${d * step}em`;
-    card.style.setProperty('--face', `var(${RESOURCE_FACE[res]})`);
     // The leftmost card is the front one, so the fan reads the way a hand held
     // in one hand does. That is the opposite of paint order, so the stacking is
     // reversed rather than the cards being appended backwards: the loop still
     // runs left to right, which is the order everything else about it is in.
     card.style.zIndex = shown - d;
-    // Only the front card shows its face. The ones behind it are edges, and a
-    // centred disc sliced by the card in front of it read as a bite taken out
-    // rather than as a card underneath.
-    if (d === 0) card.appendChild(document.createElement('i'));
+    paint(card, d === 0);
     b.appendChild(card);
   }
   const badge = document.createElement('span');
@@ -2445,6 +2367,30 @@ function resStackEl(count, res, title, onClick) {
   b.appendChild(badge);
   return b;
 }
+
+const resStackEl = (count, res, title, onClick) =>
+  fanEl(count, title, onClick, (card, front) => {
+    card.style.setProperty('--face', `var(${RESOURCE_FACE[res]})`);
+    // Only the front card shows its face. The ones behind it are edges, and a
+    // centred disc sliced by the card in front of it read as a bite taken out
+    // rather than as a card underneath.
+    if (front) card.appendChild(document.createElement('i'));
+  });
+
+// The same fan, holding development cards. The ground is the card's own orange
+// rather than a terrain's colour, and the front one carries its face; the cards
+// behind it are edges, exactly as they are in a resource fan.
+const devStackEl = (count, name, title, onClick) => {
+  const face = count ? devFace(name) : '';
+  return fanEl(count, title, onClick, (card, front) => {
+    if (count) card.style.setProperty('--face', 'var(--accent)');
+    if (!front) return;
+    if (face) card.innerHTML = face;
+    // No face yet, or no card at all: the disc every other card carries, which
+    // is what an empty resource slot shows too.
+    else card.appendChild(document.createElement('i'));
+  }, face ? 'faced' : '');
+};
 
 function renderHand(v) {
   const hand = document.getElementById('hand');
@@ -2519,9 +2465,7 @@ function renderHand(v) {
       ? `${n} victory point, already counted in your total and hidden from `
         + 'everyone else until the game ends'
       : (play ? `Play ${c.name}` : `${n} ${c.name}${note}`);
-    const face = devFace(c.name);
-    const pile = stackEl(n, face || devMark(), title, play);
-    if (face) pile.classList.add('faced');
+    const pile = devStackEl(n, c.name, title, play);
     if (play) pile.classList.add('playable');
     if (fresh) {
       pile.classList.add('fresh');
@@ -2532,7 +2476,9 @@ function renderHand(v) {
     }
     dev.appendChild(pile);
   });
-  if (!dev.children.length) dev.appendChild(stackEl(0, '', 'no development cards', null));
+  if (!dev.children.length) {
+    dev.appendChild(devStackEl(0, '', 'no development cards', null));
+  }
 }
 
 // ---- actions ---------------------------------------------------------------

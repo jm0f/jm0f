@@ -97,14 +97,19 @@ phones are out of scope.
 
 ### Your hand
 
-Five stacks, one per resource, always in the same order, **drawn as piles
-whose thickness grows with the count** and carrying a count badge on the pile's
-top right corner, where every other count on the page sits. Empty types stay in
+Five stacks, one per resource, always in the same order, **drawn as fans of
+cards, one card per card held**, and carrying a count badge on the pile's top
+right corner, where every other count on the page sits. Empty types stay in
 place, greyed at zero.
 
 The depth is the point: it tells you a fat hand is coming before the
 discard-on-seven rule bites, and it does it without you reading a number.
 Fixed slots mean the thing you want never moves under the cursor.
+
+The fan stops growing at five cards and shares a fixed budget of width between
+however many it draws, the way a real fan of cards does. Past that the badge is
+doing the counting anyway, and a hand of twelve spread at full width would push
+the dock wider than the board that sets its width.
 
 Development cards sit in their own group beside the resources. **You play one
 by clicking it**, so there is no separate button opening a list of the cards
@@ -130,13 +135,20 @@ thing that is never true of it, that you have not read it. Everywhere the card
 is genuinely unknown it stays a back: the deck in the bank, and the line in the
 log that says somebody bought one.
 
-Three details follow from putting a face on it, and all three are the same
-argument. The pile takes the card's orange, so the whole stack is the card
-rather than a slot with a mark in it. The cards *behind* the front one take a
-shade of that orange, because an edge in the same colour as the face is not an
-edge and two cards looked exactly like three. And the `new` state dashes the
-card's own edge rather than ringing it in the accent, since accent on accent is
-a glow, not a state.
+**Both groups are the same object.** A development pile is drawn by the same
+code as a resource pile: one fan, one card per card held up to the limit, the
+same edge, the same tooth, the same badge, the same empty slot. The only thing
+that differs is what a card is painted with, the terrain's colour and a disc, or
+the card's own orange and its face. They were two ways of drawing a hand of
+cards for a while, an up-and-right pile beside a fan, which meant a hand that
+changed shape halfway along the row.
+
+Two states then had to be said differently, and both for the same reason: the
+card's ground is the accent, so the accent is no longer available to mark it
+with. `new` dashes the card's own edge, the way an empty slot's edge is dashed.
+Playable rings the whole pile rather than each card in it, since a ring per card
+drew one around the front card and another around every sliver behind it, which
+read as three piles rather than one that is live.
 
 ### Actions
 
