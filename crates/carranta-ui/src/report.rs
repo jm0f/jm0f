@@ -62,6 +62,19 @@ fn row(cells: &[String], head: bool) -> String {
     out
 }
 
+/// A card's header: what the card is, and one line on what it says.
+///
+/// Title then description, which is the borrowed design's shape for this and a
+/// better one than the uppercase micro-label it replaces: a label tells you a
+/// section exists, a description tells you whether to read it.
+fn card_head(title: &str, desc: &str) -> String {
+    format!("<div class=\"card-head\"><h2>{title}</h2><p class=\"desc\">{desc}</p></div>")
+}
+
+/// A table lives in its own bordered box rather than bleeding into the card.
+const T_OPEN: &str = "<div class=\"tw\"><table>";
+const T_CLOSE: &str = "</table></div>";
+
 /// A head row whose columns carry their own explanation.
 ///
 /// The rules behind a column belong on the column rather than in a paragraph
@@ -105,7 +118,12 @@ fn names(saved: &Saved, seats: usize) -> Vec<String> {
 /// took and everything about how it was divided. A turn that reads twice as
 /// wide as its neighbour had twice as much in it.
 fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
-    let mut b = String::from("<section><h2>The turns</h2>");
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "The turns",
+        "The whole game across one bar, a segment per turn, sized by what \
+         happened in it and coloured by whose it was.",
+    ));
     let turns = &study.turns;
     if turns.is_empty() {
         b.push_str("<p class=\"note\">Nobody finished a turn in this game.</p></section>");
@@ -143,7 +161,8 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     }
     b.push_str("</div>");
 
-    b.push_str("<table><thead>");
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     b.push_str(&head_row(&[
         ("", ""),
         ("turns", "Turns this seat took."),
@@ -177,7 +196,8 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
             false,
         ));
     }
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b.push_str(
         "<p class=\"note\">Length is measured in moves, not in seconds: a saved \
          game is a seed and a list of moves, which is everything needed to \
@@ -234,7 +254,14 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     // The five things that score (R-11.3), each as how many were held and, in
     // brackets, what they were worth. The bracketed figures add across to the
     // total beside them.
-    b.push_str("<section><h2>The result</h2><table><thead>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "The result",
+        "Where every point came from, read off the final position. Hover a \
+         column for the rule behind it.",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     b.push_str(&head_row(&[
         ("", ""),
         (
@@ -280,17 +307,25 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         cells.extend(study.points[s].parts().iter().map(|p| scored(*p)));
         b.push_str(&row(&cells, false));
     }
-    b.push_str("</tbody></table></section>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b.push_str("</section>");
 
     // ---- the turns ----------------------------------------------------------
     b.push_str(&turn_bar(study, &who, seats));
 
     // ---- ratings ------------------------------------------------------------
-    b.push_str("<section><h2>What it did to the ratings</h2>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "What it did to the ratings",
+        "The pool before this game and after it, which is the section this page \
+         exists for.",
+    ));
     if study.movement.iter().take(seats).all(Option::is_none) {
         b.push_str("<p class=\"note\">Nothing: this game could not be rated.</p>");
     } else {
-        b.push_str("<table><thead>");
+        b.push_str(T_OPEN);
+        b.push_str("<thead>");
         b.push_str(&row(
             &[
                 "".into(),
@@ -323,7 +358,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
                 false,
             ));
         }
-        b.push_str("</tbody></table>");
+        b.push_str("</tbody>");
+        b.push_str(T_CLOSE);
         b.push_str(
             "<p class=\"note\">A Weng-Lin Plackett-Luce update over the whole \
              finishing order, not just the winner (A-1): the final points rank \
@@ -339,7 +375,12 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- the dice -----------------------------------------------------------
     let total: u32 = r.rolls.iter().sum();
-    b.push_str("<section><h2>The dice</h2>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "The dice",
+        "What was rolled against what should have been, as an effect size and a \
+         percentile rather than as a verdict.",
+    ));
     let _ = write!(
         b,
         "<p>{total} rolls, {sevens} of them sevens. The deviation from a fair \
@@ -347,7 +388,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         sevens = r.sevens,
         kl = format!("{:.3}", study.dice.kl_bits),
     );
-    b.push_str("<table class=\"rolls\"><thead>");
+    b.push_str("<div class=\"tw\"><table class=\"rolls\"><thead>");
     let mut heads = vec!["".to_string()];
     heads.extend((2..=12).map(|n| n.to_string()));
     b.push_str(&row(&heads, true));
@@ -361,7 +402,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         expected.push(n1(total as f64 * ways as f64 / 36.0));
     }
     b.push_str(&row(&expected, false));
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     match study.dice_percentile {
         Some(p) => {
             let _ = write!(
@@ -387,7 +429,14 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
 
     // ---- production ---------------------------------------------------------
-    b.push_str("<section><h2>What the board paid</h2><table><thead>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "What the board paid",
+        "Production decomposed into what was chance and what was somebody's \
+         doing (§10.2).",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     b.push_str(&row(
         &[
             "".into(),
@@ -420,7 +469,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             false,
         ));
     }
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b.push_str(
         "<p class=\"note\">Expected is what the buildings standing at each roll \
          should have paid at the dice's true odds, and the three columns after \
@@ -432,7 +482,11 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
 
     // ---- the robber ---------------------------------------------------------
-    b.push_str("<section><h2>The robber</h2>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "The robber",
+        "Who took what from whom, and what the sevens cost everybody.",
+    ));
     let _ = write!(
         b,
         "<p>Moved {moves} times. {empty} of those robberies found an empty hand \
@@ -440,7 +494,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         moves = r.robber_moves,
         empty = r.empty_robberies,
     );
-    b.push_str("<table><thead>");
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     let mut heads = vec!["stole from".to_string()];
     heads.extend(who.iter().map(|n| esc(n)));
     heads.push("discarded".to_string());
@@ -458,11 +513,19 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         cells.push(r.discards[thief].to_string());
         b.push_str(&row(&cells, false));
     }
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b.push_str("<p class=\"note\">Read along a row: what that seat took.</p></section>");
 
     // ---- the market ---------------------------------------------------------
-    b.push_str("<section><h2>The market</h2><table><thead>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "The market",
+        "Negotiation churn, which under an open market is most of the \
+         interaction in a game (H-4).",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     b.push_str(&row(
         &[
             "".into(),
@@ -488,14 +551,21 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             false,
         ));
     }
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b.push_str(
         "<p class=\"note\">A completed trade is counted for both sides of it, so \
          that column sums to twice the number of trades.</p></section>",
     );
 
     // ---- development cards --------------------------------------------------
-    b.push_str("<section><h2>Development cards</h2><table><thead>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "Development cards",
+        "What was bought, and what was played with it.",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     let mut heads = vec!["".to_string(), "bought".to_string()];
     heads.extend(DEV_NAMES.iter().map(|n| n.to_string()));
     b.push_str(&row(&heads, true));
@@ -505,7 +575,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         cells.extend(r.dev_played[s].iter().map(u32::to_string));
         b.push_str(&row(&cells, false));
     }
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b.push_str(
         "<p class=\"note\">Played, not held. A victory point card is never \
          played (R-9.11), so that column is always empty and is kept so the \
@@ -513,7 +584,13 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
 
     // ---- the opening --------------------------------------------------------
-    b.push_str("<section><h2>The opening</h2><table><thead>");
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "The opening",
+        "What the first two settlements bought, before anybody had a turn.",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
     b.push_str(&row(
         &[
             "".into(),
@@ -537,7 +614,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             false,
         ));
     }
-    b.push_str("</tbody></table>");
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b.push_str(
         "<p class=\"note\">Pips are the dots on every number the starting \
          settlements touch, which is the standard measure of how much \
@@ -546,12 +624,19 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- the corpus ---------------------------------------------------------
     if let Some(wins) = study.seat_wins {
-        b.push_str("<section><h2>Across every game here</h2>");
+        b.push_str("<section>");
+        b.push_str(&card_head(
+            "Across every game here",
+            "Seat win rates, which is the one question a single game cannot \
+             answer at all.",
+        ));
         let _ = write!(
             b,
-            "<p>{n} other games, all at this table's settings.</p><table><thead>",
+            "<p>{n} other games, all at this table's settings.</p>",
             n = study.corpus_games
         );
+        b.push_str(T_OPEN);
+        b.push_str("<thead>");
         b.push_str(&row(&["seat".into(), "win rate".into()], true));
         b.push_str("</thead><tbody>");
         for s in 0..seats.min(MAX_PLAYERS) {
@@ -560,7 +645,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
                 false,
             ));
         }
-        b.push_str("</tbody></table>");
+        b.push_str("</tbody>");
+        b.push_str(T_CLOSE);
         b.push_str(
             "<p class=\"note\">Seat, not player, because this is asking whether \
              going first is worth anything. It needs hundreds of games before it \
@@ -578,9 +664,33 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 /// the board's stylesheet is a game's worth of rules about cards and hexes, and
 /// a document needs almost none of it.
 const CSS: &str = "
+/* ---- tokens ----
+   shadcn's vocabulary, in Carranta's ink and paper. The names are theirs
+   because the roles they name are the useful part: `--muted-foreground` says
+   what a colour is *for*, where `--dim` only says what it looks like. The
+   values are the board's, so a report still belongs to the game it reports on.
+
+   The library itself is React, Tailwind and a bundler, none of which this
+   server has or wants (H-1 in spirit: one binary, no build step). What was
+   worth taking is the system underneath: the role names, the radius scale,
+   the muted-foreground habit, and the proportions of a card and a table. */
 :root {
-  --bg: #F3EDE1; --panel: #FBF7EF; --line: #E2D9C8;
-  --ink: #33261B; --dim: #6B5B4C; --accent: #E8542F; --good: #1B5637;
+  --background: #F3EDE1;
+  --foreground: #33261B;
+  --card: #FBF7EF;
+  --muted: #EFE8DA;
+  --muted-foreground: #6B5B4C;
+  --border: #E2D9C8;
+  --primary: #E8542F;
+  --primary-foreground: #FBF7EF;
+  --positive: #1B5637;
+  /* One radius, and everything else derived from it, which is what keeps a
+     badge, a table and a card looking like one family. */
+  --radius: .625rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
   /* The seat colours the board plays in, so a bar segment is recognisably
      the same player who sat there. */
   --p0: #2CA7BA; --p1: #3C2EB8; --p2: #C065D2; --p3: #C1256B;
@@ -592,56 +702,93 @@ const CSS: &str = "
 @font-face { font-family: Audiowide; src: url('/font/audiowide.woff2') format('woff2');
              font-weight: 400; font-display: swap; }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
-       font: 16px/1.55 Figtree, system-ui, sans-serif; }
+body { margin: 0; background: var(--background); color: var(--foreground);
+       font: 16px/1.55 Figtree, system-ui, sans-serif;
+       -webkit-font-smoothing: antialiased; }
 header { display: flex; align-items: baseline; gap: 1.2em;
          padding: 1.2rem clamp(16px, 5vw, 64px); }
-.mark { font: 400 22px Audiowide, system-ui, sans-serif; color: var(--accent);
+.mark { font: 400 22px Audiowide, system-ui, sans-serif; color: var(--primary);
         text-decoration: none; }
-nav a { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--line); }
-nav a:hover { color: var(--accent); border-color: var(--accent); }
-main { max-width: 62rem; margin: 0 auto; padding: 0 clamp(16px, 5vw, 64px) 5rem; }
-h1 { font: 600 clamp(28px, 4vw, 40px)/1.1 Fraunces, Georgia, serif; margin: .4em 0 .2em; }
-h2 { font: 600 13px Figtree, system-ui, sans-serif; text-transform: uppercase;
-     letter-spacing: .09em; color: var(--dim); margin: 0 0 .9rem; }
-.lede { color: var(--dim); margin: 0 0 2.5rem; }
-section { background: var(--panel); border: 1px solid var(--line);
-          border-radius: 14px; padding: 1.4rem 1.5rem; margin: 0 0 1.1rem;
-          box-shadow: 0 2px 5px rgba(51,38,27,.05), 0 12px 28px rgba(51,38,27,.06); }
+nav a { color: var(--muted-foreground); text-decoration: none;
+        border-bottom: 1px solid var(--border); }
+nav a:hover { color: var(--primary); border-color: var(--primary); }
+main { max-width: 62rem; margin: 0 auto; padding: 0 clamp(16px, 5vw, 64px) 5rem;
+       display: flex; flex-direction: column; gap: 1.5rem; }
+/* Tight tracking on a big heading, which is the one typographic tic of the
+   borrowed design worth keeping wholesale. */
+h1 { font: 600 clamp(28px, 4vw, 40px)/1.1 Fraunces, Georgia, serif;
+     letter-spacing: -.02em; margin: .4em 0 .2em; }
+.lede { color: var(--muted-foreground); margin: 0 0 1rem; }
+
+/* ---- card ----
+   Border, generous padding, one shallow shadow. The two-layer lift the page
+   had before reads as a modal floating over something; a report is not
+   floating over anything. */
+section { background: var(--card); border: 1px solid var(--border);
+          border-radius: var(--radius-xl); padding: 1.5rem; margin: 0;
+          box-shadow: 0 1px 2px rgba(51,38,27,.06); }
+/* Title and one line on what the card says, before anything it says. */
+.card-head { margin: 0 0 1.25rem; }
+.card-head h2 { font: 600 17px/1.3 Figtree, system-ui, sans-serif;
+                letter-spacing: -.01em; color: var(--foreground); margin: 0; }
+.desc { color: var(--muted-foreground); font-size: 14px; margin: .25rem 0 0; }
 section > p { margin: 0 0 1rem; }
-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-/* A wide table scrolls inside itself rather than pushing the page sideways. */
-section { overflow-x: auto; }
-th, td { text-align: right; padding: .45em .6em; border-bottom: 1px solid var(--line); }
+
+/* ---- table ----
+   In its own bordered box, headers muted and sentence-cased rather than
+   shouted, rows that answer to the pointer. Numbers stay right-aligned: that
+   is a column of figures, whatever the design language. */
+.tw { border: 1px solid var(--border); border-radius: var(--radius-md);
+      overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px;
+        font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: .7em .9em;
+         border-bottom: 1px solid var(--border); }
 th:first-child, td:first-child { text-align: left; }
-thead th { font-weight: 600; font-size: 13px; color: var(--dim);
-           text-transform: uppercase; letter-spacing: .05em; }
+thead th { font-weight: 500; color: var(--muted-foreground); white-space: nowrap; }
+tbody tr { transition: background .12s ease; }
+tbody tr:hover { background: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
-.rolls th, .rolls td { padding: .45em .35em; }
-.tag { display: inline-block; padding: 0 .5em; border-radius: 999px;
-       background: var(--accent); color: #FBF7EF; font-size: 12px;
-       font-weight: 600; letter-spacing: .03em; vertical-align: 1px; }
-.up { color: var(--good); font-weight: 600; }
-.down { color: var(--accent); font-weight: 600; }
-.note { color: var(--dim); font-size: 14px; margin: 1rem 0 0; }
+.rolls th, .rolls td { padding: .7em .45em; }
 /* A column that explains itself on hover says so, quietly. */
 thead th[title] { cursor: help; text-decoration: underline dotted #BFAF9C;
                   text-underline-offset: 4px; }
 /* What a thing was worth, beside how many of it there were. */
-.worth { color: var(--dim); }
+.worth { color: var(--muted-foreground); }
+
+/* ---- badge ---- */
+.tag { display: inline-block; padding: .05em .45em; border-radius: var(--radius-sm);
+       background: var(--primary); color: var(--primary-foreground);
+       font-size: 12px; font-weight: 600; letter-spacing: .01em;
+       vertical-align: 1px; }
+.up { color: var(--positive); font-weight: 600; }
+.down { color: var(--primary); font-weight: 600; }
+
+/* ---- footnote ----
+   The long explanation belongs after the thing it explains and below a rule,
+   so the figures are not read through it. */
+.note { color: var(--muted-foreground); font-size: 14px;
+        margin: 1.25rem 0 0; padding-top: 1rem;
+        border-top: 1px solid var(--border); }
+/* A note that *is* the card's content has nothing above it to be ruled off. */
+.card-head + .note { margin: 0; padding: 0; border-top: 0; }
+/* Prose picks up again below a table rather than butting against it. */
+.tw + p { margin: 1rem 0 0; }
+section > p:last-child { margin-bottom: 0; }
 
 /* ---- the turn bar ----
    Always the full width: every segment grows from a basis of nothing, so the
    widths are shares of the game and never of a scale the reader cannot see.
    No gaps between the segments: play goes round the table, so neighbours are
    never the same colour and a gap would only spend width on nothing. */
-.bar { display: flex; width: 100%; height: 2.4rem;
-       margin: 0 0 1.2rem; border-radius: 8px; overflow: hidden;
-       background: var(--line); }
-.seg { flex: 1 1 0; min-width: 1px; background: var(--dim); }
+.bar { display: flex; width: 100%; height: 2.5rem; margin: 0 0 1.25rem;
+       border-radius: var(--radius-md); overflow: hidden;
+       background: var(--muted); }
+.seg { flex: 1 1 0; min-width: 1px; background: var(--muted-foreground); }
 .seg:hover { filter: brightness(1.15); }
-.dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%;
-       margin-right: .5em; background: var(--dim); vertical-align: baseline; }
+.dot { display: inline-block; width: .55em; height: .55em; border-radius: 50%;
+       margin-right: .55em; background: var(--muted-foreground);
+       vertical-align: baseline; }
 .s0 { background: var(--p0); } .s1 { background: var(--p1); }
 .s2 { background: var(--p2); } .s3 { background: var(--p3); }
 ";

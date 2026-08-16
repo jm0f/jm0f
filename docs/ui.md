@@ -1318,6 +1318,41 @@ silently becomes a different game is worse than a dead link. Games that are not
 the live one are read-only: a POST to one is refused rather than quietly
 driving whatever is being played now.
 
+### How the report is dressed
+
+The page borrows **shadcn/ui's design system and none of its code**. shadcn is
+not a library you link to: it is a CLI that copies React and TypeScript source
+into a project, and every component of it assumes React, Tailwind, a Radix
+primitive or two and a bundler. Its charts are Recharts, another React
+dependency. This workspace has no Node toolchain and no third-party crate, and
+`./play` is `cargo build --release` and run, with every asset compiled into one
+binary you can copy to a machine and execute. Taking the package would cost all
+of that to replace hand-written CSS that was already doing the job, and would
+ship a JavaScript runtime to a page that deliberately carries no script.
+
+What was worth taking is the system underneath the React, which is MIT and is
+mostly a set of good decisions:
+
+- **The token vocabulary.** `--background`, `--foreground`, `--card`, `--muted`,
+  `--muted-foreground`, `--border`, `--primary`. The names say what a colour is
+  *for*, where the old `--dim` only said what it looked like. The values are
+  still Carranta's ink and paper, so the report belongs to the game.
+- **One radius, everything derived.** `--radius` with `sm`/`md`/`lg`/`xl`
+  computed off it, which is what keeps a badge, a table box and a card looking
+  like one family.
+- **The card.** Border, generous padding, one shallow shadow. The two-layer
+  lift the page had before read as a modal floating over something, and a
+  report is not floating over anything.
+- **Title and description before content.** A label tells you a section exists;
+  a description tells you whether to read it. This replaced the uppercase
+  micro-label headings.
+- **Tables in their own bordered box**, headers muted, medium weight and
+  sentence-cased rather than shouted, rows that answer to the pointer. Numeric
+  columns stay right-aligned: that is a column of figures whatever the design
+  language says.
+- **The muted-foreground habit** for anything secondary, and long explanations
+  as a footnote ruled off below the figures rather than mixed in with them.
+
 ### What the report says, and what it refuses to say
 
 The whole of `carranta-analytics` reads a game record, and this is that crate
