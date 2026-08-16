@@ -639,7 +639,13 @@
      getting dangerous to hold is something you see before you read it. */
   .stack { position: relative; border: 0; background: none; padding: 0; cursor: pointer;
            width: 5.3em; height: 7em; box-shadow: none; }
-  .stack:disabled { cursor: default; }
+  /* A card you cannot click is not a card that is unavailable, and an empty
+     slot is not a faded one. The button reset dims disabled controls to half,
+     which put the whole development pile at 50% against resource slots that
+     already opt out of it, so the two sat side by side at different weights.
+     The same argument the dashed "new" card makes: dim reads as "you have
+     none", and either you do have it or the slot is saying where one goes. */
+  .stack:disabled { cursor: default; opacity: 1; background: none; }
   .stack .layer {
     position: absolute; left: 0; right: 0; bottom: 0; height: 7em;
     border: 1px solid var(--line); border-radius: .55em; background: var(--panel);
@@ -647,7 +653,17 @@
   }
   .stack .face { display: flex; align-items: center; justify-content: center; }
   .stack .face svg { width: 52%; height: 52%; }
-  .stack.empty .layer { opacity: .4; }
+  /* Holding none is drawn the way holding no resources is drawn: the slot stays,
+     outlined and empty, with the disc every card carries showing through it. A
+     dimmed card back with its symbol still on it said "here is a faint card",
+     which is not the same as "here is where a card would go". */
+  .stack.empty .layer {
+    background: transparent; box-shadow: none; border-style: dashed;
+  }
+  .stack.empty .face::before {
+    content: ''; width: 2.6em; height: 2.6em; border-radius: 50%;
+    background: var(--line); opacity: .5;
+  }
   /* Bought this turn, so held but not yet playable. Dashed rather than dimmed:
      dim reads as "you have none", and you do have it. */
   .stack.fresh .layer { border-style: dashed; border-color: var(--accent); }
@@ -675,7 +691,7 @@
      the card it was supposed to be centred on: it sat a third of the way in,
      over the face, reading as a label stuck on the card rather than a count of
      the pile. */
-  .resStack .badge {
+  .resStack .badge, .stack .badge {
     min-width: 1.5em; height: 1.5em; padding: 0 .3em; border-radius: 999px;
     background: var(--ink); color: var(--panel);
     font-size: .82em; font-weight: 600; line-height: 1.5em; text-align: center;
@@ -2464,7 +2480,7 @@ function renderHand(v) {
     }
     dev.appendChild(pile);
   });
-  if (!dev.children.length) dev.appendChild(stackEl(0, devIcon(), 'no development cards', null));
+  if (!dev.children.length) dev.appendChild(stackEl(0, '', 'no development cards', null));
 }
 
 // ---- actions ---------------------------------------------------------------
