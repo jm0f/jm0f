@@ -530,16 +530,32 @@
   }
   .tradeSide { display: flex; flex-direction: column; min-width: 0; }
   .tradeSide.grow { flex: 1; }
+  /* The two trays are one pair and have to read as one: the ask side carries a
+     row of five beneath it and the offer side does not, so without this the
+     trays came out different depths and the pair looked like two unrelated
+     boxes.
+     The offer side gets the row back as an invisible copy of it rather than as
+     a calculated height. Arithmetic was two pixels out, because a row of cards
+     is a row of cards plus whatever the buttons around them add; a copy of the
+     thing is exactly as tall as the thing. */
+  .askRow.ghostRow { visibility: hidden; pointer-events: none; }
   /* The caption line carries the side's own controls at its far end. There is
      nowhere else for them: the bar is the dock's height and three buttons fill
      a column of it on their own. */
-  .tradeCap { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+  /* A fixed height, not a minimum: one caption carries a select and the other
+     carries nothing, and a caption that grows to fit its control pushed one
+     tray two pixels below the other. */
+  .tradeCap { display: flex; align-items: center; gap: 8px; margin-bottom: 3px;
+              height: 1.8em; flex: none; }
   .tradeCap .sideLabel { flex: 1; }
   .tradeTo { color: var(--dim); font-size: 11px; text-transform: uppercase;
              letter-spacing: .06em; display: flex; align-items: center; gap: 5px; }
-  .tradeTo select { padding: 1px 6px; font-size: 11px; text-transform: none;
-                    letter-spacing: 0; max-width: 12em; }
-  .tradeClose { flex: none; }
+  .tradeTo select { padding: 0 6px; height: 1.7em; font-size: 11px;
+                    text-transform: none; letter-spacing: 0; max-width: 12em; }
+  /* The far right of the bar, over the buttons it is a way out of rather than
+     tucked against the ask side's caption. The column below is given its height
+     back as padding, so the three buttons still fill what is left. */
+  .tradeClose { position: absolute; top: 8px; right: 12px; z-index: 1; }
   /* The tray a side's cards live in. It holds its height whether or not there
      is anything in it, so putting the first card down does not resize the
      composer under the cursor that put it there. */
@@ -572,7 +588,7 @@
   /* Three and only three, filling the column. Anything else in here does not
      fit: the bar is as deep as the dock and that is the whole budget. */
   .tradeDo { display: flex; flex-direction: column; justify-content: stretch;
-             gap: 5px; flex: none; width: 10em; }
+             gap: 4px; flex: none; width: 10em; padding-top: 1.6em; }
   .tradeDo button { flex: 1; justify-content: center; text-align: center; }
   .dock {
     /* Wrapping is the safety valve. The dock is only as wide as the board, and
@@ -2338,7 +2354,7 @@ function renderHand(v) {
     const left = held - staged;
     let act = null, tip = `${left} ${r.name}`;
     if (arming && held > give[r.i] && !want[r.i]) {
-      act = () => { give[r.i]++; renderPrompt(view); renderHand(view); };
+      act = () => { give[r.i]++; playSound('deal'); renderPrompt(view); renderHand(view); };
       tip = `${left} ${r.name} left, click to offer another`;
     } else if (!arming && held > 0 && canTrade) {
       act = () => {
@@ -3079,6 +3095,25 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#board, #prompt')) return;
   cancelPlay();
 });
+
+// Clicking away from the composer puts it away. Nothing has been committed
+// while it is open, so turning your attention to the board is an answer.
+//
+// The dock is not "away": clicking your hand is how the offer gets built, and
+// the composer sits directly on top of the dock precisely so the two read as
+// one thing. Neither is a decision card, which can stand at the same time and
+// is a separate question.
+// On the capture phase, which matters: clicking a card in your hand rebuilds
+// the hand, so by the time a bubbling listener ran the clicked node had already
+// been thrown away and `closest` walked up from a detached element to nothing.
+// Every click on the composer read as a click outside it and put it away.
+// Capture runs before the target's own handler, while the page is still the
+// page that was clicked.
+document.addEventListener('click', (e) => {
+  if (prompt.mode !== 'compose') return;
+  if (e.target.closest('#tradeBar, .dock, #prompt')) return;
+  closePrompt();
+}, true);
 
 // ---- tooltip ---------------------------------------------------------------
 // One element, moved and filled per trigger. Shown on hover and on focus, so a
@@ -3839,9 +3874,9 @@ function renderTrade(v) {
   const redraw = () => { renderTrade(view); renderHand(view); };
 
   // ---- what you are putting up, and what you are asking for ----------------
-  const side = (label, counts, tray, extra) => {
+  const side = (label, counts, tray, extra, offering) => {
     const box = document.createElement('div');
-    box.className = 'tradeSide grow';
+    box.className = 'tradeSide grow' + (offering ? ' offering' : '');
     // The caption line doubles as the side's own header, so the controls that
     // belong to a trade but not to a tray have somewhere to sit. There is no
     // room for a row of their own: the bar is the dock's height and three
@@ -3869,7 +3904,7 @@ function renderTrade(v) {
         const c = miniCard(r.i);
         c.classList.add('big');
         c.title = `${r.name}, click to take it back`;
-        c.onclick = () => { counts[r.i]--; redraw(); };
+        c.onclick = () => { counts[r.i]--; playSound('deal'); redraw(); };
         t.appendChild(c);
       }
     });
@@ -3893,7 +3928,7 @@ function renderTrade(v) {
       ? `you are already offering ${r.name}`
       : `ask for ${r.name}`);
     if (blocked) b.setAttribute('aria-disabled', 'true');
-    else b.onclick = () => { want[r.i]++; redraw(); };
+    else b.onclick = () => { want[r.i]++; playSound('deal'); redraw(); };
     row.appendChild(b);
   });
 
@@ -3917,9 +3952,14 @@ function renderTrade(v) {
   close.textContent = 'close';
   close.onclick = closePrompt;
 
-  const giving = side('you offer', give, 'click your cards below', toRow);
-  const asking = side('you ask for', want, 'pick from the row beneath', close);
+  const giving = side('you offer', give, 'click your cards below', toRow, true);
+  const asking = side('you ask for', want, 'pick from the row beneath');
   asking.appendChild(row);
+  // The same row again, invisible, so the offer tray ends exactly where the ask
+  // tray does.
+  const ghost = row.cloneNode(true);
+  ghost.classList.add('ghostRow');
+  giving.appendChild(ghost);
 
   // ---- the three ways out --------------------------------------------------
   // A bank or port trade is one resource in and one out, which is exactly the
@@ -3994,7 +4034,7 @@ function renderTrade(v) {
   button('Port trade', 'btn-secondary', supplyWhy('port', atPort),
     () => { closePrompt(); act(atPort.i); });
 
-  bar.append(giving, asking, doing);
+  bar.append(giving, asking, doing, close);
 }
 
 async function load(url, opts) {

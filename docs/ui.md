@@ -415,6 +415,32 @@ asks for a number, where the cards are the game's own word for a resource and
 are already on the screen twice over, so putting one up is picking it up and
 putting it down.
 
+**Every card that moves in or out of the composition makes the card sound.**
+These are the one set of gestures the log never sees, since nothing has happened
+at the table yet and there is no line for a cue to hang on, so they are the one
+exception to sounds being played off the log (§7a). A card you pick up should
+sound like the cards that get dealt to you.
+
+**The two trays are one pair and sit at the same height.** The ask side carries
+a row of five beneath it and the offer side does not, so the offer side is given
+that row back as an invisible copy of it. A calculated height was two pixels
+out, because a row of cards is a row of cards plus whatever the buttons around
+them add, and a copy of the thing is exactly as tall as the thing. The captions
+are a fixed height for the same reason: one carries a select and the other
+carries nothing.
+
+**Clicking away puts it away.** Nothing has been committed while it is open, so
+turning your attention to the board is an answer. The dock is not "away":
+clicking your hand is how the offer gets built, and the composer sits directly
+on the dock precisely so the two read as one thing. Nor is a decision card,
+which can stand at the same time and is a separate question.
+
+That listener runs on the **capture** phase, which is load-bearing. Clicking a
+card in your hand rebuilds the hand, so by the time a bubbling listener ran, the
+clicked node had already been thrown away and `closest` walked up from a
+detached element to nothing: every click on the composer read as a click outside
+it and closed it.
+
 **One door for every trade, and three ways out of it.** The bank had its own
 button in the dock opening its own list of twenty sentences, which split trading
 in two and made the trade people make most often the one they could not simply
