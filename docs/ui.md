@@ -28,7 +28,7 @@ Four, fixed. Nothing moves between them as the position changes.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  header, the mark linking home · this game's name           │
+│  header, the mark · this game's name · its report            │
 ├────────────┬────────────────────────────────┬────────────────┤
 │  seats     │                                │   reserved     │
 │   you      │                                │                │
@@ -69,20 +69,22 @@ meant that a piece placed past the previous extent shifted and rescaled the
 whole board, which is the one thing a board must never do. The only thing that
 resizes it is the window.
 
-**The header is the mark, the table's name, and the way out of this page.**
-Whose turn it is, the turn number and the seed all belong to panels that
-already say them, and repeating them at the top made the one strip that never
-changes the busiest thing on screen.
+**The header is the mark, the table's name, and the way through to the
+report.** Whose turn it is, the turn number and the seed all belong to panels
+that already say them, and repeating them at the top made the one strip that
+never changes the busiest thing on screen.
 
-The exception, and it is the only one: a game has exactly two pages, the board
-and its report (§12), and the header is where a page says what else there is.
-It sits at the far end so the mark and the name stay together as one thing and
-it reads as somewhere else to go rather than as more of the title. It works
-mid-game, since a report on a game still being played is a report on the
-position so far. The mark links home; the name sits beside it in the
-body face and a quieter colour, so the mark stays the mark and the name reads
-as the answer to "which game is this". An unnamed table shows nothing rather
-than a placeholder, since a name nobody chose is worse than no name.
+The mark links home; the name sits beside it in the body face and a quieter
+colour, so the mark stays the mark and the name reads as the answer to "which
+game is this". An unnamed table shows nothing rather than a placeholder, since
+a name nobody chose is worse than no name.
+
+**The report is the one other thing up there**, and it is the only exception to
+the rule above. A game has exactly two pages, the board and its analytics
+(§12), and the header is where a page says what else there is. It sits at the
+far end, so the mark and the name stay together as one thing and it reads as
+somewhere else to go rather than as more of the title. It works mid-game: a
+report on a game still being played is a report on the position so far.
 
 **It has no surface of its own**, and no rule under it. It had a paler
 translucent panel with a blur behind it, which is what you build when content
