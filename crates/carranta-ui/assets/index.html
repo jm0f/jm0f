@@ -795,6 +795,10 @@
      opening one moves nothing: the board keeps its size and its position, and
      the card covers a part of it rather than pushing it around. */
   .prompt[hidden] { display: none; }
+  /* The stack, not a card. Everything being asked of you at once stands in
+     here, one card each, and the container carries only the position: it has no
+     surface of its own, so an empty stack is nothing and a stack of one looks
+     exactly like the single card it used to be. */
   .prompt {
     /* The board's top left corner, not the middle of the screen. A card in the
        middle sits on the part of the board you are being asked to look at; in
@@ -805,10 +809,25 @@
        other and close the gap when one goes, which is what the flow does for
        free and what a stack of absolutely placed cards would not. */
     position: absolute; z-index: 50;
-    top: 14px; left: 14px;
+    /* Room inside the scroller for the cards' shadow, which a scrolling box
+       would otherwise cut off at its own edge. Held in a property and taken
+       back off the offsets, so the cards land where they always did and the
+       bleed is one number rather than four that have to agree. */
+    --bleed: 22px;
+    top: calc(14px - var(--bleed)); left: calc(14px - var(--bleed));
+    padding: var(--bleed);
     display: flex; flex-direction: column; gap: 10px;
-    width: min(400px, calc(100% - 28px)); max-height: calc(100% - 28px);
+    /* Content box, so the width is the cards' width and not the width plus the
+       bleed. */
+    box-sizing: content-box;
+    width: min(400px, calc(100% - 28px));
+    max-height: calc(100% - 28px - 2 * var(--bleed));
     overflow-y: auto;
+  }
+  .promptCard {
+    /* Positioned, because the close button is placed against its own card and
+       not against whatever card happens to be at the top of the stack. */
+    position: relative; flex: none;
     background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 6px 14px rgba(51, 38, 27, .10), 0 26px 60px rgba(51, 38, 27, .20);
@@ -2587,7 +2606,11 @@ function openPrompt(mode, data) {
   // waiting, the way a dialog primitive would. It is not aria-modal: the board
   // stays live behind it on purpose, and claiming otherwise would lie to a
   // screen reader about what is reachable.
-  const first = document.querySelector('#prompt button, #prompt select');
+  // Into the card that was just opened, not into the first one on the stack:
+  // another card can already be standing above this one, and landing the caret
+  // in somebody's trade offer is not where the click asked to go.
+  const card = document.querySelector(`#prompt [data-card="${mode}"]`) || document;
+  const first = card.querySelector('button, select');
   if (first) first.focus();
 }
 function closePrompt() {
@@ -2808,7 +2831,6 @@ function renderPrompt(v) {
   const host = document.getElementById('prompt');
   host.textContent = '';
 
-  // Forced first: the game is waiting on you and nothing else matters.
   const discard = v.choices.filter(c => c.group === 'discard');
   // Declining is a single choice that clears every open offer at once, not one
   // per offer, so it belongs to the card rather than to a row.
@@ -2820,26 +2842,30 @@ function renderPrompt(v) {
   // card on "answerable" hid the whole table whenever the one thing on it was
   // out of your reach, including the button to turn it down.
   const incoming = v.offers.filter(o => !o.mine);
-  let mode = prompt.mode;
-  if (v.winner !== null) mode = 'over';
-  else if (discard.length) mode = 'discard';
-  // Placing the robber happens on the board, so the card only says so. It used
-  // to be said by ringing every hex in the accent, which is the whole board
-  // shouting the same thing at once.
-  else if (v.phase === 'move the robber') mode = 'place';
-  else if (!mode && incoming.length && (decline || answerable.some(o => !o.mine))) mode = 'offers';
 
-  host.style.removeProperty('--rule');
-  if (!mode) { host.hidden = true; return; }
-  host.hidden = false;
-
-  host.setAttribute('role', 'dialog');
-  host.setAttribute('aria-labelledby', 'promptTitle');
-  const head = (text, closable) => {
+  // A card per thing being asked of you, rather than the one thing the card
+  // used to be able to say. Two questions can stand at once, and the commonest
+  // pair is the one that was worst served: opening the trade composer hid an
+  // incoming offer, so the offer you were answering vanished the moment you
+  // went to counter it.
+  let titles = 0;
+  const add = (name) => {
+    const box = document.createElement('div');
+    box.className = 'promptCard';
+    box.dataset.card = name;
+    box.setAttribute('role', 'dialog');
+    host.appendChild(box);
+    return box;
+  };
+  // A header, and the button that closes the card it belongs to. Bound per
+  // card, because two dialogs on screen cannot share one title id and a close
+  // button placed against the stack lands on whichever card is at the top.
+  const headFor = (box) => (text, closable) => {
     const h = document.createElement('h2');
-    h.id = 'promptTitle';
+    h.id = 'promptTitle' + (++titles);
     h.textContent = text;
-    host.appendChild(h);
+    box.setAttribute('aria-labelledby', h.id);
+    box.appendChild(h);
     if (closable) {
       const x = document.createElement('button');
       x.className = 'btn-ghost btn-sm';
@@ -2851,50 +2877,71 @@ function renderPrompt(v) {
       x.textContent = retract ? 'put the card back' : 'close';
       x.style.cssText = 'position:absolute; top:10px; right:12px;';
       x.onclick = retract ? cancelPlay : closePrompt;
-      host.appendChild(x);
+      box.appendChild(x);
     }
   };
-  const buttonList = (choices) => {
-    const box = document.createElement('div');
-    box.className = 'buttons';
+  const buttonListFor = (box) => (choices) => {
+    const list = document.createElement('div');
+    list.className = 'buttons';
     choices.forEach(c => {
       const b = document.createElement('button');
       b.textContent = c.label;
       b.onclick = () => { prompt.mode = null; act(c.i); };
-      box.appendChild(b);
+      list.appendChild(b);
     });
-    host.appendChild(box);
+    box.appendChild(list);
   };
 
-  if (mode === 'over') {
+  // The end of the game, and a seven, are the whole screen: there is exactly
+  // one thing to do and stacking anything beside it would be offering a choice
+  // that is not there.
+  if (v.winner !== null) {
+    const box = add('over');
     // The header no longer carries a new game button, so the offer to start
     // one belongs where every other decision does.
-    head(v.winner === v.you ? 'You won' : `${seatName(v, v.winner)} won`, false);
+    headFor(box)(v.winner === v.you ? 'You won' : `${seatName(v, v.winner)} won`, false);
     const b = document.createElement('button');
     b.className = 'btn-primary btn-block';
     b.textContent = 'New game';
     b.onclick = openLobby;
-    host.appendChild(b);
+    box.appendChild(b);
+    host.hidden = false;
     return;
   }
-  if (mode === 'discard') { renderDiscard(v, host, head); return; }
-  if (mode === 'place') {
+  if (discard.length) {
+    const box = add('discard');
+    renderDiscard(v, box, headFor(box));
+    host.hidden = false;
+    return;
+  }
+
+  // Otherwise, top to bottom: what the rules are forcing, then what you opened
+  // yourself, then what the table is asking. Yours sits above the market so an
+  // offer arriving cannot push the thing you are working on down the screen.
+  if (v.phase === 'move the robber') {
+    // Placing the robber happens on the board, so the card only says so. It
+    // used to be said by ringing every hex in the accent, which is the whole
+    // board shouting the same thing at once.
+    const box = add('place');
     // A militia was already spent to get here and can still be taken back; a
     // seven cannot, so that one has no way out and is not offered one.
-    head(v.canCancel ? 'Place the militia' : 'Move the robber', !!v.canCancel);
+    headFor(box)(v.canCancel ? 'Place the militia' : 'Move the robber', !!v.canCancel);
     const p = document.createElement('p');
     p.className = 'promptSay';
     p.textContent = 'Click a hex on the board.';
-    host.appendChild(p);
-    return;
+    box.appendChild(p);
   }
-  if (mode === 'pick') { renderPick(v, host, head, buttonList); return; }
-  if (mode === 'rob') {
+  if (prompt.mode === 'pick') {
+    const box = add('pick');
+    renderPick(v, box, headFor(box), buttonListFor(box));
+  }
+  if (prompt.mode === 'rob') {
     const here = v.choices.filter(c => c.hex === prompt.data.hex && c.victim !== undefined);
     if (!here.length) { closePrompt(); return; }
-    head('Take a card from', true);
-    const box = document.createElement('div');
-    box.className = 'buttons';
+    const box = add('rob');
+    headFor(box)('Take a card from', true);
+    const list = document.createElement('div');
+    list.className = 'buttons';
     here.forEach(c => {
       const b = document.createElement('button');
       b.textContent = seatName(v, c.victim);
@@ -2902,21 +2949,25 @@ function renderPrompt(v) {
       b.style.color = onColour(SEAT_HEX[c.victim]);
       b.className = 'seatBtn';
       b.onclick = () => { prompt.mode = null; act(c.i); };
-      box.appendChild(b);
+      list.appendChild(b);
     });
-    host.appendChild(box);
-    return;
+    box.appendChild(list);
   }
-  if (mode === 'offers') {
+  if (prompt.mode === 'compose') {
+    const box = add('compose');
+    renderCompose(v, box, headFor(box));
+  }
+  if (incoming.length && (decline || answerable.some(o => !o.mine))) {
+    const box = add('offers');
     // One person waiting on you means the card can wear their colour. Several
     // means it cannot belong to any of them, so it stays the accent.
-    const asking = [...new Set(v.offers.filter(o => !o.mine).map(o => o.from))];
-    if (asking.length === 1) host.style.setProperty('--rule', COLOURS[asking[0]]);
-    head('On the table', false);
-    renderOffers(v, host, v.offers, decline);
-    return;
+    const asking = [...new Set(incoming.map(o => o.from))];
+    if (asking.length === 1) box.style.setProperty('--rule', COLOURS[asking[0]]);
+    headFor(box)('On the table', false);
+    renderOffers(v, box, v.offers, decline);
   }
-  if (mode === 'compose') { renderCompose(v, host); return; }
+
+  host.hidden = !host.firstChild;
 }
 
 // Picking a development card, and then its subject if it has one.
@@ -3206,18 +3257,12 @@ function miniCard(res) {
   return card;
 }
 
-function renderCompose(v, host) {
-  const h = document.createElement('h2');
-  h.id = 'promptTitle';
-  h.textContent = v.yourTurn ? 'Offer a trade, click your cards to add them'
-    : `Counter ${seatName(v, v.toAct)}`;
-  host.appendChild(h);
-  const x = document.createElement('button');
-  x.className = 'btn-ghost btn-sm';
-  x.textContent = 'close';
-  x.style.cssText = 'position:absolute; top:10px; right:12px;';
-  x.onclick = closePrompt;
-  host.appendChild(x);
+function renderCompose(v, host, head) {
+  // Through the shared header rather than its own copy of one, so the title id
+  // is unique across a stack of cards and the close button is placed against
+  // this card rather than against whichever one is on top.
+  head(v.yourTurn ? 'Offer a trade, click your cards to add them'
+    : `Counter ${seatName(v, v.toAct)}`, true);
 
   // Who it can go to. On another seat's turn R-7.3 leaves only them, so the
   // choice is made rather than offered.

@@ -294,6 +294,26 @@ reserved column and the dock exactly where they were. That was already the rule
 when the card lived in a column, and it survives the move: a panel that
 resizes what the player is reading is worse than one that covers a corner.
 
+### More than one card can stand
+
+**One card per thing being asked of you.** They stack in the board's corner,
+under each other, and close the gap when one goes. The stack is a flex column,
+so that last part is free; `#prompt` is the stack and carries no surface of its
+own, and each card is a `.promptCard` with its own `role="dialog"`, its own
+title and its own close button.
+
+It used to be one card that could say exactly one thing, chosen by priority.
+The commonest pair was also the worst served: opening the trade composer hid the
+incoming offer, so the offer you were answering vanished the moment you went to
+counter it.
+
+The order, top to bottom, is **what the rules are forcing, then what you opened
+yourself, then what the table is asking.** Yours sits above the market so an
+offer arriving cannot push the thing you are working on down the screen. Two
+cards are exclusive and stack with nothing: the end of the game, and a seven.
+There is one thing to do in each, and standing anything beside it would offer a
+choice that is not there.
+
 ### Taking back a half-played card
 
 A development card that opens a second decision is spent on the first of them,
