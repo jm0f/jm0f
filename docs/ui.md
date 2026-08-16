@@ -1504,7 +1504,18 @@ is paired with an effect size.
   above; this is who took them from whom, which a per-player column cannot say.
   With it, the robber's own counts: times moved, and robberies that found an
   empty hand.
-- **The market, development cards and the opening**, as counts.
+- **Trades**, as a chord: every party round a circle, each arc as long as their
+  trades, a ribbon across the middle for each pair as thick as the trades
+  between them. The bank and the ports are parties too, since a trade with the
+  supply is still a trade and leaving it out would draw a market smaller than
+  the one played. A chord rather than a sankey because trading is symmetric:
+  there is no side a trade goes from, and drawing one would invent a direction
+  the game does not have. Which counter a supply trade used is read off the
+  price rather than off the ports a seat owns: four cards for one is the bank,
+  three or two is a port. Beneath it, the counts, where a completed trade is
+  counted for both sides so that column totals to twice the trades; the circle
+  counts each one once.
+- **Development cards and the opening**, as counts.
 - **Across every game here**, seat win rates, with the note that at a handful of
   games the spread is noise.
 

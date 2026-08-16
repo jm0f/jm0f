@@ -508,6 +508,164 @@ fn plot(
     b
 }
 
+/// Every trade in the game as a circle of who dealt with whom.
+///
+/// Nodes round the rim, each arc as long as that party's trades; a ribbon
+/// across the middle for each pair, as thick as the trades between them. The
+/// bank and the ports are parties too, since a trade with the supply is still a
+/// trade and leaving it out would draw a market smaller than the one played.
+///
+/// A chord rather than a sankey because trading is symmetric: there is no side
+/// a trade goes from and no side it goes to, and drawing one would invent a
+/// direction the game does not have.
+fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    // The box has to hold the names as well as the circle, and a name at the
+    // rim runs outwards: the first draft clipped "Ines 4th" against the edge.
+    const SIZE: f64 = 560.0;
+    const R: f64 = 150.0;
+    const BAND: f64 = 12.0;
+    const GAP: f64 = 0.055;
+
+    let tr = &study.trades;
+    // The parties: everyone who sat down, then the two counters.
+    let bank = seats;
+    let port = seats + 1;
+    let n = seats + 2;
+    let mut weight = vec![0u32; n];
+    for p in 0..seats {
+        weight[p] = tr.total(p);
+        weight[bank] += tr.bank[p];
+        weight[port] += tr.port[p];
+    }
+    let total: u32 = weight.iter().sum();
+    if total == 0 {
+        return String::new();
+    }
+
+    // Arcs round the rim, sized by what each party traded, with a gap between.
+    let shown: Vec<usize> = (0..n).filter(|i| weight[*i] > 0).collect();
+    let span = std::f64::consts::TAU - GAP * shown.len() as f64;
+    let mut at = -std::f64::consts::FRAC_PI_2;
+    let mut arc = vec![(0.0, 0.0); n];
+    for &i in &shown {
+        let width = span * f64::from(weight[i]) / f64::from(total);
+        arc[i] = (at, at + width);
+        at += width + GAP;
+    }
+
+    let mid = SIZE / 2.0;
+    let point = |angle: f64, radius: f64| (mid + radius * angle.cos(), mid + radius * angle.sin());
+    let mut b = format!(
+        "<div class=\"ring\"><svg viewBox=\"0 0 {SIZE} {SIZE}\" role=\"img\" \
+         aria-label=\"Who traded with whom\">"
+    );
+
+    // The ribbons first, under the rim.
+    let mut cursor: Vec<f64> = arc.iter().map(|(a, _)| *a).collect();
+    let step = |w: u32| span * f64::from(w) / f64::from(total);
+    let mut ribbon = |b: &mut String,
+                      from: usize,
+                      to: usize,
+                      count: u32,
+                      class: &str,
+                      title: String| {
+        if count == 0 {
+            return;
+        }
+        let (a0, a1) = (cursor[from], cursor[from] + step(count));
+        let (c0, c1) = (cursor[to], cursor[to] + step(count));
+        cursor[from] = a1;
+        cursor[to] = c1;
+        let (x0, y0) = point(a0, R);
+        let (x1, y1) = point(a1, R);
+        let (u0, v0) = point(c0, R);
+        let (u1, v1) = point(c1, R);
+        // Through the centre, which is what makes a chord read as one link
+        // rather than as two lines that happen to meet.
+        let _ = write!(
+            b,
+            "<path class=\"chord {class}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
+             Q{mid} {mid} {u1:.1} {v1:.1} A{R} {R} 0 0 1 {u0:.1} {v0:.1} Q{mid} {mid} {x0:.1} {y0:.1} Z\">\
+             <title>{}</title></path>",
+            esc(&title),
+        );
+    };
+
+    for a in 0..seats {
+        for c in (a + 1)..seats {
+            let count = tr.between[a][c];
+            ribbon(
+                &mut b,
+                a,
+                c,
+                count,
+                &format!("f{a}"),
+                format!("{} and {}: {count} traded", who[a], who[c]),
+            );
+        }
+    }
+    for a in 0..seats {
+        ribbon(
+            &mut b,
+            a,
+            bank,
+            tr.bank[a],
+            &format!("f{a}"),
+            format!("{}: {} with the bank", who[a], tr.bank[a]),
+        );
+        ribbon(
+            &mut b,
+            a,
+            port,
+            tr.port[a],
+            &format!("f{a}"),
+            format!("{}: {} at a port", who[a], tr.port[a]),
+        );
+    }
+
+    // The rim, and a name outside each arc.
+    for &i in &shown {
+        let (a0, a1) = arc[i];
+        let (x0, y0) = point(a0, R);
+        let (x1, y1) = point(a1, R);
+        let (x2, y2) = point(a1, R + BAND);
+        let (x3, y3) = point(a0, R + BAND);
+        let class = if i < seats {
+            format!("n{i}")
+        } else {
+            "supply".to_string()
+        };
+        let _ = write!(
+            b,
+            "<path class=\"rim {class}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
+             L{x2:.1} {y2:.1} A{r2} {r2} 0 0 0 {x3:.1} {y3:.1} Z\"/>",
+            r2 = R + BAND,
+        );
+        let centre = (a0 + a1) / 2.0;
+        let (tx, ty) = point(centre, R + BAND + 14.0);
+        let name = match i {
+            _ if i < seats => label(&who[i], place[i]),
+            _ if i == bank => "the bank".to_string(),
+            _ => "ports".to_string(),
+        };
+        let _ = write!(
+            b,
+            "<text class=\"who {anchor}\" x=\"{tx:.1}\" y=\"{ty:.1}\">{}</text>",
+            esc(&name),
+            // A name runs outwards from the rim, so which way it is anchored
+            // depends on where round the circle it sits. At the top and bottom
+            // neither end is outwards, and it is centred.
+            anchor = match centre.cos() {
+                c if c < -0.3 => "end",
+                c if c > 0.3 => "",
+                _ => "mid",
+            },
+        );
+    }
+    b.push_str("</svg></div>");
+    b
+}
+
 /// How the game was divided, seat by seat.
 fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
     let mut b = String::from("<section>");
@@ -1051,11 +1209,14 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     // ---- the market ---------------------------------------------------------
     b.push_str("<section>");
     b.push_str(&card_head(
-        "The market",
+        "Trades",
         "Negotiation churn, which under an open market is most of the \
          interaction in a game (H-4). A completed trade is counted for both \
-         sides of it, so that column totals to twice the number of trades.",
+         sides of it, so that column totals to twice the number of trades. The \
+         circle above counts each trade once, and takes the bank and the ports \
+         as parties, since a trade with the supply is still a trade.",
     ));
+    b.push_str(&chord(study, &who, &place, seats));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
     b.push_str(&head_row(&[
@@ -1398,10 +1559,11 @@ tbody tr.sub:hover { background: transparent; }
 .ribbon:hover { opacity: .8; }
 .who { font: 500 13px Figtree, system-ui, sans-serif; fill: var(--foreground); }
 .who.end { text-anchor: end; }
-.ribbon.f0 { fill: var(--p0); } .ribbon.f1 { fill: var(--p1); }
-.ribbon.f2 { fill: var(--p2); } .ribbon.f3 { fill: var(--p3); }
-.n0 { fill: var(--p0); } .n1 { fill: var(--p1); }
-.n2 { fill: var(--p2); } .n3 { fill: var(--p3); }
+.who.mid { text-anchor: middle; }
+.ribbon.f0, .chord.f0 { fill: var(--p0); } .ribbon.f1, .chord.f1 { fill: var(--p1); }
+.ribbon.f2, .chord.f2 { fill: var(--p2); } .ribbon.f3, .chord.f3 { fill: var(--p3); }
+.node.n0, .rim.n0 { fill: var(--p0); } .node.n1, .rim.n1 { fill: var(--p1); }
+.node.n2, .rim.n2 { fill: var(--p2); } .node.n3, .rim.n3 { fill: var(--p3); }
 
 /* ---- the production curves ----
    Five views in the page and a radio deciding which is on screen, so the
@@ -1449,6 +1611,16 @@ tbody tr.sub:hover { background: transparent; }
 .r2, .swatch.r2 { stroke: #8DBE4A; background: #8DBE4A; }
 .r3, .swatch.r3 { stroke: #E2A32B; background: #E2A32B; }
 .r4, .swatch.r4 { stroke: #5C6B78; background: #5C6B78; }
+
+/* ---- the trade ring ----
+   A chord, because trading is symmetric: there is no side a trade goes from,
+   and a sankey would invent a direction the game does not have. */
+.ring svg { display: block; width: 100%; max-width: 520px; height: auto;
+            margin: 0 auto 1rem; }
+.chord { opacity: .4; }
+.chord:hover { opacity: .75; }
+.rim.supply { fill: var(--muted-foreground); }
+.rim { stroke: var(--card); stroke-width: 1; }
 
 /* ---- badge ---- */
 .tag { display: inline-block; padding: .05em .45em; border-radius: var(--radius-sm);
@@ -1540,7 +1712,7 @@ mod tests {
             "Dice",
             "Production",
             "Militia",
-            "The market",
+            "Trades",
             "Development cards",
             "The opening",
         ] {

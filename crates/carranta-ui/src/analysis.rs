@@ -477,6 +477,90 @@ fn series_of(saved: &Saved) -> Series {
     out
 }
 
+/// Who traded with whom, and at what counter.
+///
+/// The market's counts say how many trades each seat was party to; this says
+/// who the other party was, which is the thing a per-seat column cannot hold.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Trades {
+    /// Trades between two seats, counted once, in both cells.
+    pub between: [[u32; MAX_PLAYERS]; MAX_PLAYERS],
+    /// Trades against a port, four to one being the bank rather than a port.
+    pub port: [u32; MAX_PLAYERS],
+    /// Trades against the bank at four to one.
+    pub bank: [u32; MAX_PLAYERS],
+}
+
+impl Trades {
+    /// Everything this seat traded, however and with whomever.
+    pub fn total(&self, seat: usize) -> u32 {
+        self.between[seat].iter().sum::<u32>() + self.port[seat] + self.bank[seat]
+    }
+}
+
+/// Follow every trade to its counterparty.
+///
+/// A player trade names both sides: the accepter is in the action and the
+/// proposer is on the offer it accepts, read before the offer is cleared away.
+///
+/// A supply trade names only one, so the counter is worked out from the price.
+/// Four cards for one is the bank; three or two is a port, and which port is a
+/// question about the board rather than about the trade (R-7.9). Read off the
+/// hand rather than off the ports the seat owns, since the hand is what
+/// actually moved.
+fn trades_of(saved: &Saved) -> Trades {
+    use carranta_core::action::Action;
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let seats = state.players as usize;
+    let mut out = Trades::default();
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        // Who proposed, before applying clears the offer away.
+        let proposer = match action {
+            Action::AcceptTrade { offer, .. } => state
+                .offers
+                .get(offer as usize)
+                .map(|o| o.from as usize)
+                .filter(|p| *p < seats),
+            _ => None,
+        };
+        let actor = state.to_act as usize;
+        let before = state.hand;
+        if state.apply(action).is_err() {
+            break;
+        }
+        match action {
+            Action::AcceptTrade { by, .. } => {
+                let by = by as usize;
+                if let Some(from) = proposer
+                    && by < seats
+                    && by != from
+                {
+                    out.between[from][by] += 1;
+                    out.between[by][from] += 1;
+                }
+            }
+            Action::Trade { .. } => {
+                if actor >= seats {
+                    continue;
+                }
+                let paid: u32 = (0..5)
+                    .map(|r| u32::from(before[actor][r].saturating_sub(state.hand[actor][r])))
+                    .sum();
+                // Four for one is the only rate the bank offers anybody.
+                if paid >= 4 {
+                    out.bank[actor] += 1;
+                } else {
+                    out.port[actor] += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// One turn of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Turn {
@@ -576,6 +660,8 @@ pub struct Study {
     pub ledger: [Ledger; MAX_PLAYERS],
     /// Production against expectation, turn by turn.
     pub series: Series,
+    /// Who traded with whom, and at what counter.
+    pub trades: Trades,
     /// Whether this game was saved with a clock in it. Games written before
     /// there was one still read, and say nothing about time rather than saying
     /// nought.
@@ -613,6 +699,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
     let series = series_of(saved);
+    let trades = trades_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
     let rolls = dice::rolls(&log);
@@ -685,6 +772,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         turns,
         ledger,
         series,
+        trades,
         timed,
         production,
         dice: this,
@@ -954,6 +1042,38 @@ mod tests {
             }
         }
         assert!(moved > 0, "some game in the range traded");
+    }
+
+    #[test]
+    fn every_trade_has_two_ends() {
+        for seed in 0..8u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            let seats = s.report.players as usize;
+            let tr = &s.trades;
+            for a in 0..seats {
+                // Nobody trades with themselves, and a trade between two seats
+                // is the same trade read from either end.
+                assert_eq!(tr.between[a][a], 0, "seed {seed}");
+                for c in 0..seats {
+                    assert_eq!(tr.between[a][c], tr.between[c][a], "seed {seed}");
+                }
+                // The counter is either the bank or a port and never both, and
+                // together they are what the market table calls supply trades.
+                assert_eq!(
+                    tr.bank[a] + tr.port[a],
+                    s.report.supply_trades[a],
+                    "seed {seed}, seat {a}: the counters do not add up"
+                );
+            }
+            // And a player trade is counted for both sides in the report, so
+            // the pairs here are exactly half of that column.
+            let pairs: u32 = (0..seats)
+                .map(|a| tr.between[a][..seats].iter().sum::<u32>())
+                .sum();
+            let counted: u32 = s.report.trades_completed[..seats].iter().sum();
+            assert_eq!(pairs, counted, "seed {seed}");
+        }
     }
 
     #[test]
