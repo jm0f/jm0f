@@ -325,6 +325,13 @@ The commonest pair was also the worst served: opening the trade composer hid the
 incoming offer, so the offer you were answering vanished the moment you went to
 counter it.
 
+**The stack does not scroll and does not clip.** It used to be the scroller,
+with padding around it so the cards' shadow had somewhere to go, and that cannot
+work: the shadow is a 60px blur, no amount of padding is enough, and it was cut
+off square. What should have been a soft glow read as a hard grey slab sitting
+beside the card. A card caps its own height and scrolls its own contents
+instead, which clips descendants and never the element's own shadow.
+
 The order, top to bottom, is **what the rules are forcing, then what you opened
 yourself, then what the table is asking.** Yours sits above the market so an
 offer arriving cannot push the thing you are working on down the screen. Two
@@ -442,8 +449,12 @@ was correct:
 
 So the card is keyed on **whether you were asked**, which is a rule about seats
 and not about hands, and the accept button on whether you can cover it. One you
-cannot cover says "you cannot cover this" and can still be turned down. Saying
-why it cannot be covered is safe here and only here: it is your own hand.
+cannot cover shows, has no accept button, and can still be turned down.
+
+Nothing labels it as unaffordable. There was a tag saying so, from when such an
+offer was invisible and the row had to explain itself; now that the offer is
+drawn in cards and your hand is drawn in the same cards a few inches below, the
+missing button is the whole of the message.
 
 The two are still distinguishable at a glance, because an offer nobody put to
 you never appears at all.
@@ -487,11 +498,20 @@ market something that happened to the player rather than something they were in.
 One at a time rather than the whole table at once, because three refusals
 landing together is a verdict and three arriving in turn is the table thinking.
 
-**A proposal of yours stays carded until the turn ends.** Before this it went on
-the table and then said nothing: you got a result or you got silence, with no
-way to tell which was still coming. The requirement is that it survives at least
-until everyone has answered; ending it with the turn is what the engine does
-with the offers themselves, so the card and the market disappear together.
+**A proposal of yours stands until it has been answered, and then closes.**
+Before this it went on the table and said nothing back: you got a result or you
+got silence, with no way to tell which was still coming. So it stays for the
+round of replies, and goes when the round is over, which is either of:
+
+- **Somebody took it.** The cards have moved, the hand shows it and the log
+  names who took it. The seats that had not answered never will now, so leaving
+  it up meant a row of `???` against a question nobody is being asked.
+- **Everybody turned it down.** The replies are all in and the log has every
+  one of them.
+
+Either way the question is closed, and a card that stays up after it has been
+answered is a card asking nothing. If neither happens the turn takes it, along
+with the offers themselves.
 
 **Everyone asked answers, including seats that could not have covered it.** A
 seat that cannot afford an offer says no like anybody else, and the answer never
@@ -521,14 +541,17 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 
 ## 7a. Sound
 
-**Four sounds, and each one names an event rather than an interaction.**
+**Seven sounds, and each one names an event rather than an interaction.**
 
 | Sound | Plays when |
 |---|---|
+| `confirmation-001` | Your turn begins |
 | `dice-throw-3` | The dice are rolled, by anyone |
 | `impact-generic-light-002` | A piece goes down on the board |
 | `card-place-1` | Cards are dealt into a hand |
 | `drop-002` | An offer goes on the table |
+| `jingles-hit-10` | The game ends and you won |
+| `jingles-hit-15` | The game ends and somebody else did |
 
 **They are played off the log, not off the clicks.** The log is the record of
 everything that happened, including everything three bots did while nobody was
@@ -536,6 +559,28 @@ looking, so hanging the cues on it makes a move sound the same whoever made it.
 Hanging them on the click would have made the whole table silent except for you,
 which is the opposite of the point: the sounds are here so a player can tell
 what is going on without watching every corner of the board.
+
+**Two are about you rather than about the table**, and those two are the ones
+that do not come off the log: your turn beginning, and the game ending. The log
+says what happened; these say whose move it is and how it went for you.
+
+Your turn is read from the **turn counter and the active seat**, not from
+"you are the one deciding". That second thing is also true when a seven asks you
+for cards in the middle of somebody else's turn, and a fanfare for being robbed
+is not the message. A turn of yours is a new turn number with you holding it,
+which is what the counter and the log already group by, and it counts each
+placement in the deal as the turn it is.
+
+The ending is kept apart from the turn cue rather than folded into it, because a
+game can end on somebody else's turn and there is then no turn of yours to hang
+it on. Which jingle plays depends on which side of it you are on: this browser
+is one player, and the end of a game is not the same event for everybody.
+
+**One flag decides whether a payload is the first one read**, shared by all
+three readers. Each used to use its own state as the marker, and since they run
+in a fixed order the turn reader seeded itself first, which told the ending
+reader that this was not the first payload after all: a reload onto a finished
+game played the jingle for it.
 
 So a "dealt card" is any line that puts cards into a hand: production, a card
 bought, a card stolen, a trade landing. A "placed piece" is any line that puts

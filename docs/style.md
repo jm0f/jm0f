@@ -354,6 +354,22 @@ drawing's own units, so it does not change with how large the piece is placed.
 faces §3.4 already paints lightest, so the sheen lands where the drawing says
 the light is instead of fighting it.
 
+**A filtered piece needs a solid silhouette underneath it.** This is a rule
+about how the drawings are built, and getting it wrong is not subtle.
+
+The sheen is read off the alpha channel, and a piece drawn as abutting faces has
+no solid alpha: two polygons that share an edge each antialias against it, so
+their alphas sum to slightly less than one all the way down the seam. The filter
+sees that as a crease and lights it. The robber came out with a bright halo
+traced around every internal edge, its head outlined in glare, and a ghost of
+its own silhouette floating inside itself.
+
+So each solid gets its **outline drawn first, as one polygon**, and its faces
+painted on top. The outline makes the alpha solid, the faces contribute only
+colour, and the filter sees the shape the piece actually is. The faces are
+unchanged and the outline is their exact union, so nothing about the drawing
+moves; the seams simply have nothing to show through.
+
 ---
 
 ## 6. Typography

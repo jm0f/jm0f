@@ -428,8 +428,11 @@
   .seatRow .vp small { color: var(--dim); font-weight: 400; }
   /* Whoever is in front, on the count everybody can see. Colour on the number
      itself rather than a tag or a badge beside it: the standing is what the
-     number already says, so it is the number that should say it louder. */
-  .seatRow .vp.ahead { color: var(--accent); }
+     number already says, so it is the number that should say it louder.
+     The unit takes the colour too. It is one thing, "4 vp", and colouring half
+     of it left the accent looking like it had been applied to the wrong span.
+     The smaller size and lighter weight are hierarchy enough. */
+  .seatRow .vp.ahead, .seatRow .vp.ahead small { color: var(--accent); }
   .seatRow .counts { grid-column: 2 / span 2; display: flex; flex-wrap: wrap;
                      gap: .2em .7em; color: var(--muted-foreground); font-size: .92em; }
   .seatRow .counts .left { flex-basis: 100%; }
@@ -837,25 +840,23 @@
        other and close the gap when one goes, which is what the flow does for
        free and what a stack of absolutely placed cards would not. */
     position: absolute; z-index: 50;
-    /* Room inside the scroller for the cards' shadow, which a scrolling box
-       would otherwise cut off at its own edge. Held in a property and taken
-       back off the offsets, so the cards land where they always did and the
-       bleed is one number rather than four that have to agree. */
-    --bleed: 22px;
-    top: calc(14px - var(--bleed)); left: calc(14px - var(--bleed));
-    padding: var(--bleed);
+    top: 14px; left: 14px;
     display: flex; flex-direction: column; gap: 10px;
-    /* Content box, so the width is the cards' width and not the width plus the
-       bleed. */
-    box-sizing: content-box;
     width: min(400px, calc(100% - 28px));
-    max-height: calc(100% - 28px - 2 * var(--bleed));
-    overflow-y: auto;
+    /* Nothing here scrolls and nothing here clips.
+       The stack used to be the scroller, with padding around it so the cards'
+       shadow had somewhere to go. That could not work: the shadow is a 60px
+       blur and no amount of padding is enough, so it was cut off square and
+       the soft glow read as a hard grey slab beside the card. A card caps its
+       own height and scrolls its own contents instead, which clips descendants
+       and never the shadow. */
   }
   .promptCard {
     /* Positioned, because the close button is placed against its own card and
        not against whatever card happens to be at the top of the stack. */
     position: relative; flex: none;
+    /* Its own scroller, for the rare card taller than the board. */
+    max-height: calc(100vh - 190px); overflow-y: auto;
     background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 6px 14px rgba(51, 38, 27, .10), 0 26px 60px rgba(51, 38, 27, .20);
@@ -1607,6 +1608,9 @@ function fit(svg, frame) {
 //
 // Kenney's, CC0, carried in the binary. See `audio/SOURCES.md`.
 const SOUNDS = {
+  won: '/sound/jingles-hit-10.mp3',
+  lost: '/sound/jingles-hit-15.mp3',
+  yours: '/sound/confirmation-001.mp3',
   roll: '/sound/dice-throw-3.mp3',
   place: '/sound/impact-generic-light-002.mp3',
   deal: '/sound/card-place-1.mp3',
@@ -1644,6 +1648,14 @@ const sound = {
   on: localStorage.getItem('carranta.sound') !== 'off',
   clips: {},
   heard: null,
+  turn: null,
+  ended: false,
+  // Whether a payload has been read at all yet. One flag for all three
+  // readers, because they run in a fixed order and each was otherwise using
+  // its own state as the marker: the turn reader seeded itself first, which
+  // told the end reader that this was not the first payload after all, and a
+  // reload onto a finished game played the jingle for it.
+  first: true,
 };
 for (const k in SOUNDS) {
   const a = new Audio(SOUNDS[k]);
@@ -1682,7 +1694,7 @@ function playSound(name) {
 // of dice.
 function soundTheLog(v) {
   const log = v.log || [];
-  if (sound.heard === null || log.length < sound.heard) {
+  if (sound.first || log.length < sound.heard) {
     sound.heard = log.length;
     return;
   }
@@ -1699,6 +1711,46 @@ function soundTheLog(v) {
   // the board, then the cards that moved because of it, then anything put up
   // for trade afterwards.
   ['roll', 'place', 'deal', 'offer'].forEach(n => { if (heard.has(n)) playSound(n); });
+}
+
+// Your turn beginning. The one cue that is about you rather than about the
+// table, which is why it is the one that does not come off the log: the log
+// says what happened, and this says whose move it is now.
+//
+// Read from the turn counter and the active seat, not from `yourTurn`. That is
+// "you are the one deciding", which is also true when a seven asks you for
+// cards in the middle of somebody else's turn, and a fanfare for being robbed
+// is not the message. A turn of yours is a new turn number with you holding it,
+// which is what the counter and the log already group by, and it counts each
+// placement in the deal as the turn it is.
+//
+// Silent on the first read, like the log: a reload lands on whatever turn the
+// game is on and that turn did not just start.
+function soundTheTurn(v) {
+  const turn = v.turns || 0;
+  const yours = v.toAct === v.you && v.winner === null;
+  if (sound.first || turn < sound.turn) { sound.turn = turn; return; }
+  if (turn !== sound.turn) {
+    sound.turn = turn;
+    if (yours) playSound('yours');
+  }
+}
+
+// The end, once. Which jingle depends on which side of it you are on, because
+// this browser is one player and the end of a game is not the same event for
+// everybody at the table.
+//
+// Kept apart from the turn cue rather than folded into it: a game can end on
+// somebody else's turn, so there is no turn of yours beginning to hang it on.
+// Once and not on every poll, because the finished position keeps arriving.
+function soundTheEnd(v) {
+  const over = v.winner !== null && v.winner !== undefined;
+  if (!over || sound.ended) { sound.ended = over; return; }
+  sound.ended = true;
+  // Silent on the first read like everything else: a reload onto a finished
+  // game is not the game finishing.
+  if (sound.first) return;
+  playSound(v.winner === v.you ? 'won' : 'lost');
 }
 
 // A speaker, with the waves on or struck through. One drawing rather than two
@@ -1732,7 +1784,12 @@ drawSoundBtn();
 
 function render() {
   const v = view;
+  // Whose move it is, before what happened: at a table the turn passing to you
+  // comes first and the dice follow.
+  soundTheTurn(v);
   soundTheLog(v);
+  soundTheEnd(v);
+  sound.first = false;
   const how = v.calledOnTime ? ' on time, most points showing' : '';
   const turn = v.winner !== null
     ? (v.winner === v.you ? `You won${how}` : `${seatName(v, v.winner)} won${how}`)
@@ -3237,7 +3294,20 @@ function renderPrompt(v) {
   // answered, or until the turn takes the whole market with it. Before this it
   // went on the table and then said nothing: you got a result or you got
   // silence, and no way to tell which was still coming.
-  const mine = v.offers.filter(o => o.mine
+  // A deal of yours closes itself once it is answered, either way.
+  //
+  // Somebody took it: the cards have moved, the hand shows it and the log names
+  // who took it. Everybody turned it down: that is the round of replies
+  // finished, and the log has all three. Either way the question is closed, and
+  // a card that stays up after it has been answered is a card asking nothing.
+  //
+  // Until then it stands, which is the whole point of it: an offer used to go
+  // on the table and say nothing back, so you got a result or you got silence
+  // with no way to tell which was still coming.
+  const answered = o => (o.answers || []).length > 0
+    && (o.answers.some(a => a.said === 'yes')
+      || o.answers.every(a => a.said !== 'waiting'));
+  const mine = v.offers.filter(o => o.mine && !answered(o)
     && (o.live || (o.answers || []).some(a => a.said !== 'waiting')));
   // An offer counts as put to you if your seat is on its answer row, which is
   // R-7.3 and nothing to do with your hand. One you cannot cover still appears,
@@ -3408,15 +3478,11 @@ function renderOffers(v, host, offers, decline) {
       who.appendChild(tag);
     }
     d.appendChild(who);
-    // No accept button and nothing in hand to cover it: say which, rather than
-    // leaving a row with no explanation for why it cannot be taken.
-    const c = v.choices.find(x => x.label === `Accept offer ${o.i}` || x.label === `Withdraw offer ${o.i}`);
-    if (!o.mine && !c && v.resourceNames.some(r => v.yourHand[r.i] < o.want[r.i])) {
-      const s = document.createElement('span');
-      s.className = 'tag tag-outline';
-      s.textContent = 'you cannot cover this';
-      d.appendChild(s);
-    }
+    // Nothing here says you cannot cover it. There used to be a tag, from when
+    // an unaffordable offer was invisible and the row needed to explain itself.
+    // Now that the offer is drawn in cards and your hand is drawn in the same
+    // cards a few inches below, the missing accept button is the whole of the
+    // message and a label repeating it is a label.
     host.appendChild(d);
     host.appendChild(answerRow(v, o));
   });
