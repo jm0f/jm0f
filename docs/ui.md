@@ -898,6 +898,15 @@ fails the suite rather than quietly stalling a game.
 separate from it, so a forced move never disturbs the dice or the deck, and the
 same seed with the same timings forfeits the same way.
 
+**A forced move is written down like any other.** The engine does not know who
+asked for it: the same roll deals the same cards to the same seats whether it
+was clicked or timed out. The forfeit wrote down the move and not what it
+caused, so the log read `Time ran out, rolled 8 for you` and then went straight
+to the turn ending. The cards were in people's hands, but a roll that pays
+nobody is the one thing a roll cannot do, and from the record the whole table
+had been skipped. Production and a robber's theft are now noted on this path
+exactly as they are when a person or a bot makes the move.
+
 ### A seven has a clock of its own
 
 **The discard is not part of anybody's turn, so it does not spend one.** It

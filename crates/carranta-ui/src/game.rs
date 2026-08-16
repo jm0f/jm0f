@@ -901,6 +901,9 @@ impl Session {
             // Drawn from the session's own generator, so a game with the same
             // seed and the same timings forfeits identically.
             let at = self.stamp();
+            // Read before the move, because what it pays out is the difference
+            // between the hands either side of it.
+            let purse = self.state.hand;
             let forced = if buf.contains(&Action::EndTurn) {
                 Action::EndTurn
             } else if buf.contains(&Action::Roll) {
@@ -922,6 +925,15 @@ impl Session {
                 ),
             };
             self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
+            // A forced move pays out exactly like a chosen one, because the
+            // engine does not know the difference: the same roll deals the same
+            // cards to the same seats. What was missing was the record of it.
+            // The log showed "Time ran out, rolled 8 for you" and then nothing,
+            // and a roll that pays nobody is the one thing a roll cannot do.
+            if pays_out(&forced) {
+                self.note_production(at, &purse);
+            }
+            self.note_steal(at, &forced, HUMAN, &purse);
             self.sync_deals();
             self.finish_move();
         }
@@ -3016,6 +3028,79 @@ mod tests {
             assert!(
                 !still.contains(o),
                 "declining answers everything that was put to you"
+            );
+        }
+    }
+
+    #[test]
+    fn a_forced_roll_pays_the_table_and_says_so() {
+        // Reported from the log: "Time ran out, rolled 8 for you" with nothing
+        // under it, then the turn ended. A roll that pays nobody is the one
+        // thing a roll cannot do. The cards were always dealt, because the
+        // engine does not know who asked for the move, but the forfeit path
+        // wrote the move down without the production it caused, so from the
+        // record the table had been skipped.
+        let mut found = None;
+        'seeds: for seed in 0..80u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..300 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                // The human's own turn, with the dice still to throw, and a
+                // roll that will actually pay somebody. A number nobody is
+                // settled on pays nothing and would prove nothing, so the
+                // search looks ahead on a copy and keeps playing until it
+                // finds one that does.
+                if s.state.decider() == HUMAN && matches!(s.state.phase, Phase::PreRoll) {
+                    let mut probe = s.state;
+                    if probe.apply(Action::Roll).is_ok() && probe.hand != s.state.hand {
+                        found = Some(s);
+                        break 'seeds;
+                    }
+                }
+                let v = s.version();
+                if s.act(0, v).is_err() {
+                    break;
+                }
+            }
+        }
+        let mut s = found.expect("some seed reaches the human's roll");
+
+        // Exactly what this roll will pay, worked out on a copy. `State` carries
+        // its own generator, so the copy throws the same dice as the forfeit is
+        // about to: the payouts are the real ones and not a second sample.
+        // Taken this way because the forfeit runs the bots on afterwards, and a
+        // hand compared across that has the next two turns in it as well.
+        let hands = s.state.hand;
+        let paid = {
+            let mut probe = s.state;
+            probe.apply(Action::Roll).expect("the roll is the only move");
+            probe.hand
+        };
+        let lines = s.log().len();
+        s = s.with_clock(Clock::PerTurn(1));
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        s.enforce_clock();
+
+        assert!(
+            s.log()[lines..]
+                .iter()
+                .any(|l| l.text.contains("Time ran out") && l.text.contains("rolled")),
+            "the clock rolls for a player who ran out of time"
+        );
+        // Seat by seat, what the roll paid against what the log says it paid.
+        assert_ne!(hands, paid, "the position was chosen for a roll that pays");
+        for seat in 0..s.state.players as usize {
+            let got = gains(&hands, &paid, seat);
+            if got.is_empty() {
+                continue;
+            }
+            assert!(
+                s.log()[lines..]
+                    .iter()
+                    .any(|l| l.seat == Some(seat as u8) && l.text == format!("Collected {got}")),
+                "seat {seat} was paid {got} and the log has to say so"
             );
         }
     }
