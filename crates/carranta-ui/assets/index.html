@@ -511,6 +511,69 @@
   #note { color: #E8542F; }
 
   /* ---- the dock -------------------------------------------------------- */
+  /* ---- the trade composer, docked to the dock ---------------------------- */
+  /* Measured off the dock rather than given a size of its own: `bottom: 100%`
+     puts its foot on the dock's head, `height: 100%` makes it the same depth,
+     and left/right 0 makes it the same width. Nothing to keep in step, and it
+     follows the dock through every window size.
+
+     It overlays the bottom of the board, which is the one part of the board
+     that is sea. Nothing in the layout moves when it opens, which is the same
+     rule the decision cards follow. */
+  .tradeBar[hidden] { display: none; }
+  .tradeBar {
+    position: absolute; z-index: 40;
+    left: 0; right: 0; bottom: calc(100% + clamp(8px, .8vw, 16px));
+    height: 100%;
+    display: flex; align-items: stretch; gap: 14px;
+    outline: 2px solid var(--accent); outline-offset: -2px;
+  }
+  .tradeSide { display: flex; flex-direction: column; min-width: 0; }
+  .tradeSide.grow { flex: 1; }
+  /* The caption line carries the side's own controls at its far end. There is
+     nowhere else for them: the bar is the dock's height and three buttons fill
+     a column of it on their own. */
+  .tradeCap { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+  .tradeCap .sideLabel { flex: 1; }
+  .tradeTo { color: var(--dim); font-size: 11px; text-transform: uppercase;
+             letter-spacing: .06em; display: flex; align-items: center; gap: 5px; }
+  .tradeTo select { padding: 1px 6px; font-size: 11px; text-transform: none;
+                    letter-spacing: 0; max-width: 12em; }
+  .tradeClose { flex: none; }
+  /* The tray a side's cards live in. It holds its height whether or not there
+     is anything in it, so putting the first card down does not resize the
+     composer under the cursor that put it there. */
+  .tradeTray {
+    flex: 1; display: flex; align-items: flex-end; gap: 3px; flex-wrap: wrap;
+    align-content: flex-end; min-height: 3.1em;
+    border-radius: var(--radius-md); padding: 4px;
+    border: 1px dashed var(--line); background: rgba(51, 38, 27, .015);
+  }
+  .tradeTray.on { border-color: var(--accent); background: rgba(232, 84, 47, .05); }
+  /* Big enough to read and to hit, small enough that a hand's worth of them
+     fits across a dock-wide tray without wrapping. */
+  .tradeTray .rcard.mini, .askRow .rcard.mini {
+    position: relative; bottom: auto; width: 1.7em; height: 2.3em;
+    border-radius: .26em; margin: 0; vertical-align: 0;
+  }
+  .tradeTray .rcard.mini i, .askRow .rcard.mini i { width: .68em; height: .68em; }
+  .tradeTray .rcard { cursor: pointer; }
+  .tradeTray .rcard:hover { transform: translateY(-2px); }
+  .tradeTray .rcard { transition: transform .1s ease-out; }
+  .tradeTray .empty { color: var(--dim); font-size: 12px; padding: 0 4px 3px; }
+  /* The five to ask for, always all five: you may want what you do not hold,
+     and a row that changes length as your hand changes is a row you cannot
+     learn the shape of. */
+  .askRow { display: flex; gap: 3px; margin-top: 4px; }
+  .askRow button { padding: 0; border: 0; background: none; box-shadow: none;
+                   line-height: 0; border-radius: .28em; cursor: pointer; }
+  .askRow button:hover { background: none; transform: translateY(-2px); }
+  .askRow button { transition: transform .1s ease-out; }
+  /* Three and only three, filling the column. Anything else in here does not
+     fit: the bar is as deep as the dock and that is the whole budget. */
+  .tradeDo { display: flex; flex-direction: column; justify-content: stretch;
+             gap: 5px; flex: none; width: 10em; }
+  .tradeDo button { flex: 1; justify-content: center; text-align: center; }
   .dock {
     /* Wrapping is the safety valve. The dock is only as wide as the board, and
        a full hand at card size plus the actions can outgrow a narrow one; a
@@ -1134,6 +1197,12 @@
        the width of the board, not a bar the width of the window: your hand and
        the actions belong to the game, and the frame should say so. -->
   <footer class="dock panel">
+  <!-- The composer, docked to the dock: same width, same height, sitting
+       directly on top of it. A trade is made out of the cards in your hand, so
+       it is built next to them and not across the board, and the hand stays
+       where it is and stays clickable because clicking it is how you build the
+       offer. docs/ui.md §6. -->
+  <div class="tradeBar panel" id="tradeBar" hidden></div>
   <div class="dockGroup">
     <span class="dockLabel">your cards</span>
     <div class="stacks" id="hand"></div>
@@ -2095,19 +2164,21 @@ function bankDev(v, exact) {
 function renderSeats(v) {
   const host = document.getElementById('seatRows');
   host.textContent = '';
-  // Who is in front, on the public count, for everybody including you.
+  // Who is in front, judged on the numbers actually printed in these rows.
   //
-  // It has to be one measurement or it is not a standing: your own row shows
-  // your real total and every other row shows what the table can see, so
-  // marking the leader off the number each row happens to display would put you
-  // ahead on a basis nobody else at the table shares. A victory-point card in
-  // your hand is exactly the thing that is not in front publicly. The row's
-  // tooltip says so when the two differ.
-  const best = Math.max(...v.seats.map(s => s.vp));
+  // Which is not one measurement: your own row shows your real total and every
+  // other row shows what the table can see, because that is the most anyone can
+  // know about each seat. Marking the lead on the public count instead was
+  // internally tidier and read as broken, since two rows both showing 5 had one
+  // of them accented and the other not. A reader compares what is on the
+  // screen, so the screen has to be what is compared: the mark means "in front
+  // as far as you can tell", which is the only standing a player has.
+  const showing = s => (s.seat === v.you ? v.yourVp : s.vp);
+  const best = Math.max(...v.seats.map(showing));
   // Nobody is in front when everybody is level, which is the whole board for
   // the first few turns. Four accented numbers would say "these are the
   // leaders" about a table where the word does not apply yet.
-  const shared = v.seats.every(s => s.vp === best);
+  const shared = v.seats.every(s => showing(s) === best);
   v.seats.forEach(s => {
     const row = document.createElement('div');
     row.className = 'seatRow' + (s.seat === v.toAct && v.winner === null ? ' acting' : '');
@@ -2124,23 +2195,23 @@ function renderSeats(v) {
     // says which is which instead of letting you assume you are level.
     const vp = document.createElement('span');
     const mine = s.seat === v.you;
-    const ahead = !shared && s.vp === best;
+    const shown = showing(s);
+    const ahead = !shared && shown === best;
     vp.className = 'vp' + (ahead ? ' ahead' : '');
-    const shown = mine ? v.yourVp : s.vp;
     vp.innerHTML = `${shown} <small>vp</small>`;
     vp.setAttribute('tabindex', '0');
-    // Three things the number might need to explain, in the order they matter:
-    // that it is your hidden total, that you are ahead on cards the table
-    // cannot see, and what the count means at all.
+    // What the number is, and what it is not. Your own can be more than the
+    // table can see; everyone else's is only ever what the table can see, and
+    // the difference is the whole reason a hidden card is worth holding.
     const hidden = mine && v.yourVp > s.vp;
     vp.setAttribute('data-tip', mine
       ? (hidden
-        ? `your real total. The table can only see ${s.vp}, so the lead is marked on that`
-          + `${v.yourVp > best ? ', and you are in front on points nobody else can count' : ''}`
-          + '. The rest is in victory-point cards'
+        ? `your real total. The table can only see ${s.vp}. The rest is in `
+          + `victory-point cards nobody else can count`
+          + `${ahead ? ', and it puts you in front' : ''}`
         : `your total, all of it public${ahead ? '. You are in front' : ''}`)
-      : `public points only. Victory-point cards in hand are not counted until the game ends`
-        + `${ahead ? '. Ahead on what can be seen' : ''}`);
+      : `public points only. Victory-point cards in hand are not counted until `
+        + `the game ends${ahead ? '. Ahead on what can be seen' : ''}`);
 
     const counts = document.createElement('span');
     counts.className = 'counts';
@@ -2959,11 +3030,14 @@ function openPrompt(mode, data) {
   // waiting, the way a dialog primitive would. It is not aria-modal: the board
   // stays live behind it on purpose, and claiming otherwise would lie to a
   // screen reader about what is reachable.
-  // Into the card that was just opened, not into the first one on the stack:
-  // another card can already be standing above this one, and landing the caret
-  // in somebody's trade offer is not where the click asked to go.
-  const card = document.querySelector(`#prompt [data-card="${mode}"]`) || document;
-  const first = card.querySelector('button, select');
+  // Into the thing that was just opened, not into the first control on the
+  // page: another card can already be standing above this one, and landing the
+  // caret in somebody's trade offer is not where the click asked to go. The
+  // composer is not in the stack, so it is named separately.
+  const card = mode === 'compose'
+    ? document.getElementById('tradeBar')
+    : document.querySelector(`#prompt [data-card="${mode}"]`);
+  const first = card && card.querySelector('button, select');
   if (first) first.focus();
 }
 function closePrompt() {
@@ -3322,10 +3396,8 @@ function renderPrompt(v) {
     });
     box.appendChild(list);
   }
-  if (prompt.mode === 'compose') {
-    const box = add('compose');
-    renderCompose(v, box, headFor(box));
-  }
+  // The composer is not in this stack: it lives in the bar above the dock,
+  // beside the cards it is made of. See `renderTrade`.
   // What is being asked of you, and what you have asked of everyone else.
   //
   // A proposal of yours stays on the card until every seat it was put to has
@@ -3367,6 +3439,9 @@ function renderPrompt(v) {
   }
 
   host.hidden = !host.firstChild;
+  // The composer is drawn from here too, so everything that redraws a decision
+  // redraws it: one call site rather than three that have to agree.
+  renderTrade(v);
 }
 
 // Picking a development card, and then its subject if it has one.
@@ -3742,151 +3817,159 @@ function miniCard(res) {
   return card;
 }
 
-function renderCompose(v, host, head) {
-  // Through the shared header rather than its own copy of one, so the title id
-  // is unique across a stack of cards and the close button is placed against
-  // this card rather than against whichever one is on top.
-  head(v.yourTurn ? 'Offer a trade, click your cards to add them'
-    : `Counter ${seatName(v, v.toAct)}`, true);
+// The composer, drawn into the bar above the dock.
+//
+// Not a card in the corner stack any more. A trade is made out of the cards in
+// your hand, and those are at the bottom of the screen, so the place to build
+// one is next to them: the bar is the dock's own width and depth, sitting
+// directly on its head, and the hand stays visible and clickable underneath
+// because clicking it is how the offer gets built.
+//
+// It is also two lists of cards rather than two columns of steppers. A stepper
+// row names a resource in words and asks for a number; the cards are the game's
+// own word for a resource and they are already on the screen twice over, so
+// putting one on the table is picking it up and putting it down.
+function renderTrade(v) {
+  const bar = document.getElementById('tradeBar');
+  bar.textContent = '';
+  if (prompt.mode !== 'compose') { bar.hidden = true; return; }
+  bar.hidden = false;
 
-  // Who it can go to. On another seat's turn R-7.3 leaves only them, so the
-  // choice is made rather than offered.
+  const sum = a => a.reduce((p, q) => p + q, 0);
+  const redraw = () => { renderTrade(view); renderHand(view); };
+
+  // ---- what you are putting up, and what you are asking for ----------------
+  const side = (label, counts, tray, extra) => {
+    const box = document.createElement('div');
+    box.className = 'tradeSide grow';
+    // The caption line doubles as the side's own header, so the controls that
+    // belong to a trade but not to a tray have somewhere to sit. There is no
+    // room for a row of their own: the bar is the dock's height and three
+    // buttons already fill a column of it.
+    const cap = document.createElement('div');
+    cap.className = 'tradeCap';
+    const name = document.createElement('span');
+    name.className = 'sideLabel';
+    name.textContent = label;
+    cap.append(name);
+    if (extra) cap.appendChild(extra);
+    box.appendChild(cap);
+    const t = document.createElement('div');
+    t.className = 'tradeTray' + (sum(counts) ? ' on' : '');
+    if (!sum(counts)) {
+      const say = document.createElement('span');
+      say.className = 'empty';
+      say.textContent = tray;
+      t.appendChild(say);
+    }
+    // One card per card, not one card with a number on it: an offer of three
+    // wheat is three wheat, and clicking one of them takes one back.
+    v.resourceNames.forEach(r => {
+      for (let k = 0; k < counts[r.i]; k++) {
+        const c = miniCard(r.i);
+        c.classList.add('big');
+        c.title = `${r.name}, click to take it back`;
+        c.onclick = () => { counts[r.i]--; redraw(); };
+        t.appendChild(c);
+      }
+    });
+    box.appendChild(t);
+    return box;
+  };
+
+
+  // The five to ask for. All five, always: you may want what you do not hold,
+  // and R-7.18 is what closes one off, not your hand.
+  const row = document.createElement('div');
+  row.className = 'askRow';
+  v.resourceNames.forEach(r => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.appendChild(miniCard(r.i));
+    // A resource may not sit on both sides of one trade (R-7.18), so claiming
+    // it for one side closes it on the other.
+    const blocked = give[r.i] > 0;
+    b.setAttribute('data-tip', blocked
+      ? `you are already offering ${r.name}`
+      : `ask for ${r.name}`);
+    if (blocked) b.setAttribute('aria-disabled', 'true');
+    else b.onclick = () => { want[r.i]++; redraw(); };
+    row.appendChild(b);
+  });
+
+  // ---- who it goes to ------------------------------------------------------
+  // On another seat's turn R-7.3 leaves only them, so the choice is made rather
+  // than offered.
   const others = v.seats.map(s => s.seat).filter(s => s !== v.you);
   const allowed = v.yourTurn ? others : [v.toAct];
   if (!v.yourTurn) to = String(v.toAct);
-  const toRow = document.createElement('div');
-  toRow.className = 'toRow';
-  toRow.innerHTML = '<span class="sideLabel">to</span>';
+  const toRow = document.createElement('span');
+  toRow.className = 'tradeTo';
   const sel = document.createElement('select');
   if (v.yourTurn) sel.appendChild(new Option('anyone at the table', ''));
   allowed.forEach(p => sel.appendChild(new Option(seatName(v, p), String(p))));
   sel.value = to;
   sel.onchange = () => { to = sel.value; };
-  toRow.appendChild(sel);
-  host.appendChild(toRow);
+  toRow.append('to ', sel);
 
-  const compose = document.createElement('div');
-  compose.className = 'compose';
-  [['you give', give], ['you want', want]].forEach(([label, counts]) => {
-    const side = document.createElement('div');
-    side.innerHTML = `<span class="sideLabel">${label}</span>`;
-    v.resourceNames.forEach(r => {
-      // A resource may not sit on both sides of one trade (R-7.18), so
-      // claiming it for one side closes it on the other.
-      const giving = counts === give;
-      const blocked = giving ? want[r.i] > 0 : give[r.i] > 0;
-      const row = document.createElement('div');
-      row.className = 'row ' + (counts[r.i] ? 'on' : 'off');
-      // The same card as the one in the dock, at reading size. A row that
-      // named the resource in words asked you to translate between the thing
-      // you are holding and the word for it on every line.
-      const name = document.createElement('span');
-      name.className = 'name';
-      name.append(miniCard(r.i), r.name);
-      const have = document.createElement('span');
-      have.className = 'have';
-      // What is left after the offer, not what you started the turn with.
-      have.textContent = giving ? v.yourHand[r.i] - give[r.i] : '';
-      const minus = document.createElement('button');
-      minus.className = 'btn-sm btn-icon';
-      minus.textContent = '−';
-      minus.disabled = counts[r.i] === 0;
-      minus.onclick = () => { counts[r.i]--; renderPrompt(view); renderHand(view); };
-      const n = document.createElement('span');
-      n.className = 'n';
-      n.textContent = counts[r.i];
-      const plus = document.createElement('button');
-      plus.className = 'btn-sm btn-icon';
-      plus.textContent = '+';
-      // You can only offer what you hold; what you ask for is bounded by the
-      // supply, and refused at acceptance if nobody can pay.
-      plus.disabled = blocked || (giving && counts[r.i] >= v.yourHand[r.i]);
-      plus.onclick = () => { counts[r.i]++; renderPrompt(view); renderHand(view); };
-      row.append(name, have, minus, n, plus);
-      side.appendChild(row);
-    });
-    compose.appendChild(side);
-  });
-  host.appendChild(compose);
+  const close = document.createElement('button');
+  close.className = 'btn-ghost btn-sm tradeClose';
+  close.textContent = 'close';
+  close.onclick = closePrompt;
 
-  const sum = a => a.reduce((p, q) => p + q, 0);
+  const giving = side('you offer', give, 'click your cards below', toRow);
+  const asking = side('you ask for', want, 'pick from the row beneath', close);
+  asking.appendChild(row);
 
-  // Trading with the bank is trading, so it happens where trading happens.
-  // It used to be its own button in the dock opening its own list of twenty
-  // sentences, which meant the one trade you make most often was the one place
-  // you could not simply say what you wanted.
-  //
-  // A bank or port trade is one resource in and one out, so it is exactly the
-  // shape the composer already builds. Whenever what you have built is one the
-  // bank or a port will take, the rate appears here as a button.
-  // Sorted into the order the page reads resources in, on both sides. The
-  // engine emits them in its own numbering, which put brick ahead of wood in
-  // a list sitting directly under one that does the opposite.
+  // ---- the three ways out --------------------------------------------------
+  // A bank or port trade is one resource in and one out, which is exactly the
+  // shape the composer already builds, so the same composition answers all
+  // three buttons and you choose the route rather than the form. A player may
+  // beat the bank, so putting it to the table stays live either way.
   const rank = {};
   v.resourceNames.forEach((r, at) => { rank[r.i] = at; });
-  const banks = v.choices
+  const supply = v.choices
     .filter(c => c.group === 'trade' && c.give !== undefined && c.take !== undefined)
     .sort((x, y) => (rank[x.give] - rank[y.give]) || (rank[x.take] - rank[y.take]));
   const gaveOne = v.resourceNames.filter(r => give[r.i] > 0);
   const tookOne = v.resourceNames.filter(r => want[r.i] > 0);
-  if (banks.length) {
-    const row = document.createElement('div');
-    row.className = 'bankRow';
-    const label = document.createElement('span');
-    label.className = 'sideLabel';
-    // The best rate on offer for what is in the give column, so a port you
-    // hold is visible as a port rather than as an unexplained smaller number.
-    const matches = banks.filter(c =>
-      gaveOne.length === 1 && gaveOne[0].i === c.give
-      && give[c.give] === c.rate
-      && (tookOne.length === 0
-        || (tookOne.length === 1 && tookOne[0].i === c.take && want[c.take] === 1)));
-    if (matches.length) {
-      label.textContent = 'or take the rate';
-      row.appendChild(label);
-      const wrap = document.createElement('div');
-      wrap.className = 'buttons';
-      matches.forEach(c => {
-        const b = document.createElement('button');
-        b.className = 'btn-secondary';
-        b.textContent = `${c.rate} ${resName(v, c.give)} for 1 `
-          + `${resName(v, c.take)} ${c.rate === 4 ? 'with the bank' : 'at the port'}`;
-        b.onclick = () => { closePrompt(); act(c.i); };
-        wrap.appendChild(b);
-      });
-      row.appendChild(wrap);
-    } else {
-      // Say what it would take, rather than leaving the option invisible until
-      // you happen to stumble onto the right count.
-      const rates = {};
-      banks.forEach(c => {
-        rates[c.give] = Math.min(rates[c.give] === undefined ? 9 : rates[c.give], c.rate);
-      });
-      const say = v.resourceNames
-        .filter(r => rates[r.i] !== undefined)
-        .map(r => `${rates[r.i]} ${r.name}`);
-      label.textContent = say.length
-        ? `the bank takes ${say.join(', ')}, for 1 of anything`
-        : 'nothing you hold reaches a bank or port rate';
-      row.appendChild(label);
-    }
-    host.appendChild(row);
-  }
+  // What you have built, read against what the engine is actually offering,
+  // rather than a second copy of the rates written here.
+  const fits = supply.filter(c =>
+    gaveOne.length === 1 && gaveOne[0].i === c.give && give[c.give] === c.rate
+    && tookOne.length === 1 && tookOne[0].i === c.take && want[c.take] === 1);
+  // Four is the bank's rate and anything under it is a port's, which is the
+  // whole difference between the two buttons.
+  const atBank = fits.find(c => c.rate === 4);
+  const atPort = fits.find(c => c.rate < 4);
+  // What it would take, for a button that cannot be pressed yet. The cheapest
+  // rate per resource, so a port you hold shows as a port.
+  const best = {};
+  supply.forEach(c => {
+    best[c.give] = Math.min(best[c.give] === undefined ? 9 : best[c.give], c.rate);
+  });
+  const rates = kind => v.resourceNames
+    .filter(r => best[r.i] !== undefined && (kind === 'bank' ? best[r.i] === 4 : best[r.i] < 4))
+    .map(r => `${best[r.i]} ${r.name}`);
 
-  const go = document.createElement('button');
-  go.id = 'propose';
-  go.className = 'btn-primary btn-block';
-  go.textContent = 'Put it on the table';
-  go.style.cssText = 'margin-top:10px';
-  // aria-disabled with a reason, the way every other unavailable control here
-  // works. The native attribute drops it out of the tab order and says nothing,
-  // so a half-built offer looked like a washed-out button and no explanation.
+  const doing = document.createElement('div');
+  doing.className = 'tradeDo';
   const short = !sum(give) ? 'pick what you are giving'
     : (!sum(want) ? 'pick what you want for it' : '');
-  if (short) go.setAttribute('aria-disabled', 'true');
-  go.setAttribute('data-tip', short || 'offer it to the table');
-  go.onclick = () => {
-    if (short) return;
+  const button = (label, cls, why, go) => {
+    const b = document.createElement('button');
+    b.className = cls + ' btn-sm';
+    b.textContent = label;
+    // aria-disabled with a reason, the way every other unavailable control here
+    // works: the native attribute drops it out of the tab order and says
+    // nothing, so a half-built offer looked like a washed-out button and no
+    // explanation at all.
+    if (why) b.setAttribute('aria-disabled', 'true');
+    b.setAttribute('data-tip', why || '');
+    b.onclick = () => { if (!why) go(); };
+    doing.appendChild(b);
+  };
+  button('Offer trade', 'btn-primary', short || '', () => {
     prompt.mode = null;
     load('/api/propose', {
       method: 'POST',
@@ -3894,8 +3977,24 @@ function renderCompose(v, host, head) {
         ? JSON.stringify({ give, want, version: view.version })
         : JSON.stringify({ give, want, to: Number(to), version: view.version }),
     });
+  });
+  const supplyWhy = (kind, at) => {
+    if (at) return '';
+    const can = rates(kind);
+    if (!can.length) {
+      return kind === 'bank'
+        ? 'nothing you hold reaches a bank rate'
+        : 'you have no port that beats the bank';
+    }
+    return `${kind === 'bank' ? 'the bank' : 'your port'} takes `
+      + `${can.join(', ')}, for 1 of anything`;
   };
-  host.appendChild(go);
+  button('Bank trade', 'btn-secondary', supplyWhy('bank', atBank),
+    () => { closePrompt(); act(atBank.i); });
+  button('Port trade', 'btn-secondary', supplyWhy('port', atPort),
+    () => { closePrompt(); act(atPort.i); });
+
+  bar.append(giving, asking, doing);
 }
 
 async function load(url, opts) {

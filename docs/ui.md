@@ -280,12 +280,13 @@ can actually see when the two differ.
 level at the top. Colour on the number rather than a tag beside it: the standing
 is what the number already says, so it is the number that says it louder.
 
-It is decided on the **public** count for every seat, including yours, because a
-standing has to be one measurement. Marking it off whatever each row happens to
-display would put you in front on a basis nobody else at the table shares, and a
-victory-point card in your hand is exactly the thing that is not in front
-publicly. When your real total would lead and your public one does not, your own
-tooltip says so, which is the honest version of the same information.
+It is judged on **the numbers actually printed in these rows**, which is not one
+measurement: your own is your real total and every other is what the table can
+see. It was decided on the public count for a while, which is internally tidier
+and read as broken, because two rows both showing 5 had one of them accented and
+the other not. A reader compares what is on the screen, so the screen has to be
+what is compared. The mark means "in front as far as you can tell", which is the
+only standing a player actually has.
 
 **Nobody is marked while everybody is level**, which is the whole table for the
 first few turns. Four accented numbers would announce four leaders about a game
@@ -394,22 +395,47 @@ already on the table, so wanting to trade a wheat and saying so are one
 gesture rather than two. `Trade` in the dock opens it empty, for when you know
 what you want before you know what you are giving.
 
-**Composing:** click a stack in your hand to move one card into *you give*;
-click it in the tray to take it back. Wanting is the same gesture against the
-five resources. The offer is built out of the cards you are already looking
-at, rather than in a disconnected panel of steppers.
+**The composer is docked to the dock**, not stacked in the board's corner with
+the other decision cards. A trade is made out of the cards in your hand and
+those are at the bottom of the screen, so it is built next to them: the bar is
+the dock's own width and depth and sits directly on its head. It is measured
+off the dock rather than given a size of its own, so there is nothing to keep in
+step through a window resize.
 
-**One door for every trade.** The bank had its own button in the dock opening
-its own list of twenty sentences, which split trading in two and made the trade
-people make most often the one they could not simply say. **Trade** now opens
-the composer whether the other side is a person, a port or the bank.
+The hand stays visible and clickable underneath, which it has to be, since
+clicking it is how the offer gets built. The bar overlays the bottom of the
+board, which is the part of the board that is sea, and nothing in the layout
+moves when it opens.
+
+**Composing:** click a stack in your hand to move one card into *you offer*;
+click that card in the tray to take it back. Asking is the same gesture against
+a row of five, always all five, since you may want what you do not hold. Both
+sides are **cards, not steppers**: a stepper row names a resource in words and
+asks for a number, where the cards are the game's own word for a resource and
+are already on the screen twice over, so putting one up is picking it up and
+putting it down.
+
+**One door for every trade, and three ways out of it.** The bank had its own
+button in the dock opening its own list of twenty sentences, which split trading
+in two and made the trade people make most often the one they could not simply
+say. **Trade** opens the composer whether the other side is a person, a port or
+the bank, and the same composition answers all three buttons:
+
+| Button | Lights when |
+|---|---|
+| Offer trade | Both sides have something in them |
+| Bank trade | What you built is one resource at the bank's rate for one of another |
+| Port trade | The same, at a rate a port of yours beats the bank with |
 
 A bank or port trade is one resource in and one out, which is exactly the shape
-the composer already builds. Whenever what you have built is a trade the bank
-or a port will take, **the rate appears as a button under the composer**. When
-it is not, the card says what the bank would take instead, so the option is
-never invisible until you stumble onto the right count. A port's improved rate
-is named as a port rather than shown as an unexplained smaller number.
+the composer already builds, so you choose the route rather than the form. **All
+three stay live at once**: a player may beat the bank, and four wheat on the
+table is a fair thing to ask the table about even when the bank would take it.
+A button that cannot be pressed says what it would take, so the option is never
+invisible until you stumble onto the right count.
+
+Which rate belongs to which button is read off what the engine is offering
+rather than written here: four is the bank's, and anything under it is a port's.
 
 **Receiving:** an offer arrives as a card that waits for an answer, accept,
 decline, or counter. It does not sit quietly in a panel to be missed.
