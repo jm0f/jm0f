@@ -1400,10 +1400,13 @@ table rather than a sentence over the one above. The only paragraphs left
 anywhere are answers rather than explanations, like "Nobody finished a turn in
 this game".
 
-**A seat wears its colour, immediately left of its name, in every table.** The
-same mark the board plays in, in the same place every time, so a row can be
-found by colour rather than by reading down the names. Row labels and the
-robber's column headers alike.
+**A seat wears its colour and its finishing place beside its name, everywhere
+the page names anybody.** The colour is the mark the board plays in, always
+immediately left of the name, so a row can be found by colour rather than by
+reading down the names. The place is a badge on the right, first place in the
+colour the win had and the rest quiet. A badge on the winner alone answered
+"where did they come" for one player and left the other three to be worked out
+from a column of points.
 
 **Nothing is written as nothing.** A cell with no value in it is blank. There is
 no dot standing in for the absence: the blank already says it, and a page of
@@ -1461,11 +1464,27 @@ is paired with an effect size.
   p<0.05 by construction, and those are precisely the games somebody screenshots
   as proof of rigging. Until there is a second game the percentile is blank and
   the column says why, because a percentile of one game is not a percentile.
-- **What the board paid**, decomposed (§10.2): expected production, what the
-  robber cost, what the supply denied, and the dice term, which is the only
-  genuinely random one. The dice term is also given in standard deviations,
-  which is the figure to read.
-- **The robber, the market, development cards and the opening**, as counts.
+- **Production**, a ledger. Every card that reached a hand or left it, by what
+  moved it: production, invention, monopoly, stolen and traded in against built,
+  discarded, robbed, monopolised and traded out. Read down, what came in less
+  what went out is what was still in hand at the end, and `Ledger::balances`
+  asserts exactly that. It is read off the hands rather than off the rules, by
+  applying each move and comparing the hands either side of it, so a card that
+  moved is counted whether or not the code knows why; only the *reason* comes
+  from the action, and that match is exhaustive, so a new action cannot be added
+  without deciding where its cards belong. Gross rather than net, per resource:
+  two wheat for one ore is one card in and two out, and a net hand size would
+  call it one card out and lose both figures. Beneath it, the §10.2
+  decomposition, which no ledger can hold because expected production is a
+  counterfactual rather than a card that moved.
+- **Militia**, as a sankey: thieves down the left, victims down the right, a
+  ribbon between each pair as thick as the cards that moved along it. Laid out
+  on the server like everything else here, since every position is a fraction of
+  a total known the moment the game ends. The cards themselves are in the ledger
+  above; this is who took them from whom, which a per-player column cannot say.
+  With it, the robber's own counts: times moved, and robberies that found an
+  empty hand.
+- **The market, development cards and the opening**, as counts.
 - **Across every game here**, seat win rates, with the note that at a handful of
   games the spread is noise.
 

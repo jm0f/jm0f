@@ -97,6 +97,25 @@ pub struct Movement {
     /// Games this player had behind them going in, which is how much the
     /// number is worth believing.
     pub games: u32,
+    /// Where they stood in the whole pool either side of this game, best
+    /// first, or `None` before they had a rating to stand anywhere with.
+    ///
+    /// The pool, not the table: a rating is a claim about every player on this
+    /// server, and a place at one table of four says nothing about it.
+    pub rank_before: Option<usize>,
+    pub rank_after: Option<usize>,
+}
+
+/// Where a player stands in the pool, best first, counting from one.
+///
+/// `None` until they have played, since an unrated player is not last, they
+/// are absent. Ranked on the conservative estimate, which is the figure the
+/// page shows, so a rank and the number beside it cannot disagree.
+fn rank_of(pool: &Pool, seat: usize) -> Option<usize> {
+    pool.leaderboard(0)
+        .iter()
+        .position(|(p, _, _)| *p == seat_player(seat))
+        .map(|i| i + 1)
 }
 
 impl Movement {
@@ -178,6 +197,155 @@ fn points_of(state: &carranta_core::state::State, seats: usize) -> [Points; MAX_
             longest_road: Scored::each((state.longest_road == Some(p as u8)) as u32, 2),
             largest_militia: Scored::each((state.largest_militia == Some(p as u8)) as u32, 2),
         };
+    }
+    out
+}
+
+/// Every card that reached a hand or left it, by what moved it.
+///
+/// The categories are the whole of the game's economy: nothing gains or loses a
+/// card except through one of these, which is what makes the ledger balance.
+/// What came in less what went out is what is still in the hand at the end, and
+/// `Ledger::balances` checks exactly that.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ledger {
+    // ---- in ----
+    /// Paid by the board on a roll, and by the second opening settlement.
+    pub production: u32,
+    /// Taken with an Invention card (R-9.9).
+    pub invention: u32,
+    /// Taken from everyone with a Monopoly (R-9.8).
+    pub monopoly: u32,
+    /// Taken from a hand by the robber, on a seven or a militia (R-6.4).
+    pub stolen: u32,
+    /// Arrived in a trade, with a person or with the supply.
+    pub traded_in: u32,
+    // ---- out ----
+    /// Spent on a road, a settlement, a city or a development card.
+    pub built: u32,
+    /// Thrown away to a seven (R-6.2).
+    pub discarded: u32,
+    /// Taken out of this hand by the robber.
+    pub robbed: u32,
+    /// Taken out of this hand by somebody else's Monopoly.
+    pub monopolised: u32,
+    /// Left in a trade.
+    pub traded_out: u32,
+    /// Still in hand when the game ended.
+    pub held: u32,
+}
+
+impl Ledger {
+    /// Cards that arrived, however they arrived.
+    pub fn came_in(&self) -> u32 {
+        self.production + self.invention + self.monopoly + self.stolen + self.traded_in
+    }
+
+    /// Cards that left, however they left.
+    pub fn went_out(&self) -> u32 {
+        self.built + self.discarded + self.robbed + self.monopolised + self.traded_out
+    }
+
+    /// The whole claim: what came in, less what went out, is what is left.
+    ///
+    /// If this is ever false there is a way to move a card that the ledger does
+    /// not know about, and every figure in it is short by that much.
+    pub fn balances(&self) -> bool {
+        self.came_in() == self.went_out() + self.held
+    }
+
+    /// In and out, in the order the card reads them.
+    pub fn rows(&self) -> [(&'static str, u32, bool); 10] {
+        [
+            ("production", self.production, true),
+            ("invention", self.invention, true),
+            ("monopoly", self.monopoly, true),
+            ("stolen", self.stolen, true),
+            ("traded in", self.traded_in, true),
+            ("built", self.built, false),
+            ("discarded", self.discarded, false),
+            ("robbed", self.robbed, false),
+            ("monopolised", self.monopolised, false),
+            ("traded out", self.traded_out, false),
+        ]
+    }
+}
+
+/// Follow every card through the game.
+///
+/// Read off the hands rather than off the rules: each move is applied and the
+/// hands are compared either side of it, so a card that moved is counted
+/// whether or not this function knows why it moved. Only the *reason* comes
+/// from the action, and the match over it is exhaustive, so a new action
+/// cannot be added without deciding where its cards belong.
+///
+/// Gross rather than net, per resource. A trade of two wheat for one ore is one
+/// card in and two out, and a net hand size would call it one card out and lose
+/// both figures.
+fn ledger_of(saved: &Saved) -> [Ledger; MAX_PLAYERS] {
+    use carranta_core::action::Action;
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let seats = state.players as usize;
+    let mut out = [Ledger::default(); MAX_PLAYERS];
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        let actor = state.to_act as usize;
+        let before = state.hand;
+        if state.apply(action).is_err() {
+            break;
+        }
+        for (p, led) in out.iter_mut().enumerate().take(seats) {
+            let up: u32 = (0..5)
+                .map(|r| u32::from(state.hand[p][r].saturating_sub(before[p][r])))
+                .sum();
+            let down: u32 = (0..5)
+                .map(|r| u32::from(before[p][r].saturating_sub(state.hand[p][r])))
+                .sum();
+            if up == 0 && down == 0 {
+                continue;
+            }
+            match action {
+                // The board paying out, on a roll or on the second settlement
+                // of the opening, which pays for the hexes it touches.
+                Action::Roll | Action::PlaceSettlement(_) => led.production += up,
+                Action::PlayInvention(_) => led.invention += up,
+                // One seat takes and the rest lose, in the same action.
+                Action::PlayMonopoly(_) => {
+                    led.monopoly += up;
+                    led.monopolised += down;
+                }
+                Action::MoveRobber { .. } => {
+                    led.stolen += up;
+                    led.robbed += down;
+                }
+                Action::Discard { .. } => led.discarded += down,
+                // Both sides of a trade move both ways, which is why this is
+                // counted per resource rather than as a change in hand size.
+                Action::Trade { .. } | Action::AcceptTrade { .. } => {
+                    led.traded_in += up;
+                    led.traded_out += down;
+                }
+                Action::BuildRoad(_)
+                | Action::BuildSettlement(_)
+                | Action::BuildCity(_)
+                | Action::BuyDev => led.built += down,
+                // Nothing else moves a card. A militia played moves the robber,
+                // and the robbery is its own action; road building pays in
+                // roads; an offer made or withdrawn moves nothing at all.
+                Action::PlaceRoad(_)
+                | Action::PlayMilitia
+                | Action::PlayRoadBuilding
+                | Action::ProposeTrade { .. }
+                | Action::WithdrawTrade { .. }
+                | Action::EndTurn => {
+                    debug_assert!(false, "{action:?} moved cards for seat {p} (actor {actor})");
+                }
+            }
+        }
+    }
+    for (p, led) in out.iter_mut().enumerate().take(seats) {
+        led.held = state.hand[p].iter().map(|n| u32::from(*n)).sum();
     }
     out
 }
@@ -277,6 +445,8 @@ pub struct Study {
     pub points: [Points; MAX_PLAYERS],
     /// The game turn by turn, in the order they were taken.
     pub turns: Vec<Turn>,
+    /// Every card each seat gained or lost, by what moved it.
+    pub ledger: [Ledger; MAX_PLAYERS],
     /// Whether this game was saved with a clock in it. Games written before
     /// there was one still read, and say nothing about time rather than saying
     /// nought.
@@ -312,6 +482,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let report = game::analyse(&log).ok()?;
     let points = points_of(&log.replay().ok()?, report.players as usize);
     let turns = turns_of(saved);
+    let ledger = ledger_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
     let rolls = dice::rolls(&log);
@@ -358,6 +529,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
             let games: Vec<u32> = (0..seats)
                 .map(|s| pool.games_played(seat_player(s)))
                 .collect();
+            let ranked: Vec<Option<usize>> = (0..seats).map(|s| rank_of(&pool, s)).collect();
             if !pool.record(&log) {
                 break;
             }
@@ -366,6 +538,8 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
                     before: before[s],
                     after: pool.rating(seat_player(s)),
                     games: games[s],
+                    rank_before: ranked[s],
+                    rank_after: rank_of(&pool, s),
                 });
             }
             continue;
@@ -379,6 +553,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         report,
         points,
         turns,
+        ledger,
         timed,
         production,
         dice: this,
@@ -543,6 +718,66 @@ mod tests {
             }
         }
         assert!(found, "some game in the range built a city");
+    }
+
+    #[test]
+    fn every_card_is_accounted_for() {
+        // The whole claim the ledger makes, and the reason it is read off the
+        // hands rather than off the rules: if any way of moving a card is
+        // missing, what came in stops matching what went out plus what is left.
+        for seed in 0..10u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            let end = crate::game::Session::replay(g.seats, g.seed, g.mode, &g.moves)
+                .expect("it replays");
+            for seat in 0..s.report.players as usize {
+                let led = s.ledger[seat];
+                assert!(
+                    led.balances(),
+                    "seed {seed}, seat {seat}: {led:?} does not balance"
+                );
+                // And what it says is left really is what is in the hand.
+                assert_eq!(led.held, end.hand_size(seat), "seed {seed}, seat {seat}");
+                // The categories are the rows, and they are the whole of it.
+                let (mut up, mut down) = (0, 0);
+                for (_, n, incoming) in led.rows() {
+                    if incoming { up += n } else { down += n }
+                }
+                assert_eq!(up, led.came_in());
+                assert_eq!(down, led.went_out());
+            }
+            // A game that was played moved cards by more than one route.
+            let ways = |f: fn(&Ledger) -> u32| {
+                (0..s.report.players as usize)
+                    .map(|i| f(&s.ledger[i]))
+                    .sum::<u32>()
+            };
+            assert!(ways(|l| l.production) > 0, "seed {seed}: the board paid");
+            assert!(ways(|l| l.built) > 0, "seed {seed}: somebody built");
+        }
+    }
+
+    #[test]
+    fn a_trade_is_counted_both_ways_round() {
+        // Gross rather than net: two wheat for one ore is one card in and two
+        // out, and a hand size alone would call it one card out.
+        let mut moved = 0;
+        for seed in 0..8u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            for seat in 0..s.report.players as usize {
+                let led = s.ledger[seat];
+                // Nobody trades one way only across a whole game: every trade
+                // gives as well as takes.
+                assert_eq!(
+                    led.traded_in > 0,
+                    led.traded_out > 0,
+                    "seed {seed}, seat {seat}: {led:?}"
+                );
+                moved += led.traded_in;
+            }
+        }
+        assert!(moved > 0, "some game in the range traded");
     }
 
     #[test]

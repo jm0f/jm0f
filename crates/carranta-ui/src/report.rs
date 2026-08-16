@@ -85,11 +85,48 @@ fn card_head(title: &str, why: &str) -> String {
 /// The same mark the board uses, in the same place in every table here, so a
 /// row can be found by colour rather than by reading down the names.
 fn seat_cell(seat: usize, name: &str) -> String {
+    placed(seat, name, None)
+}
+
+/// The same, with where they finished.
+///
+/// Every table names the same four people, and the thing a reader wants beside
+/// a name is where it came. A badge on the winner alone answered that for one
+/// of them and left the other three to be worked out from a column of points.
+fn placed(seat: usize, name: &str, place: Option<usize>) -> String {
+    let badge = match place {
+        // First place is the win, so it keeps the colour the win had.
+        Some(1) => " <span class=\"tag\">1st</span>".to_string(),
+        Some(n) => format!(" <span class=\"tag quiet\">{}</span>", ordinal(n)),
+        None => String::new(),
+    };
     format!(
-        "<span class=\"dot s{}\"></span>{}",
+        "<span class=\"dot s{}\"></span>{}{badge}",
         seat.min(MAX_PLAYERS - 1),
         esc(name)
     )
+}
+
+/// Where each seat finished, best first.
+///
+/// The winner leads however the points fell, since they are the one who reached
+/// ten and ended it. Everybody else is ordered on final points, and a tie shares
+/// a place rather than being broken by seat number, which would be inventing an
+/// order the game never played.
+fn places(r: &carranta_analytics::game::Report, seats: usize) -> [Option<usize>; MAX_PLAYERS] {
+    let won = |s: usize| r.winner == Some(s as u8);
+    let mut order: Vec<usize> = (0..seats).collect();
+    order.sort_by(|a, b| won(*b).cmp(&won(*a)).then(r.vp[*b].cmp(&r.vp[*a])));
+    let mut out = [None; MAX_PLAYERS];
+    let mut place = 1;
+    for (i, &s) in order.iter().enumerate() {
+        let previous = i.checked_sub(1).map(|j| order[j]);
+        if previous.is_some_and(|q| won(q) || r.vp[q] != r.vp[s]) {
+            place = i + 1;
+        }
+        out[s] = Some(place);
+    }
+    out
 }
 
 /// Nothing, written as nothing.
@@ -97,6 +134,16 @@ fn seat_cell(seat: usize, name: &str) -> String {
 /// A column with no value in it is left blank rather than filled with a mark
 /// standing in for the absence. The blank already says it.
 const NONE: &str = "";
+
+/// A subtotal, ruled off from the rows it adds up.
+fn sub_row(label: &str, cells: &[String]) -> String {
+    let mut out = format!("<tr class=\"sub\"><td>{label}</td>");
+    for c in cells {
+        let _ = write!(out, "<td>{c}</td>");
+    }
+    out.push_str("</tr>");
+    out
+}
 
 /// A totals row, in the table's foot.
 ///
@@ -152,8 +199,151 @@ fn names(saved: &Saved, seats: usize) -> Vec<String> {
     (0..seats).map(|s| seat_name(s, &saved.name)).collect()
 }
 
+/// A name with where it finished, for places a badge cannot go.
+fn label(name: &str, place: Option<usize>) -> String {
+    match place {
+        Some(n) => format!("{name} {}", ordinal(n)),
+        None => name.to_string(),
+    }
+}
+
+/// Who took from whom, drawn.
+///
+/// A sankey: thieves down the left, victims down the right, and a ribbon
+/// between each pair as thick as the cards that moved along it. The grid below
+/// says the same thing exactly; this says it at a glance, which is a different
+/// and also useful thing for a table of numbers to be paired with.
+///
+/// Laid out here rather than by a script, because the page has none and this
+/// needs none: every position is a fraction of a total that is known the moment
+/// the game ends.
+fn sankey(
+    r: &carranta_analytics::game::Report,
+    who: &[String],
+    place: &[Option<usize>],
+    seats: usize,
+) -> String {
+    // The drawing's own coordinates, scaled to whatever width it is given.
+    const W: f64 = 720.0;
+    const H: f64 = 232.0;
+    const TOP: f64 = 14.0;
+    const NODE: f64 = 12.0;
+    const LEFT: f64 = 96.0;
+    const RIGHT: f64 = W - 96.0;
+    const GAP: f64 = 10.0;
+
+    let took: Vec<u32> = (0..seats)
+        .map(|s| (0..seats).map(|v| r.steals[s][v]).sum())
+        .collect();
+    let lost: Vec<u32> = (0..seats)
+        .map(|v| (0..seats).map(|s| r.steals[s][v]).sum())
+        .collect();
+    let total: u32 = took.iter().sum();
+    if total == 0 {
+        return String::new();
+    }
+
+    // One scale for both sides, so a ribbon is the same thickness at each end.
+    // Two scales would draw a card as larger where it landed than where it
+    // left, which is a picture of something that did not happen.
+    let widest = [&took, &lost]
+        .iter()
+        .map(|v: &&Vec<u32>| v.iter().filter(|n| **n > 0).count())
+        .max()
+        .unwrap_or(1);
+    let scale = (H - GAP * widest.saturating_sub(1) as f64) / f64::from(total);
+
+    // Where each seat's block sits on its side, centred on the drawing.
+    let stack = |totals: &[u32]| -> Vec<(f64, f64)> {
+        let shown = totals.iter().filter(|n| **n > 0).count();
+        let height =
+            f64::from(totals.iter().sum::<u32>()) * scale + GAP * shown.saturating_sub(1) as f64;
+        let mut y = TOP + (H - height) / 2.0;
+        totals
+            .iter()
+            .map(|n| {
+                if *n == 0 {
+                    return (y, y);
+                }
+                let block = (y, y + f64::from(*n) * scale);
+                y = block.1 + GAP;
+                block
+            })
+            .collect()
+    };
+    let from = stack(&took);
+    let to = stack(&lost);
+
+    let mut b = format!(
+        "<div class=\"flow\"><svg viewBox=\"0 0 {W} {h}\" role=\"img\" \
+         aria-label=\"Who took cards from whom\">",
+        h = H + TOP * 2.0
+    );
+
+    // The ribbons first, so the blocks and names sit over them.
+    let mut out_at: Vec<f64> = from.iter().map(|(y, _)| *y).collect();
+    let mut in_at: Vec<f64> = to.iter().map(|(y, _)| *y).collect();
+    for thief in 0..seats {
+        for victim in 0..seats {
+            let n = r.steals[thief][victim];
+            if n == 0 {
+                continue;
+            }
+            let thick = f64::from(n) * scale;
+            let (a, c) = (out_at[thief], in_at[victim]);
+            let (bmid, cmid) = (LEFT + NODE + 60.0, RIGHT - NODE - 60.0);
+            let _ = write!(
+                b,
+                "<path class=\"ribbon f{thief}\" d=\"M{x0} {a} C{bmid} {a} {cmid} {c} {x1} {c} \
+                 L{x1} {c2} C{cmid} {c2} {bmid} {a2} {x0} {a2} Z\"><title>{title}</title></path>",
+                x0 = LEFT + NODE,
+                x1 = RIGHT - NODE,
+                a2 = a + thick,
+                c2 = c + thick,
+                title = esc(&format!("{} took {n} from {}", who[thief], who[victim])),
+            );
+            out_at[thief] += thick;
+            in_at[victim] += thick;
+        }
+    }
+
+    // The blocks, and a name beside each.
+    for s in 0..seats {
+        if took[s] > 0 {
+            let _ = write!(
+                b,
+                "<rect class=\"node n{s}\" x=\"{x}\" y=\"{y}\" width=\"{NODE}\" \
+                 height=\"{h}\" rx=\"3\"/>\
+                 <text class=\"who end\" x=\"{tx}\" y=\"{ty}\">{name}</text>",
+                x = LEFT,
+                y = from[s].0,
+                h = from[s].1 - from[s].0,
+                tx = LEFT - 10.0,
+                ty = (from[s].0 + from[s].1) / 2.0 + 5.0,
+                name = esc(&label(&who[s], place[s])),
+            );
+        }
+        if lost[s] > 0 {
+            let _ = write!(
+                b,
+                "<rect class=\"node n{s}\" x=\"{x}\" y=\"{y}\" width=\"{NODE}\" \
+                 height=\"{h}\" rx=\"3\"/>\
+                 <text class=\"who\" x=\"{tx}\" y=\"{ty}\">{name}</text>",
+                x = RIGHT - NODE,
+                y = to[s].0,
+                h = to[s].1 - to[s].0,
+                tx = RIGHT + 10.0,
+                ty = (to[s].0 + to[s].1) / 2.0 + 5.0,
+                name = esc(&label(&who[s], place[s])),
+            );
+        }
+    }
+    b.push_str("</svg></div>");
+    b
+}
+
 /// How the game was divided, seat by seat.
-fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
+fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
     let mut b = String::from("<section>");
     b.push_str(&card_head(
         "Turns",
@@ -194,7 +384,7 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     b.push_str("</thead><tbody>");
     for s in 0..seats {
         let mine: Vec<&crate::analysis::Turn> = turns.iter().filter(|t| t.seat == s).collect();
-        let mut cells = vec![seat_cell(s, &who[s]), mine.len().to_string()];
+        let mut cells = vec![placed(s, &who[s], place[s]), mine.len().to_string()];
         if study.timed {
             let millis: u32 = mine.iter().map(|t| t.millis).sum();
             cells.push(clock(millis));
@@ -224,6 +414,22 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     b
 }
 
+/// A place, written as a place: 1st, 2nd, 3rd, 4th.
+///
+/// A rank is an ordinal and a bare "2" in a column of figures reads as a
+/// quantity. Only the small numbers this pool ever produces are handled well,
+/// which is every number it produces.
+fn ordinal(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
 /// A duration, at whatever precision it is worth reading at.
 ///
 /// A game somebody played takes minutes a turn; a game the computer played out
@@ -247,6 +453,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     let r = &study.report;
     let seats = r.players as usize;
     let who = names(saved, seats);
+    let place = places(r, seats);
     let mut b = String::new();
 
     let _ = write!(
@@ -321,17 +528,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     ]));
     b.push_str("</thead><tbody>");
     for s in 0..seats {
-        let win = r.winner == Some(s as u8);
-        let name = if win {
-            format!(
-                "<span class=\"dot s{s}\"></span><strong>{}</strong> \
-                 <span class=\"tag\">won</span>",
-                esc(&who[s])
-            )
-        } else {
-            seat_cell(s, &who[s])
-        };
-        let mut cells = vec![name, format!("<strong>{}</strong>", r.vp[s])];
+        let mut cells = vec![
+            placed(s, &who[s], place[s]),
+            format!("<strong>{}</strong>", r.vp[s]),
+        ];
         cells.extend(study.points[s].parts().iter().map(|p| scored(*p)));
         b.push_str(&row(&cells, false));
     }
@@ -340,7 +540,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("</section>");
 
     // ---- the turns ----------------------------------------------------------
-    b.push_str(&turn_bar(study, &who, seats));
+    b.push_str(&turn_bar(study, &who, &place, seats));
 
     // ---- ratings ------------------------------------------------------------
     b.push_str("<section>");
@@ -361,16 +561,31 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         b.push_str(&head_row(&[
             ("", ""),
             (
-                "before",
+                "rating before",
                 "The conservative estimate going in: three standard deviations \
                  below the mean, which is what a rating is worth believing \
                  rather than what it is.",
             ),
-            ("after", "The same figure once this game was folded in."),
+            (
+                "rating after",
+                "The same figure once this game was folded in.",
+            ),
             (
                 "change",
                 "An update is a redistribution, so these very nearly cancel: \
                  somebody gains what somebody else loses.",
+            ),
+            (
+                "rank before",
+                "Where they stood in the whole pool going in, best first. The \
+                 pool, not this table: a rating is a claim about every player on \
+                 this server. Blank before they had a rating to stand anywhere \
+                 with, since an unrated player is not last, they are absent.",
+            ),
+            (
+                "rank after",
+                "And where they stand now. A rating can rise and a rank fall, \
+                 if somebody else rose further.",
             ),
             (
                 "total games played",
@@ -393,10 +608,12 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             };
             b.push_str(&row(
                 &[
-                    seat_cell(s, &who[s]),
+                    placed(s, &who[s], place[s]),
                     n1(m.before.conservative()),
                     n1(m.after.conservative()),
                     format!("<span class=\"{cls}\">{}</span>", signed(d)),
+                    m.rank_before.map_or(NONE.to_string(), ordinal),
+                    m.rank_after.map_or(NONE.to_string(), ordinal),
                     // `games` is what each had behind them going in, and this
                     // game is now one of them.
                     (m.games + 1).to_string(),
@@ -516,16 +733,114 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("</section>");
 
     // ---- production ---------------------------------------------------------
+    // Every card that reached a hand or left it, by what moved it. This is the
+    // steal grid and the production decomposition in one place, because they
+    // were two views of one thing: where the cards went.
     b.push_str("<section>");
     b.push_str(&card_head(
-        "What the board paid",
-        "Production decomposed into what was chance and what was somebody's \
-         doing (§10.2). Expected is what the buildings standing at each roll should have paid \
-         at the dice's true odds, and the three columns after it are why that \
-         is not what arrived. Only one of them is chance: the robber sitting on \
-         your hexes is an opponent's choice, and a stack running dry is the \
-         supply (R-5.6).",
+        "Production",
+        "Every card that reached a hand or left it, and what moved it. Read \
+         down: what came in, less what went out, is what was still in hand when \
+         the game ended, which is what makes this a ledger rather than a list. \
+         Road Building is not here because it pays in roads rather than in \
+         cards, and a victory point card is never played at all.",
     ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![("", "")];
+    let named: Vec<String> = (0..seats).map(|s| placed(s, &who[s], place[s])).collect();
+    heads.extend(named.iter().map(|n| (n.as_str(), "")));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    const WHY: [(&str, &str); 10] = [
+        (
+            "production",
+            "Paid by the board on a roll, and by the second opening \
+                        settlement, which pays for the hexes it touches.",
+        ),
+        (
+            "invention",
+            "Taken with an Invention card, two of anything (R-9.9).",
+        ),
+        (
+            "monopoly",
+            "Taken from every other hand with a Monopoly (R-9.8).",
+        ),
+        (
+            "stolen",
+            "Taken from a hand by the robber, on a seven or on a militia \
+                    (R-6.4).",
+        ),
+        (
+            "traded in",
+            "Arrived in a trade, with a person or with the supply.",
+        ),
+        (
+            "built",
+            "Spent on a road, a settlement, a city or a development card.",
+        ),
+        (
+            "discarded",
+            "Thrown away to a seven (R-6.2). Nobody's choice but the \
+                       dice's.",
+        ),
+        ("robbed", "Taken out of this hand by the robber."),
+        (
+            "monopolised",
+            "Taken out of this hand by somebody else's Monopoly.",
+        ),
+        (
+            "traded out",
+            "Left in a trade, to a person or to the supply.",
+        ),
+    ];
+    let cell = |v: u32, sign: bool| {
+        if v == 0 {
+            NONE.to_string()
+        } else if sign {
+            v.to_string()
+        } else {
+            format!("&minus;{v}")
+        }
+    };
+    let mut written = 0;
+    for (i, (name, why)) in WHY.iter().enumerate() {
+        // The subtotals fall between the two halves and at the end, where the
+        // reader has just finished adding the rows above them.
+        if i == 5 {
+            b.push_str(&sub_row(
+                "came in",
+                &(0..seats)
+                    .map(|s| study.ledger[s].came_in().to_string())
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        let mut cells = vec![format!("<span title=\"{}\">{name}</span>", esc(why))];
+        for s in 0..seats {
+            let led = study.ledger[s];
+            cells.push(cell(led.rows()[i].1, led.rows()[i].2));
+        }
+        b.push_str(&row(&cells, false));
+        written += 1;
+    }
+    debug_assert_eq!(written, WHY.len());
+    b.push_str(&sub_row(
+        "went out",
+        &(0..seats)
+            .map(|s| format!("&minus;{}", study.ledger[s].went_out()))
+            .collect::<Vec<_>>(),
+    ));
+    b.push_str(&sub_row(
+        "left in hand",
+        &(0..seats)
+            .map(|s| study.ledger[s].held.to_string())
+            .collect::<Vec<_>>(),
+    ));
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+
+    // What the board *should* have paid, which no ledger can hold: it is a
+    // counterfactual rather than a card that moved (§10.2).
     b.push_str(T_OPEN);
     b.push_str("<thead>");
     b.push_str(&head_row(&[
@@ -533,7 +848,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         (
             "expected",
             "What the buildings standing at each roll should have paid at the \
-             dice's true odds.",
+             dice's true odds. Not a card that moved, which is why it cannot \
+             sit in the ledger above.",
         ),
         (
             "the robber",
@@ -550,7 +866,6 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             "What is left once the other two are taken out, which is the only \
              genuinely random term of the three.",
         ),
-        ("arrived", "Cards that actually reached their hand."),
         (
             "luck",
             "The dice term in standard deviations, which is the one to read: a \
@@ -559,21 +874,18 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ),
     ]));
     b.push_str("</thead><tbody>");
-    let mut sums = [0.0f64; 5];
+    let mut sums = [0.0f64; 4];
     for s in 0..seats {
         let d = study.production.decompose(s);
-        for (slot, v) in sums.iter_mut().zip([
-            d.e_raw,
-            -d.robber_cost,
-            -d.supply_denial,
-            d.dice_luck,
-            d.actual,
-        ]) {
+        for (slot, v) in
+            sums.iter_mut()
+                .zip([d.e_raw, -d.robber_cost, -d.supply_denial, d.dice_luck])
+        {
             *slot += v;
         }
         b.push_str(&row(
             &[
-                seat_cell(s, &who[s]),
+                placed(s, &who[s], place[s]),
                 n1(d.e_raw),
                 signed(-d.robber_cost),
                 signed(-d.supply_denial),
@@ -582,7 +894,6 @@ pub fn page(saved: &Saved, study: &Study) -> String {
                     if d.dice_luck >= 0.0 { "up" } else { "down" },
                     signed(d.dice_luck)
                 ),
-                n1(d.actual),
                 format!("{:+.2}&sigma;", d.luck_z),
             ],
             false,
@@ -595,56 +906,22 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         signed(sums[1]),
         signed(sums[2]),
         signed(sums[3]),
-        n1(sums[4]),
         // A z-score is a position on a spread. Four of them add to nothing.
         NONE.to_string(),
     ]));
     b.push_str(T_CLOSE);
     b.push_str("</section>");
 
-    // ---- the robber ---------------------------------------------------------
+    // ---- the militia --------------------------------------------------------
     b.push_str("<section>");
     b.push_str(&card_head(
-        "The robber",
-        "Read along a row: what that seat took. The diagonal is blank because \
-         nobody robs themselves.",
+        "Militia",
+        "Where the robber went and what it took. The cards themselves are in \
+         the ledger above, as stolen and robbed; this is who took them from \
+         whom, which a per-player column cannot say. The robber moves on a \
+         seven as well as on a militia, and most of these are sevens.",
     ));
-    b.push_str(T_OPEN);
-    b.push_str("<thead>");
-    // The columns name players as well, so they wear the colour too.
-    let victims: Vec<String> = (0..seats).map(|s| seat_cell(s, &who[s])).collect();
-    let mut heads = vec![("stole from", "")];
-    heads.extend(victims.iter().map(|n| (n.as_str(), "")));
-    heads.push((
-        "discarded",
-        "Cards this seat threw away to sevens, which is the robber's other \
-         cost and nobody's choice but the dice's (R-6.2).",
-    ));
-    b.push_str(&head_row(&heads));
-    b.push_str("</thead><tbody>");
-    let mut taken = vec![0u32; seats];
-    let mut binned = 0u32;
-    for thief in 0..seats {
-        let mut cells = vec![seat_cell(thief, &who[thief])];
-        for victim in 0..seats {
-            cells.push(if thief == victim {
-                NONE.to_string()
-            } else {
-                taken[victim] += r.steals[thief][victim];
-                r.steals[thief][victim].to_string()
-            });
-        }
-        binned += r.discards[thief];
-        cells.push(r.discards[thief].to_string());
-        b.push_str(&row(&cells, false));
-    }
-    b.push_str("</tbody>");
-    let mut foot = vec!["lost".to_string()];
-    foot.extend(taken.iter().map(u32::to_string));
-    foot.push(binned.to_string());
-    b.push_str(&totals(&foot));
-    b.push_str(T_CLOSE);
-    // The piece itself, which belongs to nobody and so has no row above.
+    b.push_str(&sankey(r, &who, &place, seats));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
     b.push_str(&head_row(&[
@@ -705,7 +982,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     for s in 0..seats {
         b.push_str(&row(
             &[
-                seat_cell(s, &who[s]),
+                placed(s, &who[s], place[s]),
                 r.offers_made[s].to_string(),
                 r.offers_declined[s].to_string(),
                 r.offers_withdrawn[s].to_string(),
@@ -747,7 +1024,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("</thead><tbody>");
     let mut played = [0u32; 5];
     for s in 0..seats {
-        let mut cells = vec![seat_cell(s, &who[s]), r.dev_bought[s].to_string()];
+        let mut cells = vec![placed(s, &who[s], place[s]), r.dev_bought[s].to_string()];
         cells.extend(r.dev_played[s].iter().map(u32::to_string));
         for (slot, n) in played.iter_mut().zip(r.dev_played[s]) {
             *slot += n;
@@ -797,7 +1074,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     for s in 0..seats {
         b.push_str(&row(
             &[
-                seat_cell(s, &who[s]),
+                placed(s, &who[s], place[s]),
                 r.opening[s].pips.to_string(),
                 format!("{} of {}", r.opening[s].diversity, RESOURCE_NAMES.len()),
                 r.opening[s].ports.to_string(),
@@ -1007,11 +1284,33 @@ tfoot tr:hover { background: transparent; }
 /* What a thing was worth, beside how many of it there were. */
 .worth { color: var(--muted-foreground); }
 
+/* A subtotal inside the body, ruled off from what it adds up. */
+tbody tr.sub td { font-weight: 600; color: var(--foreground);
+                  border-top: 1px solid var(--border); }
+tbody tr.sub:hover { background: transparent; }
+
+/* ---- the steal flow ----
+   Thieves down the left, victims down the right, a ribbon between each pair as
+   thick as the cards that moved along it. Laid out on the server, since every
+   position is a fraction of a total known the moment the game ends. */
+.flow svg { display: block; width: 100%; height: auto; margin: 0 0 1rem; }
+.ribbon { opacity: .45; }
+.ribbon:hover { opacity: .8; }
+.who { font: 500 13px Figtree, system-ui, sans-serif; fill: var(--foreground); }
+.who.end { text-anchor: end; }
+.f0 { fill: var(--p0); } .f1 { fill: var(--p1); }
+.f2 { fill: var(--p2); } .f3 { fill: var(--p3); }
+.n0 { fill: var(--p0); } .n1 { fill: var(--p1); }
+.n2 { fill: var(--p2); } .n3 { fill: var(--p3); }
+
 /* ---- badge ---- */
 .tag { display: inline-block; padding: .05em .45em; border-radius: var(--radius-sm);
        background: var(--primary); color: var(--primary-foreground);
        font-size: 12px; font-weight: 600; letter-spacing: .01em;
        vertical-align: 1px; }
+/* Every place but first, which keeps the colour the win had. */
+.tag.quiet { background: transparent; color: var(--muted-foreground);
+             border: 1px solid var(--border); font-weight: 500; }
 .up { color: var(--positive); font-weight: 600; }
 .down { color: var(--primary); font-weight: 600; }
 
@@ -1092,8 +1391,8 @@ mod tests {
             "Turns",
             "Ratings",
             "Dice",
-            "What the board paid",
-            "The robber",
+            "Production",
+            "Militia",
             "The market",
             "Development cards",
             "The opening",
@@ -1262,11 +1561,10 @@ mod tests {
         // The paragraphs that used to sit under the tables are gone, and what
         // they said is on the card or the column it was about.
         for gone in [
-            "Read along a row",
             "dots on every number",
             "Played, not held",
             "Counted for both sides",
-            "Expected is what the buildings",
+            "What the buildings standing at each roll",
             "No p-value, deliberately",
             "Seat, not player",
         ] {
