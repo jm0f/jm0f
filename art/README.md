@@ -12,6 +12,7 @@ them. Useful names, though nothing depends on them yet:
 | `settlement.svg`, `city.svg`, `road.svg`, `robber.svg` | the pieces |
 | `port.svg` | the marker off the coast |
 | `dev-*.svg` | the five development card faces, one per card |
+| `award-*.svg` | the two bonus tiles, longest road and largest militia |
 
 Two things that save a round trip:
 
@@ -54,19 +55,26 @@ geometry rather than drawn once and reused.
 So `road.svg` is the specification: proportions, colours, and how the three
 tones fall. The renderer generates the pieces from it.
 
-## The development card faces
+## The card faces
 
-`dev-cards.py` writes the five `dev-*.svg` files and is the source they come
-from. Edit the script and re-run it, rather than editing an SVG, or the next run
-puts it back. The five share a template and their drawings are arithmetic on the
-pieces already in this folder, so keeping them in step by hand was the thing
-worth avoiding. It is a tool: nothing in the Rust workspace runs it, and the
-files it writes are what the binary carries.
+`card-faces.py` writes the five `dev-*.svg` and two `award-*.svg` files and is
+the source they come from. Edit the script and re-run it, rather than editing an
+SVG, or the next run puts it back. The seven share a template and their drawings
+are arithmetic on the pieces already in this folder, so keeping them in step by
+hand was the thing worth avoiding.
+
+The awards are the development cards' own drawings rearranged: three robbers for
+largest militia, three roads end to end for longest road. Road building sets its
+two roads *across* each other so they read as two; longest road sets the same
+drawing end to end so it reads as one that keeps going.
+
+The script is a tool: nothing in the Rust workspace runs it, and the files it
+writes are what the binary carries.
 
 A card is 100 by 132, which is the shape the dock draws one in. The drawing sits
 between the name at the top and the number at the bottom, centred on x 50 and
-**standing on the same line as the other four**, which bottom out between y 90
-and 93.3. Bases rather than centres: the robber is half again as tall as the
+**standing on the same line as the rest**, which bottom out between y 90 and
+93.3. Bases rather than centres: the robber is half again as tall as the
 rest, and a shared centre put it on top of its own number. Text is Audiowide,
 the wordmark's face, at one weight, because
 that is the only weight there is: asking for a bolder one gets a synthetic

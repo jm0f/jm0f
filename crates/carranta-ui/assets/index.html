@@ -773,6 +773,9 @@
      at a time. Here it goes on the button, because the fan's silhouette is
      exactly the button's box: a ring per card drew one around the front one and
      another around each sliver behind it, which read as three piles. */
+  /* One is all there is of either award, so a badge counting to one is a number
+     with nothing to say. */
+  .resStack.award .badge { display: none; }
   .resStack.faced.playable {
     outline: 2px solid var(--accent); outline-offset: 1px; border-radius: .6em;
   }
@@ -836,7 +839,13 @@
      of the dock; stacked and stretched, the pair is one die wide and stands the
      full height of the cards beside it, which is the whole point of a die being
      an object rather than a number. */
-  .dice { display: flex; flex-direction: column; gap: .4em; height: 7em; }
+  .dice { display: flex; flex-direction: column; align-items: center;
+          gap: .4em; height: 7em; }
+  /* Square, and the height is what decides how big. `flex: 1` shares the
+     column's height between the two; `aspect-ratio` turns that height into the
+     width. The centring is what makes that work: a flex child stretches across
+     its container by default, which pulled each die out to the width of the
+     word DICE above it and left a pair of tall thin cards. */
   .die { flex: 1; aspect-ratio: 1; height: auto; width: auto;
          border-radius: .5em; border: 1px solid var(--border);
          background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
@@ -1357,6 +1366,13 @@
     <span class="dockLabel">development</span>
     <div class="stacks" id="dev"></div>
   </div>
+  <!-- The two bonus tiles, when you hold one. No slot when you do not: most
+       games never give you either, and two empty slots' worth of dock is a
+       lot to hold open for that. -->
+  <div class="dockGroup" id="awardGroup" hidden>
+    <span class="dockLabel">awards</span>
+    <div class="stacks" id="awards"></div>
+  </div>
   <div class="dockGroup spacer"></div>
   <!-- Building is asked for here and answered on the board, docs/ui.md §3.
        The button arms a kind of piece; the spots for that kind are what the
@@ -1508,7 +1524,8 @@ const art = {};
 async function loadArt() {
   for (const name of ['road-30', 'road-90', 'road-150', 'settlement', 'city', 'robber',
                       'dev-militia', 'dev-victory-point', 'dev-monopoly',
-                      'dev-road-building', 'dev-invention']) {
+                      'dev-road-building', 'dev-invention',
+                      'award-longest-road', 'award-largest-militia']) {
     const text = await (await fetch(`/art/${name}.svg`)).text();
     art[name] = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
   }
@@ -2596,6 +2613,8 @@ function renderHand(v) {
     hand.appendChild(resStackEl(left, r.i, tip, act));
   });
 
+  renderAwards(v);
+
   const dev = document.getElementById('dev');
   dev.textContent = '';
   // What each kind of card can actually do right now, straight from the view.
@@ -2663,6 +2682,47 @@ function renderHand(v) {
   if (!dev.children.length) {
     dev.appendChild(devStackEl(0, '', 'no development cards', null));
   }
+}
+
+// ---- the two awards --------------------------------------------------------
+// Longest road and largest militia (R-10). Cards, because that is what they are
+// from where you sit: something you hold, that is worth points, that somebody
+// can take off you. They are drawn by the same face template the development
+// cards use, out of the same two drawings, arranged to say "longest" and
+// "most" rather than "a road" and "a robber".
+//
+// Only your own, and only when you hold one. Who else holds what is on their
+// seat row, where the rest of what is public about them is; and a slot held
+// open for a tile most games never give you is a lot of dock for nothing.
+const AWARDS = [
+  { key: 'longestRoad', art: 'award-longest-road', name: 'longest road',
+    // R-10.1, R-10.5, R-10.6.
+    rule: (s) => `Worth 2 points. A run of ${s.road} roads, and yours until `
+      + 'somebody builds a longer one: it takes five to win it, and strictly '
+      + 'more than the holder to take it' },
+  { key: 'largestMilitia', art: 'award-largest-militia', name: 'largest militia',
+    // R-10.8, and the same tie rule.
+    rule: (s) => `Worth 2 points. ${s.militia} militia played, and yours until `
+      + 'somebody plays more: it takes three to win it, and strictly more than '
+      + 'the holder to take it' },
+];
+function renderAwards(v) {
+  const host = document.getElementById('awards');
+  const group = document.getElementById('awardGroup');
+  host.textContent = '';
+  const you = v.seats.find(s => s.seat === v.you);
+  const held = you ? AWARDS.filter(a => you[a.key]) : [];
+  group.hidden = held.length === 0;
+  held.forEach(a => {
+    const face = art[a.art] ? art[a.art].outerHTML : '';
+    const pile = fanEl(1, `${a.name}. ${a.rule(you)}`, null, (card, front) => {
+      card.style.setProperty('--face', 'var(--accent)');
+      if (!front) return;
+      if (face) card.innerHTML = face;
+      else card.appendChild(document.createElement('i'));
+    }, face ? 'faced award' : 'award');
+    host.appendChild(pile);
+  });
 }
 
 // ---- actions ---------------------------------------------------------------
@@ -2778,7 +2838,7 @@ function renderBuilding(v, theirs, rolled) {
           : missing(v, COSTS[kind]) || `nowhere legal to put a ${kind}`));
     const b = document.createElement('button');
     b.className = 'act build' + (building === kind ? ' armed' : '');
-    b.innerHTML = buildGlyph(art);
+    b.innerHTML = buildGlyph(art, live ? SEAT_HEX[v.you] : BUILD_GREY);
     // The name is carried here rather than on the face, so it is on the button
     // for a screen reader and for anyone who does not recognise the drawing.
     b.setAttribute('aria-label', label);
@@ -2798,22 +2858,27 @@ function renderBuilding(v, theirs, rolled) {
 // colour. The same three tones the drawing already carries, so it keeps its
 // solid shape: a flat silhouette of a settlement and a flat silhouette of a
 // city are nearly the same mark.
-// A warm grey, since everything else on this table is warm. Run through the
-// drawings' own lighting ramp rather than picked face by face, so the piece on
-// the button is lit exactly like the piece on the board.
+// A button you can press shows the piece in your own colour, because that is
+// the piece it puts on the board: press it and the ghosts that appear are that
+// colour too. A button you cannot press shows the same piece in a warm grey,
+// which is the palette's way of saying a thing is not in play.
+//
+// Either way the colour goes through the drawing's own lighting ramp rather
+// than being picked face by face, so the piece on the button is lit exactly
+// like the piece on the board.
 //
 // Not `pieceGlyph`: the log already has one of those, drawing the same pieces
 // in a seat's colour for a line of text. Two function declarations of one name
 // are not two functions, they are the later one, and this was silently calling
 // the log's with no seat to colour by.
 const BUILD_GREY = '#9C8E7C';
-function buildGlyph(name) {
+function buildGlyph(name, hex) {
   const src = art[name];
   if (!src) return '<svg viewBox="0 0 24 24"></svg>';
   const node = src.cloneNode(true);
   node.querySelectorAll('[fill]').forEach((n) => {
     const f = (n.getAttribute('fill') || '').toUpperCase();
-    if (f in ART_TONES) n.setAttribute('fill', tone(BUILD_GREY, ART_TONES[f]));
+    if (f in ART_TONES) n.setAttribute('fill', tone(hex, ART_TONES[f]));
   });
   // Sized by the box it goes in rather than by its own dimensions, so the three
   // pieces come out at one height however tall each drawing happens to be.

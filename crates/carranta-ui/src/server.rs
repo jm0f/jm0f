@@ -38,7 +38,7 @@ const PHOTOS: [(&str, &[u8]); 6] = [
     ("desert", include_bytes!("../../../art/desert.jpg")),
 ];
 
-const ART: [(&str, &str); 11] = [
+const ART: [(&str, &str); 13] = [
     ("road-30", include_str!("../../../art/road-30.svg")),
     ("road-90", include_str!("../../../art/road-90.svg")),
     ("road-150", include_str!("../../../art/road-150.svg")),
@@ -61,6 +61,17 @@ const ART: [(&str, &str); 11] = [
     (
         "dev-invention",
         include_str!("../../../art/dev-invention.svg"),
+    ),
+    // The two bonus tiles (R-10). Same faces as the development cards, because
+    // they are the same object: a card in your hand with a name, a picture of
+    // what it does and what it is worth.
+    (
+        "award-longest-road",
+        include_str!("../../../art/award-longest-road.svg"),
+    ),
+    (
+        "award-largest-militia",
+        include_str!("../../../art/award-largest-militia.svg"),
     ),
 ];
 

@@ -165,6 +165,35 @@ Playable rings the whole pile rather than each card in it, since a ring per card
 drew one around the front card and another around every sliver behind it, which
 read as three piles rather than one that is live.
 
+### The two awards
+
+Longest road and largest militia (R-10) are **cards you hold**, sitting to the
+right of the development cards. That is what they are from where you sit:
+something you have, that is worth points, that somebody can take off you. They
+are drawn by the same face template the development cards use, out of the same
+two drawings, arranged to say "longest" and "most" rather than "a road" and "a
+robber": three roads end to end, and three militia with the middle one forward.
+
+That arrangement is the whole reason the drawings are rearranged rather than
+reused as they are. Road building shows two roads set *across* each other so
+they read as two roads; longest road shows the same drawing end to end so it
+reads as one road that keeps going. One robber is the militia card, and the word
+underneath would have been the only difference.
+
+**Only your own, and only when you hold one.** Who else holds what is on their
+seat row, with the rest of what is public about them. A slot held open for a
+tile most games never give you is a lot of dock for nothing, so the section is
+not there until it has something in it, and the layout moves when it appears.
+That is the one place the dock breaks its own fixed-slots rule, and it is worth
+it.
+
+**No count badge.** There is one of either, and a number that can only ever read
+`1` has nothing to say.
+
+The tooltip carries what it is worth, where you stand right now, and what it
+takes to lose it: five roads to win the road and strictly more than the holder
+to take it, three militia played for the other (R-10.1, R-10.6, R-10.8).
+
 ### Actions
 
 A fixed grid: **roll, buy a development card, trade, end turn.** Four of them,
@@ -181,9 +210,15 @@ does not cost you the explanation.
 ### Building
 
 Three buttons, one per piece, in the order they cost: road, settlement, city.
-Each carries the board's own drawing of that piece, in a warm grey run through
-the same lighting ramp a placed piece uses, so the button and the thing it puts
-down are the same object seen twice.
+Each carries the board's own drawing of that piece, so the button and the thing
+it puts down are the same object seen twice.
+
+**A button you can press shows the piece in your own colour**, because that is
+the piece it puts on the board: press it and the ghosts that appear are that
+colour too. A button you cannot press shows the same piece in a warm grey, which
+is the palette's way of saying a thing is not in play. Either way the colour
+goes through the drawing's own lighting ramp rather than being picked face by
+face, so the piece on the button is lit exactly like the piece on the board.
 
 **Pressing one arms it; the board answers with the spots for that piece.** Every
 spot you could afford used to be lit the whole time, which turned an ordinary
@@ -234,8 +269,13 @@ dock on every laptop rather than on small windows only.
 
 ### Dice
 
-Two dice objects showing the last roll, **one above the other** in the dock's
-right corner, standing **the full height of the cards beside them**. Clicking
+Two **square** dice showing the last roll, **one above the other** in the dock's
+right corner, standing **the full height of the cards beside them**. The height
+is what decides how big: the column's height is shared between the two and the
+aspect ratio turns that into the width. They have to be centred in their column
+for that to work, because a flex child stretches across its container by
+default, which pulled each die out to the width of the word `DICE` above it and
+left a pair of tall thin cards. Clicking
 rolls. Side by side they were the widest thing in that corner and pushed the
 actions off the middle of the dock; stacked and stretched, the pair is one die
 wide and as deep as the dock is, which is the whole point of a die being an
@@ -1212,7 +1252,18 @@ is not what `+2` means. They sit close enough together to read as a single mark,
 and the pair is moved symmetrically about its midpoint so tightening the gap
 does not walk the drawing off centre.
 
-`art/dev-cards.py` is where all five come from. The template is the source and
+**The two awards are the same face**, in `art/award-*.svg`: longest road and
+largest militia, `+2` each (R-10.1, R-10.8). They reuse the militia's robber and
+road building's road, arranged to mean "most" and "longest": three robbers with
+the middle one forward, and three roads end to end.
+
+End to end is measured off the road's own axis rather than its bounding box.
+Head to tail the drawing runs `(68.40, 39.49)` at scale 1, which is thirty
+degrees exactly, while its box is `76.81` by `54.05` because a box has to hold
+the mitred ends too. Stepping by the box left a gap at every joint and the run
+read as a dashed line rather than as a road.
+
+`art/card-faces.py` is where all seven come from. The template is the source and
 the SVGs are its output, so a change made to one file rather than to the script
 is undone by the next run.
 
