@@ -762,7 +762,14 @@ impl State {
     /// May `p` take this offer? Every trade needs the active player as one
     /// party (R-7.3), and nobody trades with themselves.
     #[inline]
-    fn may_accept(&self, p: usize, offer: &Offer) -> bool {
+    /// Whether `p` is one of the two parties an offer was put to.
+    ///
+    /// Public because it is the question "was this seat asked?", which a
+    /// display needs and cannot answer without restating R-7.3. It reads
+    /// nothing but seat numbers and the offer, so a caller learns nothing
+    /// about anybody's hand from it. Whether they can *cover* it is a
+    /// different question, and that one is private.
+    pub fn may_accept(&self, p: usize, offer: &Offer) -> bool {
         let active = self.to_act as usize;
         let from = offer.from as usize;
         if p == from {

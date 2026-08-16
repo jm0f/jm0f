@@ -10,7 +10,7 @@
 use carranta_bot::{Heuristic, Policy};
 use carranta_core::action::{Action, Illegal};
 use carranta_core::rng::{Rng, Stream};
-use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Phase, State, TradeMode};
+use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Offer, Phase, State, TradeMode};
 use carranta_record::fog::{Fog, Viewer, fog};
 
 /// The seat a person plays.
@@ -167,7 +167,19 @@ fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
             Some(s) => format!("Offered seat {s} {} for {}", cards(&give), cards(&want)),
             None => format!("Offered {} for {}", cards(&give), cards(&want)),
         },
-        Action::AcceptTrade { .. } => "Accepted an offer".to_string(),
+        // Named while the offer is still on the table, which is the only time
+        // it can be: taking one is what removes it. "Accepted an offer" said
+        // who but not with whom or for what, and which offer was taken is the
+        // whole of the news when several are standing.
+        Action::AcceptTrade { offer, .. } => match state.offers.get(offer as usize) {
+            Some(o) => format!(
+                "Took {} from seat {} for {}",
+                cards(&o.give),
+                o.from,
+                cards(&o.want)
+            ),
+            None => "Accepted an offer".to_string(),
+        },
         Action::WithdrawTrade { .. } => "Withdrew an offer".to_string(),
         Action::EndTurn => "Ended the turn".to_string(),
     }
@@ -237,8 +249,14 @@ pub struct Session {
     /// refused rather than applied to a different position.
     version: u64,
     log: Vec<LogLine>,
-    /// Offers the human has already waved away, so they are asked once.
-    declined: [bool; MAX_OFFERS],
+    /// Every offer put on the table this turn, and what each seat said to it.
+    ///
+    /// The engine does not carry this and should not: an offer nobody took and
+    /// an offer three people turned down are the same position to it, and it is
+    /// right about that. They are not the same thing to watch. It also drops an
+    /// offer the moment it is taken, which is exactly when there is something
+    /// worth showing about it.
+    deals: Vec<Deal>,
     seed: u64,
     /// When this game was dealt. The clock belongs to the server rather than
     /// to the page, so reloading the browser does not restart it.
@@ -319,7 +337,7 @@ impl Session {
                 seat: None,
                 text: format!("{seats} players, {mode:?} market, seed {}", seed_code(seed)),
             }],
-            declined: [false; MAX_OFFERS],
+            deals: Vec::new(),
             seed,
             started: std::time::Instant::now(),
             clock: Clock::Off,
@@ -534,7 +552,7 @@ impl Session {
     /// Wave away every offer currently open, as declining does.
     fn decline_open_offers(&mut self) {
         for i in self.open_offers() {
-            self.declined[i as usize] = true;
+            self.answer(i, HUMAN, Answer::No);
         }
     }
 
@@ -597,6 +615,11 @@ impl Session {
                         self.spent[prev].saturating_sub(std::time::Duration::from_secs(inc));
                 }
             }
+            // Offers do not survive the turn they were made in, and neither
+            // does the record of who said what to them. A card still showing
+            // last turn's replies is a question about a table that has been
+            // cleared.
+            self.deals.clear();
             self.turn_holder = deciding;
             self.turn_at = now;
             self.turn_began = now;
@@ -723,7 +746,7 @@ impl Session {
                 ),
             };
             self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
-            self.forget_declines();
+            self.sync_deals();
             self.finish_move();
         }
     }
@@ -829,7 +852,15 @@ impl Session {
             return Vec::new();
         }
         (0..self.state.offer_count)
-            .filter(|&i| !self.declined[i as usize])
+            // Asked once. A decline sticks to the offer it was made about
+            // rather than to a slot in the market, so an offer arriving later
+            // is a new question and gets asked.
+            .filter(|&i| {
+                self.deals
+                    .iter()
+                    .find(|d| d.at == Some(i))
+                    .is_none_or(|d| d.answers[HUMAN as usize] == Answer::Waiting)
+            })
             .filter(|&i| {
                 let mut probe = self.state;
                 probe
@@ -856,10 +887,8 @@ impl Session {
         match choice {
             Choice::Decline => {
                 self.undo = None;
-                for i in self.open_offers() {
-                    self.declined[i as usize] = true;
-                }
-                self.note(Some(HUMAN), "Declined the open offers".to_string());
+                self.decline_open_offers();
+                self.note(Some(HUMAN), "Passed on the offers".to_string());
             }
             Choice::Play(action) => {
                 // Named before it is applied: a phrase describes the position
@@ -872,6 +901,11 @@ impl Session {
                 // half-made move can be put back, see `cancel`.
                 let mark =
                     matches!(action, Action::PlayMilitia).then(|| (self.state, self.log.len()));
+                // Recorded before it is applied, because taking an offer is
+                // what removes it: afterwards there is no offer to answer.
+                if let Action::AcceptTrade { offer, .. } = action {
+                    self.answer(offer, HUMAN, Answer::Yes);
+                }
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.undo = mark;
                 self.version += 1;
@@ -884,7 +918,7 @@ impl Session {
                     self.note_production(at, &purse);
                 }
                 self.note_steal(at, &action, HUMAN, &purse);
-                self.forget_declines();
+                self.sync_deals();
             }
         }
         self.finish_move();
@@ -961,7 +995,7 @@ impl Session {
         self.state.apply(action).map_err(Refused::Illegal)?;
         self.version += 1;
         self.note_at(at, Some(HUMAN), phrase);
-        self.forget_declines();
+        self.sync_deals();
         self.finish_move();
         Ok(())
     }
@@ -1026,10 +1060,11 @@ impl Session {
     /// Whether the next bot action may happen yet, arming the wait if it may.
     ///
     /// One gate for everything a bot does, because everything a bot does is
-    /// something a person is watching for. Making a move and taking somebody
-    /// else's offer are the same event to a reader.
-    fn beat_due(&mut self) -> bool {
-        let (lo, hi) = self.pace.window();
+    /// something a person is watching for. Making a move and answering somebody
+    /// else's offer are both events to a reader, so both come through here;
+    /// they are drawn from different windows, because reading an offer takes
+    /// longer than watching a move.
+    fn beat_due(&mut self, (lo, hi): (u64, u64)) -> bool {
         if hi == 0 {
             return true;
         }
@@ -1061,7 +1096,7 @@ impl Session {
             if self.state.decider() == HUMAN || !self.choices().is_empty() {
                 break;
             }
-            if !self.beat_due() {
+            if !self.beat_due(self.pace.window()) {
                 break;
             }
             self.state.legal_into(&mut buf);
@@ -1073,6 +1108,13 @@ impl Session {
             let phrase = log_phrase(&action, &self.state, seat);
             let at = self.stamp();
             let purse = self.state.hand;
+            // The active player may take an offer as an ordinary move rather
+            // than through the market settle, and that is still an answer:
+            // recorded here too, or the card would leave them at "???" over an
+            // offer they had already taken.
+            if let Action::AcceptTrade { offer, .. } = action {
+                self.answer(offer, seat as u8, Answer::Yes);
+            }
             if self.state.apply(action).is_err() {
                 break;
             }
@@ -1088,7 +1130,7 @@ impl Session {
                 self.note_production(at, &purse);
             }
             self.note_steal(at, &action, seat as u8, &purse);
-            self.forget_declines();
+            self.sync_deals();
             // Each bot pays for its own thinking, and the turn passing between
             // two bots is still the turn passing.
             self.hand_over_clock();
@@ -1106,14 +1148,29 @@ impl Session {
         }
     }
 
-    /// Let bots take each other's offers. The human is asked separately, by
-    /// being offered the choice rather than answered on their behalf.
+    /// Let the bots answer the offers on the table, one seat per beat.
+    ///
+    /// The human is asked separately, by being offered the choice rather than
+    /// answered on their behalf.
+    ///
+    /// One seat at a time and not the whole table at once, because a proposal
+    /// being answered is something to watch: three refusals landing together
+    /// is a verdict, three arriving in turn is the table thinking. Every answer
+    /// is recorded, so a proposal can be shown being considered rather than
+    /// only reported once it has failed.
     fn settle_between_bots(&mut self) {
-        if self.state.trade_mode == TradeMode::Disabled || self.state.offer_count == 0 {
+        if self.state.trade_mode == TradeMode::Disabled {
             return;
         }
         for _ in 0..16 {
-            // Who would take what, worked out *before* the wait is armed.
+            // Every time round, because taking an offer removes it and the
+            // engine fills the gap by moving another one into it: an index
+            // read before that is a name for the wrong offer afterwards.
+            self.sync_deals();
+            if self.state.offer_count == 0 {
+                return;
+            }
+            // Who has still to answer, worked out *before* the wait is armed.
             //
             // Arming it first spent the beat whether or not there was anything
             // to spend it on, and an offer nobody wants stays on the table for
@@ -1122,36 +1179,55 @@ impl Session {
             // was reached, and the table stopped dead: the turn holder's clock
             // ran to zero with nobody able to move and the next turn never
             // began.
-            let mut taker = None;
-            'outer: for i in 0..self.state.offer_count {
+            let mut next = None;
+            'outer: for d in self.deals.iter() {
+                let Some(i) = d.at else { continue };
                 for seat in 1..self.state.players {
-                    if self.state.offers[i as usize].from == seat {
+                    // Only the seats it was actually put to. A seat that was
+                    // never asked has nothing to say and is not left waiting
+                    // on the card for the rest of the turn.
+                    if d.answers[seat as usize] != Answer::Waiting
+                        || !self.state.may_accept(seat as usize, &d.offer)
+                    {
                         continue;
                     }
-                    let take = Action::AcceptTrade { offer: i, by: seat };
-                    let mut probe = self.state;
-                    if probe.apply(take).is_err() {
-                        continue;
-                    }
-                    if self.bots[seat as usize].accepts(&self.state, seat as usize, i as usize) {
-                        taker = Some((i, seat));
-                        break 'outer;
-                    }
+                    next = Some((i, seat));
+                    break 'outer;
                 }
             }
-            let Some((i, seat)) = taker else {
+            let Some((i, seat)) = next else {
                 return;
             };
-            // A bot answering an offer waits the same beat it waits to move.
-            // Without this the table settled its own trades in the tick the
-            // offer was made, so an offer a person might have taken was gone
-            // before it had been drawn once.
-            if !self.beat_due() {
+            // Reading an offer is not watching a move, so it is drawn from its
+            // own window. Without any wait at all the table settled its own
+            // trades in the tick the offer was made, and an offer a person
+            // might have taken was gone before it had been drawn once.
+            if !self.beat_due(self.pace.answer_window()) {
                 return;
             }
+
             let take = Action::AcceptTrade { offer: i, by: seat };
-            let from = self.state.offers[i as usize].from as usize;
+            let from = self.state.offers[i as usize].from;
+            // A seat that was asked always answers, whether it turned the trade
+            // down or could not have covered it either way. Both are "no" out
+            // loud and neither says which, so answering does not report on a
+            // hand nobody is entitled to see.
+            let could = {
+                let mut probe = self.state;
+                probe.apply(take).is_ok()
+            };
+            if !could || !self.bots[seat as usize].accepts(&self.state, seat as usize, i as usize) {
+                self.answer(i, seat, Answer::No);
+                self.note(Some(seat), format!("Passed on seat {from}'s offer"));
+                // A refusal moves nothing on the board, but it is news, so the
+                // page has to be told something changed or it would arrive
+                // whenever the idle poll next happened to land.
+                self.version += 1;
+                continue;
+            }
+            let from = from as usize;
             let purse = self.state.hand;
+            self.answer(i, seat, Answer::Yes);
             if self.state.apply(take).is_err() {
                 return;
             }
@@ -1164,14 +1240,94 @@ impl Session {
                 Some(seat),
                 format!("Took {got} from seat {from} for {gave}"),
             );
-            self.forget_declines();
+            self.sync_deals();
         }
     }
 
-    /// A decline applies to the offers that were on the table at the time.
-    /// Once the market has moved, ask again.
-    fn forget_declines(&mut self) {
-        self.declined = [false; MAX_OFFERS];
+    /// Re-read the market and keep the turn's record of it in step.
+    ///
+    /// The engine's table is not a record. It drops an offer the moment it is
+    /// taken, clears the lot at the end of a turn, and reindexes what is left
+    /// by swapping the last entry into the gap, so an index is not a name for
+    /// an offer. The record is therefore kept beside it and matched back to it
+    /// by value, which is stable across all three.
+    fn sync_deals(&mut self) {
+        let live = self.state.live_offers();
+        if live.is_empty() && self.deals.is_empty() {
+            return;
+        }
+        // Each live offer answers to at most one record, so two identical
+        // offers from the same seat stay two records rather than collapsing.
+        let mut claimed = [false; MAX_OFFERS];
+        for d in self.deals.iter_mut() {
+            if d.at.is_none() {
+                continue;
+            }
+            d.at = live
+                .iter()
+                .enumerate()
+                .find(|&(k, o)| !claimed[k] && *o == d.offer)
+                .map(|(k, _)| {
+                    claimed[k] = true;
+                    k as u8
+                });
+        }
+        for (k, o) in live.iter().enumerate() {
+            if claimed[k] {
+                continue;
+            }
+            self.deals.push(Deal {
+                offer: *o,
+                answers: [Answer::Waiting; MAX_PLAYERS],
+                at: Some(k as u8),
+            });
+        }
+    }
+
+    /// Record an answer against the offer at a market index.
+    fn answer(&mut self, at: u8, seat: u8, said: Answer) {
+        if let Some(d) = self.deals.iter_mut().find(|d| d.at == Some(at)) {
+            d.answers[seat as usize] = said;
+        }
+    }
+
+    /// The turn's offers and what was said to them, newest last.
+    pub fn deals(&self) -> &[Deal] {
+        &self.deals
+    }
+}
+
+/// What a seat has said to an offer.
+///
+/// Only the seats an offer was actually put to ever leave `Waiting`: a seat
+/// that cannot cover it, or is not a party to it, was never asked and is not
+/// shown as having refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Answer {
+    #[default]
+    Waiting,
+    No,
+    Yes,
+}
+
+/// An offer made this turn, and the round of replies to it.
+///
+/// Outlives the engine's copy on purpose. A deal that has been taken or has
+/// lapsed keeps its answers until the turn ends, because "Ines took it" is
+/// the part of a trade a person watches for and the engine has thrown the
+/// offer away by the time it is true.
+#[derive(Clone, Debug)]
+pub struct Deal {
+    pub offer: Offer,
+    pub answers: [Answer; MAX_PLAYERS],
+    /// Where it sits in the engine's market, or `None` once it has left it.
+    pub at: Option<u8>,
+}
+
+impl Deal {
+    /// Whether it is still open to be answered.
+    pub fn live(&self) -> bool {
+        self.at.is_some()
     }
 }
 
@@ -1292,6 +1448,24 @@ impl Pace {
             Pace::Instant => (0, 0),
             Pace::Fast => (420, 980),
             Pace::Slow => (1400, 3000),
+        }
+    }
+
+    /// The window an answer to an offer is drawn from, in milliseconds.
+    ///
+    /// Longer than a move's, because it is not the same act. A move is watched;
+    /// an offer is read, weighed against a hand, and possibly contested, and
+    /// all three have to fit before the table has settled it. At a move's beat
+    /// an offer was gone before it could be reached for, which made the market
+    /// something that happened to the player rather than something they were in.
+    ///
+    /// One seat answers per beat rather than the table answering at once, so
+    /// the answers arrive as a round of replies and not as a verdict.
+    fn answer_window(self) -> (u64, u64) {
+        match self {
+            Pace::Instant => (0, 0),
+            Pace::Fast => (900, 1800),
+            Pace::Slow => (2200, 4000),
         }
     }
 }
@@ -2273,6 +2447,102 @@ mod tests {
             .find(|l| l.seat.is_some())
             .expect("something was placed");
         assert!(last.setup, "the last placement is still part of the deal");
+    }
+
+    /// Deal the board out and then put one offer of the human's on the table.
+    fn table_with_an_offer_from_the_human(seed: u64) -> Option<Session> {
+        let mut s = Session::new(4, seed, TradeMode::Full);
+        while s.in_setup() {
+            let v = s.version();
+            s.act(0, v).ok()?;
+        }
+        for _ in 0..300 {
+            if s.can_propose() {
+                let hand = s.state.hand[HUMAN as usize];
+                if let Some(give) = (0..5).find(|&r| hand[r] > 0) {
+                    let want = (0..5).find(|&w| w != give).expect("five resources");
+                    let mut out = [0u8; 5];
+                    let mut back = [0u8; 5];
+                    out[give] = 1;
+                    back[want] = 1;
+                    let v = s.version();
+                    if s.propose(None, out, back, v).is_ok() {
+                        return Some(s);
+                    }
+                }
+            }
+            let v = s.version();
+            s.act(0, v).ok()?;
+        }
+        None
+    }
+
+    #[test]
+    fn a_deal_keeps_who_said_what_after_it_has_left_the_table() {
+        // A trade is watched as much as it is played, and the engine throws the
+        // offer away at exactly the moment there is most to say about it. So
+        // the session keeps its own record, and every seat the offer was put to
+        // answers it rather than some of them being left unheard from.
+        let s = (0..40u64)
+            .find_map(table_with_an_offer_from_the_human)
+            .expect("some seed lets the human put an offer up");
+
+        let deal = s
+            .deals()
+            .iter()
+            .find(|d| d.offer.from == HUMAN)
+            .expect("the offer is on the record");
+        for seat in 0..s.state.players {
+            if !s.state.may_accept(seat as usize, &deal.offer) {
+                continue;
+            }
+            assert_ne!(
+                deal.answers[seat as usize],
+                Answer::Waiting,
+                "seat {seat} was asked and never answered"
+            );
+        }
+        // An unpaced table settles inside the propose, so by now the offer has
+        // either been taken or been turned down by everyone. Either way what
+        // was said survives the offer.
+        if !deal.live() {
+            assert!(
+                deal.answers.iter().any(|&a| a != Answer::Waiting),
+                "a deal that has left the table still says what happened to it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_turn_takes_the_answers_with_it() {
+        // Offers do not survive the turn they were made in (the engine's rule),
+        // and neither may the round of replies: a card still showing last
+        // turn's answers is a question about a table that has been cleared.
+        let mut s = (0..40u64)
+            .find_map(table_with_an_offer_from_the_human)
+            .expect("some seed lets the human put an offer up");
+        let mine = s
+            .deals()
+            .iter()
+            .find(|d| d.offer.from == HUMAN)
+            .expect("the offer is on the record")
+            .offer;
+
+        let ended = s.turn_no();
+        for _ in 0..60 {
+            if s.turn_no() > ended {
+                break;
+            }
+            let v = s.version();
+            if s.act(0, v).is_err() {
+                break;
+            }
+        }
+        assert!(s.turn_no() > ended, "the turn moved on");
+        assert!(
+            !s.deals().iter().any(|d| d.offer == mine),
+            "the deal went with the turn that made it"
+        );
     }
 
     #[test]

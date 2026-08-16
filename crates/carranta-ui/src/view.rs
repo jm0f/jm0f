@@ -10,7 +10,7 @@ use carranta_core::topology::{
     vertex_bit,
 };
 
-use crate::game::{HUMAN, Session, Target};
+use crate::game::{Answer, HUMAN, Session, Target};
 use crate::json::Json;
 
 const RESOURCES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
@@ -200,14 +200,37 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.bool("botThinking", session.bot_thinking());
 
     // ---- The market ----
-    j.array("offers", 0..v.offer_count as usize, |o, i| {
-        let offer = v.offers[i];
-        o.int("i", i as i64)
-            .int("from", offer.from as i64)
-            .bool("mine", offer.from == HUMAN)
-            .opt_int("to", offer.to.map(|t| t as i64))
-            .ints("give", offer.give.iter().map(|&n| n as i64))
-            .ints("want", offer.want.iter().map(|&n| n as i64));
+    // The session's record rather than the engine's table, because a trade is
+    // watched as well as played: the engine drops an offer the instant it is
+    // taken, which is the moment there is most to say about it. `i` is where it
+    // sits in the engine's market and is null once it has left, which is also
+    // what says a deal is settled.
+    j.array("offers", session.deals(), |o, d| {
+        o.opt_int("i", d.at.map(|i| i as i64))
+            .int("from", d.offer.from as i64)
+            .bool("mine", d.offer.from == HUMAN)
+            .bool("live", d.live())
+            .opt_int("to", d.offer.to.map(|t| t as i64))
+            .ints("give", d.offer.give.iter().map(|&n| n as i64))
+            .ints("want", d.offer.want.iter().map(|&n| n as i64));
+        // Who was asked, and what they have said so far. Only the seats the
+        // offer was actually put to (R-7.3), so nobody is left waiting on the
+        // card for a question they were never asked.
+        o.array(
+            "answers",
+            (0..session.state().players)
+                .filter(|&s| session.state().may_accept(s as usize, &d.offer)),
+            |a, seat| {
+                a.int("seat", seat as i64).str(
+                    "said",
+                    match d.answers[seat as usize] {
+                        Answer::Waiting => "waiting",
+                        Answer::No => "no",
+                        Answer::Yes => "yes",
+                    },
+                );
+            },
+        );
     });
 
     // ---- What the human may do now ----

@@ -865,6 +865,21 @@
   .offer { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
   .offer .who { flex: 1; }
   .offer .addressed { color: #b45309; }
+  /* The round of replies to one offer. Small and quiet: it is the state of a
+     question, not another thing to answer, so it sits under the offer at the
+     weight of a caption. */
+  .answers { display: flex; flex-wrap: wrap; gap: 4px 6px; padding-bottom: 4px; }
+  .answer { display: inline-flex; align-items: baseline; gap: .35em;
+            font-size: 11px; letter-spacing: .02em;
+            padding: 2px 7px; border-radius: 999px;
+            background: var(--muted); color: var(--muted-foreground); }
+  .answer b { font-weight: 600; }
+  /* Waiting is the one that has to read as unfinished, so it is the palest and
+     the only one whose text is a placeholder rather than a word. */
+  .answer.said-waiting { opacity: .72; }
+  .answer.said-waiting span { font-variant-numeric: tabular-nums; letter-spacing: .12em; }
+  .answer.said-yes { background: rgba(45, 106, 79, .13); color: #2D6A4F; }
+  .answer.said-no { background: rgba(51, 38, 27, .07); }
 </style>
 </head>
 <body>
@@ -2918,7 +2933,11 @@ function renderPrompt(v) {
   // Otherwise, top to bottom: what the rules are forcing, then what you opened
   // yourself, then what the table is asking. Yours sits above the market so an
   // offer arriving cannot push the thing you are working on down the screen.
-  if (v.phase === 'move the robber') {
+  // `yourTurn` and not the phase alone. A card asks for something, so it may
+  // only stand when the thing it asks for is yours to give: a bot playing a
+  // militia puts the game in this phase too, and keying on the phase told the
+  // player to place a robber that was not theirs to move.
+  if (v.phase === 'move the robber' && v.yourTurn) {
     // Placing the robber happens on the board, so the card only says so. It
     // used to be said by ringing every hex in the accent, which is the whole
     // board shouting the same thing at once.
@@ -2957,14 +2976,25 @@ function renderPrompt(v) {
     const box = add('compose');
     renderCompose(v, box, headFor(box));
   }
-  if (incoming.length && (decline || answerable.some(o => !o.mine))) {
+  // What is being asked of you, and what you have asked of everyone else.
+  //
+  // A proposal of yours stays on the card until every seat it was put to has
+  // answered, or until the turn takes the whole market with it. Before this it
+  // went on the table and then said nothing: you got a result or you got
+  // silence, and no way to tell which was still coming.
+  const mine = v.offers.filter(o => o.mine
+    && (o.live || (o.answers || []).some(a => a.said !== 'waiting')));
+  const shown = incoming.length && (decline || answerable.some(o => !o.mine))
+    ? v.offers.filter(o => !o.mine || mine.includes(o))
+    : mine;
+  if (shown.length) {
     const box = add('offers');
     // One person waiting on you means the card can wear their colour. Several
     // means it cannot belong to any of them, so it stays the accent.
     const asking = [...new Set(incoming.map(o => o.from))];
     if (asking.length === 1) box.style.setProperty('--rule', COLOURS[asking[0]]);
-    headFor(box)('On the table', false);
-    renderOffers(v, box, v.offers, decline);
+    headFor(box)(incoming.length ? 'On the table' : 'Your offer', false);
+    renderOffers(v, box, shown, decline);
   }
 
   host.hidden = !host.firstChild;
@@ -3072,8 +3102,11 @@ function renderOffers(v, host, offers, decline) {
     d.className = 'offer';
     // The same loader the empty seats use, in the proposer's colour. An offer
     // is a question somebody is waiting on the answer to, and the motion is
-    // what walks the eye from who asked to the buttons that answer them.
-    d.appendChild(pixelLoader(COLOURS[o.from]));
+    // what walks the eye from who asked to the buttons that answer them. A
+    // deal that has left the table is not waiting on anything, so it holds
+    // still: motion on a settled row would keep asking a closed question.
+    if (o.live) d.appendChild(pixelLoader(COLOURS[o.from]));
+    else d.appendChild(el2('span', { class: 'dot', style: `background:${COLOURS[o.from]}` }));
     const who = document.createElement('span');
     who.className = 'who';
     const addressed = o.to === null ? '' : (o.to === v.you ? ' → you' : ` → ${seatName(v, o.to)}`);
@@ -3122,6 +3155,7 @@ function renderOffers(v, host, offers, decline) {
       d.appendChild(s);
     }
     host.appendChild(d);
+    host.appendChild(answerRow(v, o));
   });
 
   // Turning offers down was reachable in the engine and nowhere on the screen,
@@ -3137,6 +3171,32 @@ function renderOffers(v, host, offers, decline) {
     b.onclick = () => act(decline.i);
     host.appendChild(b);
   }
+}
+
+// Who was asked, and what they have said. A proposal you make is otherwise
+// silent until it either happens or does not, and the interesting part of a
+// trade is the round of replies in between.
+//
+// Everyone starts at "???" and turns into yes or no as their answer lands, so
+// the row reads as the table going round rather than as a result appearing.
+// Only the seats the offer was put to are here: the payload leaves out anyone
+// who was never asked, which is also why it never says why a no was a no.
+function answerRow(v, o) {
+  const row = document.createElement('div');
+  row.className = 'answers';
+  (o.answers || []).forEach(a => {
+    const chip = document.createElement('span');
+    chip.className = 'answer said-' + a.said;
+    const who = document.createElement('b');
+    who.textContent = a.seat === v.you ? 'you' : seatName(v, a.seat);
+    who.style.color = COLOURS[a.seat];
+    const said = document.createElement('span');
+    said.textContent = a.said === 'yes' ? 'accepted'
+      : a.said === 'no' ? 'declined' : '???';
+    chip.append(who, said);
+    row.appendChild(chip);
+  });
+  return row;
 }
 
 // The board is drawn with SVG elements; the panels are ordinary HTML, and a

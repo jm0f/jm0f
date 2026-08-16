@@ -314,6 +314,11 @@ cards are exclusive and stack with nothing: the end of the game, and a seven.
 There is one thing to do in each, and standing anything beside it would offer a
 choice that is not there.
 
+**A card only stands when the thing it asks for is yours to give.** Keyed on
+whether the human is the decider, never on the phase alone: a bot playing a
+militia puts the game in `MoveRobber` too, and reading the phase told the player
+to place a robber that was not theirs to move.
+
 ### Taking back a half-played card
 
 A development card that opens a second decision is spent on the first of them,
@@ -413,6 +418,41 @@ the beat whether or not there was a trade to make, and an offer nobody wants
 sits on the table for the rest of the turn: every tick went on a trade that was
 never going to happen, the seat whose turn it was never got a beat to move in,
 and the table stopped dead with its clock at zero.
+
+### The round of replies
+
+An offer is answered by **one seat per beat**, and each answer is shown as it
+lands. Everyone the offer was put to starts at `???` and turns into *accepted*
+or *declined*.
+
+**Answering is slower than moving**, and drawn from its own window: about a
+second to two at *fast*, two to four at *slow*, against a move's half-second.
+A move is watched; an offer is read, weighed against a hand, and possibly
+contested, and all three have to fit before the table has settled it. At a
+move's beat an offer was gone before it could be reached for, which made the
+market something that happened to the player rather than something they were in.
+
+One at a time rather than the whole table at once, because three refusals
+landing together is a verdict and three arriving in turn is the table thinking.
+
+**A proposal of yours stays carded until the turn ends.** Before this it went on
+the table and then said nothing: you got a result or you got silence, with no
+way to tell which was still coming. The requirement is that it survives at least
+until everyone has answered; ending it with the turn is what the engine does
+with the offers themselves, so the card and the market disappear together.
+
+**Everyone asked answers, including seats that could not have covered it.** A
+seat that cannot afford an offer says no like anybody else, and the answer never
+says why. Reporting "cannot" instead would publish something about a hand that
+§7.3 keeps private, and a seat left at `???` for the rest of the turn would
+publish the same thing by omission. Seats the offer was *not* put to (R-7.3) are
+not on the row at all, which reads off seat numbers and needs no hand.
+
+**The record outlives the offer.** The engine drops an offer the moment it is
+taken, which is exactly when there is most to say about it, and reindexes what
+is left by swapping the last entry into the gap, so an index is not a name for
+an offer. The session therefore keeps its own list of the turn's deals and
+matches it back to the engine's table by value.
 
 ---
 
