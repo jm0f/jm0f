@@ -839,14 +839,21 @@
      of the dock; stacked and stretched, the pair is one die wide and stands the
      full height of the cards beside it, which is the whole point of a die being
      an object rather than a number. */
-  .dice { display: flex; flex-direction: column; align-items: center;
-          gap: .4em; height: 7em; }
-  /* Square, and the height is what decides how big. `flex: 1` shares the
-     column's height between the two; `aspect-ratio` turns that height into the
-     width. The centring is what makes that work: a flex child stretches across
-     its container by default, which pulled each die out to the width of the
-     word DICE above it and left a pair of tall thin cards. */
-  .die { flex: 1; aspect-ratio: 1; height: auto; width: auto;
+  /* Two dice and the gap between them come to the height of a card, so the
+     column is as deep as the dock and each die is a square of what is left over
+     when the gap is taken out. Both numbers are written here, once, rather than
+     one being derived from the other at layout time.
+
+     Stated rather than computed on purpose. `flex: 1` with `aspect-ratio: 1`
+     and an auto width also produces a square, and does in Chromium, but it asks
+     a replaced element to take its width from a height it was itself given by
+     flex growth. That resolved to the width of the word DICE in another engine
+     and drew a pair of tall thin cards, and in Chromium it left the dice
+     overflowing a column measured at less than half their width, which quietly
+     took fifteen pixels off the dock's own accounting. */
+  .dice { --die: 3.3em; display: flex; flex-direction: column;
+          align-items: center; gap: .4em; height: 7em; }
+  .die { flex: none; width: var(--die); height: var(--die);
          border-radius: .5em; border: 1px solid var(--border);
          background: var(--card); box-shadow: 0 1px 2px rgba(51, 38, 27, .10); }
   .die circle { fill: var(--foreground); }

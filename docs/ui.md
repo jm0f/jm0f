@@ -270,12 +270,17 @@ dock on every laptop rather than on small windows only.
 ### Dice
 
 Two **square** dice showing the last roll, **one above the other** in the dock's
-right corner, standing **the full height of the cards beside them**. The height
-is what decides how big: the column's height is shared between the two and the
-aspect ratio turns that into the width. They have to be centred in their column
-for that to work, because a flex child stretches across its container by
-default, which pulled each die out to the width of the word `DICE` above it and
-left a pair of tall thin cards. Clicking
+right corner, standing **the full height of the cards beside them**. Two dice
+and the gap between them come to a card's height, and both numbers are written
+down once rather than one being derived from the other at layout time.
+
+Stated rather than computed on purpose. Sharing the column's height between the
+two with `flex` and taking the width back from `aspect-ratio` also produces a
+square, and does in Chromium, but it asks a replaced element for a width based
+on a height it was itself handed by flex growth. That resolved to the width of
+the word `DICE` in another engine and drew a pair of tall thin cards, and even
+in Chromium it left the dice overflowing a column measured at less than half
+their width, which quietly took fifteen pixels off the dock's own accounting. Clicking
 rolls. Side by side they were the widest thing in that corner and pushed the
 actions off the middle of the dock; stacked and stretched, the pair is one die
 wide and as deep as the dock is, which is the whole point of a die being an
