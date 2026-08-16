@@ -261,6 +261,18 @@ pub enum Refused {
 /// A live game.
 pub struct Session {
     state: State,
+    /// Every action applied, in order.
+    ///
+    /// The whole game, because the engine is deterministic: the same seats, the
+    /// same seed and the same moves rebuild this position down to the next
+    /// random number. That is what makes a game something you can put on disk
+    /// in a few hundred bytes and analyse afterwards, and it is the same
+    /// argument `carranta-record` makes about its own event log (H-1).
+    moves: Vec<Action>,
+    /// The two other things `Session::new` was given, kept so a saved game can
+    /// be rebuilt from its file without the caller having to remember them.
+    seats: u8,
+    mode: TradeMode,
     bots: Vec<Heuristic>,
     /// Bumped on every applied action, so a click made against a stale board is
     /// refused rather than applied to a different position.
@@ -342,7 +354,7 @@ pub struct Session {
     tempo: Rng,
     /// The position before a development card that opens a second decision,
     /// and how long the log was then, so an unfinished play can be put back.
-    undo: Option<(State, usize)>,
+    undo: Option<(State, usize, usize)>,
     /// Whether the bank's stacks are counted exactly or only sized.
     bank_exact: bool,
     /// Whether the table is listed for anyone to join. Private by default:
@@ -359,6 +371,9 @@ impl Session {
         let seats = seats.clamp(3, MAX_PLAYERS as u8);
         Session {
             state: State::new(seats, seed).with_trade_mode(mode),
+            moves: Vec::new(),
+            seats,
+            mode,
             bots: (0..seats)
                 .map(|s| Heuristic::new(seed.wrapping_mul(31).wrapping_add(s as u64 + 1)))
                 .collect(),
@@ -815,6 +830,7 @@ impl Session {
             if self.state.apply(forced).is_err() {
                 break;
             }
+            self.moves.push(forced);
             self.version += 1;
             self.note_at(
                 at,
@@ -915,6 +931,7 @@ impl Session {
             if self.state.apply(forced).is_err() {
                 return;
             }
+            self.moves.push(forced);
             self.version += 1;
             let what = match forced {
                 Action::EndTurn => "the turn was ended".to_string(),
@@ -952,6 +969,32 @@ impl Session {
 
     pub fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// What this game was dealt from, and everything that has happened since.
+    ///
+    /// Enough to rebuild the game exactly: `Session::replay` folds it back into
+    /// the same position, and `carranta-record` folds it into a `Log` for the
+    /// analytics to read.
+    pub fn table(&self) -> (u8, u64, TradeMode) {
+        (self.seats, self.seed, self.mode)
+    }
+
+    pub fn moves(&self) -> &[Action] {
+        &self.moves
+    }
+
+    /// Rebuild a played game from what was written down about it.
+    ///
+    /// Returns `None` at the first move the engine refuses, which means the
+    /// file and this build disagree about the rules rather than that the file
+    /// is unreadable. Better to say so than to serve half a game as a whole one.
+    pub fn replay(seats: u8, seed: u64, mode: TradeMode, moves: &[Action]) -> Option<State> {
+        let mut state = State::new(seats.clamp(3, MAX_PLAYERS as u8), seed).with_trade_mode(mode);
+        for action in moves {
+            state.apply(*action).ok()?;
+        }
+        Some(state)
     }
 
     pub fn state(&self) -> &State {
@@ -1116,14 +1159,15 @@ impl Session {
                 // A militia is not one decision but two, and the card is spent
                 // on the first of them. Keep the position from before it so the
                 // half-made move can be put back, see `cancel`.
-                let mark =
-                    matches!(action, Action::PlayMilitia).then(|| (self.state, self.log.len()));
+                let mark = matches!(action, Action::PlayMilitia)
+                    .then(|| (self.state, self.log.len(), self.moves.len()));
                 // Recorded before it is applied, because taking an offer is
                 // what removes it: afterwards there is no offer to answer.
                 if let Action::AcceptTrade { offer, .. } = action {
                     self.answer(offer, HUMAN, Answer::Yes);
                 }
                 self.state.apply(action).map_err(Refused::Illegal)?;
+                self.moves.push(action);
                 self.undo = mark;
                 self.version += 1;
                 let phrase = match action {
@@ -1174,9 +1218,13 @@ impl Session {
             self.undo = None;
             return Err(Refused::NoSuchChoice);
         }
-        let (state, lines) = self.undo.take().ok_or(Refused::NoSuchChoice)?;
+        let (state, lines, moves) = self.undo.take().ok_or(Refused::NoSuchChoice)?;
         self.state = state;
         self.log.truncate(lines);
+        // And the move with it. The position is being put back whole, so a
+        // record that still carried the militia would replay into a different
+        // game from the one being played.
+        self.moves.truncate(moves);
         self.version += 1;
         Ok(())
     }
@@ -1210,6 +1258,7 @@ impl Session {
         let phrase = log_phrase(&action, &self.state, HUMAN as usize);
         let at = self.stamp();
         self.state.apply(action).map_err(Refused::Illegal)?;
+        self.moves.push(action);
         self.version += 1;
         self.note_at(at, Some(HUMAN), phrase);
         self.sync_deals();
@@ -1335,6 +1384,7 @@ impl Session {
             if self.state.apply(action).is_err() {
                 break;
             }
+            self.moves.push(action);
             self.version += 1;
             let phrase = match action {
                 Action::Roll => rolled(&self.state),
@@ -1448,6 +1498,7 @@ impl Session {
             if self.state.apply(take).is_err() {
                 return;
             }
+            self.moves.push(take);
             self.version += 1;
             // Both halves, because a trade is two public transfers and "took an
             // offer" said neither.
@@ -3030,6 +3081,90 @@ mod tests {
                 "declining answers everything that was put to you"
             );
         }
+    }
+
+    #[test]
+    fn what_is_written_down_replays_into_the_game_that_was_played() {
+        // The whole basis for saving a game in a few hundred bytes: the engine
+        // is deterministic, so the seats, the seed and the moves are the game.
+        // If this ever stops holding, every stored game becomes a different
+        // game the next time it is read, silently.
+        for seed in 0..40u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..400 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                let v = s.version();
+                if s.choices().is_empty() || s.act(0, v).is_err() {
+                    break;
+                }
+            }
+            let (seats, dealt, mode) = s.table();
+            let again = Session::replay(seats, dealt, mode, s.moves())
+                .expect("every move the session applied is legal on replay");
+            // The whole position, down to the generator: two games that agree
+            // on everything but the next random number are not the same game.
+            assert_eq!(again, s.state, "seed {seed} replays into a different game");
+        }
+    }
+
+    #[test]
+    fn taking_a_militia_back_takes_its_move_back_too() {
+        // The position is restored whole, and the record has to go with it or
+        // the file would replay a card that was never played.
+        // Buy cards until one of them is a militia, then play it. Playing the
+        // first legal move every turn almost never buys a card.
+        let mut found = None;
+        'seeds: for seed in 0..200u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..400 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                let choices = s.choices();
+                if choices.is_empty() {
+                    break;
+                }
+                if let Some(i) = choices
+                    .iter()
+                    .position(|c| *c == Choice::Play(Action::PlayMilitia))
+                {
+                    let v = s.version();
+                    s.act(i, v).expect("a militia offered is a militia playable");
+                    found = Some(s);
+                    break 'seeds;
+                }
+                let pick = choices
+                    .iter()
+                    .position(|c| *c == Choice::Play(Action::BuyDev))
+                    .or_else(|| choices.iter().position(|c| *c == Choice::Play(Action::Roll)))
+                    .or_else(|| {
+                        choices
+                            .iter()
+                            .position(|c| *c == Choice::Play(Action::EndTurn))
+                    })
+                    .unwrap_or(0);
+                let v = s.version();
+                if s.act(pick, v).is_err() {
+                    break;
+                }
+            }
+        }
+        let mut s = found.expect("some seed reaches a playable militia");
+        assert_eq!(s.moves().last(), Some(&Action::PlayMilitia));
+        let before = s.moves().len();
+        let v = s.version();
+        s.cancel(v).expect("a half-played militia can be taken back");
+        assert_eq!(s.moves().len(), before - 1, "the move goes back with it");
+        // The count and the replay, not the absence of every militia ever
+        // played: a bot may well have played one earlier and that one stands.
+        let (seats, seed, mode) = s.table();
+        assert_eq!(
+            Session::replay(seats, seed, mode, s.moves()).as_ref(),
+            Some(&s.state),
+            "and what is left still replays into the position on the table"
+        );
     }
 
     #[test]

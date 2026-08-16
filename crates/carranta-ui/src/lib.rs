@@ -14,6 +14,7 @@
 pub mod game;
 pub mod json;
 pub mod server;
+pub mod store;
 pub mod view;
 
 pub use game::{Choice, Session, Target};
