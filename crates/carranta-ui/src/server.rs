@@ -191,20 +191,26 @@ impl Server {
     /// time. "Play six" would play six more on every restart; "have six" is the
     /// same request asked in a way that can be asked twice.
     pub fn demo(&self, want: u32) -> Vec<String> {
-        let have = self
+        let mut have = self
             .store
             .all()
             .into_iter()
             .filter(|g| g.winner.is_some())
             .count() as u32;
         let mut out = Vec::new();
-        for _ in have..want {
+        // Attempts rather than games, because what is wanted is finished games
+        // and a game is only finished once it has been played. The cap is there
+        // so a table that cannot reach a winner stops rather than spinning: a
+        // deal that goes nowhere is a bug to see, not a loop to hide in.
+        let mut left = (want.saturating_sub(have)) * 4 + 4;
+        while have < want && left > 0 {
+            left -= 1;
             let (seats, seed, mode) = {
                 let live = self.live.lock().unwrap();
                 let (seats, seed, mode) = live.session.table();
                 (seats, seed.wrapping_add(1), mode)
             };
-            {
+            let finished = {
                 let mut live = self.live.lock().unwrap();
                 live.session = Session::new(seats, seed, mode)
                     .with_pace(Pace::Instant)
@@ -214,9 +220,13 @@ impl Server {
                 // Every seat played by the table's own hand, the human's
                 // included: there is nobody here to ask.
                 live.session.play_out();
-                out.push(live.id.clone());
-            }
+                live.session.winner().is_some()
+            };
             self.keep();
+            if finished {
+                have += 1;
+                out.push(self.live.lock().unwrap().id.clone());
+            }
         }
         out
     }
@@ -262,8 +272,18 @@ impl Server {
     /// After every move rather than at the end. A game abandoned halfway is
     /// still a game that happened, and a file only written when somebody wins
     /// is a file that mostly does not exist.
+    ///
+    /// A game nobody has moved in is the exception, and is not written at all.
+    /// Every visit to `/` deals a table, so a file at that point would mean a
+    /// game on disk for every time the page was opened and closed again, each
+    /// of them a seed and nothing else. Those are not abandoned games, they are
+    /// games that never started, and they were diluting every figure the
+    /// analytics computed across the store. The first move writes the file.
     fn keep(&self) {
         let live = self.live.lock().unwrap();
+        if live.session.moves().is_empty() {
+            return;
+        }
         let (seats, seed, mode) = live.session.table();
         let _ = self.store.save(&Saved {
             id: live.id.clone(),
@@ -813,6 +833,48 @@ mod tests {
             .filter(|g| g.winner.is_some())
             .count();
         assert_eq!(finished, 3);
+        // And every game it wrote is one somebody won: `--demo` exists to give
+        // the analytics something to read, and a game nobody won is exactly
+        // what the analytics cannot read.
+        let all = server.store().all();
+        assert_eq!(all.len(), 3, "nothing on disk but the three");
+        for g in &all {
+            assert!(g.winner.is_some(), "{} was played out", g.id);
+            assert!(!g.moves.is_empty());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_game_nobody_moved_in_is_not_written_down() {
+        // Every visit to `/` deals a table. Writing one at that point put a
+        // game on disk for every time the page was opened, each a seed and
+        // nothing else, and every figure computed across the store was then
+        // divided by them.
+        let dir = std::env::temp_dir().join(format!("carranta-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 7, TradeMode::Full, &dir);
+        assert!(server.store().all().is_empty(), "dealing is not playing");
+        // Nor does dealing again, which is what `/api/new` does.
+        {
+            let mut live = server.live.lock().unwrap();
+            live.session = Session::new(4, 8, TradeMode::Full);
+            live.id = mint_id();
+            live.dealt = now();
+        }
+        server.keep();
+        assert!(server.store().all().is_empty(), "still nothing played");
+        // The first move writes the file.
+        let id = server.live_id();
+        {
+            let mut live = server.live.lock().unwrap();
+            let v = live.session.version();
+            live.session.act(0, v).expect("the opening is playable");
+        }
+        server.keep();
+        let all = server.store().all();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, id);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

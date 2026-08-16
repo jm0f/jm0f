@@ -1318,6 +1318,23 @@ silently becomes a different game is worse than a dead link. Games that are not
 the live one are read-only: a POST to one is refused rather than quietly
 driving whatever is being played now.
 
+**A game nobody has moved in is not written down.** Every visit to `/` deals a
+table, so writing one at that point meant a file for every time the page was
+opened and closed again, each of them a seed and nothing else. Those are not
+abandoned games, they are games that never started, and they were dividing
+every figure the analytics computed across the store. A game abandoned halfway
+is still kept: it happened. The first move is what makes a file.
+
+**The corpus is finished games only**, which is a filter this page applies
+rather than one `carranta-analytics` applies for itself: that crate counts what
+it is given and reports `finished` beside it, rightly, since a half-played game
+is still evidence about the dice. It is not evidence about anything on the
+report. A game nobody won has no finishing order, so it says nothing about
+whether going first is worth anything and only enlarges the denominator, and
+its dice are a handful of rolls whose deviation from fair is enormous by
+construction, so placing a full game against it is not a comparison. The
+ratings already refused unfinished games (`Pool::record`), for the same reason.
+
 ### How the report is dressed
 
 The page borrows **shadcn/ui's design system and none of its code**. shadcn is

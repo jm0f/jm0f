@@ -18,7 +18,7 @@ carranta-play, play Carranta locally in a browser
   --seed N       board seed (1)
   --mode MODE    full | restricted | disabled (full)
   --games DIR    where games are kept (./games)
-  --demo N       have at least N played games to look at (plays what is missing)
+  --demo N       have at least N finished games to look at (plays what is missing)
 
 Binds 127.0.0.1 only: the game is local and stays local.";
 

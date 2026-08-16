@@ -409,14 +409,15 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             let _ = write!(
                 b,
                 "<p>These dice deviated more than <strong>{p}%</strong> of the \
-                 {n} other games recorded here.</p>",
+                 {n} other finished games recorded here.</p>",
                 p = format!("{p:.0}"),
                 n = study.corpus_games,
             );
         }
         None => b.push_str(
-            "<p class=\"note\">There are no other games here to place this one \
-             against yet. A percentile of one game is not a percentile.</p>",
+            "<p class=\"note\">There are no other finished games here to place \
+             this one against yet. A percentile of one game is not a \
+             percentile.</p>",
         ),
     }
     b.push_str(
@@ -632,7 +633,9 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ));
         let _ = write!(
             b,
-            "<p>{n} other games, all at this table's settings.</p>",
+            "<p>{n} other finished games, all at this table's settings. A game \
+             nobody won is left out: it has no finishing order, so it can only \
+             enlarge the denominator.</p>",
             n = study.corpus_games
         );
         b.push_str(T_OPEN);
@@ -929,7 +932,7 @@ mod tests {
         let only = played(9);
         let s = study(&only, std::slice::from_ref(&only)).expect("it studies");
         let html = page(&only, &s);
-        assert!(html.contains("no other games here"));
+        assert!(html.contains("no other finished games here"));
         assert!(!html.contains("Across every game here"));
     }
 }

@@ -277,10 +277,19 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let this = dice::analyse_game(&rolls, SIMS, saved.seed);
 
     // Every other finished game, for the percentile and the seat balance.
+    // Finished games only, which is a filter the corpus cannot apply for
+    // itself: it counts what it is given and reports `finished` beside it,
+    // rightly, since a half-played game is still evidence about the dice.
+    //
+    // It is not evidence about anything on this page. A game nobody won has no
+    // finishing order, so it says nothing about whether going first is worth
+    // anything and only enlarges the denominator, and its dice are a handful of
+    // rolls whose deviation from fair is enormous by construction, so placing a
+    // full game against it is not a comparison.
     let mut games = corpus::Corpus::new(corpus::Config::of(&log));
     let mut others = 0usize;
     for g in history {
-        if g.id == saved.id {
+        if g.id == saved.id || g.winner.is_none() {
             continue;
         }
         if let Some(l) = to_log(g)

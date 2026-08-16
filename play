@@ -10,10 +10,12 @@
 #   ./play              start, and follow the branch from then on
 #   ./play --once       start what is checked out, and do not watch
 #   ./play --port 9000  any option the game itself takes still works
-#   ./play --demo 6     have six played games to read the analytics of
+#   ./play --demo 6     have six finished games to read the analytics of
 #
 # `--demo N` is a floor rather than a tally, so it can sit in the command you
 # leave running: a restart tops the store up to N rather than adding N more.
+# It counts games somebody won, and plays until it has that many: a game that
+# did not reach a winner is not one the analytics can read.
 set -e
 cd "$(dirname "$0")"
 
