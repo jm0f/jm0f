@@ -1477,6 +1477,26 @@ is paired with an effect size.
   call it one card out and lose both figures. The §10.2 decomposition is not on
   this card: expected production is a counterfactual rather than a card that
   moved, and it belongs with the per-turn view rather than beside a ledger.
+- **Production per turn**, as a chart. Solid is what the board paid, dotted in
+  the same colour is what the pips through the buildings standing at each roll
+  owed at fair odds, and both are running totals, so each line only climbs and
+  the gap between a pair is everything that has happened to that seat so far. A
+  per-turn figure would be nearly all zeroes with occasional spikes: most turns
+  pay a given player nothing. The expectation ignores the robber (§10.2's
+  `e_raw`), so a seat under blockade watches its solid line fall away from its
+  dotted one, which is what a blockade costs, drawn.
+
+  Above it, a switch: everybody, or one seat at a time drawn a resource at a
+  time, which is the only way to see *which* card a placement was short of. The
+  switch is five radio inputs and a sibling selector, so the page still carries
+  no script; every view is drawn into the page and CSS decides which is visible,
+  because five charts of a few hundred points are a smaller thing to ship than a
+  script that would build one. Per-player URLs are a later thing, for when
+  profiles and profile history need linking.
+
+  The last point is the end of the game rather than the end of the last
+  completed turn: the winning turn never ends, and dropping its cards would put
+  the chart out of step with the ledger above it.
 - **Militia**, as a sankey: thieves down the left, victims down the right, a
   ribbon between each pair as thick as the cards that moved along it. Laid out
   on the server like everything else here, since every position is a fraction of

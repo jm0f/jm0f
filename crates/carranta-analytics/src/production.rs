@@ -174,6 +174,24 @@ impl Decomposition {
 }
 
 /// Compute production for a recorded game.
+/// What the board owes each seat on one roll, at fair odds.
+///
+/// The pips through the buildings standing right now, and nothing else: the
+/// robber is ignored, so this is what a placement is worth rather than what it
+/// was allowed to collect. The difference between this and reality is the whole
+/// of §10.2, and drawing them against each other is how the cost of a blockade
+/// becomes visible.
+pub fn expectation(state: &State) -> [[f64; 5]; MAX_PLAYERS] {
+    let open = yields(state, false);
+    core::array::from_fn(|p| {
+        core::array::from_fn(|res| {
+            (0..OUTCOMES)
+                .map(|n| REFERENCE[n] * f64::from(open[n][p][res]))
+                .sum()
+        })
+    })
+}
+
 pub fn analyse(log: &Log) -> Result<Report, ReplayError> {
     let mut state = *log.created.opening;
     let mut r = Report {

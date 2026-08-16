@@ -342,6 +342,172 @@ fn sankey(
     b
 }
 
+/// Production against expectation, turn by turn, with a switch above it.
+///
+/// The default is every seat at once: a solid line for what each collected and
+/// a dotted one, in the same colour, for what the pips owed them. Pick a seat
+/// and the same chart is drawn a resource at a time, which is the only way to
+/// see *which* card a placement was short of.
+///
+/// The switch is five radio inputs and a sibling selector, so the page still
+/// carries no script. Every view is drawn into the page and CSS decides which
+/// one is visible: five charts of a few hundred points each is a smaller thing
+/// to ship than a script that would build one.
+fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let s = &study.series;
+    if s.turns() < 2 {
+        return String::new();
+    }
+
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "Production per turn",
+        "Solid is what the board actually paid; dotted is what the pips through \
+         the buildings standing at each roll owed at fair odds. Both running \
+         totals, so each line only climbs and the gap between a pair is \
+         everything that has happened to that seat so far. The robber is \
+         ignored in the expectation, so a seat under blockade watches its solid \
+         line fall away from its dotted one, which is what a blockade costs.",
+    ));
+
+    // The switch. One radio per view, named together so they are one control.
+    b.push_str("<div class=\"modes\">");
+    for (i, label) in std::iter::once("everybody".to_string())
+        .chain((0..seats).map(|p| esc(&who[p])))
+        .enumerate()
+    {
+        let _ = write!(
+            b,
+            "<input type=\"radio\" name=\"view\" id=\"view{i}\"{on}>\
+             <label for=\"view{i}\">{label}</label>",
+            on = if i == 0 { " checked" } else { "" },
+        );
+    }
+    b.push_str("</div><div class=\"views\">");
+
+    // Everybody: two lines a seat, in the seat's colour.
+    let ceiling = s.ceiling(seats);
+    let mut lines = Vec::new();
+    for p in 0..seats {
+        lines.push((
+            format!("f{p}"),
+            true,
+            label(&who[p], place[p]),
+            (0..s.turns())
+                .map(|i| f64::from(s.actual[i][p].iter().sum::<u32>()))
+                .collect::<Vec<f64>>(),
+        ));
+        lines.push((
+            format!("f{p}"),
+            false,
+            format!("{} expected", label(&who[p], place[p])),
+            (0..s.turns())
+                .map(|i| s.expected[i][p].iter().sum::<f64>())
+                .collect(),
+        ));
+    }
+    b.push_str(&plot(&lines, ceiling, s.turns(), "cards"));
+
+    // And one view a seat, drawn a resource at a time.
+    for p in 0..seats {
+        let ceiling = s.ceiling_of(p);
+        let mut lines = Vec::new();
+        for (res, name) in RESOURCE_NAMES.iter().enumerate() {
+            lines.push((
+                format!("r{res}"),
+                true,
+                (*name).to_string(),
+                (0..s.turns())
+                    .map(|i| f64::from(s.actual[i][p][res]))
+                    .collect::<Vec<f64>>(),
+            ));
+            lines.push((
+                format!("r{res}"),
+                false,
+                format!("{name} expected"),
+                (0..s.turns()).map(|i| s.expected[i][p][res]).collect(),
+            ));
+        }
+        b.push_str(&plot(&lines, ceiling, s.turns(), "cards"));
+    }
+    b.push_str("</div></section>");
+    b
+}
+
+/// One chart: a polyline per series, on one axis.
+///
+/// `lines` is (colour class, solid, name, points). Every series shares the
+/// ceiling, or the gap between a pair of them would be a picture of two scales
+/// rather than of a difference.
+fn plot(
+    lines: &[(String, bool, String, Vec<f64>)],
+    ceiling: f64,
+    turns: usize,
+    unit: &str,
+) -> String {
+    const W: f64 = 720.0;
+    const H: f64 = 260.0;
+    const PAD: f64 = 34.0;
+    let top = if ceiling > 0.0 { ceiling } else { 1.0 };
+    let x = |i: usize| PAD + (W - PAD * 2.0) * i as f64 / (turns - 1).max(1) as f64;
+    let y = |v: f64| H - PAD - (H - PAD * 2.0) * v / top;
+
+    let mut b = format!(
+        "<div class=\"view\"><svg viewBox=\"0 0 {W} {H}\" role=\"img\" \
+         aria-label=\"Cumulative production against expectation\">"
+    );
+    // Four gridlines and their values, so the height of a line can be read.
+    for k in 1..=4 {
+        let v = top * f64::from(k) / 4.0;
+        let _ = write!(
+            b,
+            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
+             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{v:.0}</text>",
+            r = W - PAD,
+            gy = y(v),
+            tx = PAD - 6.0,
+            ty = y(v) + 4.0,
+        );
+    }
+    let _ = write!(
+        b,
+        "<text class=\"axis start\" x=\"{PAD}\" y=\"{ty}\">turn 1</text>\
+         <text class=\"axis\" x=\"{r}\" y=\"{ty}\">turn {turns}</text>\
+         <text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">{unit}</text>",
+        r = W - PAD,
+        ty = H - 10.0,
+    );
+    for (colour, solid, name, points) in lines {
+        let path: String = points
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = write!(
+            b,
+            "<polyline class=\"line {colour}{dash}\" points=\"{path}\">\
+             <title>{name}</title></polyline>",
+            dash = if *solid { "" } else { " owed" },
+            name = esc(name),
+        );
+    }
+    b.push_str("</svg><div class=\"key\">");
+    // A key, since eight lines in four colours need saying once.
+    for (colour, solid, name, _) in lines {
+        if !solid {
+            continue;
+        }
+        let _ = write!(
+            b,
+            "<span class=\"pair\"><span class=\"swatch {colour}\"></span>{}</span>",
+            esc(name)
+        );
+    }
+    b.push_str("</div></div>");
+    b
+}
+
 /// How the game was divided, seat by seat.
 fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
     let mut b = String::from("<section>");
@@ -841,6 +1007,9 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     b.push_str("</section>");
 
+    // ---- production per turn -------------------------------------------------
+    b.push_str(&curves(study, &who, &place, seats));
+
     // ---- the militia --------------------------------------------------------
     b.push_str("<section>");
     b.push_str(&card_head(
@@ -1229,10 +1398,57 @@ tbody tr.sub:hover { background: transparent; }
 .ribbon:hover { opacity: .8; }
 .who { font: 500 13px Figtree, system-ui, sans-serif; fill: var(--foreground); }
 .who.end { text-anchor: end; }
-.f0 { fill: var(--p0); } .f1 { fill: var(--p1); }
-.f2 { fill: var(--p2); } .f3 { fill: var(--p3); }
+.ribbon.f0 { fill: var(--p0); } .ribbon.f1 { fill: var(--p1); }
+.ribbon.f2 { fill: var(--p2); } .ribbon.f3 { fill: var(--p3); }
 .n0 { fill: var(--p0); } .n1 { fill: var(--p1); }
 .n2 { fill: var(--p2); } .n3 { fill: var(--p3); }
+
+/* ---- the production curves ----
+   Five views in the page and a radio deciding which is on screen, so the
+   switch needs no script. The inputs themselves are never seen: their labels
+   are the control. */
+.modes { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1rem; }
+.modes input { position: absolute; opacity: 0; pointer-events: none; }
+.modes label { cursor: pointer; padding: .3em .9em; font-size: 14px;
+               border: 1px solid var(--border); border-radius: 999px;
+               color: var(--muted-foreground); }
+.modes label:hover { color: var(--foreground); background: var(--muted); }
+.modes input:checked + label { background: var(--foreground);
+                               border-color: var(--foreground);
+                               color: var(--card); font-weight: 500; }
+.modes input:focus-visible + label { outline: 2px solid var(--primary);
+                                     outline-offset: 2px; }
+/* Every view is drawn; exactly one is shown. `nth-of-type` counts the views in
+   the order the radios above them run, which is the order they are written. */
+.views > .view { display: none; }
+.modes:has(input:nth-of-type(1):checked) ~ .views > .view:nth-of-type(1),
+.modes:has(input:nth-of-type(2):checked) ~ .views > .view:nth-of-type(2),
+.modes:has(input:nth-of-type(3):checked) ~ .views > .view:nth-of-type(3),
+.modes:has(input:nth-of-type(4):checked) ~ .views > .view:nth-of-type(4),
+.modes:has(input:nth-of-type(5):checked) ~ .views > .view:nth-of-type(5) { display: block; }
+.view svg { display: block; width: 100%; height: auto; }
+.line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+/* What was owed, drawn as a claim rather than as a fact. */
+.line.owed { stroke-dasharray: 4 4; stroke-width: 1.5; opacity: .75; }
+.grid { stroke: var(--border); stroke-width: 1; }
+.axis { font: 400 11px Figtree, system-ui, sans-serif; fill: var(--muted-foreground);
+        text-anchor: end; }
+.axis.start { text-anchor: start; }
+.axis.unit { font-weight: 500; }
+.key { display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; margin: .6rem 0 0;
+       font-size: 13px; color: var(--muted-foreground); }
+.pair { display: inline-flex; align-items: center; gap: .45em; }
+.swatch { width: .7em; height: .7em; border-radius: 2px; }
+.f0, .swatch.f0 { stroke: var(--p0); background: var(--p0); }
+.f1, .swatch.f1 { stroke: var(--p1); background: var(--p1); }
+.f2, .swatch.f2 { stroke: var(--p2); background: var(--p2); }
+.f3, .swatch.f3 { stroke: var(--p3); background: var(--p3); }
+/* The five resources, in the colours their terrain wears on the board. */
+.r0, .swatch.r0 { stroke: #C0563B; background: #C0563B; }
+.r1, .swatch.r1 { stroke: #1F5E3A; background: #1F5E3A; }
+.r2, .swatch.r2 { stroke: #8DBE4A; background: #8DBE4A; }
+.r3, .swatch.r3 { stroke: #E2A32B; background: #E2A32B; }
+.r4, .swatch.r4 { stroke: #5C6B78; background: #5C6B78; }
 
 /* ---- badge ---- */
 .tag { display: inline-block; padding: .05em .45em; border-radius: var(--radius-sm);

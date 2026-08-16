@@ -350,6 +350,133 @@ fn ledger_of(saved: &Saved) -> [Ledger; MAX_PLAYERS] {
     out
 }
 
+/// Production against expectation, turn by turn.
+///
+/// Cumulative on both counts, so each line only ever climbs and the gap between
+/// a pair of them is everything that has happened to that seat so far. A
+/// per-turn figure would be nearly all zeroes with occasional spikes: most
+/// turns pay a given player nothing.
+///
+/// Expected is the pips through the buildings standing when the dice were
+/// thrown, at fair odds, with the robber ignored (§10.2's `e_raw`). So a seat
+/// under blockade watches its actual line fall away from its expected one,
+/// which is the robber's cost drawn rather than tabulated.
+#[derive(Clone, Debug, Default)]
+pub struct Series {
+    /// Cards collected by the end of each turn, per seat and resource.
+    pub actual: Vec<[[u32; 5]; MAX_PLAYERS]>,
+    /// What a fair pair owed them over the same turns.
+    pub expected: Vec<[[f64; 5]; MAX_PLAYERS]>,
+}
+
+impl Series {
+    pub fn turns(&self) -> usize {
+        self.actual.len()
+    }
+
+    /// The largest number either line reaches, which is the axis both share.
+    ///
+    /// One axis for both, or the gap between a pair of lines would be a
+    /// picture of two different scales rather than of a difference.
+    pub fn ceiling(&self, seats: usize) -> f64 {
+        let top = |a: f64, b: f64| if b > a { b } else { a };
+        let actual = self
+            .actual
+            .last()
+            .map(|row| {
+                (0..seats)
+                    .map(|p| f64::from(row[p].iter().sum::<u32>()))
+                    .fold(0.0, top)
+            })
+            .unwrap_or(0.0);
+        let expected = self
+            .expected
+            .last()
+            .map(|row| {
+                (0..seats)
+                    .map(|p| row[p].iter().sum::<f64>())
+                    .fold(0.0, top)
+            })
+            .unwrap_or(0.0);
+        top(actual, expected)
+    }
+
+    /// The same for one seat, read a resource at a time.
+    pub fn ceiling_of(&self, seat: usize) -> f64 {
+        let top = |a: f64, b: f64| if b > a { b } else { a };
+        let a = self
+            .actual
+            .last()
+            .map(|row| row[seat].iter().map(|n| f64::from(*n)).fold(0.0, top))
+            .unwrap_or(0.0);
+        let e = self
+            .expected
+            .last()
+            .map(|row| row[seat].iter().copied().fold(0.0, top))
+            .unwrap_or(0.0);
+        top(a, e)
+    }
+}
+
+/// Follow production and its expectation across the game.
+///
+/// Sampled at the end of every turn, on the same boundaries `turns_of` uses, so
+/// a point on this chart and a row in that table are talking about the same
+/// turn. The setup is left out for the same reason: it comes before anybody has
+/// a turn to take, and the second settlement's payout lands in the first turn's
+/// figure instead.
+fn series_of(saved: &Saved) -> Series {
+    use carranta_core::action::Action;
+    use carranta_core::state::Phase;
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let seats = state.players as usize;
+    let mut out = Series::default();
+    let mut actual = [[0u32; 5]; MAX_PLAYERS];
+    let mut expected = [[0.0f64; 5]; MAX_PLAYERS];
+    let mut playing = false;
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        // The board as it stood when the dice were thrown is what the roll was
+        // owed, so the expectation is read before the roll lands.
+        let owed = matches!(action, Action::Roll)
+            .then(|| carranta_analytics::production::expectation(&state));
+        let before = state.hand;
+        if state.apply(action).is_err() {
+            break;
+        }
+        if let Some(owed) = owed {
+            for p in 0..seats {
+                for res in 0..5 {
+                    expected[p][res] += owed[p][res];
+                }
+            }
+        }
+        // Only the board pays production. A trade or a steal moves cards
+        // between hands and adds nothing to what the board produced.
+        if matches!(action, Action::Roll | Action::PlaceSettlement(_)) {
+            for p in 0..seats {
+                for res in 0..5 {
+                    actual[p][res] += u32::from(state.hand[p][res].saturating_sub(before[p][res]));
+                }
+            }
+        }
+        if playing && action == Action::EndTurn {
+            out.actual.push(actual);
+            out.expected.push(expected);
+        }
+        playing |= matches!(state.phase, Phase::PreRoll);
+    }
+    // The winning turn never ends, so its cards would be missing from the last
+    // point and the chart would stop short of what the ledger counts. A closing
+    // sample carries them, and is only added when there is something to carry.
+    if out.actual.last() != Some(&actual) {
+        out.actual.push(actual);
+        out.expected.push(expected);
+    }
+    out
+}
+
 /// One turn of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Turn {
@@ -447,6 +574,8 @@ pub struct Study {
     pub turns: Vec<Turn>,
     /// Every card each seat gained or lost, by what moved it.
     pub ledger: [Ledger; MAX_PLAYERS],
+    /// Production against expectation, turn by turn.
+    pub series: Series,
     /// Whether this game was saved with a clock in it. Games written before
     /// there was one still read, and say nothing about time rather than saying
     /// nought.
@@ -483,6 +612,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let points = points_of(&log.replay().ok()?, report.players as usize);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
+    let series = series_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
     let rolls = dice::rolls(&log);
@@ -554,6 +684,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         points,
         turns,
         ledger,
+        series,
         timed,
         production,
         dice: this,
@@ -754,6 +885,51 @@ mod tests {
             };
             assert!(ways(|l| l.production) > 0, "seed {seed}: the board paid");
             assert!(ways(|l| l.built) > 0, "seed {seed}: somebody built");
+        }
+    }
+
+    #[test]
+    fn the_curves_end_where_the_ledger_says_they_should() {
+        for seed in 0..6u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            let seats = s.report.players as usize;
+            // A point per turn, on the same boundaries the turns table uses,
+            // and one more for the winning turn, which never ends.
+            assert!(
+                (s.turns.len()..=s.turns.len() + 1).contains(&s.series.turns()),
+                "seed {seed}: {} points for {} turns",
+                s.series.turns(),
+                s.turns.len()
+            );
+            for seat in 0..seats {
+                // Cumulative, so neither line ever falls.
+                for pair in s.series.actual.windows(2) {
+                    let (a, b) = (pair[0][seat], pair[1][seat]);
+                    for res in 0..5 {
+                        assert!(b[res] >= a[res], "seed {seed}: production went backwards");
+                    }
+                }
+                for pair in s.series.expected.windows(2) {
+                    let total = |row: &[[f64; 5]; MAX_PLAYERS]| row[seat].iter().sum::<f64>();
+                    assert!(total(&pair[1]) >= total(&pair[0]) - 1e-9);
+                }
+                // And the last point is what the ledger calls production: the
+                // chart and the table are drawing the same cards.
+                let end: u32 = s.series.actual.last().expect("a game has turns")[seat]
+                    .iter()
+                    .sum();
+                assert_eq!(
+                    end, s.ledger[seat].production,
+                    "seed {seed}, seat {seat}: the curve and the ledger disagree"
+                );
+                // The expectation is a real one, not a flat nothing.
+                let owed: f64 = s.series.expected.last().unwrap()[seat].iter().sum();
+                assert!(
+                    owed > 0.0,
+                    "seed {seed}, seat {seat}: nothing was ever owed"
+                );
+            }
         }
     }
 
