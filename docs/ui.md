@@ -91,8 +91,9 @@ phones are out of scope.
 ### Your hand
 
 Five stacks, one per resource, always in the same order, **drawn as piles
-whose thickness grows with the count** and carrying a count badge. Empty types
-stay in place, greyed at zero.
+whose thickness grows with the count** and carrying a count badge on the pile's
+top right corner, where every other count on the page sits. Empty types stay in
+place, greyed at zero.
 
 The depth is the point: it tells you a fat hand is coming before the
 discard-on-seven rule bites, and it does it without you reading a number.

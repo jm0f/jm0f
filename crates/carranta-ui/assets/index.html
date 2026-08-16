@@ -655,11 +655,15 @@
   .badge {
     position: absolute; top: -.25em; right: -.35em; z-index: 20;
   }
-  /* Centred on the front card rather than hung off the right end of the fan,
-     which put the count over the back of the pile and out towards the next
-     resource along. */
+  /* The stack's top right corner, which is where every other count on the page
+     sits and where one on a pile of cards is expected.
+     It was centred over the front card for a while, and the offset that did it
+     was written in `em`. That resolves against the badge's *own* font size,
+     which this rule shrinks, so the number did not even land in the middle of
+     the card it was supposed to be centred on: it sat a third of the way in,
+     over the face, reading as a label stuck on the card rather than a count of
+     the pile. */
   .resStack .badge {
-    left: 2.65em; right: auto; transform: translateX(-50%);
     min-width: 1.5em; height: 1.5em; padding: 0 .3em; border-radius: 999px;
     background: var(--ink); color: var(--panel);
     font-size: .82em; font-weight: 600; line-height: 1.5em; text-align: center;
