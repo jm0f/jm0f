@@ -17,6 +17,7 @@ carranta-play, play Carranta locally in a browser
   --seats N      3 or 4 (4)
   --seed N       board seed (1)
   --mode MODE    full | restricted | disabled (full)
+  --games DIR    where games are kept (./games)
 
 Binds 127.0.0.1 only: the game is local and stays local.";
 
@@ -25,6 +26,9 @@ fn main() {
     let mut seats: u8 = 4;
     let mut seed: u64 = 1;
     let mut mode = TradeMode::Full;
+    // Beside the binary by default, so a game played today is still there
+    // tomorrow without anyone having to say where to put it.
+    let mut games = std::path::PathBuf::from("games");
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -33,6 +37,7 @@ fn main() {
             "--port" => port = value().parse().unwrap_or(port),
             "--seats" => seats = value().parse().unwrap_or(seats),
             "--seed" => seed = value().parse().unwrap_or(seed),
+            "--games" => games = std::path::PathBuf::from(value()),
             "--mode" => {
                 mode = match value().as_str() {
                     "disabled" => TradeMode::Disabled,
@@ -51,9 +56,9 @@ fn main() {
         }
     }
 
-    // Loopback only. This has no authentication and holds one game in memory;
-    // it is a local tool, and binding it wider would be a mistake rather than
-    // a feature.
+    // Loopback only. This has no authentication and keeps its games in a
+    // directory beside it; it is a local tool, and binding it wider would be a
+    // mistake rather than a feature.
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
@@ -66,5 +71,7 @@ fn main() {
         env!("CARRANTA_BUILD")
     );
     println!("  {seats} seats, {mode:?} market, seed {seed}");
-    Server::new(seats, seed, mode).serve(listener);
+    let server = Server::new(seats, seed, mode, &games);
+    println!("  games in {}", server.store().dir().display());
+    server.serve(listener);
 }

@@ -15,6 +15,7 @@ use carranta_core::state::TradeMode;
 use carranta_core::action::Illegal;
 
 use crate::game::{Clock, DEFAULT_DISCARD_SECS, Pace, Refused, Session};
+use crate::store::{Saved, Store, game_id, is_game_id};
 use crate::json;
 use crate::view;
 
@@ -138,15 +139,72 @@ const SOUNDS: [(&str, &[u8]); 8] = [
 /// larger is a mistake or a probe, and is refused rather than buffered.
 const MAX_BODY: usize = 4 * 1024;
 
+/// The game being played, and the name it answers to.
+struct Live {
+    id: String,
+    session: Session,
+    /// What the file says about it, less the moves, which come off the session.
+    dealt: u64,
+}
+
 pub struct Server {
-    session: Mutex<Session>,
+    live: Mutex<Live>,
+    store: Store,
 }
 
 impl Server {
-    pub fn new(seats: u8, seed: u64, mode: TradeMode) -> Self {
-        Server {
-            session: Mutex::new(Session::new(seats, seed, mode)),
-        }
+    pub fn new(seats: u8, seed: u64, mode: TradeMode, dir: impl Into<std::path::PathBuf>) -> Self {
+        let server = Server {
+            live: Mutex::new(Live {
+                id: mint_id(),
+                session: Session::new(seats, seed, mode),
+                dealt: now(),
+            }),
+            store: Store::new(dir),
+        };
+        server.keep();
+        server
+    }
+
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// The address the live game answers to.
+    pub fn live_id(&self) -> String {
+        self.live.lock().unwrap().id.clone()
+    }
+
+    /// A game off disk, rendered the way the live one is.
+    ///
+    /// Read and replayed on every request rather than cached. A game is a few
+    /// hundred bytes and replaying it costs microseconds, so a cache here would
+    /// be a second copy of the truth to keep in step for no gain.
+    fn stored(&self, id: &str) -> Option<String> {
+        let saved = self.store.load(id)?;
+        let session = Session::resume(saved.seats, saved.seed, saved.mode, &saved.moves)?
+            .with_name(&saved.name);
+        Some(view::render(&session))
+    }
+
+    /// Write the live game down, as it stands.
+    ///
+    /// After every move rather than at the end. A game abandoned halfway is
+    /// still a game that happened, and a file only written when somebody wins
+    /// is a file that mostly does not exist.
+    fn keep(&self) {
+        let live = self.live.lock().unwrap();
+        let (seats, seed, mode) = live.session.table();
+        let _ = self.store.save(&Saved {
+            id: live.id.clone(),
+            seats,
+            seed,
+            mode,
+            name: live.session.name().to_string(),
+            dealt: live.dealt,
+            winner: live.session.winner(),
+            moves: live.session.moves().to_vec(),
+        });
     }
 
     /// Serve until the process is stopped.
@@ -207,13 +265,34 @@ impl Server {
             None => (path.as_str(), ""),
         };
 
+        // A game has an address, so the api lives under it: `/<id>/api/state`
+        // rather than `/api/state`. One game is live at a time, but the page
+        // asking has to say which game it thinks it is looking at, or a stale
+        // tab would drive somebody else's board.
+        let (game, path) = split_game(path);
+
         match (method.as_str(), path) {
-            ("GET", "/") => respond(
-                &mut stream,
-                200,
-                "text/html; charset=utf-8",
-                PAGE.as_bytes(),
-            ),
+            // The root is not a game, it is where you go to get one.
+            ("GET", "/") if game.is_none() => {
+                let id = self.live_id();
+                redirect(&mut stream, &format!("/{id}/"))
+            }
+            ("GET", "/") => {
+                let id = game.unwrap_or_default();
+                // Live, or on disk, or neither. A game nobody has heard of is a
+                // 404 rather than a fresh board, because an address that
+                // silently becomes a different game is worse than a dead link.
+                if id == self.live_id() || self.store.load(&id).is_some() {
+                    respond(
+                        &mut stream,
+                        200,
+                        "text/html; charset=utf-8",
+                        PAGE.as_bytes(),
+                    )
+                } else {
+                    respond(&mut stream, 404, "text/plain", b"no such game")
+                }
+            }
             ("GET", p) if p.starts_with("/art/") && p.ends_with(".jpg") => {
                 let name = p.trim_start_matches("/art/").trim_end_matches(".jpg");
                 match PHOTOS.iter().find(|(n, _)| *n == name) {
@@ -243,17 +322,37 @@ impl Server {
                 }
             }
             ("GET", "/api/state") => {
-                let mut session = self.session.lock().unwrap();
+                let id = game.clone().unwrap_or_default();
+                let mut live = self.live.lock().unwrap();
+                if id != live.id {
+                    // A game that is not the live one is a game that is over as
+                    // far as this server is concerned: read it off disk and
+                    // hand it back as it stands. Nothing ticks, because nothing
+                    // is waiting.
+                    drop(live);
+                    let payload = self.stored(&id);
+                    return match payload {
+                        Some(p) => respond(&mut stream, 200, "application/json", p.as_bytes()),
+                        None => respond(&mut stream, 404, "text/plain", b"no such game"),
+                    };
+                }
+                let session = &mut live.session;
                 // A server only wakes when asked, so this poll is the whole
                 // clock: it is what lets a paced bot's wait expire, and what
                 // ends a turn whose time ran out.
                 session.tick();
                 session.enforce_clock();
-                let payload = view::render(&session);
+                let payload = view::render(session);
+                drop(live);
+                self.keep();
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             ("POST", "/api/act") => {
-                let mut session = self.session.lock().unwrap();
+                let mut live = self.live.lock().unwrap();
+                if game.as_deref() != Some(live.id.as_str()) {
+                    return respond(&mut stream, 409, "text/plain", b"that game is over");
+                }
+                let session = &mut live.session;
                 let action = json::read_u64(&body, "action");
                 let version = json::read_u64(&body, "version");
                 let payload = match (action, version) {
@@ -261,13 +360,19 @@ impl Server {
                         Ok(()) => view::render(&session),
                         Err(e) => view::render_with_note(&session, &refusal(&e)),
                     },
-                    _ => view::render_with_note(&session, "malformed request"),
+                    _ => view::render_with_note(session, "malformed request"),
                 };
+                drop(live);
+                self.keep();
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             // Put back a development card whose action was never finished.
             ("POST", "/api/cancel") => {
-                let mut session = self.session.lock().unwrap();
+                let mut live = self.live.lock().unwrap();
+                if game.as_deref() != Some(live.id.as_str()) {
+                    return respond(&mut stream, 409, "text/plain", b"that game is over");
+                }
+                let session = &mut live.session;
                 let payload = match json::read_u64(&body, "version") {
                     Some(v) => match session.cancel(v) {
                         Ok(()) => view::render(&session),
@@ -278,7 +383,11 @@ impl Server {
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             ("POST", "/api/propose") => {
-                let mut session = self.session.lock().unwrap();
+                let mut live = self.live.lock().unwrap();
+                if game.as_deref() != Some(live.id.as_str()) {
+                    return respond(&mut stream, 409, "text/plain", b"that game is over");
+                }
+                let session = &mut live.session;
                 let give = json::read_u8_array(&body, "give", 5);
                 let want = json::read_u8_array(&body, "want", 5);
                 let version = json::read_u64(&body, "version");
@@ -297,8 +406,11 @@ impl Server {
                 };
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
+            // Starting a game is the one thing that does not belong to a
+            // game, so it is not scoped to one: any page may ask for a table.
             ("POST", "/api/new") => {
-                let mut session = self.session.lock().unwrap();
+                let mut live = self.live.lock().unwrap();
+                let session = &mut live.session;
                 let seats = param(query, "seats")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(4);
@@ -330,7 +442,7 @@ impl Server {
                 let name = param(query, "name").unwrap_or_default();
                 let log_shown = param(query, "log").as_deref() != Some("off");
                 let public = wants_public(query);
-                let game = param(query, "game").unwrap_or_default();
+                let named = param(query, "game").unwrap_or_default();
                 let pace = Pace::parse(param(query, "pace").as_deref());
                 // Anything but an explicit "rough" counts the stacks, since
                 // that is what the rules already let anybody do (R-5.6).
@@ -339,17 +451,74 @@ impl Server {
                     .with_clock(clock)
                     .with_log(log_shown)
                     .with_public(public)
-                    .with_game(&decode(&game))
+                    .with_game(&decode(&named))
                     .with_pace(pace)
                     .with_bank_exact(bank_exact)
                     .with_discard_secs(discard_secs)
                     .with_name(&decode(&name));
-                let payload = view::render(&session);
+                // A new game is a new address. The old one keeps its file and
+                // keeps working, which is the whole point of the address.
+                live.id = mint_id();
+                live.dealt = now();
+                let id = live.id.clone();
+                drop(live);
+                self.keep();
+                // The page is told where it now is, so it can move there
+                // without asking again.
+                let payload = format!("{{\"went\":\"/{id}/\"}}");
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             _ => respond(&mut stream, 404, "text/plain", b"not found"),
         }
     }
+}
+
+/// Split a leading game id off a path.
+///
+/// `/abcd-efgh-ijkl/api/state` is the state of that game; `/api/state` on its
+/// own is nobody's. The id is checked for shape here, so everything downstream
+/// is working with something that could be an address rather than with whatever
+/// arrived.
+fn split_game(path: &str) -> (Option<String>, &str) {
+    let rest = path.strip_prefix('/').unwrap_or(path);
+    let (head, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    if !is_game_id(head) {
+        return (None, path);
+    }
+    (Some(head.to_string()), if tail.is_empty() { "/" } else { &path[head.len() + 1..] })
+}
+
+/// Send somebody somewhere else.
+fn redirect(stream: &mut TcpStream, to: &str) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 303 See Other\r\n\
+         Location: {to}\r\n\
+         Content-Length: 0\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.flush()
+}
+
+/// Unix seconds, or zero if the clock is behind 1970.
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// A fresh address for a game.
+///
+/// From the clock and the process, which is enough for a local server writing a
+/// handful of games: two ids collide only if two games are dealt in the same
+/// nanosecond by the same process, and the second would overwrite the first's
+/// file rather than corrupt it.
+fn mint_id() -> String {
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    game_id(n ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
 /// Whether the lobby asked for a listed table.
@@ -510,6 +679,26 @@ mod tests {
                 "{name} is the name the page asks for"
             );
         }
+    }
+
+    #[test]
+    fn a_path_says_which_game_it_is_about() {
+        let id = "6t8y-tghb-2t2x";
+        assert_eq!(split_game("/"), (None, "/"));
+        assert_eq!(split_game("/api/state"), (None, "/api/state"));
+        assert_eq!(split_game(&format!("/{id}/")), (Some(id.to_string()), "/"));
+        assert_eq!(
+            split_game(&format!("/{id}/api/state")),
+            (Some(id.to_string()), "/api/state")
+        );
+        assert_eq!(
+            split_game(&format!("/{id}/analytics")),
+            (Some(id.to_string()), "/analytics")
+        );
+        // Anything that is not an id is left where it is, so a path that
+        // happens to start with a word is not read as an address.
+        assert_eq!(split_game("/art/city.svg"), (None, "/art/city.svg"));
+        assert_eq!(split_game("/../../etc/passwd"), (None, "/../../etc/passwd"));
     }
 
     #[test]

@@ -4292,7 +4292,7 @@ async function handBack(plan) {
     for (let k = 0; k < plan[r]; k++) {
       const c = (view.choices || []).find(x => x.group === 'discard' && x.res === r);
       if (!c) return;
-      await load('/api/act', {
+      await load(api('/api/act'), {
         method: 'POST',
         body: JSON.stringify({ action: c.i, version: view.version }),
       });
@@ -4478,7 +4478,7 @@ function renderTrade(v) {
   // pressed: the supply always takes it, there is nobody to answer, and there
   // is nothing left to say.
   button('Offer trade', 'btn-primary', short || '', () => {
-    load('/api/propose', {
+    load(api('/api/propose'), {
       method: 'POST',
       body: to === ''
         ? JSON.stringify({ give, want, version: view.version })
@@ -4507,6 +4507,9 @@ function renderTrade(v) {
 async function load(url, opts) {
   const r = await fetch(url, opts);
   const next = await r.json();
+  // A new game is a new address, and the server says which. Going there rather
+  // than redrawing, so the game you are playing is the game the page is called.
+  if (next.went) { location.assign(next.went); return; }
   // A composed offer is about a position; when that moves, start it over
   // rather than carrying a half-built offer into a hand that has changed.
   if (!view || next.version !== view.version) {
@@ -4521,25 +4524,31 @@ async function load(url, opts) {
 function cancelPlay() {
   if (!view || !view.canCancel) return;
   closePrompt();
-  load('/api/cancel', {
+  load(api('/api/cancel'), {
     method: 'POST',
     body: JSON.stringify({ version: view.version }),
   });
 }
 
 function act(i) {
-  load('/api/act', {
+  load(api('/api/act'), {
     method: 'POST',
     body: JSON.stringify({ action: i, version: view.version }),
   });
 }
+// Which game this page is. The address carries it, so a tab left open on a
+// finished game keeps asking about that game rather than about whatever is
+// being played now.
+const GAME = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] || '';
+const api = (path) => `/${GAME}${path}`;
+
 // New game goes through the lobby rather than restarting on the spot: the
 // settings are the point of pressing it.
 // A game nobody has touched yet gets the lobby; one already in progress does
 // not, so reloading the page mid-game returns you to the board rather than
 // making you deal a new one.
 loadArt()
-  .then(() => load('/api/state'))
+  .then(() => load(api('/api/state')))
   .then(() => { if (view.version === 0) openLobby(); });
 
 // The server is restarted whenever a change is pulled, and a page served by
@@ -4555,7 +4564,7 @@ loadArt()
 const POLL_IDLE = 3000, POLL_MOVING = 150;
 (async function poll() {
   try {
-    const next = await (await fetch('/api/state', { cache: 'no-store' })).json();
+    const next = await (await fetch(api('/api/state'), { cache: 'no-store' })).json();
     if (view && next.build !== view.build) { location.reload(); return; }
     // The same poll enforces the clock: the server only wakes when asked, so
     // without this a turn that ran out of time would sit there until clicked.
