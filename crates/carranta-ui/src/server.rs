@@ -249,6 +249,7 @@ impl Server {
                 dealt: live.dealt,
                 winner: live.session.winner(),
                 moves: live.session.moves().to_vec(),
+                times: live.session.times().to_vec(),
             });
         }
         drop(live);
@@ -294,6 +295,7 @@ impl Server {
             dealt: live.dealt,
             winner: live.session.winner(),
             moves: live.session.moves().to_vec(),
+            times: live.session.times().to_vec(),
         });
     }
 

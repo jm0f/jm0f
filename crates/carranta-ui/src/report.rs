@@ -68,7 +68,36 @@ fn row(cells: &[String], head: bool) -> String {
 /// better one than the uppercase micro-label it replaces: a label tells you a
 /// section exists, a description tells you whether to read it.
 fn card_head(title: &str, desc: &str) -> String {
-    format!("<div class=\"card-head\"><h2>{title}</h2><p class=\"desc\">{desc}</p></div>")
+    card_head_why(title, desc, "")
+}
+
+/// The same, with the card's own explanation behind the description.
+///
+/// The long note that used to sit under a table is here instead. It was being
+/// read through to reach the figures, or not read at all; on the description it
+/// is one hover away from the reader who wants it and invisible to the one who
+/// does not.
+fn card_head_why(title: &str, desc: &str, why: &str) -> String {
+    let desc = if why.is_empty() {
+        format!("<p class=\"desc\">{desc}</p>")
+    } else {
+        format!("<p class=\"desc\" title=\"{}\">{desc}</p>", esc(why))
+    };
+    format!("<div class=\"card-head\"><h2>{title}</h2>{desc}</div>")
+}
+
+/// A totals row, in the table's foot.
+///
+/// Only where a column adds up to something true. A maximum, a rate and a
+/// percentile do not, and a row that totalled them would be read as though they
+/// did.
+fn totals(cells: &[String]) -> String {
+    let mut out = String::from("<tfoot><tr>");
+    for c in cells {
+        let _ = write!(out, "<td>{c}</td>");
+    }
+    out.push_str("</tr></tfoot>");
+    out
 }
 
 /// A table lives in its own bordered box rather than bleeding into the card.
@@ -119,10 +148,16 @@ fn names(saved: &Saved, seats: usize) -> Vec<String> {
 /// wide as its neighbour had twice as much in it.
 fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     let mut b = String::from("<section>");
-    b.push_str(&card_head(
+    b.push_str(&card_head_why(
         "The turns",
         "The whole game across one bar, a segment per turn, sized by what \
          happened in it and coloured by whose it was.",
+        "The bar is always the full width, so it says nothing about how long \
+         the game took and everything about how it was divided: a turn twice as \
+         wide as its neighbour had twice as much in it. There are no gaps \
+         because play goes round the table, so no two neighbours share a \
+         colour. The setup placements are left out, since they come before \
+         anybody has a turn to take.",
     ));
     let turns = &study.turns;
     if turns.is_empty() {
@@ -131,27 +166,19 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     }
 
     let total: u32 = turns.iter().map(|t| t.actions).sum();
-    let (at, longest) = turns
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, t)| t.actions)
-        .expect("there is at least one turn");
-    let _ = write!(
-        b,
-        "<p>{n} turns, {total} moves between them. The busiest was turn {at}, \
-         {name}'s, with {most}.</p>",
-        n = turns.len(),
-        at = at + 1,
-        name = esc(&who[longest.seat]),
-        most = plural(longest.actions, "move"),
-    );
+    let spent: u32 = turns.iter().map(|t| t.millis).sum();
 
     b.push_str("<div class=\"bar\">");
     for (i, t) in turns.iter().enumerate() {
+        let when = if study.timed {
+            format!(", {}", clock(t.millis))
+        } else {
+            String::new()
+        };
         let _ = write!(
             b,
             "<span class=\"seg s{seat}\" style=\"flex-grow:{grow}\" \
-             title=\"Turn {n}, {name}: {moves}\"></span>",
+             title=\"Turn {n}, {name}: {moves}{when}\"></span>",
             seat = t.seat.min(MAX_PLAYERS - 1),
             grow = t.actions,
             n = i + 1,
@@ -163,51 +190,71 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
 
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    b.push_str(&head_row(&[
+    let mut heads = vec![
         ("", ""),
         ("turns", "Turns this seat took."),
-        ("moves", "Decisions taken while it was their turn."),
+        (
+            "moves",
+            "Decisions taken while it was their turn. Not all of them theirs: a \
+             discard, a robbery and an accepted offer all land inside somebody \
+             else's turn.",
+        ),
         (
             "longest",
-            "The most that happened in any one of their turns.",
+            "The most that happened in any one of their turns. A maximum, so it \
+             has no total.",
         ),
-        (
-            "share of the bar",
-            "How much of the game's width is theirs, which is their share of \
-             its moves rather than of its turns.",
-        ),
-    ]));
+    ];
+    if study.timed {
+        heads.push((
+            "time",
+            "Wall-clock time inside their turns, which is their own thinking \
+             plus whatever the table made them wait for. A game the computer \
+             played out to itself takes almost none.",
+        ));
+    }
+    heads.push((
+        "share of the bar",
+        "How much of the bar's width is theirs, which is their share of the \
+         game's moves rather than of its turns.",
+    ));
+    b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
     for s in 0..seats {
         let mine: Vec<&crate::analysis::Turn> = turns.iter().filter(|t| t.seat == s).collect();
         let moves: u32 = mine.iter().map(|t| t.actions).sum();
-        b.push_str(&row(
-            &[
-                format!("<span class=\"dot s{s}\"></span>{}", esc(&who[s])),
-                mine.len().to_string(),
-                moves.to_string(),
-                mine.iter()
-                    .map(|t| t.actions)
-                    .max()
-                    .unwrap_or(0)
-                    .to_string(),
-                format!("{:.0}%", 100.0 * moves as f64 / total as f64),
-            ],
-            false,
-        ));
+        let mut cells = vec![
+            format!("<span class=\"dot s{s}\"></span>{}", esc(&who[s])),
+            mine.len().to_string(),
+            moves.to_string(),
+            mine.iter()
+                .map(|t| t.actions)
+                .max()
+                .unwrap_or(0)
+                .to_string(),
+        ];
+        if study.timed {
+            cells.push(clock(mine.iter().map(|t| t.millis).sum()));
+        }
+        cells.push(format!("{:.0}%", 100.0 * moves as f64 / total as f64));
+        b.push_str(&row(&cells, false));
     }
     b.push_str("</tbody>");
+    let mut foot = vec![
+        "the game".to_string(),
+        turns.len().to_string(),
+        total.to_string(),
+        // A maximum does not add up, and a column that adds where it cannot
+        // would be read as though it did.
+        "&middot;".to_string(),
+    ];
+    if study.timed {
+        foot.push(clock(spent));
+    }
+    foot.push("100%".to_string());
+    b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
-    b.push_str(
-        "<p class=\"note\">Length is measured in moves, not in seconds: a saved \
-         game is a seed and a list of moves, which is everything needed to \
-         rebuild the position and nothing about when each one was made. A turn \
-         is wide because a lot happened in it, and what happened need not have \
-         been the turn holder's doing, since a discard, a robbery and an \
-         accepted offer all land inside somebody's turn. The setup placements \
-         are not counted: they come before anybody has a turn to \
-         take.</p></section>",
-    );
+    b.push_str("</section>");
     b
 }
 
@@ -217,6 +264,25 @@ fn plural(n: u32, thing: &str) -> String {
         format!("{n} {thing}")
     } else {
         format!("{n} {thing}s")
+    }
+}
+
+/// A duration, at whatever precision it is worth reading at.
+///
+/// A game somebody played takes minutes a turn; a game the computer played out
+/// to itself takes microseconds. One format cannot show both, so the scale
+/// picks itself: below a second the milliseconds are the answer, and above an
+/// hour the seconds are noise.
+fn clock(millis: u32) -> String {
+    let secs = millis / 1000;
+    if millis < 1000 {
+        format!("{millis}ms")
+    } else if secs < 60 {
+        format!("{:.1}s", millis as f64 / 1000.0)
+    } else if secs < 3600 {
+        format!("{}m {:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {:02}m", secs / 3600, (secs % 3600) / 60)
     }
 }
 
@@ -316,26 +382,43 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- ratings ------------------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head(
+    b.push_str(&card_head_why(
         "What it did to the ratings",
         "The pool before this game and after it, which is the section this page \
          exists for.",
+        "A Weng-Lin Plackett-Luce update over the whole finishing order, not \
+         just the winner (A-1): the final points rank everyone, so one game \
+         carries a complete ranking rather than one bit. Ratings are computed \
+         by replaying every recorded game in order and reading the pool either \
+         side of this one, since a rating is a function of everything before \
+         it.",
     ));
     if study.movement.iter().take(seats).all(Option::is_none) {
         b.push_str("<p class=\"note\">Nothing: this game could not be rated.</p>");
     } else {
         b.push_str(T_OPEN);
         b.push_str("<thead>");
-        b.push_str(&row(
-            &[
-                "".into(),
-                "before".into(),
-                "after".into(),
-                "change".into(),
-                "games behind it".into(),
-            ],
-            true,
-        ));
+        b.push_str(&head_row(&[
+            ("", ""),
+            (
+                "before",
+                "The conservative estimate going in: three standard deviations \
+                 below the mean, which is what a rating is worth believing \
+                 rather than what it is.",
+            ),
+            ("after", "The same figure once this game was folded in."),
+            (
+                "change",
+                "An update is a redistribution, so these very nearly cancel: \
+                 somebody gains what somebody else loses.",
+            ),
+            (
+                "games behind it",
+                "How many games each player had behind them going in, which is \
+                 how much the figure is worth believing. Early games move a \
+                 rating a long way because the belief starts wide.",
+            ),
+        ]));
         b.push_str("</thead><tbody>");
         for s in 0..seats {
             let Some(m) = study.movement[s] else { continue };
@@ -359,100 +442,151 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             ));
         }
         b.push_str("</tbody>");
+        // Before and after are positions rather than quantities, and adding
+        // four ratings together produces a number of nothing.
+        let moved: f64 = (0..seats)
+            .filter_map(|s| study.movement[s])
+            .map(|m| m.delta())
+            .sum();
+        b.push_str(&totals(&[
+            "the table".to_string(),
+            "&middot;".to_string(),
+            "&middot;".to_string(),
+            signed(moved),
+            (0..seats)
+                .filter_map(|s| study.movement[s])
+                .map(|m| m.games)
+                .sum::<u32>()
+                .to_string(),
+        ]));
         b.push_str(T_CLOSE);
-        b.push_str(
-            "<p class=\"note\">A Weng-Lin Plackett-Luce update over the whole \
-             finishing order, not just the winner (A-1): the final points rank \
-             everyone, so one game carries a complete ranking rather than one \
-             bit. The figure shown is the conservative estimate, three standard \
-             deviations below the mean, which is what a rating is worth \
-             believing rather than what it is. Early games move it a long way \
-             because the belief starts wide; the count on the right is how much \
-             each player had behind them going in.</p>",
-        );
     }
     b.push_str("</section>");
 
     // ---- the dice -----------------------------------------------------------
     let total: u32 = r.rolls.iter().sum();
     b.push_str("<section>");
-    b.push_str(&card_head(
+    b.push_str(&card_head_why(
         "The dice",
-        "What was rolled against what should have been, as an effect size and a \
-         percentile rather than as a verdict.",
+        match study.dice_percentile {
+            // "More than 100% of five games" is not a sentence. At either end
+            // of the range the comparison is to all of them or none of them,
+            // and saying so is both shorter and true.
+            Some(p) => format!(
+                "{total} rolls, {sevens} of them sevens, deviating from a fair \
+                 pair by {kl} bits: {how} of the {n} other finished games \
+                 recorded here.",
+                sevens = r.sevens,
+                kl = format!("{:.3}", study.dice.kl_bits),
+                n = study.corpus_games,
+                how = if p >= 99.5 {
+                    "further than every one".to_string()
+                } else if p < 0.5 {
+                    "less than any".to_string()
+                } else {
+                    format!("further than {p:.0}%")
+                },
+            ),
+            None => format!(
+                "{total} rolls, {sevens} of them sevens, deviating from a fair \
+                 pair by {kl} bits. There are no other finished games here to \
+                 place this one against yet.",
+                sevens = r.sevens,
+                kl = format!("{:.3}", study.dice.kl_bits),
+            ),
+        }
+        .as_str(),
+        "No p-value, deliberately (§10.1). Across enough games one in twenty \
+         clears p<0.05 by construction, and those are precisely the games \
+         somebody screenshots as proof of rigging. The percentile carries the \
+         same information with no significance claim attached, and until there \
+         is a second game it is withheld, because a percentile of one game is \
+         not a percentile. Whether the generator itself is fair is a different \
+         question asked of millions of pooled rolls, never of one game.",
     ));
-    let _ = write!(
-        b,
-        "<p>{total} rolls, {sevens} of them sevens. The deviation from a fair \
-         pair of dice is <strong>{kl} bits</strong>.</p>",
-        sevens = r.sevens,
-        kl = format!("{:.3}", study.dice.kl_bits),
-    );
     b.push_str("<div class=\"tw\"><table class=\"rolls\"><thead>");
-    let mut heads = vec!["".to_string()];
-    heads.extend((2..=12).map(|n| n.to_string()));
-    b.push_str(&row(&heads, true));
+    let mut heads = vec![("", "")];
+    let labels: Vec<String> = (2..=12).map(|n: u32| n.to_string()).collect();
+    heads.extend(labels.iter().map(|s| (s.as_str(), "")));
+    heads.push((
+        "total",
+        "Every roll in the game. The two rows have to add to the same number: \
+         one is how the rolls fell and the other is how they should have.",
+    ));
+    b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
     let mut actual = vec!["rolled".to_string()];
     actual.extend(r.rolls.iter().map(u32::to_string));
+    actual.push(format!("<strong>{total}</strong>"));
     b.push_str(&row(&actual, false));
     let mut expected = vec!["expected".to_string()];
     for n in 2..=12u32 {
         let ways = 6 - (n as i32 - 7).abs();
         expected.push(n1(total as f64 * ways as f64 / 36.0));
     }
+    expected.push(format!("<strong>{}</strong>", n1(total as f64)));
     b.push_str(&row(&expected, false));
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
-    match study.dice_percentile {
-        Some(p) => {
-            let _ = write!(
-                b,
-                "<p>These dice deviated more than <strong>{p}%</strong> of the \
-                 {n} other finished games recorded here.</p>",
-                p = format!("{p:.0}"),
-                n = study.corpus_games,
-            );
-        }
-        None => b.push_str(
-            "<p class=\"note\">There are no other finished games here to place \
-             this one against yet. A percentile of one game is not a \
-             percentile.</p>",
-        ),
-    }
-    b.push_str(
-        "<p class=\"note\">No p-value, deliberately (§10.1). Across enough \
-         games one in twenty clears p&lt;0.05 by construction, and those are \
-         precisely the games somebody screenshots as proof of rigging. The \
-         percentile carries the same information with no significance claim \
-         attached. Whether the generator itself is fair is a different question \
-         asked of millions of pooled rolls, never of one game.</p></section>",
-    );
+    b.push_str("</section>");
 
     // ---- production ---------------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head(
+    b.push_str(&card_head_why(
         "What the board paid",
         "Production decomposed into what was chance and what was somebody's \
          doing (§10.2).",
+        "Expected is what the buildings standing at each roll should have paid \
+         at the dice's true odds, and the three columns after it are why that \
+         is not what arrived. Only one of them is chance: the robber sitting on \
+         your hexes is an opponent's choice, and a stack running dry is the \
+         supply (R-5.6).",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    b.push_str(&row(
-        &[
-            "".into(),
-            "expected".into(),
-            "the robber".into(),
-            "the supply".into(),
-            "the dice".into(),
-            "arrived".into(),
-            "luck".into(),
-        ],
-        true,
-    ));
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "expected",
+            "What the buildings standing at each roll should have paid at the \
+             dice's true odds.",
+        ),
+        (
+            "the robber",
+            "Cards the robber cost them by sitting on their hexes. Not chance: \
+             somebody chose that hex.",
+        ),
+        (
+            "the supply",
+            "Cards a stack that had run dry could not pay (R-5.6). Not chance \
+             either: the table emptied it.",
+        ),
+        (
+            "the dice",
+            "What is left once the other two are taken out, which is the only \
+             genuinely random term of the three.",
+        ),
+        ("arrived", "Cards that actually reached their hand."),
+        (
+            "luck",
+            "The dice term in standard deviations, which is the one to read: a \
+             card is worth more on a small board than a large one. A spread, so \
+             it has no total.",
+        ),
+    ]));
     b.push_str("</thead><tbody>");
+    let mut sums = [0.0f64; 5];
     for s in 0..seats {
         let d = study.production.decompose(s);
+        for (slot, v) in sums.iter_mut().zip([
+            d.e_raw,
+            -d.robber_cost,
+            -d.supply_denial,
+            d.dice_luck,
+            d.actual,
+        ]) {
+            *slot += v;
+        }
         b.push_str(&row(
             &[
                 esc(&who[s]),
@@ -471,52 +605,71 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ));
     }
     b.push_str("</tbody>");
+    b.push_str(&totals(&[
+        "the board".to_string(),
+        n1(sums[0]),
+        signed(sums[1]),
+        signed(sums[2]),
+        signed(sums[3]),
+        n1(sums[4]),
+        // A z-score is a position on a spread. Four of them add to nothing.
+        "&middot;".to_string(),
+    ]));
     b.push_str(T_CLOSE);
-    b.push_str(
-        "<p class=\"note\">Expected is what the buildings standing at each roll \
-         should have paid at the dice's true odds, and the three columns after \
-         it are why that is not what arrived. Only one of them is chance: the \
-         robber sitting on your hexes is an opponent's choice, and a stack \
-         running dry is the supply (R-5.6). The last column is the dice term in \
-         standard deviations, which is the one to read, since a card is worth \
-         more on a small board than a large one.</p></section>",
-    );
+    b.push_str("</section>");
 
     // ---- the robber ---------------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head(
-        "The robber",
-        "Who took what from whom, and what the sevens cost everybody.",
-    ));
     let _ = write!(
         b,
-        "<p>Moved {moves} times. {empty} of those robberies found an empty hand \
-         (R-6.4).</p>",
-        moves = r.robber_moves,
-        empty = r.empty_robberies,
+        "{}",
+        card_head_why(
+            "The robber",
+            &format!(
+                "Moved {moves} times, {empty} of those robberies finding an \
+                 empty hand (R-6.4).",
+                moves = r.robber_moves,
+                empty = r.empty_robberies,
+            ),
+            "Read along a row: what that seat took. The diagonal is a dot \
+             because nobody robs themselves.",
+        )
     );
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    let mut heads = vec!["stole from".to_string()];
-    heads.extend(who.iter().map(|n| esc(n)));
-    heads.push("discarded".to_string());
-    b.push_str(&row(&heads, true));
+    let victims: Vec<String> = who.iter().map(|n| esc(n)).collect();
+    let mut heads = vec![("stole from", "")];
+    heads.extend(victims.iter().map(|n| (n.as_str(), "")));
+    heads.push((
+        "discarded",
+        "Cards this seat threw away to sevens, which is the robber's other \
+         cost and nobody's choice but the dice's (R-6.2).",
+    ));
+    b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
+    let mut taken = vec![0u32; seats];
+    let mut binned = 0u32;
     for thief in 0..seats {
         let mut cells = vec![esc(&who[thief])];
         for victim in 0..seats {
             cells.push(if thief == victim {
                 "&middot;".to_string()
             } else {
+                taken[victim] += r.steals[thief][victim];
                 r.steals[thief][victim].to_string()
             });
         }
+        binned += r.discards[thief];
         cells.push(r.discards[thief].to_string());
         b.push_str(&row(&cells, false));
     }
     b.push_str("</tbody>");
+    let mut foot = vec!["lost".to_string()];
+    foot.extend(taken.iter().map(u32::to_string));
+    foot.push(binned.to_string());
+    b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
-    b.push_str("<p class=\"note\">Read along a row: what that seat took.</p></section>");
+    b.push_str("</section>");
 
     // ---- the market ---------------------------------------------------------
     b.push_str("<section>");
@@ -527,17 +680,24 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    b.push_str(&row(
-        &[
-            "".into(),
-            "offered".into(),
-            "turned down".into(),
-            "withdrew".into(),
-            "traded".into(),
-            "with the bank".into(),
-        ],
-        true,
-    ));
+    b.push_str(&head_row(&[
+        ("", ""),
+        ("offered", "Offers this seat put on the table."),
+        ("turned down", "Offers this seat said no to."),
+        (
+            "withdrew",
+            "Offers this seat pulled back before anybody took them.",
+        ),
+        (
+            "traded",
+            "Trades this seat was a party to. Counted for both sides, so the \
+             total is twice the number of trades that happened.",
+        ),
+        (
+            "with the bank",
+            "Trades against the supply rather than against a person.",
+        ),
+    ]));
     b.push_str("</thead><tbody>");
     for s in 0..seats {
         b.push_str(&row(
@@ -553,36 +713,54 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ));
     }
     b.push_str("</tbody>");
+    let sum = |v: &[u32; MAX_PLAYERS]| v[..seats].iter().sum::<u32>().to_string();
+    b.push_str(&totals(&[
+        "the table".to_string(),
+        sum(&r.offers_made),
+        sum(&r.offers_declined),
+        sum(&r.offers_withdrawn),
+        sum(&r.trades_completed),
+        sum(&r.supply_trades),
+    ]));
     b.push_str(T_CLOSE);
-    b.push_str(
-        "<p class=\"note\">A completed trade is counted for both sides of it, so \
-         that column sums to twice the number of trades.</p></section>",
-    );
+    b.push_str("</section>");
 
     // ---- development cards --------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head(
+    b.push_str(&card_head_why(
         "Development cards",
         "What was bought, and what was played with it.",
+        "Played, not held. A victory point card is never played (R-9.11), so \
+         that column is always empty, and it is kept so the five read in the \
+         order the cards do.",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    let mut heads = vec!["".to_string(), "bought".to_string()];
-    heads.extend(DEV_NAMES.iter().map(|n| n.to_string()));
-    b.push_str(&row(&heads, true));
+    let mut heads = vec![
+        ("", ""),
+        ("bought", "Cards drawn from the deck, of any kind."),
+    ];
+    heads.extend(DEV_NAMES.iter().map(|n| (*n, "")));
+    b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
+    let mut played = [0u32; 5];
     for s in 0..seats {
         let mut cells = vec![esc(&who[s]), r.dev_bought[s].to_string()];
         cells.extend(r.dev_played[s].iter().map(u32::to_string));
+        for (slot, n) in played.iter_mut().zip(r.dev_played[s]) {
+            *slot += n;
+        }
         b.push_str(&row(&cells, false));
     }
     b.push_str("</tbody>");
+    let mut foot = vec![
+        "the deck".to_string(),
+        r.dev_bought[..seats].iter().sum::<u32>().to_string(),
+    ];
+    foot.extend(played.iter().map(u32::to_string));
+    b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
-    b.push_str(
-        "<p class=\"note\">Played, not held. A victory point card is never \
-         played (R-9.11), so that column is always empty and is kept so the \
-         five read in the order the cards do.</p></section>",
-    );
+    b.push_str("</section>");
 
     // ---- the opening --------------------------------------------------------
     b.push_str("<section>");
@@ -592,16 +770,26 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    b.push_str(&row(
-        &[
-            "".into(),
-            "pips".into(),
-            "resources".into(),
-            "ports".into(),
-            "biggest hand".into(),
-        ],
-        true,
-    ));
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "pips",
+            "The dots on every number the starting settlements touch, which is \
+             the standard measure of how much production a placement buys.",
+        ),
+        (
+            "resources",
+            "How many of the five the opening touches at all. A placement can \
+             be rich and still be missing something it will need.",
+        ),
+        ("ports", "Ports the starting settlements sit on."),
+        (
+            "biggest hand",
+            "The most cards this seat ever held at once, anywhere in the game. \
+             Not an opening figure, and here because it is the other half of \
+             the same question: what the placement turned into.",
+        ),
+    ]));
     b.push_str("</thead><tbody>");
     for s in 0..seats {
         b.push_str(&row(
@@ -616,31 +804,54 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ));
     }
     b.push_str("</tbody>");
+    b.push_str(&totals(&[
+        "the board".to_string(),
+        r.opening[..seats]
+            .iter()
+            .map(|o| o.pips)
+            .sum::<u32>()
+            .to_string(),
+        // Diversity is per placement and a peak is a maximum. Neither adds.
+        "&middot;".to_string(),
+        r.opening[..seats]
+            .iter()
+            .map(|o| o.ports)
+            .sum::<u32>()
+            .to_string(),
+        "&middot;".to_string(),
+    ]));
     b.push_str(T_CLOSE);
-    b.push_str(
-        "<p class=\"note\">Pips are the dots on every number the starting \
-         settlements touch, which is the standard measure of how much \
-         production a placement buys.</p></section>",
-    );
+    b.push_str("</section>");
 
     // ---- the corpus ---------------------------------------------------------
     if let Some(wins) = study.seat_wins {
         b.push_str("<section>");
-        b.push_str(&card_head(
-            "Across every game here",
-            "Seat win rates, which is the one question a single game cannot \
-             answer at all.",
-        ));
         let _ = write!(
             b,
-            "<p>{n} other finished games, all at this table's settings. A game \
-             nobody won is left out: it has no finishing order, so it can only \
-             enlarge the denominator.</p>",
-            n = study.corpus_games
+            "{}",
+            card_head_why(
+                "Across every game here",
+                &format!(
+                    "Seat win rates across {n} other finished games, all at this \
+                     table's settings.",
+                    n = study.corpus_games
+                ),
+                "Seat, not player, because this is asking whether going first is \
+                 worth anything. It needs hundreds of games before it means \
+                 much: at this count the spread is noise. A game nobody won is \
+                 left out, since it has no finishing order and can only enlarge \
+                 the denominator.",
+            )
         );
         b.push_str(T_OPEN);
         b.push_str("<thead>");
-        b.push_str(&row(&["seat".into(), "win rate".into()], true));
+        b.push_str(&head_row(&[
+            ("seat", ""),
+            (
+                "win rate",
+                "Games won from this seat, over games played from it.",
+            ),
+        ]));
         b.push_str("</thead><tbody>");
         for s in 0..seats.min(MAX_PLAYERS) {
             b.push_str(&row(
@@ -649,12 +860,15 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             ));
         }
         b.push_str("</tbody>");
+        b.push_str(&totals(&[
+            "every seat".to_string(),
+            format!(
+                "{:.0}%",
+                wins[..seats.min(MAX_PLAYERS)].iter().sum::<f64>() * 100.0
+            ),
+        ]));
         b.push_str(T_CLOSE);
-        b.push_str(
-            "<p class=\"note\">Seat, not player, because this is asking whether \
-             going first is worth anything. It needs hundreds of games before it \
-             means much: at this count the spread is noise.</p></section>",
-        );
+        b.push_str("</section>");
     }
 
     b.push_str("</main></body></html>");
@@ -753,9 +967,15 @@ tbody tr { transition: background .12s ease; }
 tbody tr:hover { background: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
 .rolls th, .rolls td { padding: .7em .45em; }
-/* A column that explains itself on hover says so, quietly. */
-thead th[title] { cursor: help; text-decoration: underline dotted #BFAF9C;
+/* Anything that explains itself on hover says so, quietly. */
+thead th[title], .desc[title] { cursor: help;
+                  text-decoration: underline dotted #BFAF9C;
                   text-underline-offset: 4px; }
+/* The totals, ruled off above and set in the ink of a figure that matters. */
+tfoot td { border-top: 1px solid var(--border); border-bottom: 0;
+           font-weight: 600; color: var(--foreground); }
+tbody tr:last-child td { border-bottom: 0; }
+tfoot tr:hover { background: transparent; }
 /* What a thing was worth, beside how many of it there were. */
 .worth { color: var(--muted-foreground); }
 
@@ -822,6 +1042,7 @@ mod tests {
             dealt: seed,
             winner: s.winner(),
             moves: s.moves().to_vec(),
+            times: s.times().to_vec(),
         }
     }
 
@@ -906,7 +1127,62 @@ mod tests {
         for t in &s.turns {
             assert!(html.contains(&format!("flex-grow:{}", t.actions)));
         }
-        assert!(html.contains("not in seconds"), "it says what it measures");
+        // A game played through a session carries its clock, so the column is
+        // there and the row adds up to the whole of it.
+        assert!(s.timed, "a game played here is a game that was timed");
+        let spent: u32 = s.turns.iter().map(|t| t.millis).sum();
+        assert!(
+            html.contains(&clock(spent)),
+            "the totals row carries the time"
+        );
+        // Explanations live on the columns now, not under the table.
+        assert!(!html.contains("class=\"note\">Length is measured"));
+        assert!(html.contains("Wall-clock time inside their turns"));
+    }
+
+    #[test]
+    fn a_total_is_shown_only_where_a_column_has_one() {
+        let g = played(6);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        // Every table that claims a total has one row of them and no more.
+        assert_eq!(
+            html.matches("<tfoot>").count(),
+            html.matches("</tfoot>").count()
+        );
+        assert!(html.matches("<tfoot>").count() >= 5, "the summable tables");
+        // The turns add across: the seats' moves are the game's moves.
+        let moves: u32 = s.turns.iter().map(|t| t.actions).sum();
+        assert!(html.contains(&format!("<td>{moves}</td>")));
+        // A maximum is not totalled, and says so on the column.
+        assert!(html.contains("A maximum, so it has no total."));
+    }
+
+    #[test]
+    fn every_long_explanation_is_a_tooltip_now() {
+        // Two games, so the corpus card is on the page to be checked too.
+        let history: Vec<Saved> = (7..9u64).map(played).collect();
+        let s = study(&history[1], &history).expect("it studies");
+        let html = page(&history[1], &s);
+        assert!(html.contains("Across every game here"), "the corpus card");
+        // The paragraphs that used to sit under the tables are gone, and what
+        // they said is on the card or the column it was about.
+        for gone in [
+            "Read along a row",
+            "dots on every number",
+            "Played, not held",
+            "Counted for both sides",
+            "Expected is what the buildings",
+            "No p-value, deliberately",
+            "Seat, not player",
+        ] {
+            assert!(!html.contains(&format!(">{gone}")), "{gone} is not prose");
+            assert!(html.contains(gone), "{gone} is still said, in a tooltip");
+        }
+        // And no explanatory paragraph survives anywhere but the two empty
+        // states, which are answers rather than explanations.
+        let notes = html.matches("class=\"note\"").count();
+        assert!(notes <= 1, "{notes} notes left on the page");
     }
 
     #[test]

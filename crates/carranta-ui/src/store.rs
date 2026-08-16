@@ -40,6 +40,19 @@ pub struct Saved {
     /// was abandoned halfway.
     pub winner: Option<u8>,
     pub moves: Vec<Step>,
+    /// Milliseconds from the deal to each step, one per entry in `moves`.
+    ///
+    /// Either empty or exactly as long as `moves`. Empty means the game was
+    /// written before this was recorded, and empty rather than zeroes because
+    /// "nobody knows" and "it took no time" are different answers and only one
+    /// of them is true of an old file.
+    ///
+    /// A separate list rather than a field on `Step` for that reason: a step is
+    /// what happened and is enough to rebuild the game on its own, which is the
+    /// whole argument this format rests on. When it happened is something known
+    /// about the step rather than part of it, and a file that has lost it is
+    /// still a whole game.
+    pub times: Vec<u32>,
 }
 
 /// A game id: three groups, the way the lobby already prints a seed.
@@ -75,6 +88,16 @@ pub fn is_game_id(s: &str) -> bool {
             }
         })
 }
+
+/// What this build writes.
+///
+/// Version 2 added the `at` lines, which say when each step landed. Version 1
+/// files are still read and simply have no clock: the addition is beside the
+/// moves rather than inside them, so an older game is not an unreadable game.
+const VERSION: u32 = 2;
+
+/// Times per `at` line. Forty numbers is a line you can still read.
+const TIMES_PER_LINE: usize = 40;
 
 fn res_code(r: Resource) -> char {
     match r {
@@ -234,7 +257,7 @@ pub fn encode(g: &Saved) -> String {
     let mut out = String::new();
     // A version on the first line, so a file written by an older build says so
     // rather than being read as though it were this one.
-    let _ = writeln!(out, "carranta 1");
+    let _ = writeln!(out, "carranta {VERSION}");
     let _ = writeln!(out, "id {}", g.id);
     let _ = writeln!(out, "seats {}", g.seats);
     let _ = writeln!(out, "seed {}", g.seed);
@@ -246,6 +269,20 @@ pub fn encode(g: &Saved) -> String {
     }
     for step in &g.moves {
         let _ = writeln!(out, "{}", step_line(step));
+    }
+    // The clock, after the game rather than through it, so the moves still read
+    // as a list of moves. Wrapped because a nine-hundred-move game is a
+    // nine-hundred-number line otherwise, and a file you can open is the point.
+    for chunk in g.times.chunks(TIMES_PER_LINE) {
+        let _ = writeln!(
+            out,
+            "at {}",
+            chunk
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
     }
     out
 }
@@ -260,6 +297,7 @@ pub fn decode(text: &str) -> Option<Saved> {
         dealt: 0,
         winner: None,
         moves: Vec::new(),
+        times: Vec::new(),
     };
     let mut version = None;
     for line in text.lines() {
@@ -277,10 +315,20 @@ pub fn decode(text: &str) -> Option<Saved> {
             "name" => g.name = rest.to_string(),
             "dealt" => g.dealt = rest.parse().ok()?,
             "winner" => g.winner = Some(rest.parse().ok()?),
+            "at" => {
+                for n in rest.split(',') {
+                    g.times.push(n.parse().ok()?);
+                }
+            }
             _ => g.moves.push(step_of(line)?),
         }
     }
-    (version == Some(1)).then_some(g)
+    // A version this build knows, and a clock that is either whole or absent:
+    // times that have fallen out of step with the moves would be attributed to
+    // the wrong turns, which is worse than having none.
+    let known = version.is_some_and(|v| (1..=VERSION).contains(&v));
+    let timed = g.times.is_empty() || g.times.len() == g.moves.len();
+    (known && timed).then_some(g)
 }
 
 /// Where games live.
@@ -414,6 +462,7 @@ mod tests {
             dealt: 1_755_300_000,
             winner: Some(2),
             moves: one_of_each(),
+            times: Vec::new(),
         };
         assert_eq!(decode(&encode(&g)), Some(g));
     }
@@ -429,6 +478,7 @@ mod tests {
             dealt: 1,
             winner: None,
             moves: vec![Step::Move(Action::Roll)],
+            times: vec![7],
         };
         let back = decode(&encode(&g)).expect("it reads back");
         assert_eq!(back.winner, None);
@@ -447,11 +497,51 @@ mod tests {
             dealt: 0,
             winner: None,
             moves: vec![Step::Move(Action::Roll)],
+            times: vec![7],
         };
         let text = encode(&g);
         assert!(decode(&text).is_some());
-        assert_eq!(decode(&text.replace("carranta 1", "carranta 2")), None);
-        assert_eq!(decode(&text.replace("carranta 1\n", "")), None);
+        // A version this build has never heard of, and no version at all.
+        assert_eq!(decode(&text.replace("carranta 2", "carranta 3")), None);
+        assert_eq!(decode(&text.replace("carranta 2\n", "")), None);
+    }
+
+    #[test]
+    fn a_game_written_before_there_was_a_clock_still_reads() {
+        // The whole reason the times are beside the moves rather than inside
+        // them: a version 1 file is a whole game that happens not to know when
+        // anything happened, and refusing it would lose the game to keep the
+        // clock.
+        let g = Saved {
+            id: game_id(11),
+            seats: 4,
+            seed: 3,
+            mode: TradeMode::Full,
+            name: "Egon".to_string(),
+            dealt: 5,
+            winner: Some(1),
+            moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
+            times: vec![120, 340],
+        };
+        let old = encode(&g)
+            .replace("carranta 2", "carranta 1")
+            .lines()
+            .filter(|l| !l.starts_with("at "))
+            .fold(String::new(), |mut acc, l| {
+                acc.push_str(l);
+                acc.push('\n');
+                acc
+            });
+        let back = decode(&old).expect("an older game is still a game");
+        assert_eq!(back.moves, g.moves);
+        assert_eq!(back.winner, Some(1));
+        // Empty rather than zeroes: nobody knows is not the same as no time.
+        assert!(back.times.is_empty());
+        // And a clock that has fallen out of step with the moves is refused
+        // outright, since the wrong seconds on the wrong turns is a wrong
+        // answer where none at all is only a missing one.
+        let short = encode(&g).replace("at 120,340", "at 120");
+        assert_eq!(decode(&short), None);
     }
 
     #[test]
@@ -467,6 +557,7 @@ mod tests {
             dealt: 0,
             winner: None,
             moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
+            times: vec![1, 2],
         };
         let text = encode(&g);
         assert_eq!(decode(&text.replace("roll", "rolll")), None);
@@ -532,6 +623,7 @@ mod tests {
                 dealt: seed,
                 winner: s.winner(),
                 moves: s.moves().to_vec(),
+                times: s.times().to_vec(),
             };
             store.save(&g).expect("it writes");
             let back = store.load(&g.id).expect("it reads");
@@ -560,6 +652,7 @@ mod tests {
                 dealt,
                 winner: None,
                 moves: vec![Step::Move(Action::Roll)],
+                times: vec![3],
             };
             store.save(&g).expect("it writes");
             ids.push(g.id);

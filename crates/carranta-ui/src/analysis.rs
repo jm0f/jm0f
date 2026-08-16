@@ -191,6 +191,13 @@ pub struct Turn {
     /// accepted offer and a robbery all happen inside somebody's turn, and the
     /// length of a turn is how much happened in it.
     pub actions: u32,
+    /// How long it took, in milliseconds, or nought on a game saved before the
+    /// clock was written down.
+    ///
+    /// Wall-clock, so it is the turn holder's thinking time plus everybody
+    /// else's answers to it. Time spent waiting on a decision inside somebody's
+    /// turn is time that turn took, whoever was being waited on.
+    pub millis: u32,
 }
 
 /// Cut a game into its turns.
@@ -199,37 +206,66 @@ pub struct Turn {
 /// not one: they are dealt before anybody has a turn to take, so counting them
 /// would hand the first seat a turn several times the size of any other.
 ///
-/// Length is measured in decisions rather than in seconds. A saved game is a
-/// seed and a list of moves (see `store`), which is everything needed to
-/// rebuild the position and nothing about when it was made, so wall-clock
-/// duration is not in the record to read.
-fn turns_of(log: &Log) -> Vec<Turn> {
+/// Read off the saved game rather than the record, because the record has no
+/// clock: `carranta-record` is about what happened and this is also about when.
+/// Replaying the moves from the seed rebuilds the same positions in the same
+/// order, which is the property the whole format rests on, so the two agree
+/// about everything they both know.
+fn turns_of(saved: &Saved) -> Vec<Turn> {
     use carranta_core::action::Action;
     use carranta_core::state::Phase;
-    use carranta_record::Payload;
 
-    let mut state = *log.created.opening;
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    // Either the clock is whole or there is none: a partial one would attribute
+    // real seconds to the wrong turns.
+    let timed = saved.times.len() == saved.moves.len();
     let mut out = Vec::new();
     let mut actions = 0u32;
+    let mut millis = 0u32;
     let mut playing = false;
-    for event in &log.events {
-        let Payload::Decision { action, resolved } = event.payload else {
-            continue;
-        };
+    let mut since = 0u32;
+    for (i, step) in saved.moves.iter().enumerate() {
         let seat = state.to_act as usize;
-        if state.apply_scripted(action, resolved).is_err() {
-            break;
-        }
-        if playing {
-            actions += 1;
-            if action == Action::EndTurn {
-                out.push(Turn { seat, actions });
-                actions = 0;
+        // What this step cost is the gap since the one before it: the time went
+        // somewhere, and where it went is the turn it landed in.
+        let spent = if timed {
+            let at = saved.times[i];
+            let spent = at.saturating_sub(since);
+            since = at;
+            spent
+        } else {
+            0
+        };
+        match *step {
+            Step::Move(action) => {
+                if state.apply(action).is_err() {
+                    break;
+                }
+                if playing {
+                    actions += 1;
+                    millis += spent;
+                    if action == Action::EndTurn {
+                        out.push(Turn {
+                            seat,
+                            actions,
+                            millis,
+                        });
+                        actions = 0;
+                        millis = 0;
+                    }
+                }
+                // Setup ends the first time play reaches a pre-roll phase, which
+                // is the same line `game::analyse` draws.
+                playing |= matches!(state.phase, Phase::PreRoll);
+            }
+            // A refusal moves nothing, so it is not one of the turn's actions.
+            // It still took as long as it took, and the table waited for it.
+            Step::Passed { .. } => {
+                if playing {
+                    millis += spent;
+                }
             }
         }
-        // Setup ends the first time play reaches a pre-roll phase, which is the
-        // same line `game::analyse` draws.
-        playing |= matches!(state.phase, Phase::PreRoll);
     }
     out
 }
@@ -241,6 +277,10 @@ pub struct Study {
     pub points: [Points; MAX_PLAYERS],
     /// The game turn by turn, in the order they were taken.
     pub turns: Vec<Turn>,
+    /// Whether this game was saved with a clock in it. Games written before
+    /// there was one still read, and say nothing about time rather than saying
+    /// nought.
+    pub timed: bool,
     pub production: production::Report,
     pub dice: dice::GameDice,
     /// Where this game's dice sit against every other game recorded here, as a
@@ -271,7 +311,8 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let log = to_log(saved)?;
     let report = game::analyse(&log).ok()?;
     let points = points_of(&log.replay().ok()?, report.players as usize);
-    let turns = turns_of(&log);
+    let turns = turns_of(saved);
+    let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
     let rolls = dice::rolls(&log);
     let this = dice::analyse_game(&rolls, SIMS, saved.seed);
@@ -338,6 +379,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         report,
         points,
         turns,
+        timed,
         production,
         dice: this,
         dice_percentile,
@@ -373,6 +415,7 @@ mod tests {
             dealt: seed,
             winner: s.winner(),
             moves: s.moves().to_vec(),
+            times: s.times().to_vec(),
         }
     }
 

@@ -269,6 +269,17 @@ pub struct Session {
     /// in a few hundred bytes and analyse afterwards, and it is the same
     /// argument `carranta-record` makes about its own event log (H-1).
     moves: Vec<Step>,
+    /// When each of them landed, in milliseconds since the deal.
+    ///
+    /// Kept beside the moves rather than inside them, for the reason the moves
+    /// are what they are: a step is enough to rebuild the game on its own, and
+    /// when it happened is something known *about* the step. Written down so
+    /// the analytics can say where a game's time went, which is the one
+    /// question the moves alone cannot answer.
+    ///
+    /// Always exactly as long as `moves`, or empty on a session rebuilt from a
+    /// file that had no clock in it.
+    times: Vec<u32>,
     /// The two other things `Session::new` was given, kept so a saved game can
     /// be rebuilt from its file without the caller having to remember them.
     seats: u8,
@@ -372,6 +383,7 @@ impl Session {
         Session {
             state: State::new(seats, seed).with_trade_mode(mode),
             moves: Vec::new(),
+            times: Vec::new(),
             seats,
             mode,
             bots: (0..seats)
@@ -830,7 +842,7 @@ impl Session {
             if self.state.apply(forced).is_err() {
                 break;
             }
-            self.moves.push(Step::Move(forced));
+            self.record(Step::Move(forced));
             self.version += 1;
             self.note_at(
                 at,
@@ -931,7 +943,7 @@ impl Session {
             if self.state.apply(forced).is_err() {
                 return;
             }
-            self.moves.push(Step::Move(forced));
+            self.record(Step::Move(forced));
             self.version += 1;
             let what = match forced {
                 Action::EndTurn => "the turn was ended".to_string(),
@@ -982,6 +994,24 @@ impl Session {
 
     pub fn moves(&self) -> &[Step] {
         &self.moves
+    }
+
+    /// When each step landed, or empty on a game rebuilt without its clock.
+    pub fn times(&self) -> &[u32] {
+        &self.times
+    }
+
+    /// Write a step down, and when it happened.
+    ///
+    /// The one place either list grows, so they cannot fall out of step with
+    /// each other. Times that had drifted by one would be attributed to the
+    /// wrong turns, which is a wrong answer rather than a missing one.
+    fn record(&mut self, step: Step) {
+        self.moves.push(step);
+        // Saturating rather than wrapping: a game left open for seven weeks
+        // should read as a very long game, not as a very short one.
+        self.times
+            .push(self.started.elapsed().as_millis().min(u32::MAX as u128) as u32);
     }
 
     /// Play the whole game out, every seat by the table's own hand.
@@ -1067,7 +1097,7 @@ impl Session {
         if let Some(d) = self.deals.iter_mut().find(|d| d.at == Some(at)) {
             d.answers[seat as usize] = Answer::No;
         }
-        self.moves.push(Step::Passed {
+        self.record(Step::Passed {
             offer: at,
             by: seat,
         });
@@ -1107,7 +1137,7 @@ impl Session {
         if self.state.apply(action).is_err() {
             return false;
         }
-        self.moves.push(Step::Move(action));
+        self.record(Step::Move(action));
         self.version += 1;
         let phrase = match action {
             Action::Roll => rolled(&self.state),
@@ -1295,7 +1325,7 @@ impl Session {
                     self.answer(offer, HUMAN, Answer::Yes);
                 }
                 self.state.apply(action).map_err(Refused::Illegal)?;
-                self.moves.push(Step::Move(action));
+                self.record(Step::Move(action));
                 self.undo = mark;
                 self.version += 1;
                 let phrase = match action {
@@ -1386,7 +1416,7 @@ impl Session {
         let phrase = log_phrase(&action, &self.state, HUMAN as usize);
         let at = self.stamp();
         self.state.apply(action).map_err(Refused::Illegal)?;
-        self.moves.push(Step::Move(action));
+        self.record(Step::Move(action));
         self.version += 1;
         self.note_at(at, Some(HUMAN), phrase);
         self.sync_deals();
@@ -1512,7 +1542,7 @@ impl Session {
             if self.state.apply(action).is_err() {
                 break;
             }
-            self.moves.push(Step::Move(action));
+            self.record(Step::Move(action));
             self.version += 1;
             let phrase = match action {
                 Action::Roll => rolled(&self.state),
@@ -1617,7 +1647,7 @@ impl Session {
             if self.state.apply(take).is_err() {
                 return;
             }
-            self.moves.push(Step::Move(take));
+            self.record(Step::Move(take));
             self.version += 1;
             // Both halves, because a trade is two public transfers and "took an
             // offer" said neither.
@@ -1680,7 +1710,7 @@ impl Session {
         // moves nothing, so it has no move to be written down as, and without
         // this the record would replay a table that never answered.
         if said == Answer::No {
-            self.moves.push(Step::Passed {
+            self.record(Step::Passed {
                 offer: at,
                 by: seat,
             });

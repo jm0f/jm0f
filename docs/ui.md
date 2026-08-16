@@ -1313,6 +1313,17 @@ the engine has no action for it and is right not to, but it is the answer the
 whole table was waiting on and the record would tell a different story without
 it. `carranta-record` draws the same distinction.
 
+**When each step landed rides beside the moves, not inside them.** File format
+version 2 adds `at` lines, a list of milliseconds from the deal, one per step.
+Beside rather than inside for the reason the moves are what they are: a step is
+enough to rebuild the game on its own, and *when* it happened is something known
+about the step. So a version 1 file is still a whole game that simply has no
+clock, and its times read as empty rather than as zero, because "nobody knows"
+and "it took no time" are different answers and only one of them is true. A
+clock that has fallen out of step with the moves is refused outright: the wrong
+seconds on the wrong turns is a wrong answer, where none at all is a missing
+one.
+
 **A game nobody has heard of is a 404**, not a fresh board. An address that
 silently becomes a different game is worse than a dead link. Games that are not
 the live one are read-only: a POST to one is refused rather than quietly
@@ -1367,8 +1378,26 @@ mostly a set of good decisions:
   sentence-cased rather than shouted, rows that answer to the pointer. Numeric
   columns stay right-aligned: that is a column of figures whatever the design
   language says.
-- **The muted-foreground habit** for anything secondary, and long explanations
-  as a footnote ruled off below the figures rather than mixed in with them.
+- **The muted-foreground habit** for anything secondary.
+
+### Explanations are tooltips, and totals are a foot
+
+**No explanatory prose on the page.** Every rule that used to sit in a paragraph
+under a table is now on the thing it is about: a column's rule is on the column
+header, a card's is on its description line, and both wear a dotted underline so
+a reader can see there is something to hover. A note under a table is read
+through to reach the figures, or not read at all. A tooltip is one hover away
+from the reader who wants it and invisible to the one who does not. The only
+paragraphs left are answers rather than explanations, like "Nobody finished a
+turn in this game".
+
+**A totals row wherever a column has a total.** Turns, moves, time, cards
+bought, offers made, what the board paid. Not where a column has none: a
+maximum, a z-score, a rate and a diversity count do not add up, and a row that
+totalled them would be read as though they did, so those cells are a dot. The
+ratings table totals only the change, which very nearly cancels, because an
+update is a redistribution and the before and after columns are positions rather
+than quantities.
 
 ### What the report says, and what it refuses to say
 
@@ -1394,12 +1423,13 @@ is paired with an effect size.
   it says nothing about how long the game took and everything about how it was
   divided; a turn twice as wide as its neighbour had twice as much in it. There
   are no gaps between segments because play goes round the table, so no two
-  neighbours share a colour. **Length is in moves, not seconds**: a saved game
-  is a seed and a list of moves, which is everything needed to rebuild the
-  position and nothing about when each one was made. A turn counts everything
-  that landed inside it, the turn holder's or not, since a discard, a robbery
-  and an accepted offer all happen in somebody's turn. Setup placements are not
-  counted: they come before anybody has a turn to take.
+  neighbours share a colour. Beneath it, per seat: turns, moves, longest turn,
+  time and share of the bar. A turn counts everything that landed inside it,
+  the turn holder's or not, since a discard, a robbery and an accepted offer all
+  happen in somebody's turn, and the time column is wall-clock on the same
+  basis. Setup placements are left out: they come before anybody has a turn to
+  take. The time column appears only when the file has a clock in it, so a game
+  saved before version 2 shows the rest and says nothing about time.
 - **What it did to the ratings**, which is the section this page exists for.
   Before, after, and the change, per seat. A Weng-Lin Plackett-Luce update over
   the whole finishing order rather than just the winner (A-1). The figure shown
