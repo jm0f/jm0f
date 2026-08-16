@@ -63,6 +63,14 @@ body face and a quieter colour, so the mark stays the mark and the name reads
 as the answer to "which game is this". An unnamed table shows nothing rather
 than a placeholder, since a name nobody chose is worse than no name.
 
+**It has no surface of its own**, and no rule under it. It had a paler
+translucent panel with a blur behind it, which is what you build when content
+scrolls underneath; nothing scrolls here, so it was separating the title from
+the table for no reason and reading as chrome. Bare, it takes the page's own
+colour, the page's own grain and the pools of light that wash across the top of
+it, and the mark simply sits on the table like everything else that is not a
+card.
+
 **Right: reserved, empty for now.** It is where chat goes when there are real
 players. Held open deliberately rather than reclaimed and re-cut later.
 
@@ -541,17 +549,31 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 
 ## 7a. Sound
 
-**Seven sounds, and each one names an event rather than an interaction.**
+**Nine sounds, and each one names an event rather than an interaction.**
 
 | Sound | Plays when |
 |---|---|
-| `confirmation-001` | Your turn begins |
+| `jingles-hit-01` | The table is dealt |
+| `confirmation-001` | Your turn begins, and a trade is taken |
 | `dice-throw-3` | The dice are rolled, by anyone |
 | `impact-generic-light-002` | A piece goes down on the board |
 | `card-place-1` | Cards are dealt into a hand |
 | `drop-002` | An offer goes on the table |
+| `error-008` | An offer is turned down |
 | `jingles-hit-10` | The game ends and you won |
 | `jingles-hit-15` | The game ends and somebody else did |
+
+`confirmation-001` is deliberately doing two jobs, which is worth watching: a
+cue that means two things is a cue that means neither. The two are far enough
+apart in context that it reads as "something went your way" both times, but if
+it ever gets confusing the turn cue is the one to move.
+
+**The deal is the one cue that is not about you at all.** Every page plays it
+when its game begins, so when the other seats have people in them the whole
+table hears the same thing at once and knows to look up. A dealt game is a
+different seed, or a version counter that has gone back to nothing: the seed is
+the real signal since dealing is what mints one, and the version is the belt to
+its braces for a table re-dealt from a seed it was already playing.
 
 **They are played off the log, not off the clicks.** The log is the record of
 everything that happened, including everything three bots did while nobody was
@@ -583,11 +605,19 @@ reader that this was not the first payload after all: a reload onto a finished
 game played the jingle for it.
 
 So a "dealt card" is any line that puts cards into a hand: production, a card
-bought, a card stolen, a trade landing. A "placed piece" is any line that puts
-wood on the board: a settlement, a city, a road, and the robber, which is the
-militia's whole effect and a seven's. Within each group they are one event to
-the ear, and one sound saying "a piece went down" is worth more than four saying
-which piece.
+bought, a card stolen. A "placed piece" is any line that puts wood on the board:
+a settlement, a city, a road, and the robber, which is the militia's whole
+effect and a seven's. Within each group they are one event to the ear, and one
+sound saying "a piece went down" is worth more than four saying which piece.
+
+**The market is the exception, and gets three cues rather than one**, because a
+trade is a small conversation and its three moments are the ones a player most
+needs to hear from across the board: the offer going up, the yes, and the no.
+
+**The first pattern that matches a line wins**, so the specific ones come first.
+Two pairs turn on that: a trade taken is not the same event as a card being
+dealt even though a trade deals cards, and a card stolen by the robber begins
+with "Took" exactly like a trade does.
 
 **A move the clock made for you is the same move.** The log writes it as "Time
 ran out, placed a settlement for you"; the prefix is stripped before the line is

@@ -191,10 +191,16 @@
   .panel::after {
     mix-blend-mode: multiply; opacity: .13; border-radius: inherit;
   }
+  /* No surface of its own: the wordmark sits on the table like everything else
+     that is not a card. It used to have a paler translucent panel, a blur
+     behind it and a rule underneath, which made a bar across the top for a
+     page that has no bar: nothing scrolls under it, so it was separating the
+     title from the table for no reason and reading as chrome. Bare, it takes
+     the page's own colour, the page's own grain and the pools of light that
+     wash across the top of it. */
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(251, 247, 239, .78);
-    backdrop-filter: saturate(150%) blur(10px);
+    padding: 10px 16px;
     flex: none;
   }
   /* The wordmark is the one place the display face is allowed to be itself:
@@ -1608,6 +1614,7 @@ function fit(svg, frame) {
 //
 // Kenney's, CC0, carried in the binary. See `audio/SOURCES.md`.
 const SOUNDS = {
+  begin: '/sound/jingles-hit-01.mp3',
   won: '/sound/jingles-hit-10.mp3',
   lost: '/sound/jingles-hit-15.mp3',
   yours: '/sound/confirmation-001.mp3',
@@ -1615,6 +1622,8 @@ const SOUNDS = {
   place: '/sound/impact-generic-light-002.mp3',
   deal: '/sound/card-place-1.mp3',
   offer: '/sound/drop-002.mp3',
+  accept: '/sound/confirmation-001.mp3',
+  deny: '/sound/error-008.mp3',
 };
 // What each sound is for, as a test against a line of the log.
 //
@@ -1629,9 +1638,17 @@ const SOUNDS = {
 // off the front, because a move the clock made for you is the same move: it
 // writes "Time ran out, placed a settlement for you" and it should sound like a
 // settlement being placed.
+// The first pattern that matches a line wins, so the specific ones come before
+// the general ones. Two pairs depend on that: a trade taken is not the same
+// event as a card being dealt even though a trade deals cards, and a card
+// stolen by the robber says "Took" exactly like a trade does.
 const SOUND_FOR = [
   [/^rolled /i, 'roll'],
   [/^offered /i, 'offer'],
+  [/^passed on /i, 'deny'],
+  [/^declined the offers/i, 'deny'],
+  [/^took a card, unseen/i, 'deal'],
+  [/^took .* from seat \d+ for /i, 'accept'],
   [/^(placed|built) a /i, 'place'],
   [/^upgraded to a city/i, 'place'],
   [/^moved the robber/i, 'place'],
@@ -1650,6 +1667,8 @@ const sound = {
   heard: null,
   turn: null,
   ended: false,
+  seed: null,
+  version: null,
   // Whether a payload has been read at all yet. One flag for all three
   // readers, because they run in a fixed order and each was otherwise using
   // its own state as the marker: the turn reader seeded itself first, which
@@ -1708,9 +1727,27 @@ function soundTheLog(v) {
     }
   }
   // In the order they happen at a table: the dice, then whatever went down on
-  // the board, then the cards that moved because of it, then anything put up
-  // for trade afterwards.
-  ['roll', 'place', 'deal', 'offer'].forEach(n => { if (heard.has(n)) playSound(n); });
+  // the board, then the cards that moved because of it, then the market, an
+  // offer going up and the answers coming back.
+  ['roll', 'place', 'deal', 'offer', 'accept', 'deny']
+    .forEach(n => { if (heard.has(n)) playSound(n); });
+}
+
+// The table being dealt. Not about you at all: it is the one cue every seat
+// gets at the same moment, which is the point of it. Every page plays it when
+// its game begins, so when the other seats have people in them the whole table
+// hears the same thing at once and knows to look up.
+//
+// A dealt game is a different seed, or a version counter that has gone back to
+// nothing. The seed is the real signal, since dealing is what mints one; the
+// version is the belt to its braces, for a table re-dealt from a seed it was
+// already playing.
+function soundTheDeal(v) {
+  const fresh = v.seed !== sound.seed
+    || (v.version === 0 && sound.version !== null && sound.version > 0);
+  sound.seed = v.seed;
+  sound.version = v.version;
+  if (!sound.first && fresh) playSound('begin');
 }
 
 // Your turn beginning. The one cue that is about you rather than about the
@@ -1784,8 +1821,9 @@ drawSoundBtn();
 
 function render() {
   const v = view;
-  // Whose move it is, before what happened: at a table the turn passing to you
-  // comes first and the dice follow.
+  // In the order they happen at a table: the deal, then whose move it is, then
+  // what that move did.
+  soundTheDeal(v);
   soundTheTurn(v);
   soundTheLog(v);
   soundTheEnd(v);
