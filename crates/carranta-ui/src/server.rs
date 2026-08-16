@@ -175,16 +175,27 @@ impl Server {
         self.live.lock().unwrap().id.clone()
     }
 
-    /// Play whole games against nobody, and keep them.
+    /// Make sure there are at least `want` finished games to look at.
     ///
     /// The analytics are the one part of this that cannot be looked at without
     /// a finished game behind it, and playing one out by hand to see whether a
     /// table renders is a poor way to spend an afternoon. Every seat is played
     /// by the same heuristic the bots use, so these are real games rather than
     /// random legal moves: the numbers on the page mean what they would mean.
-    pub fn demo(&self, games: u32) -> Vec<String> {
+    ///
+    /// A floor rather than a count, because `./play` restarts the server on
+    /// every change pushed to the branch and hands it the same options each
+    /// time. "Play six" would play six more on every restart; "have six" is the
+    /// same request asked in a way that can be asked twice.
+    pub fn demo(&self, want: u32) -> Vec<String> {
+        let have = self
+            .store
+            .all()
+            .into_iter()
+            .filter(|g| g.winner.is_some())
+            .count() as u32;
         let mut out = Vec::new();
-        for _ in 0..games {
+        for _ in have..want {
             let (seats, seed, mode) = {
                 let live = self.live.lock().unwrap();
                 let (seats, seed, mode) = live.session.table();
@@ -770,6 +781,29 @@ mod tests {
                 "{name} is the name the page asks for"
             );
         }
+    }
+
+    #[test]
+    fn asking_for_played_games_twice_does_not_play_them_twice() {
+        // `./play` restarts on every change pushed and passes the same options
+        // back in, so this has to be a floor rather than a tally.
+        let dir = std::env::temp_dir().join(format!("carranta-demo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 1, TradeMode::Full, &dir);
+        let first = server.demo(2);
+        assert_eq!(first.len(), 2, "two were missing");
+        let again = server.demo(2);
+        assert!(again.is_empty(), "and now none are");
+        let more = server.demo(3);
+        assert_eq!(more.len(), 1, "one short of three");
+        let finished = server
+            .store()
+            .all()
+            .into_iter()
+            .filter(|g| g.winner.is_some())
+            .count();
+        assert_eq!(finished, 3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1359,8 +1359,11 @@ what make the seat-order balance mean anything.
 **The report is a document, not an application.** Everything on it settled the
 moment the game ended, so it is rendered on the server and carries no script.
 
-**`--demo N` plays N whole games into the store before the door opens**, and
-prints their addresses. The analytics are the one part of this that cannot be
+**`--demo N` makes sure there are at least N played games**, playing whatever
+is missing before the door opens, and prints their addresses. A floor rather
+than a tally, because `./play` restarts the server on every change pushed to
+the branch and hands it the same options each time: "play six" would play six
+more on every restart. The analytics are the one part of this that cannot be
 looked at without a finished game behind it, and playing one out by hand to see
 whether a table renders is a poor way to spend an afternoon. Every seat is
 played by the same heuristic the bots use, so these are real games rather than
