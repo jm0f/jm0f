@@ -11,8 +11,10 @@
 //! raw state would teach the codebase a habit the real server then has to
 //! unpick.
 
+pub mod analysis;
 pub mod game;
 pub mod json;
+pub mod report;
 pub mod server;
 pub mod store;
 pub mod view;

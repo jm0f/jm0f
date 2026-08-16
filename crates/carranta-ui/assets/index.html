@@ -298,6 +298,9 @@
   .btn-sm { padding: 2px 8px; font-size: .92em; border-radius: var(--radius-sm); }
   .btn-icon { padding: 0; width: 1.9em; height: 1.9em; }
   .btn-block { width: 100%; }
+  /* A link wearing a button's clothes takes the button's manners with it: the
+     underline is for links in a sentence, and this one is a control. */
+  a.btn { text-decoration: none; }
 
   /* ---- tag (shadcn "badge"; the name badge is already the count on a pile) */
   .tag {
@@ -3832,6 +3835,14 @@ function renderPrompt(v) {
     // The header no longer carries a new game button, so the offer to start
     // one belongs where every other decision does.
     headFor(box)(v.winner === v.you ? 'You won' : `${seatName(v, v.winner)} won`, false);
+    // What happened, before what happens next. A finished game is the one
+    // moment its analytics are worth reading, and the page they are on is a
+    // sibling of this one's address.
+    const study = document.createElement('a');
+    study.className = 'btn btn-block';
+    study.href = api('/analytics');
+    study.textContent = 'How the game went';
+    box.appendChild(study);
     const b = document.createElement('button');
     b.className = 'btn-primary btn-block';
     b.textContent = 'New game';

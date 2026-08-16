@@ -6,3 +6,7 @@
 
 # Training runs.
 /runs
+
+# Games played locally. The server writes one file per game beside
+# itself; they are somebody's afternoon, not source.
+/games

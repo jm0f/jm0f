@@ -1286,6 +1286,72 @@ them is a file drop into `art/`.
 
 ---
 
+## 12. Analytics
+
+Every game has an **address**, and its analytics are a sibling of it:
+`/<id>/` is the board, `/<id>/analytics` is the report. The root is not a game,
+it is where you go to get one: it mints a table and sends you to its address.
+
+**A game is a seed, a table and a list of steps**, written to a file after
+every move. The engine is deterministic, so those few hundred bytes are the
+whole game: replaying them rebuilds the position down to the next random number
+and the account of it down to the log line. Nothing derived is stored, because
+everything derived is regenerable (H-7), and a metric that changes is
+recomputed rather than migrated.
+
+**A step is a move or a refusal.** Turning an offer down changes no position, so
+the engine has no action for it and is right not to, but it is the answer the
+whole table was waiting on and the record would tell a different story without
+it. `carranta-record` draws the same distinction.
+
+**A game nobody has heard of is a 404**, not a fresh board. An address that
+silently becomes a different game is worse than a dead link. Games that are not
+the live one are read-only: a POST to one is refused rather than quietly
+driving whatever is being played now.
+
+### What the report says, and what it refuses to say
+
+The whole of `carranta-analytics` reads a game record, and this is that crate
+put in front of a person. §10's one rule shapes the writing throughout: **small
+n makes p-values invalid, large n makes them uninformative**, so every figure
+is paired with an effect size.
+
+- **The result**, with true points, hidden cards included (R-11.3), which is
+  not what the table could see while it was playing.
+- **What it did to the ratings**, which is the section this page exists for.
+  Before, after, and the change, per seat. A Weng-Lin Plackett-Luce update over
+  the whole finishing order rather than just the winner (A-1). The figure shown
+  is the conservative estimate, three standard deviations below the mean, and
+  beside it the games each player had behind them, because that is how much the
+  number is worth believing. Ratings are computed by replaying every recorded
+  game in order and reading the pool either side of this one: a rating is a
+  function of everything before it, so what a result did cannot be worked out
+  from the result alone.
+- **The dice**, as a roll histogram against the theoretical one and a KL
+  divergence in bits, then placed against every other game recorded here as a
+  percentile. **No p-value**, deliberately (§10.1): across enough games one in
+  twenty clears p<0.05 by construction, and those are precisely the games
+  somebody screenshots as proof of rigging. Until there is a second game the
+  percentile is withheld and says so, because a percentile of one game is not a
+  percentile.
+- **What the board paid**, decomposed (§10.2): expected production, what the
+  robber cost, what the supply denied, and the dice term, which is the only
+  genuinely random one. The dice term is also given in standard deviations,
+  which is the figure to read.
+- **The robber, the market, development cards and the opening**, as counts.
+- **Across every game here**, seat win rates, with the note that at a handful of
+  games the spread is noise.
+
+**Each seat is a rated player, not "the bot".** The three heuristics are the
+same player underneath, so their ratings should converge on each other, but a
+ranking cannot list one player three times and per-seat identities are also
+what make the seat-order balance mean anything.
+
+**The report is a document, not an application.** Everything on it settled the
+moment the game ended, so it is rendered on the server and carries no script.
+
+---
+
 ## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a

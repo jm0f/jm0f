@@ -175,6 +175,30 @@ impl Server {
         self.live.lock().unwrap().id.clone()
     }
 
+    /// A game as it stands, live or stored.
+    ///
+    /// The live one is taken from memory rather than from its file, so the
+    /// analytics of a game in progress are the analytics of the position on the
+    /// table and not of the last write.
+    fn current(&self, id: &str) -> Option<Saved> {
+        let live = self.live.lock().unwrap();
+        if live.id == id {
+            let (seats, seed, mode) = live.session.table();
+            return Some(Saved {
+                id: live.id.clone(),
+                seats,
+                seed,
+                mode,
+                name: live.session.name().to_string(),
+                dealt: live.dealt,
+                winner: live.session.winner(),
+                moves: live.session.moves().to_vec(),
+            });
+        }
+        drop(live);
+        self.store.load(id)
+    }
+
     /// A game off disk, rendered the way the live one is.
     ///
     /// Read and replayed on every request rather than cached. A game is a few
@@ -291,6 +315,37 @@ impl Server {
                     )
                 } else {
                     respond(&mut stream, 404, "text/plain", b"no such game")
+                }
+            }
+            // The analytics for one game (§10). Rendered here rather than
+            // fetched and drawn: everything on it settled the moment the game
+            // ended, so there is nothing for a script to do.
+            ("GET", "/analytics") => {
+                let id = game.clone().unwrap_or_default();
+                let Some(saved) = self.current(&id) else {
+                    return respond(&mut stream, 404, "text/plain", b"no such game");
+                };
+                // Every game here, this one included, oldest first: a rating is
+                // a function of everything before it, so what this result did
+                // cannot be worked out from this result alone.
+                let mut history = self.store.all();
+                history.reverse();
+                if !history.iter().any(|g| g.id == saved.id) {
+                    history.push(saved.clone());
+                }
+                match crate::analysis::study(&saved, &history) {
+                    Some(study) => respond(
+                        &mut stream,
+                        200,
+                        "text/html; charset=utf-8",
+                        crate::report::page(&saved, &study).as_bytes(),
+                    ),
+                    None => respond(
+                        &mut stream,
+                        500,
+                        "text/plain",
+                        b"this game and this build disagree about the rules",
+                    ),
                 }
             }
             ("GET", p) if p.starts_with("/art/") && p.ends_with(".jpg") => {

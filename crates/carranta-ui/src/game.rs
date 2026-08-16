@@ -989,6 +989,11 @@ impl Session {
     /// Returns `None` at the first move the engine refuses, which means the
     /// file and this build disagree about the rules rather than that the file
     /// is unreadable. Better to say so than to serve half a game as a whole one.
+    /// The board a table starts from, before anybody has placed anything.
+    pub fn opening(seats: u8, seed: u64, mode: TradeMode) -> State {
+        State::new(seats.clamp(3, MAX_PLAYERS as u8), seed).with_trade_mode(mode)
+    }
+
     pub fn replay(seats: u8, seed: u64, mode: TradeMode, moves: &[Step]) -> Option<State> {
         let mut state = State::new(seats.clamp(3, MAX_PLAYERS as u8), seed).with_trade_mode(mode);
         for step in moves {
