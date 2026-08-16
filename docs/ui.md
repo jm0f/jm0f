@@ -268,6 +268,21 @@ already have won. The row says so rather than letting you assume otherwise:
 every score carries the explanation, and your own says how much of it the table
 can actually see when the two differ.
 
+**Whoever is in front has their score in the accent**, and ties mark everybody
+level at the top. Colour on the number rather than a tag beside it: the standing
+is what the number already says, so it is the number that says it louder.
+
+It is decided on the **public** count for every seat, including yours, because a
+standing has to be one measurement. Marking it off whatever each row happens to
+display would put you in front on a basis nobody else at the table shares, and a
+victory-point card in your hand is exactly the thing that is not in front
+publicly. When your real total would lead and your public one does not, your own
+tooltip says so, which is the honest version of the same information.
+
+**Nobody is marked while everybody is level**, which is the whole table for the
+first few turns. Four accented numbers would announce four leaders about a game
+where the word does not apply yet.
+
 ---
 
 ## 5. Where a decision happens

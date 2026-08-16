@@ -426,6 +426,10 @@
   .seatRow .who { font-weight: 600; }
   .seatRow .vp { font-variant-numeric: tabular-nums; font-weight: 600; }
   .seatRow .vp small { color: var(--dim); font-weight: 400; }
+  /* Whoever is in front, on the count everybody can see. Colour on the number
+     itself rather than a tag or a badge beside it: the standing is what the
+     number already says, so it is the number that should say it louder. */
+  .seatRow .vp.ahead { color: var(--accent); }
   .seatRow .counts { grid-column: 2 / span 2; display: flex; flex-wrap: wrap;
                      gap: .2em .7em; color: var(--muted-foreground); font-size: .92em; }
   .seatRow .counts .left { flex-basis: 100%; }
@@ -1996,6 +2000,19 @@ function bankDev(v, exact) {
 function renderSeats(v) {
   const host = document.getElementById('seatRows');
   host.textContent = '';
+  // Who is in front, on the public count, for everybody including you.
+  //
+  // It has to be one measurement or it is not a standing: your own row shows
+  // your real total and every other row shows what the table can see, so
+  // marking the leader off the number each row happens to display would put you
+  // ahead on a basis nobody else at the table shares. A victory-point card in
+  // your hand is exactly the thing that is not in front publicly. The row's
+  // tooltip says so when the two differ.
+  const best = Math.max(...v.seats.map(s => s.vp));
+  // Nobody is in front when everybody is level, which is the whole board for
+  // the first few turns. Four accented numbers would say "these are the
+  // leaders" about a table where the word does not apply yet.
+  const shared = v.seats.every(s => s.vp === best);
   v.seats.forEach(s => {
     const row = document.createElement('div');
     row.className = 'seatRow' + (s.seat === v.toAct && v.winner === null ? ' acting' : '');
@@ -2011,16 +2028,24 @@ function renderSeats(v) {
     // which means the two numbers are not measured the same way, so the row
     // says which is which instead of letting you assume you are level.
     const vp = document.createElement('span');
-    vp.className = 'vp';
     const mine = s.seat === v.you;
+    const ahead = !shared && s.vp === best;
+    vp.className = 'vp' + (ahead ? ' ahead' : '');
     const shown = mine ? v.yourVp : s.vp;
     vp.innerHTML = `${shown} <small>vp</small>`;
     vp.setAttribute('tabindex', '0');
+    // Three things the number might need to explain, in the order they matter:
+    // that it is your hidden total, that you are ahead on cards the table
+    // cannot see, and what the count means at all.
+    const hidden = mine && v.yourVp > s.vp;
     vp.setAttribute('data-tip', mine
-      ? (v.yourVp > s.vp
-        ? `your real total. The table can only see ${s.vp}. The rest is in victory-point cards nobody else can count`
-        : 'your total, all of it public')
-      : 'public points only. Victory-point cards in hand are not counted until the game ends');
+      ? (hidden
+        ? `your real total. The table can only see ${s.vp}, so the lead is marked on that`
+          + `${v.yourVp > best ? ', and you are in front on points nobody else can count' : ''}`
+          + '. The rest is in victory-point cards'
+        : `your total, all of it public${ahead ? '. You are in front' : ''}`)
+      : `public points only. Victory-point cards in hand are not counted until the game ends`
+        + `${ahead ? '. Ahead on what can be seen' : ''}`);
 
     const counts = document.createElement('span');
     counts.className = 'counts';
