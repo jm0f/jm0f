@@ -1389,11 +1389,16 @@ can see there is something to hover. A note under a table is read through to
 reach the figures, or not read at all; a tooltip is one hover from the reader
 who wants it and invisible to the one who does not.
 
-The subtitle under a heading survives on exactly two cards, the dice and the
-robber, because on those it carries a figure no table holds. A sentence
-describing a card the reader is already looking at is a sentence they read to
-learn nothing. The only paragraphs left anywhere are answers rather than
-explanations, like "Nobody finished a turn in this game".
+There is no subtitle anywhere. A sentence describing a card the reader is
+already looking at is a sentence they read to learn nothing, and a sentence
+carrying a figure is a figure that belongs in a table, so the three that carried
+figures were folded into theirs: the dice card gained a deviation, percentile
+and games-compared row beneath its histogram, the robber card a moved and
+found-nothing row beneath its grid, and the corpus card games and won columns
+beside its win rate. Figures that belong to nobody's row get their own small
+table rather than a sentence over the one above. The only paragraphs left
+anywhere are answers rather than explanations, like "Nobody finished a turn in
+this game".
 
 **A seat wears its colour, immediately left of its name, in every table.** The
 same mark the board plays in, in the same place every time, so a row can be
@@ -1419,7 +1424,7 @@ put in front of a person. §10's one rule shapes the writing throughout: **small
 n makes p-values invalid, large n makes them uninformative**, so every figure
 is paired with an effect size.
 
-- **The result**, broken into what scored. The five things that do (R-11.3),
+- **Result**, broken into what scored. The five things that do (R-11.3),
   each as how many were held with what they were worth in brackets, so the
   bracketed figures add across to the total: a settlement one, a city two, each
   tile two, each victory point card one, and a road nothing however many there
@@ -1427,16 +1432,18 @@ is paired with an effect size.
   a different number, since a settlement upgraded to a city stopped being a
   settlement and was still built. The total is the true one, hidden cards
   included, which is not what the table could see while it was playing.
-- **The turns**, per seat: turns, moves, longest turn, time and share of the
-  game's moves. A turn is what falls between two ends of turn, and it counts
-  everything that landed inside it, the turn holder's or not, since a discard, a
-  robbery and an accepted offer all happen in somebody's turn; the time column
-  is wall-clock on the same basis. Setup placements are left out: they come
-  before anybody has a turn to take. The time column appears only when the file
-  has a clock in it, so a game saved before version 2 shows the rest and says
-  nothing about time.
-- **What it did to the ratings**, which is the section this page exists for.
-  Before, after, and the change, per seat. A Weng-Lin Plackett-Luce update over
+- **Turns**, per seat: turns, time, and share of the game's time. A turn is
+  what falls between two ends of turn, and it counts everything that landed
+  inside it, the turn holder's or not, since a discard, a robbery and an
+  accepted offer all happen in somebody's turn; the time is wall-clock on the
+  same basis. Setup placements are left out: they come before anybody has a turn
+  to take. Time and share appear only when the file has a clock in it, so a game
+  saved before version 2 shows its turn counts and says nothing about time.
+- **Ratings**, which is the section this page exists for. Before, after, the
+  change, and the total games each player has been rated on here, this one
+  included. No totals row: before and after are positions rather than
+  quantities, four players' games played is not a number of anything, and the
+  changes do not cancel exactly enough for their sum to be worth printing. A Weng-Lin Plackett-Luce update over
   the whole finishing order rather than just the winner (A-1). The figure shown
   is the conservative estimate, three standard deviations below the mean, and
   beside it the games each player had behind them, because that is how much the
