@@ -185,6 +185,10 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.str("clock", session.clock().name());
     j.int("clockSecs", session.clock().secs() as i64);
     j.int("clockIncrement", session.clock().increment() as i64);
+    // The seven's own allowance, and what is left of it. Null when nothing is
+    // being discarded, which is also what says the turn clock is running again.
+    j.int("discardSecs", session.discard_secs() as i64);
+    j.opt_int("discardLeft", session.discard_left());
     j.str("youName", session.name());
     j.str("game", session.game());
     j.int("turns", session.turn_no() as i64);

@@ -14,7 +14,7 @@ use carranta_core::state::TradeMode;
 
 use carranta_core::action::Illegal;
 
-use crate::game::{Clock, Pace, Refused, Session};
+use crate::game::{Clock, DEFAULT_DISCARD_SECS, Pace, Refused, Session};
 use crate::json;
 use crate::view;
 
@@ -279,6 +279,13 @@ impl Server {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0);
                 let clock = Clock::parse(param(query, "clock").as_deref(), secs, increment);
+                // The discard has an allowance of its own, because a seven is
+                // an interruption and not part of anybody's turn. Zero is no
+                // limit, and an absent parameter means the default rather than
+                // none: a lobby that does not mention it still wants one.
+                let discard_secs: u64 = param(query, "discardSecs")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(DEFAULT_DISCARD_SECS);
                 let name = param(query, "name").unwrap_or_default();
                 let log_shown = param(query, "log").as_deref() != Some("off");
                 let public = wants_public(query);
@@ -294,6 +301,7 @@ impl Server {
                     .with_game(&decode(&game))
                     .with_pace(pace)
                     .with_bank_exact(bank_exact)
+                    .with_discard_secs(discard_secs)
                     .with_name(&decode(&name));
                 let payload = view::render(&session);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())

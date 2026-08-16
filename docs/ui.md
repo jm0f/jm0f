@@ -201,7 +201,10 @@ to carry a noun and a number, counted by looking exactly as the dock asks, so a
 reader scanning a turn sees colours rather than a wall of words. Past what can
 be told apart at that size the number comes back, because a fan nobody can
 count is worse than the digit it replaced. The roll shows its two dice instead
-of writing them in brackets.
+of writing them in brackets. **A development card is drawn as the bank draws
+it**, the orange back with its white disc: buying one and the deck it came off
+should be recognisably the same card, and "a development card" was the last
+card-shaped thing in the log still being spelled out.
 
 **A handful of discards is one line.** The engine discards one card at a time,
 so handing four back was four lines saying almost the same thing; what happened
@@ -410,6 +413,26 @@ they are waiting on you. Nothing about that wait is charged to you: it runs
 against the clock of whoever holds the turn, and when their turn runs out the
 offers die with it (§8).
 
+**Every offer put to you shows, including the ones you cannot cover.** Two
+different things used to look identical from the outside, and only one of them
+was correct:
+
+- An offer made by a passive player on somebody else's turn is addressed to the
+  active player alone (R-7.3). It is not yours to answer and there is nothing to
+  show. This is right and stays.
+- An offer that *was* put to you but that you cannot cover is a question. It
+  used to be silently invisible, because the whole card was keyed on what you
+  could accept: no accept, so no card, no explanation, and no way to say no. The
+  table then waited on an answer you had no means of giving.
+
+So the card is keyed on **whether you were asked**, which is a rule about seats
+and not about hands, and the accept button on whether you can cover it. One you
+cannot cover says "you cannot cover this" and can still be turned down. Saying
+why it cannot be covered is safe here and only here: it is your own hand.
+
+The two are still distinguishable at a glance, because an offer nobody put to
+you never appears at all.
+
 **A beat is spent on a move, never on looking for one.** Bots share one pace
 gate for everything they do, moving and answering the market alike, so the two
 read as one table thinking at one speed. That means settling the market has to
@@ -418,6 +441,20 @@ the beat whether or not there was a trade to make, and an offer nobody wants
 sits on the table for the rest of the turn: every tick went on a trade that was
 never going to happen, the seat whose turn it was never got a beat to move in,
 and the table stopped dead with its clock at zero.
+
+### An offer is shown in cards
+
+**The trade is drawn, not written.** "1 wood for 2 wheat" has to be read and
+then matched against a hand that is drawn as cards a few inches below it. The
+cards are the game's own word for a resource and they are already on the screen
+twice over, in the dock and on the board, so an offer said in them is taken in
+at a glance rather than parsed.
+
+**Every way out of the card sits in one row along its foot.** Accept, counter
+and no thanks used to be in three places: two inline against the offer they
+belonged to, one alone under a rule. That let the row's width decide whether the
+buttons wrapped under the sentence, and it read as three unrelated controls
+rather than as the set of answers to one question.
 
 ### The round of replies
 
@@ -648,6 +685,32 @@ fails the suite rather than quietly stalling a game.
 **The forfeit draws from its own generator**, seeded from the game's seed but
 separate from it, so a forced move never disturbs the dice or the deck, and the
 same seed with the same timings forfeits the same way.
+
+### A seven has a clock of its own
+
+**The discard is not part of anybody's turn, so it does not spend one.** It
+stops the player who rolled from playing, and it asks everyone else for cards on
+a turn that is not theirs. Charging it to the turn punished the roller for the
+dice; charging it to whoever owes cards would be a second clock on people who
+are not playing. So it is neither: **a short fixed window belonging to the seven
+itself**, set in the lobby, ten seconds by default, with the turn clock held
+while it runs and resumed where it stopped.
+
+It is set even when there is no turn clock. A table can reasonably want the
+discard bounded and the turns not. Zero is no limit.
+
+**Run it out and the cards are picked at random**, for everyone still owing
+them. This is the one place a clock takes cards out of a hand, and it is
+justified the same way every other forfeit is: a discard cannot be declined and
+the position is illegal until it is done, so the choice is between choosing
+badly for someone and the game stopping on them.
+
+The countdown shows on the discard card and not beside the turn clock, which is
+held while it runs: two numbers counting in the same corner where only one is
+moving reads as a fault. It is driven by the page's own one-second tick rather
+than by the payload, because a wait is exactly the state in which no new payload
+arrives, and a number that only moved when the game did would sit still through
+the seconds it is counting.
 
 ### The clock belongs to the turn
 

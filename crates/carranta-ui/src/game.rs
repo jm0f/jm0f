@@ -16,6 +16,13 @@ use carranta_record::fog::{Fog, Viewer, fog};
 /// The seat a person plays.
 pub const HUMAN: u8 = 0;
 
+/// How long a seven's discard gets when the lobby does not say otherwise.
+///
+/// Short, because it is an interruption rather than a turn: everyone else is
+/// waiting on it, the decision is small, and the hand is laid out to choose
+/// from. Ten seconds is long enough to read a hand of eight and pick four.
+pub const DEFAULT_DISCARD_SECS: u64 = 10;
+
 /// A seed as something a person can read out loud, copy, or type back in.
 ///
 /// Base 36 rather than decimal, grouped, because twenty digits in a row cannot
@@ -126,6 +133,16 @@ pub struct LogLine {
 /// the vertex or edge. The history does not: the board already shows where the
 /// road went, and "Build road at 68" asks the reader to hold a number that
 /// means nothing to them.
+/// A log phrase with its first letter dropped to lower case, for the middle of
+/// a sentence: "Time ran out, discarded a wheat for you".
+fn lower_first(t: String) -> String {
+    let mut c = t.chars();
+    match c.next() {
+        Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
+        None => t,
+    }
+}
+
 fn log_phrase(a: &Action, state: &State, seat: usize) -> String {
     match *a {
         Action::PlaceSettlement(_) => "Placed a settlement".to_string(),
@@ -269,6 +286,21 @@ pub struct Session {
     turn_began: std::time::Instant,
     /// When time was last charged to anyone. Moves on at every settle.
     last_settle: std::time::Instant,
+    /// How long a seven's discard gets, in seconds. Its own allowance, because
+    /// it is not part of anybody's turn: see `discard_left`.
+    discard_secs: u64,
+    /// When the discard now owed began, if one is owed.
+    discard_at: Option<std::time::Instant>,
+    /// How long this turn has been held while discards were owed, so the turn
+    /// clock can be paused for them and resumed where it stopped. Reset when
+    /// the turn is.
+    turn_paused: std::time::Duration,
+    /// How much of that hold has already been taken off a seat's account.
+    ///
+    /// Two questions, and one accumulator cannot answer both: a per-turn
+    /// allowance wants every pause since the turn began, and a chess bank wants
+    /// only the pause since the last settle. This is the mark between them.
+    paused_settled: std::time::Duration,
     /// Whose turn it is: what the turn counter and the log group by, and whose
     /// clock is running. There used to be a second field beside this one for
     /// the clock's owner, on the theory that an unanswered offer is charged to
@@ -343,6 +375,10 @@ impl Session {
             clock: Clock::Off,
             turn_began: std::time::Instant::now(),
             last_settle: std::time::Instant::now(),
+            discard_secs: DEFAULT_DISCARD_SECS,
+            discard_at: None,
+            turn_paused: std::time::Duration::ZERO,
+            paused_settled: std::time::Duration::ZERO,
             turn_holder: HUMAN,
             turn_at: std::time::Instant::now(),
             spent: [std::time::Duration::ZERO; MAX_PLAYERS],
@@ -377,9 +413,74 @@ impl Session {
         let now = std::time::Instant::now();
         self.turn_began = now;
         self.last_settle = now;
+        self.turn_paused = std::time::Duration::ZERO;
+        self.paused_settled = std::time::Duration::ZERO;
         self.turn_holder = self.state.decider();
         self.turn_at = now;
         self
+    }
+
+    /// How long a seven's discard gets. Zero is no limit.
+    pub fn with_discard_secs(mut self, secs: u64) -> Self {
+        self.discard_secs = secs;
+        self
+    }
+
+    pub fn discard_secs(&self) -> u64 {
+        self.discard_secs
+    }
+
+    /// Seconds left to discard, or `None` when nothing is being discarded.
+    ///
+    /// Its own allowance, separate from every turn clock, because a seven is
+    /// not part of anybody's turn. It interrupts the turn holder, who did
+    /// nothing but roll, and it asks the other players for something on a turn
+    /// that is not theirs. Charging it to the turn punished the roller for the
+    /// dice; charging it to the players who owe cards would have been a second
+    /// clock on people who are not playing. So it is neither: a short fixed
+    /// window belonging to the seven itself, with the turn clock held while it
+    /// runs.
+    pub fn discard_left(&self) -> Option<i64> {
+        let at = self.discard_at?;
+        if self.discard_secs == 0 {
+            return None;
+        }
+        Some(self.discard_secs as i64 - at.elapsed().as_secs() as i64)
+    }
+
+    /// Whether a discard is being waited on right now.
+    pub fn discarding(&self) -> bool {
+        self.discard_at.is_some()
+    }
+
+    /// How long this turn's clock has been held, including the hold running now.
+    fn paused(&self) -> std::time::Duration {
+        self.turn_paused
+            + self
+                .discard_at
+                .map_or(std::time::Duration::ZERO, |t| t.elapsed())
+    }
+
+    /// Of that, how much has not yet been taken off anybody's account.
+    fn paused_unsettled(&self) -> std::time::Duration {
+        self.paused().saturating_sub(self.paused_settled)
+    }
+
+    /// Start or finish holding the turn clock, following the phase.
+    ///
+    /// Called after anything that could change it. Entering the discard stops
+    /// the turn clock where it stands; leaving it adds the held time to the
+    /// turn's account so the allowance resumes rather than restarting.
+    fn follow_discard(&mut self) {
+        let owed = matches!(self.state.phase, Phase::Discard);
+        match (owed, self.discard_at) {
+            (true, None) => self.discard_at = Some(std::time::Instant::now()),
+            (false, Some(at)) => {
+                self.turn_paused += at.elapsed();
+                self.discard_at = None;
+            }
+            _ => {}
+        }
     }
 
     /// Name the person at this browser. Empty falls back rather than showing a
@@ -551,7 +652,10 @@ impl Session {
 
     /// Wave away every offer currently open, as declining does.
     fn decline_open_offers(&mut self) {
-        for i in self.open_offers() {
+        // Everything put to you, not only what you could have taken: turning
+        // down an offer you cannot cover is the same answer and the table needs
+        // it just as much.
+        for i in self.offers_to_me() {
             self.answer(i, HUMAN, Answer::No);
         }
     }
@@ -563,11 +667,19 @@ impl Session {
         // Charged to whoever's turn it is, which is the only seat a clock ever
         // runs against. Read before the turn changes hands below, so the time
         // lands on the player who spent it rather than on the next one.
+        //
+        // Less whatever of the stretch went on a discard: the seven's own
+        // allowance covers that, and the turn holder is not paying for it.
+        //
+        // Before the turn boundary below, so a hold that has just ended is
+        // credited against the turn it interrupted and not the next one.
+        self.follow_discard();
         let owner = self.turn_holder as usize;
         if owner < MAX_PLAYERS {
-            self.spent[owner] += now - self.last_settle;
+            self.spent[owner] += (now - self.last_settle).saturating_sub(self.paused_unsettled());
         }
         self.last_settle = now;
+        self.paused_settled = self.paused();
 
         // A turn is everything between one player ending theirs and the next
         // player ending theirs, and a placement in the deal is a turn of its
@@ -623,15 +735,23 @@ impl Session {
             self.turn_holder = deciding;
             self.turn_at = now;
             self.turn_began = now;
+            // A fresh turn owes nothing to the last one's interruptions, and a
+            // hold still running belongs to the turn that is starting.
+            self.turn_paused = std::time::Duration::ZERO;
+            self.paused_settled = std::time::Duration::ZERO;
             self.turns += 1;
         }
     }
 
-    /// Time a seat has used, including the stretch not yet settled.
+    /// Time a seat has used, including the stretch not yet settled and less
+    /// whatever of it went on waiting for a discard, which is nobody's turn.
     fn used(&self, seat: u8) -> std::time::Duration {
         let mut d = self.spent[seat as usize];
         if seat == self.turn_holder {
-            d += self.last_settle.elapsed();
+            d += self
+                .last_settle
+                .elapsed()
+                .saturating_sub(self.paused_unsettled());
         }
         d
     }
@@ -645,7 +765,10 @@ impl Session {
         match self.clock {
             Clock::Off => None,
             Clock::PerTurn(n) => Some(if seat == self.turn_holder {
-                n as i64 - self.turn_began.elapsed().as_secs() as i64
+                // Less the time held for a discard: a seven interrupts the turn
+                // holder, who did nothing to deserve it but roll.
+                let spent = self.turn_began.elapsed().saturating_sub(self.paused());
+                n as i64 - spent.as_secs() as i64
             } else {
                 n as i64
             }),
@@ -658,6 +781,50 @@ impl Session {
         self.time_left(seat).is_some_and(|t| t <= 0)
     }
 
+    /// Discard for whoever ran out of time to do it themselves.
+    ///
+    /// The one place a clock takes cards out of a hand. A discard cannot be
+    /// passed: the rules give no way to decline it and the position is illegal
+    /// until it is done, so the alternative to choosing badly for someone is
+    /// the game stopping on them. Random and stated is the lesser of those.
+    ///
+    /// Drawn from the forfeit's own generator, like every other forced move, so
+    /// the same seed with the same timings discards the same cards.
+    fn enforce_discard(&mut self) {
+        if self.discard_secs == 0 || !self.discarding() {
+            return;
+        }
+        if self.discard_left().is_some_and(|t| t > 0) {
+            return;
+        }
+        let mut buf = Vec::new();
+        // Every discard still owed, by everyone who owes one: the seven is over
+        // when the table has paid for it, not when one player has.
+        for _ in 0..64 {
+            if !matches!(self.state.phase, Phase::Discard) {
+                break;
+            }
+            let seat = self.state.decider();
+            let at = self.stamp();
+            self.state.legal_into(&mut buf);
+            if buf.is_empty() {
+                break;
+            }
+            let forced = buf[self.forfeit.below(Stream::Steal, buf.len() as u32) as usize];
+            let phrase = log_phrase(&forced, &self.state, seat as usize);
+            if self.state.apply(forced).is_err() {
+                break;
+            }
+            self.version += 1;
+            self.note_at(
+                at,
+                Some(seat),
+                format!("Time ran out, {}", lower_first(phrase)),
+            );
+        }
+        self.finish_move();
+    }
+
     /// End a turn whose clock has run out.
     ///
     /// Enforced lazily, on the way in to a request, because a server that only
@@ -665,6 +832,7 @@ impl Session {
     /// turn that could legally be ended. A clock should not be able to skip a
     /// setup placement or a discard, which would leave the position illegal.
     pub fn enforce_clock(&mut self) {
+        self.enforce_discard();
         if self.clock == Clock::Off {
             return;
         }
@@ -675,6 +843,13 @@ impl Session {
             // The clock belongs to the turn, so it is the turn holder's
             // allowance that says whether time is up, whoever happens to be
             // deciding at this instant.
+            // A discard has an allowance of its own, and `enforce_discard` is
+            // what spends it. The turn clock is held while one is owed, so it
+            // must not reach past the hold and force the same cards on a
+            // different timer.
+            if self.discarding() {
+                return;
+            }
             let holder = self.on_clock();
             if !self.out_of_time(holder) {
                 return;
@@ -730,19 +905,12 @@ impl Session {
                 return;
             }
             self.version += 1;
-            let lower = |t: String| {
-                let mut c = t.chars();
-                match c.next() {
-                    Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
-                    None => t,
-                }
-            };
             let what = match forced {
                 Action::EndTurn => "the turn was ended".to_string(),
-                Action::Roll => format!("{} for you", lower(rolled(&self.state))),
+                Action::Roll => format!("{} for you", lower_first(rolled(&self.state))),
                 other => format!(
                     "{} for you",
-                    lower(log_phrase(&other, &self.state, HUMAN as usize))
+                    lower_first(log_phrase(&other, &self.state, HUMAN as usize))
                 ),
             };
             self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
@@ -802,7 +970,12 @@ impl Session {
                 })
             })
             .collect();
-        if !out.is_empty() {
+        // Saying no is offered for anything put to you, not only for what you
+        // could say yes to. An offer you cannot cover is still a question, and
+        // one you can neither take nor turn down is a question with no answer:
+        // it sat there invisible, and the table waited on it until the turn ran
+        // out.
+        if !self.offers_to_me().is_empty() {
             out.push(Choice::Decline);
         }
         out
@@ -848,6 +1021,35 @@ impl Session {
 
     /// Offers the human could take and has not already waved away.
     fn open_offers(&self) -> Vec<u8> {
+        self.offers_to_me()
+            .into_iter()
+            .filter(|&i| {
+                let mut probe = self.state;
+                probe
+                    .apply(Action::AcceptTrade {
+                        offer: i,
+                        by: HUMAN,
+                    })
+                    .is_ok()
+            })
+            .collect()
+    }
+
+    /// Offers the human was *asked* about and has not answered, whether or not
+    /// they can cover them.
+    ///
+    /// Not the same list as `open_offers`, and the difference was a bug worth
+    /// naming. An offer you cannot afford is still a question put to you: it
+    /// has to appear, say that you cannot cover it, and let you say no. Keying
+    /// the whole card on what you could accept meant an offer you could not
+    /// afford was silently invisible, which reads exactly like the game
+    /// dropping trades on the floor.
+    ///
+    /// Whether you were asked at all is R-7.3 and nothing to do with your hand:
+    /// a passive player's offer goes to the active player alone, so on a bot's
+    /// turn another bot's offer is genuinely not yours to answer, and no card
+    /// for that one is right.
+    fn offers_to_me(&self) -> Vec<u8> {
         if self.state.trade_mode == TradeMode::Disabled {
             return Vec::new();
         }
@@ -862,13 +1064,8 @@ impl Session {
                     .is_none_or(|d| d.answers[HUMAN as usize] == Answer::Waiting)
             })
             .filter(|&i| {
-                let mut probe = self.state;
-                probe
-                    .apply(Action::AcceptTrade {
-                        offer: i,
-                        by: HUMAN,
-                    })
-                    .is_ok()
+                self.state
+                    .may_accept(HUMAN as usize, &self.state.offers[i as usize])
             })
             .collect()
     }
@@ -2647,6 +2844,172 @@ mod tests {
             s.log().iter().any(|l| l.text.contains("declined")),
             "and the log says the clock did it"
         );
+    }
+
+    /// Play until the human owes cards to a seven, on the clocks given.
+    fn table_owing_a_discard(clock: Clock, discard: u64) -> Option<Session> {
+        for seed in 0..60u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full)
+                .with_clock(clock)
+                .with_discard_secs(discard);
+            for _ in 0..400 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                if matches!(s.state.phase, Phase::Discard) && s.state.decider() == HUMAN {
+                    return Some(s);
+                }
+                let v = s.version();
+                if s.act(0, v).is_err() {
+                    break;
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn a_discard_holds_the_turn_clock_rather_than_spending_it() {
+        // A seven is an interruption, not a turn. It stops the player who rolled
+        // from playing and asks everyone else for cards on a turn that is not
+        // theirs, so the turn's allowance is held while it is answered. Before
+        // this the roller paid for the dice: a table that took ten seconds over
+        // its discards took them out of the roller's minute.
+        let mut s = table_owing_a_discard(Clock::PerTurn(60), 30)
+            .expect("some seed rolls a seven onto the human");
+        let holder = s.on_clock();
+        let before = s.time_left(holder).expect("a clock");
+        assert!(s.discarding(), "a discard is owed");
+
+        std::thread::sleep(std::time::Duration::from_millis(1_400));
+        assert_eq!(
+            s.time_left(holder),
+            Some(before),
+            "the turn clock is held while the table discards"
+        );
+        // And the seven's own allowance is the one running.
+        let left = s.discard_left().expect("a discard clock");
+        assert!(left < 30, "the discard's own clock is counting: {left}");
+
+        // Finishing it starts the turn clock again from where it stopped,
+        // rather than from the beginning.
+        while matches!(s.state.phase, Phase::Discard) && s.state.decider() == HUMAN {
+            let v = s.version();
+            if s.act(0, v).is_err() {
+                break;
+            }
+        }
+        assert!(!s.discarding(), "the discard is done");
+        assert!(
+            s.time_left(s.on_clock()).is_some_and(|t| t <= before),
+            "the turn clock resumes rather than refilling"
+        );
+    }
+
+    #[test]
+    fn a_discard_nobody_makes_in_time_is_made_at_random() {
+        // The one place a clock takes cards out of a hand. A discard cannot be
+        // declined and the position is illegal until it is done, so the choice
+        // is between choosing badly for someone and the game stopping on them.
+        let mut s = table_owing_a_discard(Clock::PerTurn(60), 1).expect("some seed rolls a seven");
+        let held: u8 = s.state.hand[HUMAN as usize].iter().sum();
+        assert!(s.discarding());
+
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(s.discard_left().is_some_and(|t| t <= 0), "time is up");
+        s.enforce_clock();
+
+        assert!(!s.discarding(), "the seven is settled");
+        assert!(
+            s.state.hand[HUMAN as usize].iter().sum::<u8>() < held,
+            "and the cards went back"
+        );
+        assert!(
+            s.log()
+                .iter()
+                .any(|l| l.text.contains("Time ran out") && l.text.contains("discarded")),
+            "and the log says the clock did it"
+        );
+    }
+
+    #[test]
+    fn an_untimed_discard_waits_however_long_it_takes() {
+        // Zero seconds is no limit, which a table may reasonably want. Nothing
+        // is forced and nothing is counted.
+        let mut s = table_owing_a_discard(Clock::PerTurn(60), 0)
+            .expect("some seed rolls a seven onto the human");
+        assert_eq!(s.discard_left(), None, "no allowance to report");
+        let hand = s.state.hand[HUMAN as usize];
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        s.enforce_clock();
+        assert_eq!(
+            s.state.hand[HUMAN as usize], hand,
+            "nothing is taken from a discard that was never on a clock"
+        );
+    }
+
+    #[test]
+    fn an_offer_you_cannot_cover_can_still_be_turned_down() {
+        // Reported as "often I don't see the trading modals". Two different
+        // things looked the same from the outside. An offer made on somebody
+        // else's turn by a passive player is not yours to answer at all
+        // (R-7.3), and showing nothing for it is right. An offer that *was* put
+        // to you but that you cannot cover is a question, and it was silently
+        // invisible: the card was keyed on what you could accept, so with
+        // nothing acceptable there was no card, no explanation and no way to
+        // say no. The table then waited on an answer you had no way to give.
+        let mut found = None;
+        'seeds: for seed in 0..120u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..300 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                let asked = s.offers_to_me();
+                if !asked.is_empty() && s.open_offers().is_empty() {
+                    found = Some(s);
+                    break 'seeds;
+                }
+                let v = s.version();
+                if s.act(0, v).is_err() {
+                    break;
+                }
+            }
+        }
+        let mut s = found.expect("some seed puts an unaffordable offer to the human");
+
+        assert!(
+            s.choices().contains(&Choice::Decline),
+            "an offer you were asked about can always be turned down"
+        );
+        // By value rather than by index: declining lets the bots play on, and
+        // what they do next can put new offers on the table. Those are new
+        // questions and being asked them again is right.
+        let asked: Vec<Offer> = s
+            .offers_to_me()
+            .into_iter()
+            .map(|i| s.state.offers[i as usize])
+            .collect();
+        assert!(!asked.is_empty());
+        let i = s
+            .choices()
+            .iter()
+            .position(|c| *c == Choice::Decline)
+            .expect("the decline is on the list");
+        let v = s.version();
+        s.act(i, v).expect("declining is a legal answer");
+
+        let still: Vec<Offer> = s
+            .offers_to_me()
+            .into_iter()
+            .map(|i| s.state.offers[i as usize])
+            .collect();
+        for o in &asked {
+            assert!(
+                !still.contains(o),
+                "declining answers everything that was put to you"
+            );
+        }
     }
 
     #[test]

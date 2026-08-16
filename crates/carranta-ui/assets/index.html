@@ -801,8 +801,12 @@
   .copyRow .unit { color: var(--muted-foreground); font-size: 12px; }
   .copyRow.spent { opacity: .45; }
   /* Two numbers that belong to one setting, so they sit on one line. */
-  .clockFields { display: flex; gap: 10px; margin-top: 6px; }
+  .clockFields { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
   .clockFields .copyRow { flex: 1; min-width: 0; }
+  /* The discard is not another number for the turn clock, it is a setting of
+     its own that happens to live under it, so it takes its own line rather than
+     squeezing in beside one and losing a digit to the narrowing. */
+  #lobbyDiscardRow { flex: 1 0 100%; }
   .seed:disabled { cursor: default; }
   .seatSlot input.slotName { flex: 1; min-width: 0; }
   .fieldLabel[data-tip] { cursor: help; text-decoration: underline dotted;
@@ -866,6 +870,11 @@
   .discardGrid .name { flex: 1; }
   .discardTally { margin-top: 8px; color: var(--muted-foreground); font-size: 12px;
                   text-transform: uppercase; letter-spacing: .06em; }
+  /* The seven's own allowance, on the card spending it. Quiet until it is
+     nearly gone, when it is the only thing on the card that matters. */
+  .discardClock { margin: 0 0 8px; color: var(--muted-foreground); font-size: 12px;
+                  font-variant-numeric: tabular-nums; }
+  .discardClock.soon { color: var(--accent); font-weight: 600; }
   /* The bank and the ports, inside the composer rather than beside it. */
   .bankRow { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); }
   .bankRow .sideLabel { display: block; margin-bottom: 6px; }
@@ -883,8 +892,16 @@
   .row.on .name { color: var(--ink); font-weight: 600; }
   .row.off .name { color: var(--dim); }
   .offer { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
-  .offer .who { flex: 1; }
+  .offer .who { flex: 1; line-height: 1.9; }
   .offer .addressed { color: #b45309; }
+  /* The cards an offer is made of, sitting on the line of text that names it.
+     Slightly overlapped, the way a held stack is, so three of a kind reads as
+     three cards and not as one wide one. */
+  .cardRun { display: inline-flex; vertical-align: -.42em; margin: 0 .12em; }
+  .cardRun .rcard.mini + .rcard.mini { margin-left: -.42em; }
+  /* Every answer to the card, in one row along its foot. */
+  .offerActions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .offerActions button { flex: 1 1 auto; justify-content: center; text-align: center; }
   /* The round of replies to one offer. Small and quiet: it is the state of a
      question, not another thing to answer, so it sits under the offer at the
      weight of a caption. */
@@ -986,6 +1003,15 @@
           <div class="copyRow" id="lobbyClockIncRow">
             <input id="lobbyClockInc" class="seed" type="number" min="0" max="600" step="1">
             <span class="unit">back per turn</span>
+          </div>
+          <!-- The seven's own allowance. It sits under the turn clock because
+               that is what it interrupts, and it is set even when there is no
+               turn clock: a table can want the discard bounded and the turns
+               not. -->
+          <div class="copyRow" id="lobbyDiscardRow">
+            <input id="lobbyDiscard" class="seed" type="number" min="0" max="600" step="5"
+                   data-tip="How long a seven gives each player to choose what to hand back. The turn clock is held while it runs. Run it out and the cards are picked at random. Zero for no limit.">
+            <span class="unit">to discard on a seven</span>
           </div>
         </div>
       </div>
@@ -2315,6 +2341,22 @@ function tickClock() {
     turns.textContent = !clockDown ? 'elapsed'
       : clockSetup ? `setup ${clockTurns}` : `turn ${clockTurns}`;
   }
+  tickDiscard();
+}
+
+// The seven's clock, counted down on this same second rather than on the
+// payload. A discard is a wait: nothing changes on the server while it runs, so
+// there is no new payload to redraw from, and a number that only moved when the
+// game did would sit still through the very seconds it is counting.
+function tickDiscard() {
+  const el = document.getElementById('discardClock');
+  if (!el || !view) return;
+  const from = view.discardLeft;
+  if (from === null || from === undefined) return;
+  const gone = Math.floor((Date.now() - clockAt) / 1000);
+  const left = Math.max(0, from - gone);
+  el.classList.toggle('soon', left <= 3);
+  el.textContent = left === 1 ? '1 second left' : `${left} seconds left`;
 }
 setInterval(tickClock, 1000);
 
@@ -2355,6 +2397,10 @@ const MODE_NOTE = {
 };
 const CLOCK_DEFAULT = { turn: 60, chess: 120 };
 const INCREMENT_DEFAULT = 45;
+// Matches DEFAULT_DISCARD_SECS in the session. Short, because a seven is an
+// interruption: everyone else is waiting, the decision is small, and the hand
+// is laid out to choose from.
+const DEFAULT_DISCARD_SECS = 10;
 const CLOCK_NOTE = {
   turn: 'A fresh allowance every turn. Run it out and your turn is ended for '
       + 'you, rolling first if the dice have not been thrown, since a turn '
@@ -2410,6 +2456,8 @@ const lobby = {
   clockInc: INCREMENT_DEFAULT,
   log: true,
   clockSecs: 60,
+  // A seven is an interruption, not a turn, so it gets its own short window.
+  discardSecs: DEFAULT_DISCARD_SECS,
   seed: '',
   name: '',
 };
@@ -2656,6 +2704,9 @@ function renderLobby() {
   // when one is chosen.
   document.getElementById('lobbyClockIncRow').hidden = lobby.clockKind !== 'chess';
   document.getElementById('lobbyClockInc').value = lobby.clockInc;
+  // Always live, whatever the turn clock is doing: the discard has its own
+  // allowance and a table can want that bounded while the turns are not.
+  document.getElementById('lobbyDiscard').value = lobby.discardSecs;
 
   tabs(document.getElementById('lobbyLog'),
     [[true, 'keep a log', { tip: LOG_NOTE.on }],
@@ -2720,6 +2771,11 @@ document.getElementById('lobbyClockSecs').oninput = (e) => {
 document.getElementById('lobbyClockInc').oninput = (e) => {
   lobby.clockInc = Math.max(0, Number(e.target.value) || 0);
 };
+// Zero is allowed here and nowhere else on this panel: it means no limit on the
+// discard, which is a thing a table may reasonably want.
+document.getElementById('lobbyDiscard').oninput = (e) => {
+  lobby.discardSecs = Math.max(0, Number(e.target.value) || 0);
+};
 document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.seed);
 document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLink());
 
@@ -2729,6 +2785,7 @@ document.getElementById('lobbyStart').onclick = () => {
   lobby.game = (document.getElementById('lobbyGame').value || '').trim();
   lobby.seed = document.getElementById('lobbySeed').value.trim();
   lobby.clockSecs = Math.max(5, Number(document.getElementById('lobbyClockSecs').value) || 0);
+  lobby.discardSecs = Math.max(0, Number(document.getElementById('lobbyDiscard').value) || 0);
   localStorage.setItem('carranta.name', lobby.name);
   const q = new URLSearchParams({
     seats: String(lobby.seats),
@@ -2736,6 +2793,7 @@ document.getElementById('lobbyStart').onclick = () => {
     mode: 'full',
     clock: lobby.clockKind,
     clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
+    discardSecs: String(lobby.discardSecs),
     clockInc: String(lobby.clockKind === 'chess' ? lobby.clockInc : 0),
     name: lobby.name,
     log: lobby.log ? 'on' : 'off',
@@ -2905,7 +2963,8 @@ function logParts(v, text, seat) {
     'rolled (\\d+) \\((\\d), (\\d)\\)'
     + '|(\\d+)\\s+(brick|wood|wool|wheat|ore)\\b'
     + '|\\b(brick|wood|wool|wheat|ore)\\b'
-    + '|\\b(settlement|city|road)\\b', 'gi');
+    + '|\\b(settlement|city|road)\\b'
+    + '|\\bdevelopment card\\b', 'gi');
   let m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > at) out.push(text.slice(at, m.index));
@@ -2915,13 +2974,31 @@ function logParts(v, text, seat) {
     } else if (m[5] || m[6]) {
       const word = (m[5] || m[6]).toLowerCase();
       out.push(logFan(RESOURCE_WORDS.indexOf(word), m[4] ? +m[4] : 1, word));
-    } else {
+    } else if (m[7]) {
       out.push(pieceGlyph(PIECE_WORDS[m[7].toLowerCase()], seat));
+    } else {
+      out.push(devGlyph());
     }
     at = m.index + m[0].length;
   }
   if (at < text.length) out.push(text.slice(at));
   return out.length ? out : [text];
+}
+
+// A development card in the log, drawn exactly as the bank draws its deck: the
+// card back in the brand orange, with the white disc every card carries. Buying
+// one and the stack it came off should be recognisably the same card, and the
+// words "a development card" were the one card-shaped thing in the log still
+// being spelled out.
+function devGlyph() {
+  const wrap = document.createElement('span');
+  wrap.className = 'logRes';
+  wrap.title = 'development card';
+  const card = miniCard(0);
+  card.className = 'rcard mini devcard';
+  card.style.setProperty('--face', 'var(--accent)');
+  wrap.appendChild(card);
+  return wrap;
 }
 
 // A piece in the log, in the colour of whoever put it there, so a line about
@@ -3010,13 +3087,6 @@ function renderPrompt(v) {
   // Declining is a single choice that clears every open offer at once, not one
   // per offer, so it belongs to the card rather than to a row.
   const decline = v.choices.find(c => c.label === 'No thanks');
-  const answerable = v.offers.filter(o =>
-    v.choices.some(c => c.label === `Accept offer ${o.i}` || c.label === `Withdraw offer ${o.i}`));
-
-  // An offer you cannot afford has no accept choice behind it, so keying the
-  // card on "answerable" hid the whole table whenever the one thing on it was
-  // out of your reach, including the button to turn it down.
-  const incoming = v.offers.filter(o => !o.mine);
 
   // A card per thing being asked of you, rather than the one thing the card
   // used to be able to say. Two questions can stand at once, and the commonest
@@ -3144,16 +3214,22 @@ function renderPrompt(v) {
   // silence, and no way to tell which was still coming.
   const mine = v.offers.filter(o => o.mine
     && (o.live || (o.answers || []).some(a => a.said !== 'waiting')));
-  const shown = incoming.length && (decline || answerable.some(o => !o.mine))
-    ? v.offers.filter(o => !o.mine || mine.includes(o))
+  // An offer counts as put to you if your seat is on its answer row, which is
+  // R-7.3 and nothing to do with your hand. One you cannot cover still appears,
+  // says so, and can be turned down: keying the card on what you could accept
+  // hid those completely, which read as the game losing trades.
+  const asked = v.offers.filter(o => o.live && !o.mine
+    && (o.answers || []).some(a => a.seat === v.you && a.said === 'waiting'));
+  const shown = asked.length
+    ? v.offers.filter(o => asked.includes(o) || mine.includes(o))
     : mine;
   if (shown.length) {
     const box = add('offers');
     // One person waiting on you means the card can wear their colour. Several
     // means it cannot belong to any of them, so it stays the accent.
-    const asking = [...new Set(incoming.map(o => o.from))];
+    const asking = [...new Set(asked.map(o => o.from))];
     if (asking.length === 1) box.style.setProperty('--rule', COLOURS[asking[0]]);
-    headFor(box)(incoming.length ? 'On the table' : 'Your offer', false);
+    headFor(box)(asked.length ? 'On the table' : 'Your offer', false);
     renderOffers(v, box, shown, decline);
   }
 
@@ -3255,8 +3331,32 @@ function resourceButtons(v, host, order, find, onFirst) {
   host.appendChild(box);
 }
 
+// One side of a trade, drawn as the cards it is made of.
+//
+// The offer used to be a sentence, "1 wood for 2 wheat", which has to be read
+// and then matched against a hand that is drawn as cards a foot below it. The
+// cards are the game's own words for a resource and they are already on the
+// screen twice over, in the dock and on the board, so an offer said in them can
+// be taken in at a glance instead of parsed.
+function cardRun(v, n) {
+  const run = document.createElement('span');
+  run.className = 'cardRun';
+  let any = false;
+  v.resourceNames.forEach(r => {
+    for (let k = 0; k < n[r.i]; k++) {
+      const c = miniCard(r.i);
+      c.title = r.name;
+      run.appendChild(c);
+      any = true;
+    }
+  });
+  // Nothing on a side cannot happen in a legal offer, but an empty run would
+  // be a silent gap if it ever did.
+  if (!any) run.textContent = 'nothing';
+  return run;
+}
+
 function renderOffers(v, host, offers, decline) {
-  const names = n => v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ') || ', ';
   offers.forEach(o => {
     const d = document.createElement('div');
     d.className = 'offer';
@@ -3269,45 +3369,23 @@ function renderOffers(v, host, offers, decline) {
     else d.appendChild(el2('span', { class: 'dot', style: `background:${COLOURS[o.from]}` }));
     const who = document.createElement('span');
     who.className = 'who';
-    const addressed = o.to === null ? '' : (o.to === v.you ? ' → you' : ` → ${seatName(v, o.to)}`);
-    // "Ines: 1 wood for 2 wheat" left it to the reader to work out which side
-    // was which. "Offers A for B" says who is handing over what.
     const strong = document.createElement('strong');
     strong.textContent = o.mine ? 'You' : seatName(v, o.from);
-    who.append(strong, ` ${o.mine ? 'offer' : 'offers'} `
-      + `${names(o.give)} for ${names(o.want)}`);
-    if (addressed) {
+    // Who, then the two sides as cards. "Offers A for B" said who was handing
+    // over what and left the what as a sentence; the cards say it in the same
+    // language the hand and the board are already speaking.
+    who.append(strong, ` ${o.mine ? 'offer' : 'offers'} `, cardRun(v, o.give),
+      ' for ', cardRun(v, o.want));
+    if (o.to !== null) {
       const tag = document.createElement('span');
       tag.className = 'addressed';
-      tag.textContent = addressed;
+      tag.textContent = o.to === v.you ? ' → you' : ` → ${seatName(v, o.to)}`;
       who.appendChild(tag);
     }
     d.appendChild(who);
-    // Taking or pulling an offer is an ordinary choice, so the button is
-    // whichever one the engine is offering for it.
-    const c = v.choices.find(x => x.label === `Accept offer ${o.i}` || x.label === `Withdraw offer ${o.i}`);
-    if (c) {
-      const b = document.createElement('button');
-      b.className = o.mine ? 'btn-secondary btn-sm' : 'btn-sm seatBtn';
-      b.textContent = o.mine ? 'withdraw' : 'accept';
-      if (!o.mine) {
-        // Answering an offer in the colour of whoever made it, so the card
-        // reads as coming from a person rather than from the interface.
-        b.style.background = COLOURS[o.from];
-        b.style.color = onColour(SEAT_HEX[o.from]);
-      }
-      b.onclick = () => act(c.i);
-      d.appendChild(b);
-    }
-    if (!o.mine && v.canPropose) {
-      const b = document.createElement('button');
-      b.className = 'btn-secondary btn-sm';
-      b.textContent = 'counter';
-      b.onclick = () => counter(o);
-      d.appendChild(b);
-    }
     // No accept button and nothing in hand to cover it: say which, rather than
     // leaving a row with no explanation for why it cannot be taken.
+    const c = v.choices.find(x => x.label === `Accept offer ${o.i}` || x.label === `Withdraw offer ${o.i}`);
     if (!o.mine && !c && v.resourceNames.some(r => v.yourHand[r.i] < o.want[r.i])) {
       const s = document.createElement('span');
       s.className = 'tag tag-outline';
@@ -3318,19 +3396,64 @@ function renderOffers(v, host, offers, decline) {
     host.appendChild(answerRow(v, o));
   });
 
-  // Turning offers down was reachable in the engine and nowhere on the screen,
-  // which left the card with no way out except accepting something. Declining
-  // clears every open offer at once, so it is one button for the card and its
-  // wording says how far it reaches.
+  // Every way out of the card, in one row along the bottom.
+  //
+  // They used to be scattered: accept and counter inline against the offer they
+  // belonged to, declining alone under a rule. That put three answers to one
+  // question in three places and let the row's width decide whether the buttons
+  // wrapped under the sentence. Together at the foot they read as the set of
+  // answers, which is what they are.
+  //
+  // Declining is the exception that earns its position: it clears every open
+  // offer at once, so it is last and says how far it reaches.
+  const row = document.createElement('div');
+  row.className = 'offerActions';
+  offers.forEach(o => {
+    const c = v.choices.find(x => x.label === `Accept offer ${o.i}` || x.label === `Withdraw offer ${o.i}`);
+    if (c) {
+      const b = document.createElement('button');
+      b.className = o.mine ? 'btn-secondary btn-sm' : 'btn-sm seatBtn';
+      // Named when there is more than one to tell apart, bare when there is
+      // not: "accept Ines" beside a single offer says nothing the offer above
+      // it has not already said.
+      const many = offers.length > 1;
+      b.textContent = o.mine
+        ? (many ? `withdraw ${cardsShort(v, o.give)}` : 'withdraw')
+        : (many ? `accept ${seatName(v, o.from)}` : 'accept');
+      if (!o.mine) {
+        // Answering an offer in the colour of whoever made it, so the card
+        // reads as coming from a person rather than from the interface.
+        b.style.background = COLOURS[o.from];
+        b.style.color = onColour(SEAT_HEX[o.from]);
+      }
+      b.onclick = () => act(c.i);
+      row.appendChild(b);
+    }
+  });
+  if (v.canPropose && offers.some(o => !o.mine)) {
+    const b = document.createElement('button');
+    b.className = 'btn-secondary btn-sm';
+    b.textContent = 'counter';
+    b.onclick = () => counter(offers.find(o => !o.mine));
+    row.appendChild(b);
+  }
   if (decline) {
     const theirs = offers.filter(o => !o.mine).length;
-    host.appendChild(el2('hr', { class: 'separator' }));
     const b = document.createElement('button');
-    b.className = 'btn-secondary btn-block';
-    b.textContent = theirs > 1 ? `No thanks, turn down all ${theirs}` : 'No thanks';
+    b.className = 'btn-secondary btn-sm';
+    b.textContent = theirs > 1 ? `no thanks, all ${theirs}` : 'no thanks';
     b.onclick = () => act(decline.i);
-    host.appendChild(b);
+    row.appendChild(b);
   }
+  if (row.firstChild) {
+    host.appendChild(el2('hr', { class: 'separator' }));
+    host.appendChild(row);
+  }
+}
+
+// A side of a trade in words, for a button, where a run of cards would not fit.
+function cardsShort(v, n) {
+  return v.resourceNames.filter(r => n[r.i]).map(r => `${n[r.i]} ${r.name}`).join(', ');
 }
 
 // Who was asked, and what they have said. A proposal you make is otherwise
@@ -3389,6 +3512,19 @@ function renderDiscard(v, host, head) {
   const owed = (v.seats.find(s => s.seat === v.you) || {}).discardsDue || 0;
   const discard = v.choices.filter(c => c.group === 'discard');
   head(`A seven was rolled, hand ${owed} back`, false);
+
+  // The seven's own clock, on the card that is spending it. It does not belong
+  // beside the turn clock: that one is held while this runs, and two numbers
+  // counting in the same corner where only one is moving reads as a fault.
+  if (v.discardLeft !== null && v.discardLeft !== undefined) {
+    const p = document.createElement('p');
+    p.id = 'discardClock';
+    p.className = 'discardClock';
+    // Filled by the same one-second tick the turn clock uses, so it counts
+    // down through a wait in which nothing else changes.
+    host.appendChild(p);
+    tickDiscard();
+  }
 
   // A hand that changed under the selection (a robber, another discard) would
   // leave counts pointing at cards that are gone.
@@ -3693,7 +3829,12 @@ const POLL_IDLE = 3000, POLL_MOVING = 150;
   } catch (e) {
     // The server is mid-restart. Nothing to do but ask again shortly.
   }
-  setTimeout(poll, view && view.botThinking ? POLL_MOVING : POLL_IDLE);
+  // A discard on a clock is the other case where the server has something to do
+  // that no click will prompt: when the allowance runs out it picks the cards
+  // itself, and it only wakes when asked. Without this the forced discard
+  // landed up to an idle poll late, with the card sitting at zero meanwhile.
+  const waiting = view && (view.botThinking || view.discardLeft !== null);
+  setTimeout(poll, waiting ? POLL_MOVING : POLL_IDLE);
 })();
 </script>
 </body>
