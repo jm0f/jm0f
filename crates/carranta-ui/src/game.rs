@@ -858,7 +858,15 @@ impl Session {
             // Clearing it is what lets the turn end rather than standing open
             // on a passive player who never clicked, and it is the only thing a
             // turn's clock does to a seat that is not holding the turn.
-            if !self.open_offers().is_empty() {
+            //
+            // Everything put to you, not only what you could have covered. What
+            // blocks the table is being *asked*: `choices` offers a decline for
+            // any question put to the human, and a pending choice is what stops
+            // the bots. Keying the escape on what the human could have accepted
+            // meant an offer they could not afford blocked the turn and then
+            // was not cleared when the clock ran out, so the table sat at 0:00
+            // waiting on an answer to an offer nobody could take.
+            if !self.offers_to_me().is_empty() {
                 self.decline_open_offers();
                 self.note(Some(HUMAN), "Time ran out, declined the offers".to_string());
                 self.finish_move();
@@ -3010,6 +3018,79 @@ mod tests {
                 "declining answers everything that was put to you"
             );
         }
+    }
+
+    #[test]
+    fn an_offer_you_cannot_cover_dies_with_the_turn_that_made_it() {
+        // Reported as "the new turn doesn't start until the offer is accepted
+        // or declined". A bot offered the human something they could not
+        // afford, the human never clicked, and the table stopped: being asked
+        // is what blocks the bots, and the clock's escape was keyed on what the
+        // human could have *accepted*. With nothing acceptable there was
+        // nothing to clear, so the turn holder's allowance ran to zero and the
+        // game sat there.
+        let mut found = None;
+        'seeds: for seed in 0..120u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..300 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                // Asked, and could not cover it, on somebody else's turn.
+                if s.state.decider() != HUMAN
+                    && !s.offers_to_me().is_empty()
+                    && s.open_offers().is_empty()
+                {
+                    found = Some(s);
+                    break 'seeds;
+                }
+                let v = s.version();
+                if s.act(0, v).is_err() {
+                    break;
+                }
+            }
+        }
+        let mut s = found.expect("some seed puts an unaffordable offer on a bot's turn");
+
+        let holder = s.on_clock();
+        assert_ne!(holder, HUMAN, "the clock stays with the turn");
+        // The question is what stops the table, whether or not it can be
+        // answered yes.
+        assert!(
+            !s.choices().is_empty(),
+            "an unanswered question holds the bots up"
+        );
+        // By value rather than by index: clearing these lets the bots play on,
+        // and what they do next can put new offers on the table. Those are new
+        // questions and being asked them is right.
+        let asked: Vec<Offer> = s
+            .offers_to_me()
+            .into_iter()
+            .map(|i| s.state.offers[i as usize])
+            .collect();
+
+        s = s.with_clock(Clock::PerTurn(1));
+        let before = s.version();
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(s.out_of_time(holder), "the turn holder's time is what runs");
+        s.enforce_clock();
+
+        let still: Vec<Offer> = s
+            .offers_to_me()
+            .into_iter()
+            .map(|i| s.state.offers[i as usize])
+            .collect();
+        for o in &asked {
+            assert!(
+                !still.contains(o),
+                "silence is a refusal even when yes was never available"
+            );
+        }
+        assert!(s.version() > before, "and the game moves on");
+        assert!(
+            s.log().iter().any(|l| l.text.contains("declined")),
+            "and the log says the clock did it"
+        );
     }
 
     #[test]

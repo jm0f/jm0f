@@ -784,7 +784,20 @@
   .die circle { fill: var(--foreground); }
   /* One clock, large, above the players. It was a figure on every row, which
      made four small numbers where only one of them was moving. */
-  .clockPanel { text-align: center; padding: .8em .6em .7em; }
+  /* Two halves of one panel, split down the middle by the same hairline the
+     bank uses to fence its development deck off from the resources. Equal
+     columns rather than sized to their contents, so the divider stays put while
+     the digits either side of it change width. */
+  .clockPanel {
+    text-align: center; padding: .8em .6em .7em;
+    display: grid; grid-template-columns: 1fr 1fr; align-items: start;
+  }
+  .clockHalf + .clockHalf { border-left: 1px solid var(--line); }
+  /* Nothing to say on the right when the game is untimed: the turn clock is
+     already counting the game up, and the same second printed twice reads as
+     two clocks that happen to agree. */
+  .clockPanel.soloClock { grid-template-columns: 1fr; }
+  .clockPanel.soloClock #gameTimeHalf { display: none; }
   /* Every character gets its own box, and a digit's box is exactly as wide as
      a zero. Fraunces is a display serif whose figures are proportional, and
      asking for tabular-nums does nothing when the face has no tabular set to
@@ -804,6 +817,11 @@
   /* The last stretch, and past the end. The clock is always the accent, so
      running short is weight rather than a colour it did not have before. */
   .bigClock.low, .bigClock.over { font-weight: 700; }
+  /* The game's own running time is not something to act on, so it is the same
+     clock in the text's colour rather than the accent. The accent in this panel
+     means "this is running out"; two accents would mean it twice, and only one
+     of them would be true. */
+  .bigClock.quiet { color: var(--dim); }
 
   /* ---- lobby ------------------------------------------------------------ */
   .lobby[hidden] { display: none; }
@@ -1216,8 +1234,17 @@
 <main>
   <aside class="col left">
     <div class="panel clockPanel">
-      <div class="bigClock" id="clock">0:00</div>
-      <div class="clockUnder"><span id="turnCount"></span></div>
+      <div class="clockHalf">
+        <div class="bigClock" id="clock">0:00</div>
+        <div class="clockUnder"><span id="turnCount"></span></div>
+      </div>
+      <!-- The whole game, beside the turn. Two different questions, "how long
+           have I got" and "how long has this taken", so two readings rather
+           than one that has to mean both. -->
+      <div class="clockHalf" id="gameTimeHalf">
+        <div class="bigClock quiet" id="gameTime">0:00</div>
+        <div class="clockUnder"><span>game time</span></div>
+      </div>
     </div>
     <div class="panel">
       <h2>Bank</h2>
@@ -2571,10 +2598,15 @@ function renderActions(v) {
 // A timed game counts down; an untimed one counts up. Past zero it keeps going
 // and shows the overrun, because a clock frozen at 0:00 reads as broken.
 let clockBase = 0, clockAt = 0, clockDown = false, clockWho = null;
-let clockTurns = 0, clockSetup = true;
+let clockTurns = 0, clockSetup = true, clockGame = 0;
 function clockFrom(v) {
   clockDown = v.clock !== 'off';
   clockAt = Date.now();
+  // The whole game, straight from the server, counted forward here between
+  // payloads the same way the turn is.
+  clockGame = v.elapsed || 0;
+  const panel = document.querySelector('.clockPanel');
+  if (panel) panel.classList.toggle('soloClock', !clockDown);
   clockTurns = v.turns || 0;
   clockSetup = !!v.inSetup;
   const seats = v.seats.map(s => ({
@@ -2623,6 +2655,10 @@ function tickClock() {
     turns.textContent = !clockDown ? 'elapsed'
       : clockSetup ? `setup ${clockTurns}` : `turn ${clockTurns}`;
   }
+  // The game's own running time, which only ever counts up. It runs on the same
+  // second as the turn clock so the two never disagree by a tick.
+  const game = document.getElementById('gameTime');
+  if (game) setDigits(game, mmss(clockGame + gone));
   tickDiscard();
 }
 
