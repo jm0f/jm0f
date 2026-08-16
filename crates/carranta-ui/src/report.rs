@@ -62,35 +62,66 @@ fn row(cells: &[String], head: bool) -> String {
     out
 }
 
-/// A card's header: what the card is, and one line on what it says.
-///
-/// Title then description, which is the borrowed design's shape for this and a
-/// better one than the uppercase micro-label it replaces: a label tells you a
-/// section exists, a description tells you whether to read it.
-fn card_head(title: &str, desc: &str) -> String {
-    card_head_why(title, desc, "")
+/// A card's header: the title, and the card's rule behind it.
+fn card_head(title: &str, why: &str) -> String {
+    card_head_desc(title, "", why)
 }
 
-/// The same, with the card's own explanation behind the description.
+/// The same, with a line under the title.
 ///
-/// The long note that used to sit under a table is here instead. It was being
-/// read through to reach the figures, or not read at all; on the description it
-/// is one hover away from the reader who wants it and invisible to the one who
-/// does not.
-fn card_head_why(title: &str, desc: &str, why: &str) -> String {
-    let desc = if why.is_empty() {
-        format!("<p class=\"desc\">{desc}</p>")
-    } else {
-        format!("<p class=\"desc\" title=\"{}\">{desc}</p>", esc(why))
+/// Only where that line carries a figure the tables do not. A sentence
+/// describing a card the reader is already looking at is a sentence they read
+/// to learn nothing, so most cards are a title and a table.
+///
+/// The explanation hangs off whichever of the two is there, under a dotted
+/// underline. The long note that used to sit below the table is here instead:
+/// it was being read through to reach the figures, or not read at all, and on
+/// the heading it is one hover from the reader who wants it and invisible to
+/// the one who does not.
+fn card_head_desc(title: &str, desc: &str, why: &str) -> String {
+    let attr = |s: &str| {
+        if why.is_empty() {
+            String::new()
+        } else {
+            format!(" title=\"{}\"", esc(s))
+        }
     };
-    format!("<div class=\"card-head\"><h2>{title}</h2>{desc}</div>")
+    if desc.is_empty() {
+        format!(
+            "<div class=\"card-head\"><h2{}>{title}</h2></div>",
+            attr(why)
+        )
+    } else {
+        format!(
+            "<div class=\"card-head\"><h2>{title}</h2><p class=\"desc\"{}>{desc}</p></div>",
+            attr(why)
+        )
+    }
 }
+
+/// A seat, named, behind the colour it played in.
+///
+/// The same mark the board uses, in the same place in every table here, so a
+/// row can be found by colour rather than by reading down the names.
+fn seat_cell(seat: usize, name: &str) -> String {
+    format!(
+        "<span class=\"dot s{}\"></span>{}",
+        seat.min(MAX_PLAYERS - 1),
+        esc(name)
+    )
+}
+
+/// Nothing, written as nothing.
+///
+/// A column with no value in it is left blank rather than filled with a mark
+/// standing in for the absence. The blank already says it.
+const NONE: &str = "";
 
 /// A totals row, in the table's foot.
 ///
 /// Only where a column adds up to something true. A maximum, a rate and a
 /// percentile do not, and a row that totalled them would be read as though they
-/// did.
+/// did, so those cells are left blank.
 fn totals(cells: &[String]) -> String {
     let mut out = String::from("<tfoot><tr>");
     for c in cells {
@@ -125,11 +156,11 @@ fn head_row(cells: &[(&str, &str)]) -> String {
 
 /// One scoring column: how many, and what they were worth.
 ///
-/// Nought is a dot, since a zero in a column of scores is nothing rather than a
+/// Nought is blank, since a zero in a column of scores is nothing rather than a
 /// number to read.
 fn scored(s: crate::analysis::Scored) -> String {
     if s.held == 0 {
-        "&middot;".to_string()
+        NONE.to_string()
     } else {
         format!("{} <span class=\"worth\">({})</span>", s.held, s.points)
     }
@@ -140,23 +171,15 @@ fn names(saved: &Saved, seats: usize) -> Vec<String> {
     (0..seats).map(|s| seat_name(s, &saved.name)).collect()
 }
 
-/// The game as one bar: a segment per turn, sized by what happened in it and
-/// coloured by whose it was.
-///
-/// The bar is always the full width, so it says nothing about how long the game
-/// took and everything about how it was divided. A turn that reads twice as
-/// wide as its neighbour had twice as much in it.
+/// How the game was divided, seat by seat.
 fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     let mut b = String::from("<section>");
-    b.push_str(&card_head_why(
+    b.push_str(&card_head(
         "The turns",
-        "The whole game across one bar, a segment per turn, sized by what \
-         happened in it and coloured by whose it was.",
-        "The bar is always the full width, so it says nothing about how long \
-         the game took and everything about how it was divided: a turn twice as \
-         wide as its neighbour had twice as much in it. There are no gaps \
-         because play goes round the table, so no two neighbours share a \
-         colour. The setup placements are left out, since they come before \
+        "A turn is what falls between two ends of turn, and it counts \
+         everything that landed inside it, the turn holder's or not: a \
+         discard, a robbery and an accepted offer all happen in somebody's \
+         turn. The setup placements are left out, since they come before \
          anybody has a turn to take.",
     ));
     let turns = &study.turns;
@@ -167,26 +190,6 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
 
     let total: u32 = turns.iter().map(|t| t.actions).sum();
     let spent: u32 = turns.iter().map(|t| t.millis).sum();
-
-    b.push_str("<div class=\"bar\">");
-    for (i, t) in turns.iter().enumerate() {
-        let when = if study.timed {
-            format!(", {}", clock(t.millis))
-        } else {
-            String::new()
-        };
-        let _ = write!(
-            b,
-            "<span class=\"seg s{seat}\" style=\"flex-grow:{grow}\" \
-             title=\"Turn {n}, {name}: {moves}{when}\"></span>",
-            seat = t.seat.min(MAX_PLAYERS - 1),
-            grow = t.actions,
-            n = i + 1,
-            name = esc(&who[t.seat]),
-            moves = plural(t.actions, "move"),
-        );
-    }
-    b.push_str("</div>");
 
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -214,9 +217,9 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
         ));
     }
     heads.push((
-        "share of the bar",
-        "How much of the bar's width is theirs, which is their share of the \
-         game's moves rather than of its turns.",
+        "share",
+        "Their share of the game's moves, which is not the same as their share \
+         of its turns: everybody gets about the same number of turns.",
     ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
@@ -224,7 +227,7 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
         let mine: Vec<&crate::analysis::Turn> = turns.iter().filter(|t| t.seat == s).collect();
         let moves: u32 = mine.iter().map(|t| t.actions).sum();
         let mut cells = vec![
-            format!("<span class=\"dot s{s}\"></span>{}", esc(&who[s])),
+            seat_cell(s, &who[s]),
             mine.len().to_string(),
             moves.to_string(),
             mine.iter()
@@ -246,7 +249,7 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
         total.to_string(),
         // A maximum does not add up, and a column that adds where it cannot
         // would be read as though it did.
-        "&middot;".to_string(),
+        NONE.to_string(),
     ];
     if study.timed {
         foot.push(clock(spent));
@@ -256,15 +259,6 @@ fn turn_bar(study: &Study, who: &[String], seats: usize) -> String {
     b.push_str(T_CLOSE);
     b.push_str("</section>");
     b
-}
-
-/// `1 move`, `4 moves`.
-fn plural(n: u32, thing: &str) -> String {
-    if n == 1 {
-        format!("{n} {thing}")
-    } else {
-        format!("{n} {thing}s")
-    }
 }
 
 /// A duration, at whatever precision it is worth reading at.
@@ -323,7 +317,11 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("<section>");
     b.push_str(&card_head(
         "The result",
-        "Where every point came from, read off the final position.",
+        "The five things that score and nothing else (R-11.3), each as how many \
+         were held with what they were worth in brackets, so the brackets add \
+         across to the total. Read off the final position rather than off what \
+         was built, which is a different number: a settlement upgraded to a \
+         city stopped being a settlement and was still built.",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -363,11 +361,12 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         let win = r.winner == Some(s as u8);
         let name = if win {
             format!(
-                "<strong>{}</strong> <span class=\"tag\">won</span>",
+                "<span class=\"dot s{s}\"></span><strong>{}</strong> \
+                 <span class=\"tag\">won</span>",
                 esc(&who[s])
             )
         } else {
-            esc(&who[s])
+            seat_cell(s, &who[s])
         };
         let mut cells = vec![name, format!("<strong>{}</strong>", r.vp[s])];
         cells.extend(study.points[s].parts().iter().map(|p| scored(*p)));
@@ -382,10 +381,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- ratings ------------------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head_why(
+    b.push_str(&card_head(
         "What it did to the ratings",
-        "The pool before this game and after it, which is the section this page \
-         exists for.",
         "A Weng-Lin Plackett-Luce update over the whole finishing order, not \
          just the winner (A-1): the final points rank everyone, so one game \
          carries a complete ranking rather than one bit. Ratings are computed \
@@ -432,7 +429,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             };
             b.push_str(&row(
                 &[
-                    esc(&who[s]),
+                    seat_cell(s, &who[s]),
                     n1(m.before.conservative()),
                     n1(m.after.conservative()),
                     format!("<span class=\"{cls}\">{}</span>", signed(d)),
@@ -450,8 +447,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             .sum();
         b.push_str(&totals(&[
             "the table".to_string(),
-            "&middot;".to_string(),
-            "&middot;".to_string(),
+            NONE.to_string(),
+            NONE.to_string(),
             signed(moved),
             (0..seats)
                 .filter_map(|s| study.movement[s])
@@ -466,7 +463,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     // ---- the dice -----------------------------------------------------------
     let total: u32 = r.rolls.iter().sum();
     b.push_str("<section>");
-    b.push_str(&card_head_why(
+    b.push_str(&card_head_desc(
         "The dice",
         match study.dice_percentile {
             // "More than 100% of five games" is not a sentence. At either end
@@ -532,11 +529,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- production ---------------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head_why(
+    b.push_str(&card_head(
         "What the board paid",
         "Production decomposed into what was chance and what was somebody's \
-         doing (§10.2).",
-        "Expected is what the buildings standing at each roll should have paid \
+         doing (§10.2). Expected is what the buildings standing at each roll should have paid \
          at the dice's true odds, and the three columns after it are why that \
          is not what arrived. Only one of them is chance: the robber sitting on \
          your hexes is an opponent's choice, and a stack running dry is the \
@@ -589,7 +585,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         }
         b.push_str(&row(
             &[
-                esc(&who[s]),
+                seat_cell(s, &who[s]),
                 n1(d.e_raw),
                 signed(-d.robber_cost),
                 signed(-d.supply_denial),
@@ -613,7 +609,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         signed(sums[3]),
         n1(sums[4]),
         // A z-score is a position on a spread. Four of them add to nothing.
-        "&middot;".to_string(),
+        NONE.to_string(),
     ]));
     b.push_str(T_CLOSE);
     b.push_str("</section>");
@@ -623,7 +619,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     let _ = write!(
         b,
         "{}",
-        card_head_why(
+        card_head_desc(
             "The robber",
             &format!(
                 "Moved {moves} times, {empty} of those robberies finding an \
@@ -637,7 +633,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
     b.push_str(T_OPEN);
     b.push_str("<thead>");
-    let victims: Vec<String> = who.iter().map(|n| esc(n)).collect();
+    // The columns name players as well, so they wear the colour too.
+    let victims: Vec<String> = (0..seats).map(|s| seat_cell(s, &who[s])).collect();
     let mut heads = vec![("stole from", "")];
     heads.extend(victims.iter().map(|n| (n.as_str(), "")));
     heads.push((
@@ -650,10 +647,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     let mut taken = vec![0u32; seats];
     let mut binned = 0u32;
     for thief in 0..seats {
-        let mut cells = vec![esc(&who[thief])];
+        let mut cells = vec![seat_cell(thief, &who[thief])];
         for victim in 0..seats {
             cells.push(if thief == victim {
-                "&middot;".to_string()
+                NONE.to_string()
             } else {
                 taken[victim] += r.steals[thief][victim];
                 r.steals[thief][victim].to_string()
@@ -676,7 +673,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(&card_head(
         "The market",
         "Negotiation churn, which under an open market is most of the \
-         interaction in a game (H-4).",
+         interaction in a game (H-4). A completed trade is counted for both \
+         sides of it, so that column totals to twice the number of trades.",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -702,7 +700,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     for s in 0..seats {
         b.push_str(&row(
             &[
-                esc(&who[s]),
+                seat_cell(s, &who[s]),
                 r.offers_made[s].to_string(),
                 r.offers_declined[s].to_string(),
                 r.offers_withdrawn[s].to_string(),
@@ -727,9 +725,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- development cards --------------------------------------------------
     b.push_str("<section>");
-    b.push_str(&card_head_why(
+    b.push_str(&card_head(
         "Development cards",
-        "What was bought, and what was played with it.",
         "Played, not held. A victory point card is never played (R-9.11), so \
          that column is always empty, and it is kept so the five read in the \
          order the cards do.",
@@ -745,7 +742,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("</thead><tbody>");
     let mut played = [0u32; 5];
     for s in 0..seats {
-        let mut cells = vec![esc(&who[s]), r.dev_bought[s].to_string()];
+        let mut cells = vec![seat_cell(s, &who[s]), r.dev_bought[s].to_string()];
         cells.extend(r.dev_played[s].iter().map(u32::to_string));
         for (slot, n) in played.iter_mut().zip(r.dev_played[s]) {
             *slot += n;
@@ -766,7 +763,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str("<section>");
     b.push_str(&card_head(
         "The opening",
-        "What the first two settlements bought, before anybody had a turn.",
+        "What the first two settlements bought, before anybody had a turn, and \
+         what the game turned it into.",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -794,7 +792,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     for s in 0..seats {
         b.push_str(&row(
             &[
-                esc(&who[s]),
+                seat_cell(s, &who[s]),
                 r.opening[s].pips.to_string(),
                 format!("{} of {}", r.opening[s].diversity, RESOURCE_NAMES.len()),
                 r.opening[s].ports.to_string(),
@@ -812,13 +810,13 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             .sum::<u32>()
             .to_string(),
         // Diversity is per placement and a peak is a maximum. Neither adds.
-        "&middot;".to_string(),
+        NONE.to_string(),
         r.opening[..seats]
             .iter()
             .map(|o| o.ports)
             .sum::<u32>()
             .to_string(),
-        "&middot;".to_string(),
+        NONE.to_string(),
     ]));
     b.push_str(T_CLOSE);
     b.push_str("</section>");
@@ -829,7 +827,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         let _ = write!(
             b,
             "{}",
-            card_head_why(
+            card_head_desc(
                 "Across every game here",
                 &format!(
                     "Seat win rates across {n} other finished games, all at this \
@@ -855,7 +853,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         b.push_str("</thead><tbody>");
         for s in 0..seats.min(MAX_PLAYERS) {
             b.push_str(&row(
-                &[format!("seat {s}"), format!("{:.0}%", wins[s] * 100.0)],
+                &[
+                    seat_cell(s, &format!("seat {s}")),
+                    format!("{:.0}%", wins[s] * 100.0),
+                ],
                 false,
             ));
         }
@@ -968,7 +969,7 @@ tbody tr:hover { background: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
 .rolls th, .rolls td { padding: .7em .45em; }
 /* Anything that explains itself on hover says so, quietly. */
-thead th[title], .desc[title] { cursor: help;
+thead th[title], .desc[title], .card-head h2[title] { cursor: help;
                   text-decoration: underline dotted #BFAF9C;
                   text-underline-offset: 4px; }
 /* The totals, ruled off above and set in the ink of a figure that matters. */
@@ -999,16 +1000,9 @@ tfoot tr:hover { background: transparent; }
 .tw + p { margin: 1rem 0 0; }
 section > p:last-child { margin-bottom: 0; }
 
-/* ---- the turn bar ----
-   Always the full width: every segment grows from a basis of nothing, so the
-   widths are shares of the game and never of a scale the reader cannot see.
-   No gaps between the segments: play goes round the table, so neighbours are
-   never the same colour and a gap would only spend width on nothing. */
-.bar { display: flex; width: 100%; height: 2.5rem; margin: 0 0 1.25rem;
-       border-radius: var(--radius-md); overflow: hidden;
-       background: var(--muted); }
-.seg { flex: 1 1 0; min-width: 1px; background: var(--muted-foreground); }
-.seg:hover { filter: brightness(1.15); }
+/* ---- the seat mark ----
+   The colour a player played in, always immediately left of their name, so a
+   row can be found by colour rather than by reading down the names. */
 .dot { display: inline-block; width: .55em; height: .55em; border-radius: 50%;
        margin-right: .55em; background: var(--muted-foreground);
        vertical-align: baseline; }
@@ -1110,25 +1104,20 @@ mod tests {
             )),
             "the count, then what it was worth"
         );
-        assert_eq!(scored(crate::analysis::Scored::default()), "&middot;");
+        assert_eq!(scored(crate::analysis::Scored::default()), "");
     }
 
     #[test]
-    fn the_bar_is_one_segment_per_turn() {
+    fn the_turns_are_a_table_and_nothing_else() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
         let html = page(&g, &s);
-        assert_eq!(
-            html.matches("class=\"seg s").count(),
-            s.turns.len(),
-            "a segment for every turn and no more"
-        );
-        // Sized by what happened, not by an axis the reader cannot see.
-        for t in &s.turns {
-            assert!(html.contains(&format!("flex-grow:{}", t.actions)));
+        // The bar is gone, and with it every trace of how it was drawn.
+        for gone in ["class=\"seg", "class=\"bar\"", "flex-grow"] {
+            assert!(!html.contains(gone), "{gone} went with the bar");
         }
         // A game played through a session carries its clock, so the column is
-        // there and the row adds up to the whole of it.
+        // there and the totals row adds up to the whole of it.
         assert!(s.timed, "a game played here is a game that was timed");
         let spent: u32 = s.turns.iter().map(|t| t.millis).sum();
         assert!(
@@ -1138,6 +1127,45 @@ mod tests {
         // Explanations live on the columns now, not under the table.
         assert!(!html.contains("class=\"note\">Length is measured"));
         assert!(html.contains("Wall-clock time inside their turns"));
+    }
+
+    #[test]
+    fn a_seat_wears_its_colour_left_of_its_name_in_every_table() {
+        let history: Vec<Saved> = (10..12u64).map(played).collect();
+        let s = study(&history[1], &history).expect("it studies");
+        let html = page(&history[1], &s);
+        // Every table on the page names seats down its first column, so every
+        // table has as many marks as it has seats, and each sits immediately
+        // before the name rather than after it.
+        let seats = s.report.players as usize;
+        assert!(
+            html.matches("class=\"dot s").count() >= seats * 8,
+            "eight tables' worth of seats are marked"
+        );
+        for (seat, name) in names(&history[1], seats).iter().enumerate() {
+            assert!(
+                html.contains(&format!("<span class=\"dot s{seat}\"></span>{name}")),
+                "{name} wears seat {seat}'s colour, on the left"
+            );
+        }
+        // Including the corpus card, where the rows are seats rather than
+        // people, and they are the same seats.
+        assert!(html.contains("<span class=\"dot s0\"></span>seat 0"));
+    }
+
+    #[test]
+    fn nothing_is_written_as_nothing() {
+        let g = played(4);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        // No stand-in mark anywhere: a column with no value is blank, and the
+        // blank already says it.
+        assert!(
+            !html.contains("&middot;"),
+            "no dots standing in for absence"
+        );
+        // Which means the cells that have no total really are empty.
+        assert!(html.contains("<td></td>"));
     }
 
     #[test]

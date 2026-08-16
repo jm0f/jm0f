@@ -1382,14 +1382,27 @@ mostly a set of good decisions:
 
 ### Explanations are tooltips, and totals are a foot
 
-**No explanatory prose on the page.** Every rule that used to sit in a paragraph
-under a table is now on the thing it is about: a column's rule is on the column
-header, a card's is on its description line, and both wear a dotted underline so
-a reader can see there is something to hover. A note under a table is read
-through to reach the figures, or not read at all. A tooltip is one hover away
-from the reader who wants it and invisible to the one who does not. The only
-paragraphs left are answers rather than explanations, like "Nobody finished a
-turn in this game".
+**A card is a title and a table.** Every rule that used to sit in a paragraph
+under a table is now on the thing it is about: a column's rule on the column
+header, a card's on its own heading, both under a dotted underline so a reader
+can see there is something to hover. A note under a table is read through to
+reach the figures, or not read at all; a tooltip is one hover from the reader
+who wants it and invisible to the one who does not.
+
+The subtitle under a heading survives on exactly two cards, the dice and the
+robber, because on those it carries a figure no table holds. A sentence
+describing a card the reader is already looking at is a sentence they read to
+learn nothing. The only paragraphs left anywhere are answers rather than
+explanations, like "Nobody finished a turn in this game".
+
+**A seat wears its colour, immediately left of its name, in every table.** The
+same mark the board plays in, in the same place every time, so a row can be
+found by colour rather than by reading down the names. Row labels and the
+robber's column headers alike.
+
+**Nothing is written as nothing.** A cell with no value in it is blank. There is
+no dot standing in for the absence: the blank already says it, and a page of
+marks meaning "not applicable" reads as a page with something in every cell.
 
 **A totals row wherever a column has a total.** Turns, moves, time, cards
 bought, offers made, what the board paid. Not where a column has none: a
@@ -1413,23 +1426,15 @@ is paired with an effect size.
   are. Counted off the final position rather than off what was built, which is
   a different number, since a settlement upgraded to a city stopped being a
   settlement and was still built. The total is the true one, hidden cards
-  included, which is not what the table could see while it was playing. The
-  rule behind each column is on the column, as a tooltip, rather than in a
-  paragraph under the table: a reader who wants to know what "cities" counts is
-  looking at the word "cities", and a reader who does not should not have to
-  scroll past the answer.
-- **The turns**, as one bar across the full width, a segment per turn, sized by
-  what happened in it and coloured by whose it was. The bar is always full, so
-  it says nothing about how long the game took and everything about how it was
-  divided; a turn twice as wide as its neighbour had twice as much in it. There
-  are no gaps between segments because play goes round the table, so no two
-  neighbours share a colour. Beneath it, per seat: turns, moves, longest turn,
-  time and share of the bar. A turn counts everything that landed inside it,
-  the turn holder's or not, since a discard, a robbery and an accepted offer all
-  happen in somebody's turn, and the time column is wall-clock on the same
-  basis. Setup placements are left out: they come before anybody has a turn to
-  take. The time column appears only when the file has a clock in it, so a game
-  saved before version 2 shows the rest and says nothing about time.
+  included, which is not what the table could see while it was playing.
+- **The turns**, per seat: turns, moves, longest turn, time and share of the
+  game's moves. A turn is what falls between two ends of turn, and it counts
+  everything that landed inside it, the turn holder's or not, since a discard, a
+  robbery and an accepted offer all happen in somebody's turn; the time column
+  is wall-clock on the same basis. Setup placements are left out: they come
+  before anybody has a turn to take. The time column appears only when the file
+  has a clock in it, so a game saved before version 2 shows the rest and says
+  nothing about time.
 - **What it did to the ratings**, which is the section this page exists for.
   Before, after, and the change, per seat. A Weng-Lin Plackett-Luce update over
   the whole finishing order rather than just the winner (A-1). The figure shown
