@@ -487,6 +487,18 @@ them add, and a copy of the thing is exactly as tall as the thing. The captions
 are a fixed height for the same reason: one carries a select and the other
 carries nothing.
 
+**The cards are centred in the tray, and the row of five is centred under it.**
+A tray is half the dock wide and usually holds a card or two, so packed into its
+left corner they read as the start of a list that has been cut off rather than
+as what is on the table. The tray keeps the slack, not the cards: it still
+stretches to fill its side, and what is centred inside it is the cards.
+
+Their size is set by what the bar can give **two** rows of them. A caption, a
+tray and the row of five all have to fit inside the dock's own depth, which is
+what the bar is measured from, and at the tightest step of the type scale that
+leaves about 2.7em each. A sweep of window sizes asserts the cards stay inside
+the tray's outline rather than the tray being squeezed out from under them.
+
 **Putting an offer up leaves the composer open.** An offer to the table is the
 start of something rather than the end of it: the answers come back one at a
 time, and a counter or a second offer is the commonest next thing to do, so the

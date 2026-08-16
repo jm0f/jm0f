@@ -604,20 +604,28 @@
   /* The tray a side's cards live in. It holds its height whether or not there
      is anything in it, so putting the first card down does not resize the
      composer under the cursor that put it there. */
+  /* Centred, in both directions. The tray is as wide as half the dock and holds
+     a card or two, so cards packed into its left corner read as a list that has
+     been cut off rather than as what is on the table. The slack is the tray's
+     to hold, which is why it keeps `flex: 1`: the cards are what is centred in
+     it, not the tray in the bar. */
   .tradeTray {
-    flex: 1; display: flex; align-items: flex-end; gap: 3px; flex-wrap: wrap;
-    align-content: flex-end; min-height: 3.1em;
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    gap: 3px; flex-wrap: wrap; align-content: center; min-height: 3.5em;
     border-radius: var(--radius-md); padding: 4px;
     border: 1px dashed var(--line); background: rgba(51, 38, 27, .015);
   }
   .tradeTray.on { border-color: var(--accent); background: rgba(232, 84, 47, .05); }
   /* Big enough to read and to hit, small enough that a hand's worth of them
-     fits across a dock-wide tray without wrapping. */
+     fits across a dock-wide tray without wrapping.
+     Sized to the height the bar can actually give two rows of them: the caption,
+     a tray and the row of five have to sit inside the dock's own depth, and at
+     the narrowest step that leaves about 2.7em each. */
   .tradeTray .rcard.mini, .askRow .rcard.mini {
-    position: relative; bottom: auto; width: 1.7em; height: 2.3em;
-    border-radius: .26em; margin: 0; vertical-align: 0;
+    position: relative; bottom: auto; width: 2.05em; height: 2.7em;
+    border-radius: .3em; margin: 0; vertical-align: 0;
   }
-  .tradeTray .rcard.mini i, .askRow .rcard.mini i { width: .68em; height: .68em; }
+  .tradeTray .rcard.mini i, .askRow .rcard.mini i { width: .8em; height: .8em; }
   .tradeTray .rcard { cursor: pointer; }
   .tradeTray .rcard:hover { transform: translateY(-2px); }
   .tradeTray .rcard { transition: transform .1s ease-out; }
@@ -625,7 +633,7 @@
   /* The five to ask for, always all five: you may want what you do not hold,
      and a row that changes length as your hand changes is a row you cannot
      learn the shape of. */
-  .askRow { display: flex; gap: 3px; margin-top: 4px; }
+  .askRow { display: flex; justify-content: center; gap: 3px; margin-top: 4px; }
   .askRow button { padding: 0; border: 0; background: none; box-shadow: none;
                    line-height: 0; border-radius: .28em; cursor: pointer; }
   .askRow button:hover { background: none; transform: translateY(-2px); }
