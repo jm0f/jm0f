@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use carranta_core::action::Action;
 use carranta_core::state::{RESOURCES, Resource, TradeMode};
 
+use crate::game::Step;
+
 /// What one file says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Saved {
@@ -32,7 +34,7 @@ pub struct Saved {
     /// Set once somebody has won, so a finished game can be told from one that
     /// was abandoned halfway.
     pub winner: Option<u8>,
-    pub moves: Vec<Action>,
+    pub moves: Vec<Step>,
 }
 
 /// A game id: three groups, the way the lobby already prints a seed.
@@ -89,6 +91,25 @@ fn seat_of(s: &str) -> Option<Option<u8>> {
         return Some(None);
     }
     s.parse().ok().map(Some)
+}
+
+/// One step, as a line.
+fn step_line(step: &Step) -> String {
+    match *step {
+        Step::Move(a) => move_line(&a),
+        // A refusal is not a move and reads as one: "seat 2 said no to offer 0".
+        Step::Passed { offer, by } => format!("no {offer} {by}"),
+    }
+}
+
+fn step_of(line: &str) -> Option<Step> {
+    if let Some(rest) = line.strip_prefix("no ") {
+        let mut t = rest.split_whitespace();
+        let offer = t.next()?.parse().ok()?;
+        let by = t.next()?.parse().ok()?;
+        return t.next().is_none().then_some(Step::Passed { offer, by });
+    }
+    move_of(line).map(Step::Move)
 }
 
 /// One move, as a line.
@@ -210,8 +231,8 @@ pub fn encode(g: &Saved) -> String {
     if let Some(w) = g.winner {
         let _ = writeln!(out, "winner {w}");
     }
-    for a in &g.moves {
-        let _ = writeln!(out, "{}", move_line(a));
+    for step in &g.moves {
+        let _ = writeln!(out, "{}", step_line(step));
     }
     out
 }
@@ -243,7 +264,7 @@ pub fn decode(text: &str) -> Option<Saved> {
             "name" => g.name = rest.to_string(),
             "dealt" => g.dealt = rest.parse().ok()?,
             "winner" => g.winner = Some(rest.parse().ok()?),
-            _ => g.moves.push(move_of(line)?),
+            _ => g.moves.push(step_of(line)?),
         }
     }
     (version == Some(1)).then_some(g)
@@ -309,8 +330,8 @@ mod tests {
 
     /// One of every action, so the codec is exercised on all sixteen rather
     /// than on the handful an ordinary game happens to contain.
-    fn one_of_each() -> Vec<Action> {
-        vec![
+    fn one_of_each() -> Vec<Step> {
+        [
             Action::PlaceSettlement(17),
             Action::PlaceRoad(41),
             Action::Roll,
@@ -354,13 +375,18 @@ mod tests {
             Action::WithdrawTrade { offer: 0, by: 1 },
             Action::EndTurn,
         ]
+        .into_iter()
+        .map(Step::Move)
+        // And the one step that is not a move.
+        .chain([Step::Passed { offer: 1, by: 2 }])
+        .collect()
     }
 
     #[test]
-    fn every_action_survives_the_round_trip() {
-        for a in one_of_each() {
-            let line = move_line(&a);
-            assert_eq!(move_of(&line), Some(a), "{line}");
+    fn every_step_survives_the_round_trip() {
+        for step in one_of_each() {
+            let line = step_line(&step);
+            assert_eq!(step_of(&line), Some(step), "{line}");
         }
     }
 
@@ -389,7 +415,7 @@ mod tests {
             name: String::new(),
             dealt: 1,
             winner: None,
-            moves: vec![Action::Roll],
+            moves: vec![Step::Move(Action::Roll)],
         };
         let back = decode(&encode(&g)).expect("it reads back");
         assert_eq!(back.winner, None);
@@ -407,7 +433,7 @@ mod tests {
             name: String::new(),
             dealt: 0,
             winner: None,
-            moves: vec![Action::Roll],
+            moves: vec![Step::Move(Action::Roll)],
         };
         let text = encode(&g);
         assert!(decode(&text).is_some());
@@ -427,7 +453,7 @@ mod tests {
             name: String::new(),
             dealt: 0,
             winner: None,
-            moves: vec![Action::Roll, Action::EndTurn],
+            moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
         };
         let text = encode(&g);
         assert_eq!(decode(&text.replace("roll", "rolll")), None);
@@ -468,6 +494,44 @@ mod tests {
     }
 
     #[test]
+    fn a_played_game_survives_a_trip_through_a_file() {
+        // The whole point, end to end: play one, write it, read it back, and
+        // get the same game with the same account of it.
+        use crate::game::Session;
+        let dir = std::env::temp_dir().join(format!("carranta-trip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Store::new(&dir);
+        for seed in 0..6u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..400 {
+                let v = s.version();
+                if s.choices().is_empty() || s.act(0, v).is_err() {
+                    break;
+                }
+            }
+            let (seats, dealt, mode) = s.table();
+            let g = Saved {
+                id: game_id(seed),
+                seats,
+                seed: dealt,
+                mode,
+                name: "Egon".to_string(),
+                dealt: seed,
+                winner: s.winner(),
+                moves: s.moves().to_vec(),
+            };
+            store.save(&g).expect("it writes");
+            let back = store.load(&g.id).expect("it reads");
+            assert_eq!(back, g, "seed {seed}: the file is the game");
+            let session = Session::resume(back.seats, back.seed, back.mode, &back.moves)
+                .expect("and the game replays");
+            let said = |x: &Session| x.log().iter().map(|l| l.text.clone()).collect::<Vec<_>>();
+            assert_eq!(said(&session), said(&s), "seed {seed}: the same account");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_store_writes_reads_and_lists_newest_first() {
         let dir = std::env::temp_dir().join(format!("carranta-store-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -482,7 +546,7 @@ mod tests {
                 name: "Egon".to_string(),
                 dealt,
                 winner: None,
-                moves: vec![Action::Roll],
+                moves: vec![Step::Move(Action::Roll)],
             };
             store.save(&g).expect("it writes");
             ids.push(g.id);

@@ -261,14 +261,14 @@ pub enum Refused {
 /// A live game.
 pub struct Session {
     state: State,
-    /// Every action applied, in order.
+    /// Everything that happened, in order.
     ///
     /// The whole game, because the engine is deterministic: the same seats, the
-    /// same seed and the same moves rebuild this position down to the next
+    /// same seed and the same steps rebuild this position down to the next
     /// random number. That is what makes a game something you can put on disk
     /// in a few hundred bytes and analyse afterwards, and it is the same
     /// argument `carranta-record` makes about its own event log (H-1).
-    moves: Vec<Action>,
+    moves: Vec<Step>,
     /// The two other things `Session::new` was given, kept so a saved game can
     /// be rebuilt from its file without the caller having to remember them.
     seats: u8,
@@ -830,7 +830,7 @@ impl Session {
             if self.state.apply(forced).is_err() {
                 break;
             }
-            self.moves.push(forced);
+            self.moves.push(Step::Move(forced));
             self.version += 1;
             self.note_at(
                 at,
@@ -931,7 +931,7 @@ impl Session {
             if self.state.apply(forced).is_err() {
                 return;
             }
-            self.moves.push(forced);
+            self.moves.push(Step::Move(forced));
             self.version += 1;
             let what = match forced {
                 Action::EndTurn => "the turn was ended".to_string(),
@@ -980,7 +980,7 @@ impl Session {
         (self.seats, self.seed, self.mode)
     }
 
-    pub fn moves(&self) -> &[Action] {
+    pub fn moves(&self) -> &[Step] {
         &self.moves
     }
 
@@ -989,12 +989,106 @@ impl Session {
     /// Returns `None` at the first move the engine refuses, which means the
     /// file and this build disagree about the rules rather than that the file
     /// is unreadable. Better to say so than to serve half a game as a whole one.
-    pub fn replay(seats: u8, seed: u64, mode: TradeMode, moves: &[Action]) -> Option<State> {
+    pub fn replay(seats: u8, seed: u64, mode: TradeMode, moves: &[Step]) -> Option<State> {
         let mut state = State::new(seats.clamp(3, MAX_PLAYERS as u8), seed).with_trade_mode(mode);
-        for action in moves {
-            state.apply(*action).ok()?;
+        for step in moves {
+            if let Step::Move(action) = step {
+                state.apply(*action).ok()?;
+            }
         }
         Some(state)
+    }
+
+    /// Play a whole recorded game back into a session, narrating as it goes.
+    ///
+    /// The moves alone rebuild the position; this rebuilds the *account* of it
+    /// as well, so a game reopened from disk reads the way it read while it was
+    /// being played. There is no pace and no clock here: the game already
+    /// happened, and this is reading it rather than playing it.
+    pub fn resume(seats: u8, seed: u64, mode: TradeMode, moves: &[Step]) -> Option<Session> {
+        let mut s = Session::new(seats, seed, mode);
+        for step in moves {
+            let ok = match *step {
+                Step::Move(action) => s.narrate(action),
+                Step::Passed { offer, by } => s.pass_again(offer, by),
+            };
+            if !ok {
+                return None;
+            }
+        }
+        s.note_winner();
+        Some(s)
+    }
+
+    /// Say no again, on the way back through a recorded game.
+    ///
+    /// Written out rather than routed through `answer`, which would push the
+    /// refusal onto the record a second time: this is reading the record, not
+    /// adding to it.
+    fn pass_again(&mut self, at: u8, seat: u8) -> bool {
+        let from = match self.deals.iter().find(|d| d.at == Some(at)) {
+            Some(d) => d.offer.from,
+            None => return false,
+        };
+        if let Some(d) = self.deals.iter_mut().find(|d| d.at == Some(at)) {
+            d.answers[seat as usize] = Answer::No;
+        }
+        self.moves.push(Step::Passed {
+            offer: at,
+            by: seat,
+        });
+        if seat == HUMAN {
+            self.note(Some(HUMAN), "Passed on the offers".to_string());
+        } else {
+            self.note(Some(seat), format!("Passed on seat {from}'s offer"));
+        }
+        self.version += 1;
+        true
+    }
+
+    /// The line that closes a finished game, wherever the game finished.
+    fn note_winner(&mut self) {
+        if let Phase::GameOver { winner } = self.state.phase {
+            let who = if winner == HUMAN {
+                "You win".to_string()
+            } else {
+                format!("Seat {winner} wins")
+            };
+            if self.log.last().map(|l| l.text.as_str()) != Some(who.as_str()) {
+                self.note(None, who);
+            }
+        }
+    }
+
+    /// Apply one action and write down what it did, as any of the paths that
+    /// apply an action would have.
+    fn narrate(&mut self, action: Action) -> bool {
+        let seat = self.state.decider();
+        let phrase = log_phrase(&action, &self.state, seat as usize);
+        let at = self.stamp();
+        let purse = self.state.hand;
+        if let Action::AcceptTrade { offer, .. } = action {
+            self.answer(offer, seat, Answer::Yes);
+        }
+        if self.state.apply(action).is_err() {
+            return false;
+        }
+        self.moves.push(Step::Move(action));
+        self.version += 1;
+        let phrase = match action {
+            Action::Roll => rolled(&self.state),
+            _ => phrase,
+        };
+        if worth_logging(&action) {
+            self.note_at(at, Some(seat), phrase);
+        }
+        if pays_out(&action) {
+            self.note_production(at, &purse);
+        }
+        self.note_steal(at, &action, seat, &purse);
+        self.sync_deals();
+        self.hand_over_clock();
+        true
     }
 
     pub fn state(&self) -> &State {
@@ -1167,7 +1261,7 @@ impl Session {
                     self.answer(offer, HUMAN, Answer::Yes);
                 }
                 self.state.apply(action).map_err(Refused::Illegal)?;
-                self.moves.push(action);
+                self.moves.push(Step::Move(action));
                 self.undo = mark;
                 self.version += 1;
                 let phrase = match action {
@@ -1258,7 +1352,7 @@ impl Session {
         let phrase = log_phrase(&action, &self.state, HUMAN as usize);
         let at = self.stamp();
         self.state.apply(action).map_err(Refused::Illegal)?;
-        self.moves.push(action);
+        self.moves.push(Step::Move(action));
         self.version += 1;
         self.note_at(at, Some(HUMAN), phrase);
         self.sync_deals();
@@ -1384,7 +1478,7 @@ impl Session {
             if self.state.apply(action).is_err() {
                 break;
             }
-            self.moves.push(action);
+            self.moves.push(Step::Move(action));
             self.version += 1;
             let phrase = match action {
                 Action::Roll => rolled(&self.state),
@@ -1403,16 +1497,7 @@ impl Session {
             self.hand_over_clock();
             self.settle_between_bots();
         }
-        if let Phase::GameOver { winner } = self.state.phase {
-            let who = if winner == HUMAN {
-                "You win".to_string()
-            } else {
-                format!("Seat {winner} wins")
-            };
-            if self.log.last().map(|l| l.text.as_str()) != Some(who.as_str()) {
-                self.note(None, who);
-            }
-        }
+        self.note_winner();
     }
 
     /// Let the bots answer the offers on the table, one seat per beat.
@@ -1498,7 +1583,7 @@ impl Session {
             if self.state.apply(take).is_err() {
                 return;
             }
-            self.moves.push(take);
+            self.moves.push(Step::Move(take));
             self.version += 1;
             // Both halves, because a trade is two public transfers and "took an
             // offer" said neither.
@@ -1557,6 +1642,15 @@ impl Session {
         if let Some(d) = self.deals.iter_mut().find(|d| d.at == Some(at)) {
             d.answers[seat as usize] = said;
         }
+        // A yes is an `AcceptTrade` and is written down as the move it is. A no
+        // moves nothing, so it has no move to be written down as, and without
+        // this the record would replay a table that never answered.
+        if said == Answer::No {
+            self.moves.push(Step::Passed {
+                offer: at,
+                by: seat,
+            });
+        }
     }
 
     /// The turn's offers and what was said to them, newest last.
@@ -1570,6 +1664,18 @@ impl Session {
 /// Only the seats an offer was actually put to ever leave `Waiting`: a seat
 /// that cannot cover it, or is not a party to it, was never asked and is not
 /// shown as having refused.
+/// One thing that happened.
+///
+/// Not every one of them is a move. Turning an offer down changes no position
+/// and the engine is right not to have an action for it, but it is the answer
+/// the table was waiting on and the record would be telling a different story
+/// without it. `carranta-record` draws the same distinction (`Recorder::decline`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Move(Action),
+    Passed { offer: u8, by: u8 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Answer {
     #[default]
@@ -3110,6 +3216,33 @@ mod tests {
     }
 
     #[test]
+    fn a_resumed_game_reads_the_way_it_was_played() {
+        // Reopening a game from disk has to give back the account of it too,
+        // not only the position: a board with no history is not the game.
+        for seed in 0..12u64 {
+            let mut s = Session::new(4, seed, TradeMode::Full).with_name("Egon");
+            for _ in 0..400 {
+                if matches!(s.state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                let v = s.version();
+                if s.choices().is_empty() || s.act(0, v).is_err() {
+                    break;
+                }
+            }
+            let (seats, dealt, mode) = s.table();
+            let back = Session::resume(seats, dealt, mode, s.moves()).expect("it replays");
+            assert_eq!(back.state, s.state, "seed {seed}: the same position");
+            assert_eq!(back.moves(), s.moves(), "and the same record of it");
+            // The log is the account. Compared by what it says rather than by
+            // the whole line, since a line carries the turn it was filed under
+            // and those agree by construction.
+            let said = |x: &Session| x.log().iter().map(|l| l.text.clone()).collect::<Vec<_>>();
+            assert_eq!(said(&back), said(&s), "seed {seed}: the same account");
+        }
+    }
+
+    #[test]
     fn taking_a_militia_back_takes_its_move_back_too() {
         // The position is restored whole, and the record has to go with it or
         // the file would replay a card that was never played.
@@ -3152,7 +3285,7 @@ mod tests {
             }
         }
         let mut s = found.expect("some seed reaches a playable militia");
-        assert_eq!(s.moves().last(), Some(&Action::PlayMilitia));
+        assert_eq!(s.moves().last(), Some(&Step::Move(Action::PlayMilitia)));
         let before = s.moves().len();
         let v = s.version();
         s.cancel(v).expect("a half-played militia can be taken back");
