@@ -1007,11 +1007,25 @@ city pieces already in `art/`. This is a deliberate reversal of `style.md`
 §3.3, made so that the pieces and the interface finally speak one language.
 §3.3 has been rewritten to match.
 
+**The five development card faces are drawn**, in `art/dev-*.svg`: brand orange
+ground, the name and the number in the wordmark's face, and the drawing in a
+three-step ramp of white through very light grey, which is the same lighting the
+isometric pieces use. Each is built from art already in `art/`, so the card and
+the thing it does are the same object: the militia carries the robber it moves,
+road building carries two roads at the board's own angle, and invention and
+monopoly carry resource cards drawn the way the game draws one, a face and a
+disc. The victory point carries no drawing at all, just `VP` and `+1`.
+
+One number per card, in the same place: `+1` militia, `+2` roads, `+2`
+resources, `ALL` of one resource, `+1` point. The drawing sits in the same band
+on all five, which was measured rather than eyed: they centre between y 68 and
+70.5 on a 132-unit card.
+
 Needed, and not yet drawn: five resource objects (brick, wood, wool, wheat,
-ore), a development-card back and five faces, the robber, and tokens for the
-longest road and the largest militia. These come from the same hand as the
-existing pieces; the interface is built against placeholders in the meantime
-and swapping them is a file drop into `art/`.
+ore), the robber as a piece rather than a marker, and tokens for the longest
+road and the largest militia. These come from the same hand as the existing
+pieces; the interface is built against placeholders in the meantime and swapping
+them is a file drop into `art/`.
 
 ---
 

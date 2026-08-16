@@ -488,16 +488,21 @@
   .logRes b { font-weight: 600; color: var(--foreground); }
   /* The bank reads across, not down: five stacks side by side, the size of
      the clock panel above it rather than a list five rows tall. */
-  .bankRows { display: flex; justify-content: space-around; align-items: flex-end;
-              gap: .3em; }
+  /* Evenly spaced across the panel, with the deck set off by a rule. The five
+     are the resources and the sixth is not one of them: it is counted out of a
+     different number and can never be refilled, so the eye should not read
+     straight along the row as though it were a sixth resource. */
+  .bankRows { display: flex; justify-content: space-between; align-items: flex-end;
+              gap: .45em; padding: 0 .2em; }
   .bankCell { display: flex; flex-direction: column; align-items: center; gap: .3em; }
   .bankFan { position: relative; display: inline-block; height: 2em; }
   .bankFan .rcard.mini { width: 1.5em; height: 2em; border-radius: .24em;
                          margin: 0; vertical-align: 0; }
   .bankFan .rcard.mini i { width: .7em; height: .7em; }
-  /* The deck stands with the five rather than apart from them: it is the same
-     bank, and a rule between made it look like a different panel. */
-  .bankCell.dev { margin-left: .35em; }
+  /* The rule sits on the deck rather than as an element of its own, so it
+     cannot fall out of step with the spacing around it. */
+  .bankCell.dev { border-left: 1px solid var(--border); padding-left: .75em;
+                  margin-left: .3em; }
   .bankCell .much { font-weight: 600; font-size: .95em;
                     font-variant-numeric: tabular-nums; }
   /* A stack that has run out is the one worth noticing: an empty outline where
@@ -2082,12 +2087,20 @@ const devIcon = () =>
 const GLYPH = {
   roll: '<svg viewBox="0 0 24 24"><rect x="2" y="8" width="13" height="13" rx="3"/>'
       + '<rect x="11" y="2" width="11" height="11" rx="3" opacity=".45"/></svg>',
+  // A card with the disc its back actually carries. It had a second, smaller
+  // dot inside the disc, which no card has: it read as a lens or a record
+  // rather than as the thing you are buying.
   buy: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/>'
-     + '<circle cx="12" cy="12" r="4.4" fill="#FBF7EF"/><circle cx="12" cy="12" r="1.7"/></svg>',
+     + '<circle cx="12" cy="12" r="4.4" fill="#FBF7EF"/></svg>',
   play: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="14" height="18" rx="3" opacity=".45"/>'
       + '<path d="M12 6l9 6-9 6z"/></svg>',
-  offer: '<svg viewBox="0 0 24 24"><path d="M4 9h11V5l6 6-6 6v-4H4z"/>'
-       + '<path d="M20 15H9v4l-6-6 6-6v4h11z" opacity=".45"/></svg>',
+  // One arrow with a tip at each end, not two arrows laid over each other. The
+  // pair read as a single heavy black mark, because the second was drawn faint
+  // enough to disappear and left the first looking like a one-way sign. Carried
+  // at just over half weight so it sits as grey against the ink of the others:
+  // an opacity rather than a colour, so it still follows the button it is on.
+  offer: '<svg viewBox="0 0 24 24"><path opacity=".55"'
+       + ' d="M2 12l5-4v3h10V8l5 4-5 4v-3H7v3z"/></svg>',
   bank: '<svg viewBox="0 0 24 24"><path d="M12 2l10 6H2z"/>'
       + '<rect x="4" y="10" width="3" height="8"/><rect x="10.5" y="10" width="3" height="8"/>'
       + '<rect x="17" y="10" width="3" height="8"/><rect x="2" y="19" width="20" height="3" rx="1"/></svg>',
