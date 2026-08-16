@@ -231,9 +231,19 @@
   .vid.coast { fill: #1E7E96; }
   header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
-  /* Pushed to the far end, so the wordmark and the game name stay together as
-     the one thing the header is for and the switch is not part of the title. */
-  .sndBtn { margin-left: auto; color: var(--dim); line-height: 0; padding: 5px 7px; }
+  /* The board's top right corner, mirroring the decision cards in its top left.
+     It is a setting of this player's own rather than of the game, so it belongs
+     on their board and not in the header, which names the table everyone at it
+     shares.
+
+     Above the cards in the stacking order, because muting has to work at the
+     moment there is most to mute: a card standing across the whole width of a
+     narrow board must not be what stops you turning the sound off. */
+  .sndBtn {
+    position: absolute; z-index: 51; top: 14px; right: 14px;
+    color: var(--dim); line-height: 0; padding: 5px 7px;
+    background: rgba(251, 247, 239, .7);
+  }
   .sndBtn svg { width: 17px; height: 17px; display: block; }
   .sndBtn[aria-pressed="false"] { opacity: .55; }
   /* ---- button ----------------------------------------------------------
@@ -352,10 +362,15 @@
   /* Positioned, so the decision cards can hang off its corner. */
   .boardPanel { display: flex; min-width: 0; min-height: 0; position: relative; }
   /* A hex you may click lifts under the cursor, so which one you are about to
-     take is something you see rather than infer. */
+     take is something you see rather than infer.
+     The whole tile moves, number disc and all. Lifting the polygons alone left
+     the disc and its pips standing where the tile used to be, so a hovered hex
+     came apart into a piece of card and a number floating off it.
+     A small lift, because the tile is large: the same few pixels that read as a
+     nudge on a card read as a jump on something this size. */
   #board g.spot { cursor: pointer; }
-  #board g.spot polygon { transition: transform .1s ease-out; }
-  #board g.spot:hover polygon { transform: translateY(-3px); }
+  #board g.hexSpot { transition: transform .1s ease-out; }
+  #board g.hexSpot:hover { transform: translateY(-2px); }
   #board { flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; display: block; }
   .col {
     display: flex; flex-direction: column; gap: clamp(8px, .8vw, 16px);
@@ -895,11 +910,6 @@
 <header>
   <a class="wordmark" href="/" id="wordmark">Carranta</a>
   <span class="gameName" id="gameName" hidden></span>
-  <!-- Sound can always be turned off, and the control is on the screen rather
-       than in a settings page: a game making a noise you did not ask for should
-       be one click from stopping, not one click plus a search. -->
-  <button class="btn-ghost btn-sm sndBtn" id="sound" type="button"
-          aria-pressed="true" data-tip="Sound"></button>
 </header>
 
 <!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
@@ -1069,6 +1079,11 @@
          board's top left corner rather than over its middle, and a column so
          several can stand at once. -->
     <div class="prompt" id="prompt" hidden></div>
+    <!-- Sound is each player's own setting and lives on their own board, in
+         the corner opposite the decisions. Off in one press, wherever the game
+         has got to. -->
+    <button class="btn-ghost btn-sm sndBtn" id="sound" type="button"
+            aria-pressed="true" data-tip="Sound"></button>
   </div>
 
   <aside class="col right">
@@ -1276,7 +1291,10 @@ function draw() {
 
   view.hexes.forEach(h => {
     const [cx, cy] = px(h.q, h.r);
-    const g = el('g', byHex[h.id] ? { class: 'spot' } : {});
+    // `hexSpot` as well as `spot`, because a hex answers a hover by lifting and
+    // an intersection answers it by brightening. Both are `spot`; only this one
+    // is a tile.
+    const g = el('g', byHex[h.id] ? { class: 'spot hexSpot' } : {});
     // The tile's own outline, drawn where a card's is: at the edge of the
     // colour, with the board showing through outside it.
     const face = hexPoints(cx, cy, TILE);
@@ -1560,20 +1578,32 @@ function fit(svg, frame) {
 // Kenney's, CC0, carried in the binary. See `audio/SOURCES.md`.
 const SOUNDS = {
   roll: '/sound/dice-throw-3.mp3',
+  place: '/sound/impact-generic-light-002.mp3',
   deal: '/sound/card-place-1.mp3',
   offer: '/sound/drop-002.mp3',
 };
-// What each sound is for, as a test against a line of the log. A dealt card is
-// any line that puts cards into a hand: production, a card bought, a card
-// stolen, a trade landing. They are all the same event to the ear.
+// What each sound is for, as a test against a line of the log.
+//
+// A dealt card is any line that puts cards into a hand: production, a card
+// bought, a card stolen, a trade landing. A placed piece is any line that puts
+// wood on the board: a settlement, a city, a road, and the robber, which is the
+// militia's whole effect and a seven's. Within each group they are one event to
+// the ear, and one sound saying "a piece went down" is worth more than four
+// saying which.
+//
+// Matched case-insensitively against the line with any "Time ran out," stripped
+// off the front, because a move the clock made for you is the same move: it
+// writes "Time ran out, placed a settlement for you" and it should sound like a
+// settlement being placed.
 const SOUND_FOR = [
-  [/^Rolled /, 'roll'],
-  [/^Time ran out, rolled /, 'roll'],
-  [/^Offered /, 'offer'],
-  [/^Collected /, 'deal'],
-  [/^Bought a development card/, 'deal'],
-  [/^Took /, 'deal'],
-  [/^Drew /, 'deal'],
+  [/^rolled /i, 'roll'],
+  [/^offered /i, 'offer'],
+  [/^(placed|built) a /i, 'place'],
+  [/^upgraded to a city/i, 'place'],
+  [/^moved the robber/i, 'place'],
+  [/^collected /i, 'deal'],
+  [/^bought a development card/i, 'deal'],
+  [/^took /i, 'deal'],
 ];
 
 const sound = {
@@ -1630,13 +1660,15 @@ function soundTheLog(v) {
   sound.heard = log.length;
   const heard = new Set();
   for (const l of fresh) {
+    const line = l.t.replace(/^Time ran out, /, '');
     for (const [pattern, name] of SOUND_FOR) {
-      if (pattern.test(l.t)) { heard.add(name); break; }
+      if (pattern.test(line)) { heard.add(name); break; }
     }
   }
-  // In the order they happen at a table: the dice, then what they paid out,
-  // then anything put on the table after.
-  ['roll', 'deal', 'offer'].forEach(n => { if (heard.has(n)) playSound(n); });
+  // In the order they happen at a table: the dice, then whatever went down on
+  // the board, then the cards that moved because of it, then anything put up
+  // for trade afterwards.
+  ['roll', 'place', 'deal', 'offer'].forEach(n => { if (heard.has(n)) playSound(n); });
 }
 
 // A speaker, with the waves on or struck through. One drawing rather than two

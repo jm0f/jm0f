@@ -77,7 +77,7 @@ const FONTS: [(&str, &[u8]); 3] = [
 ///
 /// MP3 rather than the OGG originals, because every browser plays MP3 and the
 /// difference is a couple of kilobytes on a file already under six.
-const SOUNDS: [(&str, &[u8]); 3] = [
+const SOUNDS: [(&str, &[u8]); 4] = [
     (
         "dice-throw-3",
         include_bytes!("../../../audio/dice-throw-3.mp3"),
@@ -85,6 +85,10 @@ const SOUNDS: [(&str, &[u8]); 3] = [
     (
         "card-place-1",
         include_bytes!("../../../audio/card-place-1.mp3"),
+    ),
+    (
+        "impact-generic-light-002",
+        include_bytes!("../../../audio/impact-generic-light-002.mp3"),
     ),
     ("drop-002", include_bytes!("../../../audio/drop-002.mp3")),
 ];
@@ -400,7 +404,12 @@ mod tests {
         // no external request loads a sound, so a missing one is silence with
         // no error anywhere. Names checked against the page itself, so
         // renaming a file without renaming its use fails here.
-        for name in ["dice-throw-3", "card-place-1", "drop-002"] {
+        for name in [
+            "dice-throw-3",
+            "card-place-1",
+            "impact-generic-light-002",
+            "drop-002",
+        ] {
             let (_, bytes) = SOUNDS
                 .iter()
                 .find(|(n, _)| *n == name)

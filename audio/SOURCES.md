@@ -1,6 +1,6 @@
 # Where the sounds came from
 
-Three sounds, all by [Kenney](https://kenney.nl), all **CC0**. That licence is
+Four sounds, all by [Kenney](https://kenney.nl), all **CC0**. That licence is
 why they can live in this repository at all: the files are redistributed inside
 the binary, and the page makes no external requests to fetch them.
 
@@ -8,7 +8,11 @@ the binary, and the page makes no external requests to fetch them.
 |---|---|---|
 | `dice-throw-3.mp3` | Casino Audio | `dice-throw-3.ogg` |
 | `card-place-1.mp3` | Casino Audio | `card-place-1.ogg` |
+| `impact-generic-light-002.mp3` | Impact Sounds | `impactGeneric_light_002.ogg` |
 | `drop-002.mp3` | Interface Sounds | `drop_002.ogg` |
+
+Kenney numbers these from `000`, so "Light 2" is the file called `002`, the one
+soundcn titles *Impact Generic Light 002*, and not the second of the five.
 
 Taken by way of [soundcn](https://github.com/kapishdima/soundcn), which is a
 registry of these packs cut into named, individually installable sounds. Its own

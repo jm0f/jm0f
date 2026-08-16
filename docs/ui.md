@@ -469,11 +469,12 @@ Bot turns play out at whatever pace the lobby was set to (§8).
 
 ## 7a. Sound
 
-**Three sounds, and each one names an event rather than an interaction.**
+**Four sounds, and each one names an event rather than an interaction.**
 
 | Sound | Plays when |
 |---|---|
 | `dice-throw-3` | The dice are rolled, by anyone |
+| `impact-generic-light-002` | A piece goes down on the board |
 | `card-place-1` | Cards are dealt into a hand |
 | `drop-002` | An offer goes on the table |
 
@@ -485,22 +486,37 @@ which is the opposite of the point: the sounds are here so a player can tell
 what is going on without watching every corner of the board.
 
 So a "dealt card" is any line that puts cards into a hand: production, a card
-bought, a card stolen, a trade landing. To the ear they are one event, and one
-sound saying "cards moved" is worth more than four saying which kind.
+bought, a card stolen, a trade landing. A "placed piece" is any line that puts
+wood on the board: a settlement, a city, a road, and the robber, which is the
+militia's whole effect and a seven's. Within each group they are one event to
+the ear, and one sound saying "a piece went down" is worth more than four saying
+which piece.
+
+**A move the clock made for you is the same move.** The log writes it as "Time
+ran out, placed a settlement for you"; the prefix is stripped before the line is
+matched, so a forfeited placement sounds like a placement.
 
 **At most one of each kind per payload.** A roll that pays four players writes
 four lines and is still one thing to listen to; four card sounds landing on each
 other is a noise rather than a cue. They fire in table order when several land
-together: the dice, then what they paid out, then anything put up afterwards.
+together: the dice, then whatever went down on the board, then the cards that
+moved because of it, then anything put up for trade afterwards.
 
 **The first read is silent.** Reloading mid-game arrives with the whole history
 in hand, and playing it back would be a minute of dice.
 
-**On by default, off in one click, and the click sticks.** A cue nobody switches
+**On by default, off in one press, and the press sticks.** A cue nobody switches
 on is a cue nobody gets, so the default is on; a game that makes a noise you did
-not ask for should be one press from stopping, so the control is in the header
+not ask for should be one press from stopping, so the control is on the screen
 and not in a settings page. Turning it back on plays one, because that press is
 also the only way to find out whether this machine makes a sound at all.
+
+The toggle lives in the **board's top right corner**, mirroring the decision
+cards in its top left. It is a setting of this player's own and not of the game,
+so it belongs on their board rather than in the header, which names the table
+everyone at it shares. It sits above the cards in the stacking order: a card
+standing across the whole width of a narrow board must not be the thing that
+stops you turning the sound off.
 
 A browser refuses to play anything before the page has been interacted with, and
 refuses by rejecting a promise rather than by throwing. The lobby's own buttons
