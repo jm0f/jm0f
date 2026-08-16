@@ -236,6 +236,15 @@
     background: var(--border); margin-right: 12px;
     vertical-align: -.15em;
   }
+  /* The analytics, which is the only other page a game has. Pushed to the far
+     end so the mark and the name stay together as one thing and this reads as
+     somewhere else to go rather than as more of the title. */
+  .headLink {
+    margin-left: auto; color: var(--dim); font: 500 13px/1 var(--sans);
+    text-decoration: none; padding-bottom: 1px;
+    border-bottom: 1px solid var(--border);
+  }
+  .headLink:hover { color: var(--accent); border-color: var(--accent); }
   header .status { color: var(--dim); }
   header .toggle { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
   .vid { font: 600 8px var(--sans); text-anchor: middle;
@@ -1152,6 +1161,9 @@
 <header>
   <a class="wordmark" href="/" id="wordmark">Carranta</a>
   <span class="gameName" id="gameName" hidden></span>
+  <!-- The one other place this game lives. Set from the address at start-up
+       rather than rendered, since it does not change while you play. -->
+  <a class="headLink" id="analytics" href="/">How it is going</a>
 </header>
 
 <!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
@@ -4552,6 +4564,12 @@ function act(i) {
 // being played now.
 const GAME = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] || '';
 const api = (path) => `/${GAME}${path}`;
+// The header's way through to this game's report. Written once, because the
+// address does not change while the game is being played.
+{
+  const a = document.getElementById('analytics');
+  if (a) a.href = api('/analytics');
+}
 
 // New game goes through the lobby rather than restarting on the spot: the
 // settings are the point of pressing it.
