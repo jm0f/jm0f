@@ -1039,9 +1039,14 @@ monopoly carry resource cards drawn the way the game draws one, a face and a
 disc. The victory point carries no drawing at all, just `VP` and `+1`.
 
 One number per card, in the same place: `+1` militia, `+2` roads, `+2`
-resources, `ALL` of one resource, `+1` point. The drawing sits in the same band
-on all five, which was measured rather than eyed: they centre between y 68 and
-70.5 on a 132-unit card.
+resources, `ALL` of one resource, `+1` point. The five drawings **stand on the
+same line**, which was measured rather than eyed: they bottom out between y 90
+and 93.3 on a 132-unit card, clear of the number below.
+
+Bottoms rather than centres, and that was a correction. Centring all five in one
+band works only while they are about the same height, and the robber is 59 units
+tall against roughly 46 for the rest, so a shared centre put its base on top of
+the `+1`. Lining up the bases instead lets a tall drawing be tall.
 
 The two roads on road building are offset **across** the road's own axis rather
 than along it. End to end they read as one long road with a joint in it, which

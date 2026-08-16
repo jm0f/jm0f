@@ -63,9 +63,12 @@ pieces already in this folder, so keeping them in step by hand was the thing
 worth avoiding. It is a tool: nothing in the Rust workspace runs it, and the
 files it writes are what the binary carries.
 
-A card is 100 by 132, which is the shape the dock draws one in, and the drawing
-sits centred at roughly x 50, y 68, between the name at the top and the number
-at the bottom. Text is Audiowide, the wordmark's face, at one weight, because
+A card is 100 by 132, which is the shape the dock draws one in. The drawing sits
+between the name at the top and the number at the bottom, centred on x 50 and
+**standing on the same line as the other four**, which bottom out between y 90
+and 93.3. Bases rather than centres: the robber is half again as tall as the
+rest, and a shared centre put it on top of its own number. Text is Audiowide,
+the wordmark's face, at one weight, because
 that is the only weight there is: asking for a bolder one gets a synthetic
 smear that reads as a second typeface.
 

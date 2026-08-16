@@ -56,8 +56,14 @@ def iso_card(cx, cy, w=22.0, tilt=0.0, lit=LIT, disc=ACCENT):
 # ---- militia: the robber, the piece the card actually moves -----------------
 # The geometry is art/robber.svg, refilled: its greys are a lighting ramp and
 # this is the same ramp in white.
+#
+# It stands 59 units tall against roughly 46 for the other four, so centring it
+# in the same band as them dropped its base onto the number underneath. Lifted
+# until its base lines up with theirs instead: the four bottom out between y 91
+# and 93, and this one now does too. Bottoms rather than centres, because a
+# drawing that much taller has no centre in common with the rest.
 robber = (
-    '<g transform="translate(34.4 36) scale(0.78)">'
+    '<g transform="translate(34.4 29) scale(0.78)">'
     f'<polygon fill="{MID}" points="20,18 40,28 40,72 20,82 0,72 0,28"/>'
     f'<polygon fill="{LIT}" points="20,18 40,28 20,38 0,28"/>'
     f'<polygon fill="{SHADE}" points="0,28 20,38 20,82 0,72"/>'
