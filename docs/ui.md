@@ -1359,6 +1359,18 @@ what make the seat-order balance mean anything.
 **The report is a document, not an application.** Everything on it settled the
 moment the game ended, so it is rendered on the server and carries no script.
 
+**`--demo N` plays N whole games into the store before the door opens**, and
+prints their addresses. The analytics are the one part of this that cannot be
+looked at without a finished game behind it, and playing one out by hand to see
+whether a table renders is a poor way to spend an afternoon. Every seat is
+played by the same heuristic the bots use, so these are real games rather than
+walks through the rules, and the numbers on the page mean what they would mean.
+
+**A game is stamped to the millisecond, not the second.** The order games were
+played in decides what the ratings say, so a handful played back to back were
+being put in whatever order their addresses happened to sort in and the ratings
+followed.
+
 ---
 
 ## 11. Still open

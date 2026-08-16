@@ -108,9 +108,9 @@ pub struct Study {
     pub report: Report,
     pub production: production::Report,
     pub dice: dice::GameDice,
-    /// Where this game's dice sit against every other game recorded here, or
-    /// `None` until there are others to sit against. A percentile of one game
-    /// is not a percentile.
+    /// Where this game's dice sit against every other game recorded here, as a
+    /// percentage from 0 to 100, or `None` until there are others to sit
+    /// against. A percentile of one game is not a percentile.
     pub dice_percentile: Option<f64>,
     pub corpus_games: usize,
     /// What this result did to each seat's rating.
@@ -153,8 +153,12 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         }
     }
     let deviations = games.dice_deviations.clone();
-    let dice_percentile = (!deviations.is_empty())
-        .then(|| dice::Corpus::from_games(deviations).deviation_percentile(this.kl_bits));
+    // Out of a hundred, not out of one. `deviation_percentile` answers with a
+    // share, which read as "these dice deviated more than 1% of games" on a
+    // page where it meant all of them.
+    let dice_percentile = (!deviations.is_empty()).then(|| {
+        dice::Corpus::from_games(deviations).deviation_percentile(this.kl_bits) * 100.0
+    });
     let seat_wins = (others > 0).then(|| games.seat_win_rate());
 
     // Ratings, in the order the games were played, stopping either side of this
@@ -294,6 +298,46 @@ mod tests {
         // believe the number, and it counts the games before this one.
         assert_eq!(study.movement[0].unwrap().games, 2);
         assert_eq!(study.corpus_games, 3);
+    }
+
+    #[test]
+    fn the_order_games_were_played_in_is_the_order_they_are_rated_in() {
+        // A rating is a function of every game before it, so the history's
+        // order is load-bearing rather than cosmetic. Read at the end of the
+        // list, a player has every earlier game behind them.
+        let history: Vec<Saved> = (30..34u64).map(played).collect();
+        let first = study(&history[0], &history).expect("it studies");
+        let last = study(&history[3], &history).expect("it studies");
+        assert_eq!(first.movement[0].unwrap().games, 0, "nothing before the first");
+        assert_eq!(last.movement[0].unwrap().games, 3, "three before the last");
+        // And the belief narrows as the games accumulate, which is the whole
+        // reason the count is printed beside the figure.
+        assert!(
+            last.movement[0].unwrap().before.sigma < first.movement[0].unwrap().before.sigma,
+            "a rating gets surer as games go by"
+        );
+    }
+
+    #[test]
+    fn the_percentile_is_out_of_a_hundred() {
+        // `deviation_percentile` answers with a share of one, and the page says
+        // "%". The wildest game in a set has to come out at 100, not at 1.
+        let history: Vec<Saved> = (20..26u64).map(played).collect();
+        let mut seen: Vec<(String, f64)> = history
+            .iter()
+            .map(|g| {
+                let s = study(g, &history).expect("it studies");
+                (g.id.clone(), s.dice_percentile.expect("there are others"))
+            })
+            .collect();
+        for (id, p) in &seen {
+            assert!((0.0..=100.0).contains(p), "{id} is at {p}");
+        }
+        seen.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // Six games, so the shares are sixths: the calmest is at 0 and the
+        // wildest at 100, which is exactly what a share of one would hide.
+        assert_eq!(seen.first().unwrap().1, 0.0);
+        assert_eq!(seen.last().unwrap().1, 100.0);
     }
 
     #[test]

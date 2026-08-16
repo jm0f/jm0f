@@ -175,6 +175,38 @@ impl Server {
         self.live.lock().unwrap().id.clone()
     }
 
+    /// Play whole games against nobody, and keep them.
+    ///
+    /// The analytics are the one part of this that cannot be looked at without
+    /// a finished game behind it, and playing one out by hand to see whether a
+    /// table renders is a poor way to spend an afternoon. Every seat is played
+    /// by the same heuristic the bots use, so these are real games rather than
+    /// random legal moves: the numbers on the page mean what they would mean.
+    pub fn demo(&self, games: u32) -> Vec<String> {
+        let mut out = Vec::new();
+        for _ in 0..games {
+            let (seats, seed, mode) = {
+                let live = self.live.lock().unwrap();
+                let (seats, seed, mode) = live.session.table();
+                (seats, seed.wrapping_add(1), mode)
+            };
+            {
+                let mut live = self.live.lock().unwrap();
+                live.session = Session::new(seats, seed, mode)
+                    .with_pace(Pace::Instant)
+                    .with_name("Egon");
+                live.id = mint_id();
+                live.dealt = now();
+                // Every seat played by the table's own hand, the human's
+                // included: there is nobody here to ask.
+                live.session.play_out();
+                out.push(live.id.clone());
+            }
+            self.keep();
+        }
+        out
+    }
+
     /// A game as it stands, live or stored.
     ///
     /// The live one is taken from memory rather than from its file, so the
@@ -556,11 +588,15 @@ fn redirect(stream: &mut TcpStream, to: &str) -> std::io::Result<()> {
     stream.flush()
 }
 
-/// Unix seconds, or zero if the clock is behind 1970.
+/// Unix milliseconds, or zero if the clock is behind 1970.
+///
+/// Milliseconds because a game's place in the order decides what the ratings
+/// say about it, and a handful of games played back to back all land in the
+/// same second.
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// A fresh address for a game.

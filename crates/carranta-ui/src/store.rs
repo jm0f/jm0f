@@ -28,8 +28,13 @@ pub struct Saved {
     pub mode: TradeMode,
     /// What the person at this table is called, for the analytics to name them.
     pub name: String,
-    /// Unix seconds when the game was dealt, so a list of games can be ordered
-    /// by when they happened rather than by how the directory reads.
+    /// Unix milliseconds when the game was dealt, so a list of games can be
+    /// ordered by when they happened rather than by how the directory reads.
+    ///
+    /// Milliseconds rather than seconds because the order is load-bearing: a
+    /// rating is a function of every game before it, so two games dealt in the
+    /// same second were being put in whatever order their addresses happened to
+    /// sort in, and the ratings followed.
     pub dealt: u64,
     /// Set once somebody has won, so a finished game can be told from one that
     /// was abandoned halfway.

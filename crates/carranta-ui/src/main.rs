@@ -18,6 +18,7 @@ carranta-play, play Carranta locally in a browser
   --seed N       board seed (1)
   --mode MODE    full | restricted | disabled (full)
   --games DIR    where games are kept (./games)
+  --demo N       play N whole games into the store before serving
 
 Binds 127.0.0.1 only: the game is local and stays local.";
 
@@ -29,6 +30,7 @@ fn main() {
     // Beside the binary by default, so a game played today is still there
     // tomorrow without anyone having to say where to put it.
     let mut games = std::path::PathBuf::from("games");
+    let mut demo: u32 = 0;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -38,6 +40,7 @@ fn main() {
             "--seats" => seats = value().parse().unwrap_or(seats),
             "--seed" => seed = value().parse().unwrap_or(seed),
             "--games" => games = std::path::PathBuf::from(value()),
+            "--demo" => demo = value().parse().unwrap_or(demo),
             "--mode" => {
                 mode = match value().as_str() {
                     "disabled" => TradeMode::Disabled,
@@ -73,5 +76,10 @@ fn main() {
     println!("  {seats} seats, {mode:?} market, seed {seed}");
     let server = Server::new(seats, seed, mode, &games);
     println!("  games in {}", server.store().dir().display());
+    // Played before the door opens, so the addresses are printed beside the
+    // one you would open anyway.
+    for id in server.demo(demo) {
+        println!("  played http://127.0.0.1:{port}/{id}/analytics");
+    }
     server.serve(listener);
 }
