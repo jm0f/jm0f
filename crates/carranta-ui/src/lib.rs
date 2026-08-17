@@ -13,6 +13,7 @@
 
 pub mod analysis;
 pub mod game;
+pub mod home;
 pub mod json;
 pub mod report;
 pub mod server;

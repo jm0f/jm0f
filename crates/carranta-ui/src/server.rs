@@ -1,10 +1,20 @@
 //! A local HTTP server, on `std` alone.
 //!
 //! Deliberately small and deliberately local. It binds the loopback address
-//! only, serves one page and three endpoints, and holds one game in memory.
-//! It is not the server of §6.2. There is no auth, no persistence, no
-//! concurrency beyond a mutex, and it should not grow into it. What it is for
-//! is putting the engine in front of a person.
+//! only and it is still not the server of §6.2: one connection at a time, no
+//! authentication, no framework. What it is for is putting the engine in front
+//! of a person.
+//!
+//! It does now hold more than one game. It held exactly one for as long as the
+//! only way to reach a board was to open the root, and the home page is what
+//! changed that: a page listing tables is a page whose links have to work, so a
+//! table stays playable when the next one is dealt. Sixteen of them, newest
+//! first, and a table that falls off the end still has its file. Persistence is
+//! the store's job and always was; memory is only what is playable right now.
+//!
+//! Who is asking is a key in a cookie and nothing more. It is enough to answer
+//! "show me my games" on one machine and it is not an account, which is the
+//! next thing this needs rather than something it pretends to have.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -142,40 +152,189 @@ const SOUNDS: [(&str, &[u8]); 8] = [
 /// larger is a mistake or a probe, and is refused rather than buffered.
 const MAX_BODY: usize = 4 * 1024;
 
-/// The game being played, and the name it answers to.
-struct Live {
+/// What a table looks like written down.
+fn saved_of(t: &Table) -> Saved {
+    let (seats, seed, mode) = t.session.table();
+    Saved {
+        id: t.id.clone(),
+        seats,
+        seed,
+        mode,
+        name: t.session.name().to_string(),
+        by: t.by.clone(),
+        dealt: t.dealt,
+        winner: t.session.winner(),
+        moves: t.session.moves().to_vec(),
+        times: t.session.times().to_vec(),
+    }
+}
+
+/// One game in memory, and the name it answers to.
+struct Table {
     id: String,
     session: Session,
     /// What the file says about it, less the moves, which come off the session.
     dealt: u64,
+    /// The key of whoever dealt it, so a home page can say which are yours.
+    by: String,
 }
 
+/// Tables kept in memory at once.
+///
+/// A table that falls off the end is not lost: every move writes the file, so it
+/// is still readable and still has its analytics. What it loses is the ability
+/// to be played on, which is the right thing to lose first, and finished games
+/// go before unfinished ones.
+const TABLES: usize = 16;
+
 pub struct Server {
-    live: Mutex<Live>,
+    /// Newest first. A `Vec` rather than a map because sixteen is small, the
+    /// order is what the home page wants anyway, and one lock covers both.
+    tables: Mutex<Vec<Table>>,
     store: Store,
+    /// The command line's answers, for the tables this server deals itself.
+    seats: u8,
+    mode: TradeMode,
+    /// The seed the next table gets. Counted rather than taken from the clock,
+    /// so a fresh server deals the same sequence of boards every time and a
+    /// game can be found again by its number.
+    seed: Mutex<u64>,
 }
 
 impl Server {
     pub fn new(seats: u8, seed: u64, mode: TradeMode, dir: impl Into<std::path::PathBuf>) -> Self {
-        let server = Server {
-            live: Mutex::new(Live {
-                id: mint_id(),
-                session: Session::new(seats, seed, mode),
-                dealt: now(),
-            }),
+        // No table is dealt here. It used to be, because the root *was* a board
+        // and there had to be one to show; the root is the home page now, every
+        // table is dealt from it or from the lobby, and a table nobody asked for
+        // is a row on that page for a game nobody is playing.
+        Server {
+            tables: Mutex::new(Vec::new()),
             store: Store::new(dir),
-        };
-        server.keep();
-        server
+            seats,
+            mode,
+            seed: Mutex::new(seed),
+        }
     }
 
     pub fn store(&self) -> &Store {
         &self.store
     }
 
-    /// The address the live game answers to.
-    pub fn live_id(&self) -> String {
-        self.live.lock().unwrap().id.clone()
+    /// The home page, for whoever is asking.
+    ///
+    /// Everything on it is read here rather than in the page: the tables from
+    /// memory, the games from the store, and which of them are this visitor's.
+    fn home(&self, player: &str) -> String {
+        let open: Vec<crate::home::Open> = self
+            .tables
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|t| crate::home::Open {
+                id: t.id.clone(),
+                game: t.session.game().to_string(),
+                host: t.session.name().to_string(),
+                seats: t.session.table().0,
+                mode: t.session.table().2,
+                public: t.session.is_public(),
+                started: !t.session.moves().is_empty(),
+                turns: t.session.turn_no(),
+                winner: t.session.winner(),
+                age: now().saturating_sub(t.dealt),
+                mine: !player.is_empty() && t.by == player,
+            })
+            .collect();
+        // A table in memory is also a file on disk once it has been moved in, so
+        // one of the two lists has to give it up or a game appears twice, once as
+        // somewhere to sit and once as history. The line is whether it can still
+        // be played: an unfinished table belongs to the joining list and nowhere
+        // else, and a finished one is history whether or not it is still in
+        // memory, because there is nothing left to do at it.
+        let live: Vec<String> = open
+            .iter()
+            .filter(|t| t.winner.is_none())
+            .map(|t| t.id.clone())
+            .collect();
+        let (mut mine, mut others) = (Vec::new(), Vec::new());
+        for g in self.store.all() {
+            if live.contains(&g.id) {
+                continue;
+            }
+            if !player.is_empty() && g.by == player {
+                mine.push(g);
+            } else {
+                others.push(g);
+            }
+        }
+        // A name to put in the form, taken from the last table they dealt, so a
+        // second game does not ask again for something already answered. Tables
+        // before stored games: a table dealt and not yet played in is the most
+        // recent thing they said their name was, and it is the case that matters,
+        // since a game with no moves in it has no file to read the name out of.
+        let name = open
+            .iter()
+            .filter(|t| t.mine)
+            .map(|t| t.host.clone())
+            .chain(mine.iter().map(|g| g.name.clone()))
+            .find(|n| !n.is_empty())
+            .unwrap_or_default();
+        crate::home::page(&open, &mine, &others, &name)
+    }
+
+    /// Deal a table from the home page's form.
+    ///
+    /// The form's fields are the lobby's, so the two ways of dealing a table
+    /// cannot drift apart: this reads the same names out of the body that
+    /// `api/new` reads out of a query.
+    fn deal(&self, form: &str, player: &str) -> String {
+        let seats = param(form, "seats")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        let name = decode(&param(form, "name").unwrap_or_default());
+        let named = decode(&param(form, "game").unwrap_or_default());
+        let pace = Pace::parse(param(form, "pace").as_deref());
+        let session = Session::new(seats, self.next_seed(), TradeMode::Full)
+            .with_public(wants_public(form))
+            .with_game(&named)
+            .with_pace(pace)
+            .with_name(&name);
+        // Nothing is written here: a table nobody has moved on is not a game
+        // (see `keep`), and it is on the home page's list from memory either way.
+        self.add(Table {
+            id: mint_id(),
+            session,
+            dealt: now(),
+            by: player.to_string(),
+        })
+    }
+
+    /// A seed for the next table, and the cursor moved on past it.
+    fn next_seed(&self) -> u64 {
+        let mut seed = self.seed.lock().unwrap();
+        let mine = *seed;
+        *seed = seed.wrapping_add(1);
+        mine
+    }
+
+    /// Put a table at the front, and drop the ones that no longer fit.
+    ///
+    /// Finished first, then oldest, because a game somebody is still playing is
+    /// the last thing to take off the table.
+    fn add(&self, table: Table) -> String {
+        let id = table.id.clone();
+        let mut tables = self.tables.lock().unwrap();
+        tables.insert(0, table);
+        while tables.len() > TABLES {
+            let victim = tables
+                .iter()
+                .enumerate()
+                .filter(|(i, t)| *i > 0 && t.session.winner().is_some())
+                .map(|(i, _)| i)
+                .next_back()
+                .unwrap_or(tables.len() - 1);
+            tables.remove(victim);
+        }
+        id
     }
 
     /// Make sure there are at least `want` finished games to look at.
@@ -205,27 +364,25 @@ impl Server {
         let mut left = (want.saturating_sub(have)) * 4 + 4;
         while have < want && left > 0 {
             left -= 1;
-            let (seats, seed, mode) = {
-                let live = self.live.lock().unwrap();
-                let (seats, seed, mode) = live.session.table();
-                (seats, seed.wrapping_add(1), mode)
-            };
-            let finished = {
-                let mut live = self.live.lock().unwrap();
-                live.session = Session::new(seats, seed, mode)
-                    .with_pace(Pace::Instant)
-                    .with_name("Egon");
-                live.id = mint_id();
-                live.dealt = now();
-                // Every seat played by the table's own hand, the human's
-                // included: there is nobody here to ask.
-                live.session.play_out();
-                live.session.winner().is_some()
-            };
-            self.keep();
+            let mut session = Session::new(self.seats, self.next_seed(), self.mode)
+                .with_pace(Pace::Instant)
+                .with_name("Egon");
+            // Every seat played by the table's own hand, the human's included:
+            // there is nobody here to ask.
+            session.play_out();
+            let finished = session.winner().is_some();
+            let id = self.add(Table {
+                id: mint_id(),
+                session,
+                dealt: now(),
+                // Nobody's: the server played it, so it belongs to no visitor and
+                // shows up on nobody's home page as theirs.
+                by: String::new(),
+            });
+            self.keep(&id);
             if finished {
                 have += 1;
-                out.push(self.live.lock().unwrap().id.clone());
+                out.push(id);
             }
         }
         out
@@ -237,22 +394,11 @@ impl Server {
     /// analytics of a game in progress are the analytics of the position on the
     /// table and not of the last write.
     fn current(&self, id: &str) -> Option<Saved> {
-        let live = self.live.lock().unwrap();
-        if live.id == id {
-            let (seats, seed, mode) = live.session.table();
-            return Some(Saved {
-                id: live.id.clone(),
-                seats,
-                seed,
-                mode,
-                name: live.session.name().to_string(),
-                dealt: live.dealt,
-                winner: live.session.winner(),
-                moves: live.session.moves().to_vec(),
-                times: live.session.times().to_vec(),
-            });
+        let tables = self.tables.lock().unwrap();
+        if let Some(t) = tables.iter().find(|t| t.id == id) {
+            return Some(saved_of(t));
         }
-        drop(live);
+        drop(tables);
         self.store.load(id)
     }
 
@@ -280,23 +426,13 @@ impl Server {
     /// of them a seed and nothing else. Those are not abandoned games, they are
     /// games that never started, and they were diluting every figure the
     /// analytics computed across the store. The first move writes the file.
-    fn keep(&self) {
-        let live = self.live.lock().unwrap();
-        if live.session.moves().is_empty() {
-            return;
+    fn keep(&self, id: &str) {
+        let tables = self.tables.lock().unwrap();
+        if let Some(t) = tables.iter().find(|t| t.id == id)
+            && !t.session.moves().is_empty()
+        {
+            let _ = self.store.save(&saved_of(t));
         }
-        let (seats, seed, mode) = live.session.table();
-        let _ = self.store.save(&Saved {
-            id: live.id.clone(),
-            seats,
-            seed,
-            mode,
-            name: live.session.name().to_string(),
-            dealt: live.dealt,
-            winner: live.session.winner(),
-            moves: live.session.moves().to_vec(),
-            times: live.session.times().to_vec(),
-        });
     }
 
     /// Serve until the process is stopped.
@@ -327,6 +463,7 @@ impl Server {
 
         // Headers, for the body length only.
         let mut length = 0usize;
+        let mut cookies = String::new();
         loop {
             let mut line = String::new();
             if reader.read_line(&mut line)? == 0 {
@@ -341,6 +478,12 @@ impl Server {
                 .or_else(|| line.strip_prefix("content-length:"))
             {
                 length = v.trim().parse().unwrap_or(0);
+            }
+            if let Some(v) = line
+                .strip_prefix("Cookie:")
+                .or_else(|| line.strip_prefix("cookie:"))
+            {
+                cookies = v.trim().to_string();
             }
         }
         if length > MAX_BODY {
@@ -363,23 +506,70 @@ impl Server {
         // tab would drive somebody else's board.
         let (game, path) = split_game(path);
 
+        // Who is asking, as far as this server can tell: a key it handed this
+        // browser on a first visit and nothing more. Not a login, not a name.
+        // When there are accounts this is where one is looked up, and the cookie
+        // becomes one way of proving which account you are rather than the whole
+        // of the identity.
+        let known = cookie(&cookies, PLAYER_COOKIE);
+        let player = known.clone().unwrap_or_else(mint_key);
+        // Handed back only when it is new, so an ordinary request carries no
+        // header nobody needed.
+        let issue = known.is_none();
+
         match (method.as_str(), path) {
             // The root is not a game, it is where you go to get one.
             ("GET", "/") if game.is_none() => {
-                let id = self.live_id();
-                redirect(&mut stream, &format!("/{id}/"))
+                let page = self.home(&player);
+                let set = if issue {
+                    cookie_header(&player)
+                } else {
+                    String::new()
+                };
+                respond_with(
+                    &mut stream,
+                    200,
+                    "text/html; charset=utf-8",
+                    page.as_bytes(),
+                    &set,
+                )
+            }
+            // Deal a table from the home page's form, and go and sit at it.
+            //
+            // A form post rather than the board page's `api/new`, because a page
+            // with no script has to be able to say "make me one" in the one way
+            // HTML has always had, and because the answer to a form is a place
+            // to go rather than a payload to draw.
+            ("POST", "/new") => {
+                let form = if body.is_empty() { query } else { &body };
+                let id = self.deal(form, &player);
+                let set = if issue {
+                    cookie_header(&player)
+                } else {
+                    String::new()
+                };
+                redirect_with(&mut stream, &format!("/{id}/"), &set)
             }
             ("GET", "/") => {
                 let id = game.unwrap_or_default();
-                // Live, or on disk, or neither. A game nobody has heard of is a
-                // 404 rather than a fresh board, because an address that
+                // On a table, or on disk, or neither. A game nobody has heard of
+                // is a 404 rather than a fresh board, because an address that
                 // silently becomes a different game is worse than a dead link.
-                if id == self.live_id() || self.store.load(&id).is_some() {
-                    respond(
+                let known = self.tables.lock().unwrap().iter().any(|t| t.id == id);
+                if known || self.store.load(&id).is_some() {
+                    respond_with(
                         &mut stream,
                         200,
                         "text/html; charset=utf-8",
                         PAGE.as_bytes(),
+                        // The board page is often the first page somebody opens,
+                        // from a link, so the key is handed out here too or their
+                        // first game would belong to nobody.
+                        &if issue {
+                            cookie_header(&player)
+                        } else {
+                            String::new()
+                        },
                     )
                 } else {
                     respond(&mut stream, 404, "text/plain", b"no such game")
@@ -446,36 +636,34 @@ impl Server {
             }
             ("GET", "/api/state") => {
                 let id = game.clone().unwrap_or_default();
-                let mut live = self.live.lock().unwrap();
-                if id != live.id {
-                    // A game that is not the live one is a game that is over as
-                    // far as this server is concerned: read it off disk and
-                    // hand it back as it stands. Nothing ticks, because nothing
-                    // is waiting.
-                    drop(live);
-                    let payload = self.stored(&id);
-                    return match payload {
+                let mut tables = self.tables.lock().unwrap();
+                let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
+                    // A game no longer on a table is one this server has put
+                    // away: read it off disk and hand it back as it stands.
+                    // Nothing ticks, because nothing is waiting.
+                    drop(tables);
+                    return match self.stored(&id) {
                         Some(p) => respond(&mut stream, 200, "application/json", p.as_bytes()),
                         None => respond(&mut stream, 404, "text/plain", b"no such game"),
                     };
-                }
-                let session = &mut live.session;
+                };
                 // A server only wakes when asked, so this poll is the whole
                 // clock: it is what lets a paced bot's wait expire, and what
                 // ends a turn whose time ran out.
-                session.tick();
-                session.enforce_clock();
-                let payload = view::render(session);
-                drop(live);
-                self.keep();
+                t.session.tick();
+                t.session.enforce_clock();
+                let payload = view::render(&t.session);
+                drop(tables);
+                self.keep(&id);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             ("POST", "/api/act") => {
-                let mut live = self.live.lock().unwrap();
-                if game.as_deref() != Some(live.id.as_str()) {
+                let id = game.clone().unwrap_or_default();
+                let mut tables = self.tables.lock().unwrap();
+                let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
-                }
-                let session = &mut live.session;
+                };
+                let session = &mut t.session;
                 let action = json::read_u64(&body, "action");
                 let version = json::read_u64(&body, "version");
                 let payload = match (action, version) {
@@ -485,17 +673,18 @@ impl Server {
                     },
                     _ => view::render_with_note(session, "malformed request"),
                 };
-                drop(live);
-                self.keep();
+                drop(tables);
+                self.keep(&id);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             // Put back a development card whose action was never finished.
             ("POST", "/api/cancel") => {
-                let mut live = self.live.lock().unwrap();
-                if game.as_deref() != Some(live.id.as_str()) {
+                let id = game.clone().unwrap_or_default();
+                let mut tables = self.tables.lock().unwrap();
+                let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
-                }
-                let session = &mut live.session;
+                };
+                let session = &mut t.session;
                 let payload = match json::read_u64(&body, "version") {
                     Some(v) => match session.cancel(v) {
                         Ok(()) => view::render(&session),
@@ -506,11 +695,12 @@ impl Server {
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             ("POST", "/api/propose") => {
-                let mut live = self.live.lock().unwrap();
-                if game.as_deref() != Some(live.id.as_str()) {
+                let id = game.clone().unwrap_or_default();
+                let mut tables = self.tables.lock().unwrap();
+                let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
-                }
-                let session = &mut live.session;
+                };
+                let session = &mut t.session;
                 let give = json::read_u8_array(&body, "give", 5);
                 let want = json::read_u8_array(&body, "want", 5);
                 let version = json::read_u64(&body, "version");
@@ -532,8 +722,6 @@ impl Server {
             // Starting a game is the one thing that does not belong to a
             // game, so it is not scoped to one: any page may ask for a table.
             ("POST", "/api/new") => {
-                let mut live = self.live.lock().unwrap();
-                let session = &mut live.session;
                 let seats = param(query, "seats")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(4);
@@ -544,8 +732,8 @@ impl Server {
                 };
                 let seed = param(query, "seed")
                     .and_then(|v| crate::game::parse_seed(&decode(&v)))
-                    // No clock dependency: the previous game's seed advances.
-                    .unwrap_or_else(|| session.seed().wrapping_add(1));
+                    // No clock dependency: the newest table's seed advances.
+                    .unwrap_or_else(|| self.next_seed());
                 // The clock is a lobby setting: which kind, and how many
                 // seconds it allows. Zero seconds is untimed either way.
                 let secs: u64 = param(query, "clockSecs")
@@ -570,7 +758,7 @@ impl Server {
                 // Anything but an explicit "rough" counts the stacks, since
                 // that is what the rules already let anybody do (R-5.6).
                 let bank_exact = param(query, "bank").as_deref() != Some("rough");
-                *session = Session::new(seats, seed, mode)
+                let session = Session::new(seats, seed, mode)
                     .with_clock(clock)
                     .with_log(log_shown)
                     .with_public(public)
@@ -579,13 +767,17 @@ impl Server {
                     .with_bank_exact(bank_exact)
                     .with_discard_secs(discard_secs)
                     .with_name(&decode(&name));
-                // A new game is a new address. The old one keeps its file and
-                // keeps working, which is the whole point of the address.
-                live.id = mint_id();
-                live.dealt = now();
-                let id = live.id.clone();
-                drop(live);
-                self.keep();
+                // A new game is a new address *and* a new table. The old one
+                // keeps its file, keeps its address and keeps being playable,
+                // which is what a table has to be once there is a page listing
+                // more than one of them.
+                let id = self.add(Table {
+                    id: mint_id(),
+                    session,
+                    dealt: now(),
+                    by: player.clone(),
+                });
+                self.keep(&id);
                 // The page is told where it now is, so it can move there
                 // without asking again.
                 let payload = format!("{{\"went\":\"/{id}/\"}}");
@@ -618,13 +810,17 @@ fn split_game(path: &str) -> (Option<String>, &str) {
     )
 }
 
-/// Send somebody somewhere else.
-fn redirect(stream: &mut TcpStream, to: &str) -> std::io::Result<()> {
+/// Somewhere else to go, with one extra header line if there is one.
+///
+/// Always a 303: the answer to a form post is a page to look at rather than the
+/// post repeated, which is what a browser does with a 307 on a reload.
+fn redirect_with(stream: &mut TcpStream, to: &str, extra: &str) -> std::io::Result<()> {
     let head = format!(
         "HTTP/1.1 303 See Other\r\n\
          Location: {to}\r\n\
          Content-Length: 0\r\n\
          Cache-Control: no-store\r\n\
+         {extra}\
          Connection: close\r\n\r\n"
     );
     stream.write_all(head.as_bytes())?;
@@ -653,6 +849,67 @@ fn mint_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos() as u64);
     game_id(n ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+/// The cookie a visitor is known by.
+const PLAYER_COOKIE: &str = "carranta";
+
+/// Read one cookie out of a `Cookie:` header.
+///
+/// The header is somebody else's text, so the value is checked rather than
+/// trusted: our keys are lower-case letters and digits, and anything else is
+/// treated as no cookie at all. A key is only ever compared and stored, never
+/// interpolated anywhere it could matter, and this keeps it that way.
+fn cookie(header: &str, name: &str) -> Option<String> {
+    header.split(';').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        if k.trim() != name {
+            return None;
+        }
+        let v = v.trim();
+        let ours = v.len() == KEY_LEN
+            && v.bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+        ours.then(|| v.to_string())
+    })
+}
+
+/// Length of a visitor key. Sixteen of thirty-six characters is eighty-two bits,
+/// which is far more than a local server needs and costs nothing.
+const KEY_LEN: usize = 16;
+
+/// A fresh key for a visitor nobody has seen before.
+///
+/// From the clock and the process, like the game addresses, because this server
+/// has no other source of noise and does not need one: the key is a name for a
+/// browser, not a secret that guards anything. When this becomes a login it will
+/// be issued by whatever holds the accounts.
+fn mint_key() -> String {
+    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64)
+        ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut out = String::with_capacity(KEY_LEN);
+    for _ in 0..KEY_LEN {
+        out.push(ALPHABET[(n % ALPHABET.len() as u64) as usize] as char);
+        // A different multiplier from the one above, so the two do not walk in
+        // step and give a key that reads like the game address beside it.
+        n = (n / ALPHABET.len() as u64) ^ n.wrapping_mul(0x2545_F491_4F6C_DD1D);
+    }
+    out
+}
+
+/// The header that hands a new visitor their key.
+///
+/// A year, because a home page that forgets your games when you close the tab is
+/// not a home page. `HttpOnly` so no script can read it, `SameSite=Lax` so it is
+/// not sent from another site's page, and no `Secure`, because this server is
+/// loopback and http and the flag would stop the cookie working at all.
+fn cookie_header(key: &str) -> String {
+    format!(
+        "Set-Cookie: {PLAYER_COOKIE}={key}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax\r\n"
+    )
 }
 
 /// Whether the lobby asked for a listed table.
@@ -727,10 +984,27 @@ fn decode(raw: &str) -> String {
 }
 
 fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &[u8]) -> std::io::Result<()> {
+    respond_with(stream, status, kind, body, "")
+}
+
+/// The same, with one more header line, already terminated.
+///
+/// Which is only ever the cookie that hands a visitor their key, and only on the
+/// two pages a visitor can arrive at. Threading it through rather than setting it
+/// on every response keeps it out of the api answers, where nothing needs it.
+fn respond_with(
+    stream: &mut TcpStream,
+    status: u16,
+    kind: &str,
+    body: &[u8],
+    extra: &str,
+) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
+        409 => "Conflict",
         413 => "Payload Too Large",
+        500 => "Internal Server Error",
         _ => "Error",
     };
     let head = format!(
@@ -738,6 +1012,7 @@ fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &[u8]) -> std:
          Content-Type: {kind}\r\n\
          Content-Length: {}\r\n\
          Cache-Control: no-store\r\n\
+         {extra}\
          Connection: close\r\n\r\n",
         body.len()
     );
@@ -856,27 +1131,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("carranta-empty-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 7, TradeMode::Full, &dir);
-        assert!(server.store().all().is_empty(), "dealing is not playing");
-        // Nor does dealing again, which is what `/api/new` does.
-        {
-            let mut live = server.live.lock().unwrap();
-            live.session = Session::new(4, 8, TradeMode::Full);
-            live.id = mint_id();
-            live.dealt = now();
-        }
-        server.keep();
+        assert!(
+            server.store().all().is_empty(),
+            "a fresh server has no games"
+        );
+        // Nor does dealing again, which is what the home page's form does.
+        let id = server.deal("name=Egon", "keytest0000000000");
+        server.keep(&id);
         assert!(server.store().all().is_empty(), "still nothing played");
-        // The first move writes the file.
-        let id = server.live_id();
+        // The first move writes the file, and writes down whose it is.
         {
-            let mut live = server.live.lock().unwrap();
-            let v = live.session.version();
-            live.session.act(0, v).expect("the opening is playable");
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let v = t.session.version();
+            t.session.act(0, v).expect("the opening is playable");
         }
-        server.keep();
+        server.keep(&id);
         let all = server.store().all();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, id);
+        assert_eq!(all[0].by, "keytest0000000000", "and whose game it is");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -932,5 +1206,175 @@ mod tests {
                 .with_public(true)
                 .is_public()
         );
+    }
+
+    #[test]
+    fn a_cookie_is_read_only_when_it_looks_like_one_of_ours() {
+        let key = "abc123def456ghi7";
+        assert_eq!(key.len(), KEY_LEN);
+        assert_eq!(
+            cookie(&format!("carranta={key}"), "carranta").as_deref(),
+            Some(key)
+        );
+        // Beside other people's cookies, and with the spacing a browser sends.
+        assert_eq!(
+            cookie(&format!("other=1; carranta={key}; third=x"), "carranta").as_deref(),
+            Some(key)
+        );
+        // A key is only ever compared and stored, and this is what keeps it that
+        // way: the wrong length, the wrong alphabet or the wrong name is no
+        // cookie at all rather than a value to be careful with later.
+        assert_eq!(cookie("carranta=short", "carranta"), None);
+        assert_eq!(cookie("carranta=ABC123DEF456GHI7", "carranta"), None);
+        assert_eq!(cookie("carranta=abc123def456gh!7", "carranta"), None);
+        assert_eq!(cookie("carrantaX=abc123def456ghi7", "carranta"), None);
+        assert_eq!(cookie("", "carranta"), None);
+        assert_eq!(cookie("carranta", "carranta"), None);
+    }
+
+    #[test]
+    fn a_minted_key_is_the_shape_the_reader_accepts() {
+        // The two halves of this have to agree or every visitor is a new one on
+        // every request, and nothing would say so: the page would simply never
+        // show anybody their games.
+        let key = mint_key();
+        assert_eq!(key.len(), KEY_LEN);
+        assert_eq!(
+            cookie(&format!("carranta={key}"), PLAYER_COOKIE).as_deref(),
+            Some(key.as_str())
+        );
+    }
+
+    #[test]
+    fn the_cookie_outlives_the_tab_and_is_kept_from_scripts() {
+        let header = cookie_header("abc123def456ghi7");
+        // A year, because a home page that forgets your games when you close the
+        // tab is not a home page.
+        assert!(header.contains("Max-Age=31536000"));
+        assert!(header.contains("Path=/"));
+        assert!(header.contains("HttpOnly"));
+        assert!(header.contains("SameSite=Lax"));
+        // Terminated, because it is written into the head between two others.
+        assert!(header.ends_with("\r\n"));
+    }
+
+    /// One request, and the whole response as text.
+    ///
+    /// Raw rather than through a client, because there is no client: this server
+    /// is `std` alone and so is anything that talks to it.
+    fn ask(port: u16, request: &str) -> String {
+        use std::net::TcpStream;
+        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("the door is open");
+        s.write_all(request.as_bytes()).expect("asked");
+        let mut out = Vec::new();
+        s.read_to_end(&mut out).expect("answered");
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    fn get(port: u16, path: &str, cookie: &str) -> String {
+        let jar = if cookie.is_empty() {
+            String::new()
+        } else {
+            format!("Cookie: {PLAYER_COOKIE}={cookie}\r\n")
+        };
+        ask(
+            port,
+            &format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n{jar}\r\n"),
+        )
+    }
+
+    #[test]
+    fn the_home_page_deals_a_table_and_remembers_whose_it_is() {
+        let dir = std::env::temp_dir().join(format!("carranta-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        // Leaked rather than joined: this server serves until the process ends,
+        // which is what `serve` is, and the test is the process.
+        let server: &'static Server = Box::leak(Box::new(Server::new(4, 7, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        // A first visit is met with a page and a key.
+        let first = get(port, "/", "");
+        assert!(first.starts_with("HTTP/1.1 200 OK"), "{first:.40}");
+        assert!(first.contains("Deal a table"));
+        assert!(first.contains("No tables."), "nothing dealt yet");
+        let key = first
+            .lines()
+            .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
+            .and_then(|v| v.split(';').next())
+            .expect("a key was handed out")
+            .to_string();
+        assert_eq!(
+            cookie(&format!("carranta={key}"), PLAYER_COOKIE),
+            Some(key.clone())
+        );
+
+        // A visit carrying that key is handed no second one.
+        let again = get(port, "/", &key);
+        assert!(!again.contains("Set-Cookie"), "one key per browser");
+
+        // The form deals a table and says where to go and sit at it.
+        let form = "name=Egon&game=Test&seats=3&visibility=public&pace=instant";
+        let dealt = ask(
+            port,
+            &format!(
+                "POST /new HTTP/1.1\r\nHost: localhost\r\n\
+                 Cookie: {PLAYER_COOKIE}={key}\r\n\
+                 Content-Length: {}\r\n\r\n{form}",
+                form.len()
+            ),
+        );
+        assert!(dealt.starts_with("HTTP/1.1 303 See Other"), "{dealt:.40}");
+        let went = dealt
+            .lines()
+            .find_map(|l| l.strip_prefix("Location: "))
+            .expect("somewhere to go")
+            .trim()
+            .to_string();
+        let id = went.trim_matches('/').to_string();
+        assert!(is_game_id(&id), "{went} is a game's address");
+        assert!(get(port, &went, &key).starts_with("HTTP/1.1 200 OK"));
+
+        // And it is on the home page as this visitor's, with what was asked for.
+        let listed = get(port, "/", &key);
+        assert!(listed.contains(&id), "the table is listed");
+        assert!(listed.contains("Test"), "under the name it was given");
+        assert!(listed.contains("yours"));
+        assert!(listed.contains("Sit down"));
+        assert!(listed.contains("<td>3</td>"), "three seats, as asked");
+        // And the form does not ask for a name it has already been told, which
+        // has to come off the table rather than the store: nothing is written
+        // down until somebody moves.
+        assert!(listed.contains("value=\"Egon\""));
+
+        // Somebody else sees it too, because it was dealt as a listed table, but
+        // not as theirs.
+        let stranger = get(port, "/", "zzzz999999999999");
+        assert!(stranger.contains(&id));
+        assert!(!stranger.contains("yours"));
+
+        // An address nobody dealt is a dead link rather than a fresh board.
+        assert!(get(port, "/9999-9999-9999/", &key).starts_with("HTTP/1.1 404"));
+
+        // Play it to the end, from underneath, and it moves from the tables to
+        // the history: a game with a winner is not somewhere to sit, and the two
+        // lists must not both claim it.
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            t.session.play_out();
+            assert!(t.session.winner().is_some(), "the table reached a winner");
+        }
+        server.keep(&id);
+        let after = get(port, "/", &key);
+        let tables_card = after.split("Your games").next().expect("a tables card");
+        assert!(!tables_card.contains(&id), "no longer somewhere to sit");
+        assert!(after.contains(&id), "but still on the page");
+        assert!(
+            after.contains(&format!("/{id}/analytics")),
+            "with its report, which is what a finished game has"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

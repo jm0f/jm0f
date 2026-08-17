@@ -952,19 +952,28 @@ to be chosen rather than the one that happens by default. The server agrees
 independently: anything other than an explicit `public` leaves the table
 unlisted, so a missing or misspelled setting cannot publish a game by accident.
 
-Public is **shown but not selectable**, because there is no landing page for a
-listed table to appear on. Shown rather than removed: knowing the choice is
-coming is worth more than a row with nothing to compare, and the reason it is
-unavailable is on the option itself. It is `aria-disabled` and keeps its tab
-stop, so that reason stays reachable by keyboard and by touch.
+Public was **shown but not selectable** for as long as there was no page for a
+listed table to appear on. There is one now (§13), so the setting does what it
+says: a listed table is on the home page for anybody who can reach the server,
+and an unlisted one is on its host's copy of that page and nowhere else.
 
 Visibility is stored on the session rather than in the browser that dealt it,
-since a listing will be read from the table and not from whoever is looking at
-it. Nothing lists tables yet, so nothing reads it yet either.
+because a listing is read from the table and not from whoever is looking at it.
+The home page reads it off the session, which is why that was the right place to
+put it before anything read it at all.
 
-A fresh server opens on the lobby. A reload part-way through a game does not:
-the board comes back instead, because the clock is running and dealing again
-would be the wrong default.
+**The lobby no longer opens itself.** It used to appear over any board with no
+moves in it, because arriving at one meant the server had dealt it and nobody
+had said what they wanted. The home page's form is that conversation now, and a
+table reached from it was asked for, so opening the lobby on top of it would ask
+the same questions twice. It is a **New game** link in the header instead, next
+to the report, and it has a way out: **Back to the board**, which the auto-opening
+version never needed because the only exit was to deal.
+
+Two ways to deal a table is deliberate. The form on the home page asks the four
+things that decide what game it is; the lobby asks the other nine, and a seed.
+The server reads the same field names out of a form post that it reads out of the
+lobby's query, so the two cannot mean different things by `visibility` or `pace`.
 
 **Seats wait for people by default.** A seat can be set to a bot, but the
 default is open, because the reason a lobby exists is that someone else is
@@ -2026,6 +2035,79 @@ followed.
 
 ---
 
+## 13. The home page
+
+Where a game comes from. Before it there was nowhere to stand: the root was
+whatever board the server happened to be holding, the only way to deal another
+was the lobby inside a game you were already in, and a game you had finished was
+reachable only if you had kept the link. The wordmark carried a comment saying it
+opened the lobby because there was no home to go to.
+
+**Three cards, in the order somebody wants them.** New game, Tables, and what
+you have played.
+
+Like the report (§12), it is **a document rather than an application**: server
+rendered, and with **no script at all**. Nothing on it changes without a request,
+so there is nothing for a script to do, and the same rule that makes the report
+honest makes this page work before anything has loaded.
+
+- **New game** is a `<form>` posting to `/new`, which is what a page with no
+  script has to use and is also the better answer: the browser remembers what you
+  typed, and every field has a default that plays an ordinary game, so the button
+  on its own is a whole reply. Four fields, because those are the ones that decide
+  what game it is: your name, a name for the table, three seats or four, listed or
+  not, and how fast the bots move. The answer to a form post is **a place to go**
+  rather than a payload to draw, so it is a 303 to the table's own address.
+- **Tables** is somewhere to sit: every game in memory that has not been won.
+  Your own are there whether or not you listed them, because you have to be able
+  to get back to a game you dealt; other people's are there only if their host
+  published them. A row says which turn it is on rather than how many turns are
+  done, since that is what a live table has.
+- **Your games**, and beneath it **Also on this server**. A game arrives in the
+  history when it ends, and leaves the tables list at the same moment: one of the
+  two lists has to give a game up or it appears twice, and the line between them
+  is whether there is anything left to do at it. Each row offers the board and the
+  report, one of them as the action and the other beside it, which one depending on
+  whether the game finished.
+
+**Whose games are whose is a cookie, and the page says so.** A key handed to a
+browser on its first request, sixteen characters, held for a year, `HttpOnly` and
+`SameSite=Lax`. It is enough to answer "show me mine" on one machine and it is
+not enough to answer "is this you" anywhere, so the card says it follows the
+browser rather than the person and that an account is what fixes that. The key is
+written into the game file as `by`, beside the moves rather than inside them, so
+an account can claim a browser's games later without rewriting a single game.
+
+The reader for that cookie **checks the value rather than trusting it**: our keys
+are lower-case letters and digits and exactly sixteen of them, and anything else
+is treated as no cookie at all. A key is only ever compared and stored, and that
+is what keeps it so.
+
+**The server holds sixteen tables, newest first.** It held exactly one for as
+long as the only way to reach a board was to open the root, and a page listing
+tables is a page whose links have to work. A table that falls off the end is not
+lost, because every move writes its file; what it loses is the ability to be
+played on, which is the right thing to lose first, and finished tables are
+evicted before unfinished ones.
+
+**A fresh server deals nothing.** It used to deal a table on start-up and on
+every visit to the root, which put a game on disk for every time the page was
+opened and closed again, each of them a seed and nothing else. Those were not
+abandoned games, they were games that never started, and every figure the
+analytics computed across the store was being divided by them. A table is dealt
+when somebody asks for one, and its file is written by its first move.
+
+**The history is capped at twenty-four rows** and says how many older games it is
+not showing. A page read at a glance does not have a hundredth row, and nothing
+is lost: every game keeps its address. "Across all of them" is a different page,
+and it is specified in `analytics-backlog.md`.
+
+The page borrows the report's stylesheet whole, so the tokens, the card, the
+table and the tooltip are one design rather than two that resemble each other.
+What it adds is a form and a button, because the report has neither.
+
+---
+
 ## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a
@@ -2035,6 +2117,15 @@ followed.
   ports on them. Carranta draws ports as discs on leader lines outside the
   coast. The board itself is not up for debate, but whether the frame counts
   as board was never settled.
+- **A second person at a table.** The tables list is the shape a joinable game
+  needs, and joining is what it cannot do yet: opening somebody else's table puts
+  you at the same seat as them, because the server seats one person and plays the
+  rest. The list is what seats will be reached from, so the page is right and the
+  server is not there yet.
+- **Accounts.** The home page answers "show me my games" from a key in a cookie,
+  which follows a browser rather than a person. The key is written into every game
+  file, so an account can claim one browser's games later without touching a
+  single recorded game; nothing claims anything today.
 - **Bot names.** Invented and placeholder until told otherwise.
 - **The endgame.** Neither the study nor these decisions say what winning
   looks like.

@@ -28,6 +28,18 @@ pub struct Saved {
     pub mode: TradeMode,
     /// What the person at this table is called, for the analytics to name them.
     pub name: String,
+    /// Which visitor dealt this table, as an opaque key from their cookie.
+    ///
+    /// Not a login and not a name: a random string this browser was handed on
+    /// its first visit, so a home page can show somebody their own games
+    /// without knowing anything else about them. Empty for a game dealt before
+    /// there were keys, and for the demo games the server plays itself, which
+    /// belong to nobody.
+    ///
+    /// When there are accounts this becomes the account's key and the cookie
+    /// becomes one way of proving which account you are. That is why it is
+    /// stored as a key rather than as a cookie value with a name attached.
+    pub by: String,
     /// Unix milliseconds when the game was dealt, so a list of games can be
     /// ordered by when they happened rather than by how the directory reads.
     ///
@@ -91,10 +103,11 @@ pub fn is_game_id(s: &str) -> bool {
 
 /// What this build writes.
 ///
-/// Version 2 added the `at` lines, which say when each step landed. Version 1
-/// files are still read and simply have no clock: the addition is beside the
-/// moves rather than inside them, so an older game is not an unreadable game.
-const VERSION: u32 = 2;
+/// Version 2 added the `at` lines, which say when each step landed. Version 3
+/// added `by`, the key of whoever dealt the table. Older files are still read
+/// and simply have less to say: both additions sit beside the moves rather than
+/// inside them, so an older game is not an unreadable game.
+const VERSION: u32 = 3;
 
 /// Times per `at` line. Forty numbers is a line you can still read.
 const TIMES_PER_LINE: usize = 40;
@@ -263,6 +276,11 @@ pub fn encode(g: &Saved) -> String {
     let _ = writeln!(out, "seed {}", g.seed);
     let _ = writeln!(out, "mode {}", mode_code(g.mode));
     let _ = writeln!(out, "name {}", g.name);
+    // Omitted when there is nobody to name, so a demo game's file says nothing
+    // about an owner rather than saying it has an empty one.
+    if !g.by.is_empty() {
+        let _ = writeln!(out, "by {}", g.by);
+    }
     let _ = writeln!(out, "dealt {}", g.dealt);
     if let Some(w) = g.winner {
         let _ = writeln!(out, "winner {w}");
@@ -294,6 +312,7 @@ pub fn decode(text: &str) -> Option<Saved> {
         seed: 0,
         mode: TradeMode::Full,
         name: String::new(),
+        by: String::new(),
         dealt: 0,
         winner: None,
         moves: Vec::new(),
@@ -313,6 +332,7 @@ pub fn decode(text: &str) -> Option<Saved> {
             "seed" => g.seed = rest.parse().ok()?,
             "mode" => g.mode = mode_of(rest)?,
             "name" => g.name = rest.to_string(),
+            "by" => g.by = rest.to_string(),
             "dealt" => g.dealt = rest.parse().ok()?,
             "winner" => g.winner = Some(rest.parse().ok()?),
             "at" => {
@@ -459,6 +479,7 @@ mod tests {
             seed: 99,
             mode: TradeMode::Restricted,
             name: "Egon".to_string(),
+            by: String::new(),
             dealt: 1_755_300_000,
             winner: Some(2),
             moves: one_of_each(),
@@ -475,6 +496,7 @@ mod tests {
             seed: 1,
             mode: TradeMode::Full,
             name: String::new(),
+            by: String::new(),
             dealt: 1,
             winner: None,
             moves: vec![Step::Move(Action::Roll)],
@@ -494,6 +516,7 @@ mod tests {
             seed: 3,
             mode: TradeMode::Full,
             name: String::new(),
+            by: String::new(),
             dealt: 0,
             winner: None,
             moves: vec![Step::Move(Action::Roll)],
@@ -501,9 +524,26 @@ mod tests {
         };
         let text = encode(&g);
         assert!(decode(&text).is_some());
-        // A version this build has never heard of, and no version at all.
-        assert_eq!(decode(&text.replace("carranta 2", "carranta 3")), None);
-        assert_eq!(decode(&text.replace("carranta 2\n", "")), None);
+        // A version this build has never heard of, and no version at all. Named
+        // against `VERSION` rather than written out, so this keeps testing what
+        // it says it tests the next time the format grows a line.
+        let mine = format!("carranta {VERSION}");
+        let future = format!("carranta {}", VERSION + 1);
+        assert_eq!(decode(&text.replace(&mine, &future)), None);
+        assert_eq!(decode(&text.replace(&format!("{mine}\n"), "")), None);
+    }
+
+    #[test]
+    fn a_game_written_before_it_belonged_to_anybody_still_reads() {
+        // Version 3 added `by`. A version 2 file has no owner rather than an
+        // unreadable one, which is the same promise version 2 made about the
+        // clock: an addition beside the moves, not inside them.
+        let text = "carranta 2\nid 9222-2222-2222\nseats 4\nseed 3\nmode full\n\
+                    name Egon\ndealt 5\nroll\nat 7\n";
+        let g = decode(text).expect("an older file is still a game");
+        assert_eq!(g.name, "Egon");
+        assert_eq!(g.by, "", "and it belongs to nobody");
+        assert_eq!(g.moves.len(), 1);
     }
 
     #[test]
@@ -518,6 +558,7 @@ mod tests {
             seed: 3,
             mode: TradeMode::Full,
             name: "Egon".to_string(),
+            by: String::new(),
             dealt: 5,
             winner: Some(1),
             moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
@@ -554,6 +595,7 @@ mod tests {
             seed: 3,
             mode: TradeMode::Full,
             name: String::new(),
+            by: String::new(),
             dealt: 0,
             winner: None,
             moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
@@ -620,6 +662,7 @@ mod tests {
                 seed: dealt,
                 mode,
                 name: "Egon".to_string(),
+                by: String::new(),
                 dealt: seed,
                 winner: s.winner(),
                 moves: s.moves().to_vec(),
@@ -649,6 +692,7 @@ mod tests {
                 seed: n,
                 mode: TradeMode::Full,
                 name: "Egon".to_string(),
+                by: String::new(),
                 dealt,
                 winner: None,
                 moves: vec![Step::Move(Action::Roll)],

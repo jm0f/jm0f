@@ -2161,6 +2161,7 @@ mod tests {
             seed: dealt,
             mode,
             name: "Egon".to_string(),
+            by: String::new(),
             dealt: seed,
             winner: s.winner(),
             moves: s.moves().to_vec(),

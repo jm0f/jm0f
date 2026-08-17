@@ -4424,7 +4424,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 /// The same ink, paper and faces as the board, written out rather than shared:
 /// the board's stylesheet is a game's worth of rules about cards and hexes, and
 /// a document needs almost none of it.
-const CSS: &str = "
+pub(crate) const CSS: &str = "
 /* ---- tokens ----
    shadcn's vocabulary, in Carranta's ink and paper. The names are theirs
    because the roles they name are the useful part: `--muted-foreground` says
@@ -4890,6 +4890,7 @@ mod tests {
             seed: dealt,
             mode,
             name: "Egon".to_string(),
+            by: String::new(),
             dealt: seed,
             winner: s.winner(),
             moves: s.moves().to_vec(),
