@@ -621,14 +621,36 @@ fn trades_of(saved: &Saved) -> Trades {
     out
 }
 
-/// Which resources each seat's opening touches at all.
-///
-/// Read at the moment the setup ends, which is the only moment the question is
-/// about the opening rather than about the game. A resource is touched when the
-/// board owes that seat any of it, which `expectation` already answers exactly:
-/// a placement that touches no wheat is owed no wheat.
-fn touches_of(saved: &Saved) -> [[bool; 5]; MAX_PLAYERS] {
-    use carranta_core::state::Phase;
+/// What an opening placement bought, before anybody had a turn.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Opening {
+    /// Dots on every number the two settlements touch, by resource. The
+    /// standard measure of how much production a placement buys, split by what
+    /// it buys.
+    pub pips: [u32; 5],
+    /// Cards a turn at fair odds, by resource, which is the same figure in the
+    /// unit somebody plays in. A pip is a thirty-sixth of a card.
+    pub per_turn: [f64; 5],
+    /// Every number the placement sits on, ascending, a hex at a time. Two
+    /// settlements on the same number is that number twice.
+    pub numbers: Vec<u8>,
+    /// Ports it sits on. `None` is the generic three to one; `Some(r)` is the
+    /// two to one for that resource.
+    pub ports: Vec<Option<usize>>,
+    /// The chance that a roll pays this placement anything at all.
+    ///
+    /// The distinct numbers it touches, weighted by how often each comes up.
+    /// Pips say how much a placement collects and this says how often it
+    /// collects: eight pips on one number and eight spread over three are the
+    /// same production and a very different game, and only this tells them
+    /// apart.
+    pub coverage: f64,
+}
+
+/// Read every opening off the board the moment the setup ends.
+fn openings_of(saved: &Saved) -> [Opening; MAX_PLAYERS] {
+    use carranta_core::state::{PORT_KINDS, Phase};
+    use carranta_core::topology::{HEX_COUNT, hex_vertices};
 
     let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
     for step in &saved.moves {
@@ -636,17 +658,59 @@ fn touches_of(saved: &Saved) -> [[bool; 5]; MAX_PLAYERS] {
         if state.apply(action).is_err() {
             break;
         }
-        // Setup ends the first time play reaches a pre-roll phase, which is the
-        // line every other reading of this game draws too.
+        // The line every other reading of this game draws: setup ends the first
+        // time play reaches a pre-roll phase.
         if matches!(state.phase, Phase::PreRoll) {
             break;
         }
     }
+
+    let seats = state.players as usize;
     let owed = production::expectation(&state);
-    core::array::from_fn(|p| core::array::from_fn(|r| owed[p][r] > 0.0))
+    let mut out: [Opening; MAX_PLAYERS] = Default::default();
+    for (p, o) in out.iter_mut().enumerate().take(seats) {
+        o.per_turn = owed[p];
+        for h in 0..HEX_COUNT {
+            let n = state.number[h];
+            if !(2..=12).contains(&n) {
+                continue; // the desert carries no disc
+            }
+            let Some(res) = state.terrain[h].yields() else {
+                continue;
+            };
+            let on = (state.settlements[p] & hex_vertices(h as u8)).count_ones();
+            if on == 0 {
+                continue;
+            }
+            o.pips[res as usize] += ways(n) * on;
+            for _ in 0..on {
+                o.numbers.push(n);
+            }
+        }
+        o.numbers.sort_unstable();
+        for kind in 0..PORT_KINDS {
+            let on = (state.settlements[p] & state.ports[kind]).count_ones();
+            for _ in 0..on {
+                // Index 0 is the generic three to one; the rest are one per
+                // resource, in resource order.
+                o.ports.push(kind.checked_sub(1));
+            }
+        }
+        // Distinct, because a number that pays twice still only comes up as
+        // often as it comes up.
+        let mut seen = o.numbers.clone();
+        seen.dedup();
+        o.coverage = seen.iter().map(|n| f64::from(ways(*n)) / 36.0).sum();
+    }
+    out
 }
 
-/// One turn of the game.
+/// How many ways two dice make `n`: the dots under a disc.
+fn ways(n: u8) -> u32 {
+    6u32.saturating_sub((i32::from(n) - 7).unsigned_abs())
+}
+
+/// One turn of the game./// One turn of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Turn {
     /// Whose turn it was.
@@ -751,8 +815,8 @@ pub struct Study {
     /// played, this is what was drawn: a card is drawn once and then either
     /// played or held, and a played card never goes back (R-8.10).
     pub dev_held: [[u32; 5]; MAX_PLAYERS],
-    /// Which resources each seat's opening settlements touch at all.
-    pub opening_touches: [[bool; 5]; MAX_PLAYERS],
+    /// What each seat's opening placement bought.
+    pub opening: [Opening; MAX_PLAYERS],
     /// Whether this game was saved with a clock in it. Games written before
     /// there was one still read, and say nothing about time rather than saying
     /// nought.
@@ -790,7 +854,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let points = points_of(&end, report.players as usize);
     let dev_held =
         core::array::from_fn(|p| core::array::from_fn(|c| u32::from(end.dev_held[p][c])));
-    let opening_touches = touches_of(saved);
+    let opening = openings_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
     let series = series_of(saved);
@@ -869,7 +933,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         series,
         trades,
         dev_held,
-        opening_touches,
+        opening,
         timed,
         production,
         dice: this,
@@ -1209,21 +1273,75 @@ mod tests {
     }
 
     #[test]
-    fn an_opening_touches_what_the_board_owes_it() {
+    fn an_opening_is_what_the_board_gave_it() {
         for seed in 0..6u64 {
             let g = played(seed);
             let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
             for seat in 0..s.report.players as usize {
-                let touched = s.opening_touches[seat].iter().filter(|t| **t).count();
-                // The same figure the opening table used to print as a
-                // fraction, now drawn as which rather than how many.
+                let o = &s.opening[seat];
+                // Pips split by resource are the pips the report counts whole.
                 assert_eq!(
-                    touched as u32, s.report.opening[seat].diversity,
+                    o.pips.iter().sum::<u32>(),
+                    s.report.opening[seat].pips,
                     "seed {seed}, seat {seat}"
                 );
-                assert!(touched > 0, "two settlements touch something");
+                // A resource is touched exactly when the board owes it, which
+                // is the figure the report calls diversity.
+                let touched = o.pips.iter().filter(|n| **n > 0).count() as u32;
+                assert_eq!(touched, s.report.opening[seat].diversity, "seed {seed}");
+                for res in 0..5 {
+                    assert_eq!(o.pips[res] > 0, o.per_turn[res] > 0.0, "seed {seed}");
+                    // A pip is a thirty-sixth of a card, per settlement.
+                    let owed = f64::from(o.pips[res]) / 36.0;
+                    assert!((o.per_turn[res] - owed).abs() < 1e-9, "seed {seed}");
+                }
+                // Two settlements touch at most three hexes each, and the pips
+                // on them are what the numbers say.
+                assert!(!o.numbers.is_empty() && o.numbers.len() <= 6, "seed {seed}");
+                assert!(o.numbers.windows(2).all(|w| w[0] <= w[1]), "in order");
+                let from_numbers: u32 = o.numbers.iter().map(|n| ways(*n)).sum();
+                assert_eq!(from_numbers, o.pips.iter().sum::<u32>(), "seed {seed}");
+                // Coverage is a probability, and it is the distinct numbers
+                // rather than all of them: a number twice is one number.
+                assert!((0.0..=1.0).contains(&o.coverage), "seed {seed}");
+                let mut distinct = o.numbers.clone();
+                distinct.dedup();
+                let want: f64 = distinct.iter().map(|n| f64::from(ways(*n)) / 36.0).sum();
+                assert!((o.coverage - want).abs() < 1e-12, "seed {seed}");
+                assert_eq!(
+                    o.ports.len() as u32,
+                    s.report.opening[seat].ports,
+                    "seed {seed}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn eight_pips_on_one_number_is_not_eight_pips_on_three() {
+        // What coverage is for. Two openings can buy the same production and
+        // collect it on a wholly different number of rolls, and pips alone
+        // cannot tell them apart.
+        let history: Vec<Saved> = (0..12u64).map(played).collect();
+        let mut seen = false;
+        for g in &history {
+            let s = study(g, &history).expect("it studies");
+            let seats = s.report.players as usize;
+            for a in 0..seats {
+                for c in 0..seats {
+                    let (x, y) = (&s.opening[a], &s.opening[c]);
+                    if x.pips.iter().sum::<u32>() == y.pips.iter().sum::<u32>()
+                        && (x.coverage - y.coverage).abs() > 0.02
+                    {
+                        seen = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            seen,
+            "two openings of equal pips and unequal coverage exist"
+        );
     }
 
     #[test]

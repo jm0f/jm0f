@@ -176,29 +176,107 @@ fn head_row(cells: &[(&str, &str)]) -> String {
     out
 }
 
-/// The five resources as board tiles, the missing ones left hollow.
+/// An opening's pips, a row per resource and a hex per dot.
 ///
-/// A hex apiece, in the colour its terrain wears on the board, because "5 of 5"
-/// says how many without saying which, and which is the question: a placement
-/// short of ore plays differently from one short of brick.
-fn tiles(touched: &[bool; 5]) -> String {
-    // A flat-top hex, the shape the board is made of, at a size that sits on a
-    // line of text.
-    const HEX: &str = "M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z";
-    let mut out = String::from("<span class=\"tiles\">");
-    for (r, on) in touched.iter().enumerate() {
+/// A row rather than a number, because "22 pips" says how much and says nothing
+/// about what. Five rows always, so the rows line up down the column and a
+/// resource nobody can produce reads as the gap it is.
+fn pip_rows(pips: &[u32; 5]) -> String {
+    let mut out = String::from("<span class=\"pips\">");
+    for (res, n) in pips.iter().enumerate() {
         let _ = write!(
             out,
-            "<svg viewBox=\"-1 -1 20 22.8\" class=\"tile\" role=\"img\" \
-             aria-label=\"{name}{miss}\"><title>{name}{miss}</title>\
-             <path class=\"{state} r{r}\" d=\"{HEX}\"/></svg>",
-            name = RESOURCE_NAMES[r],
-            miss = if *on { "" } else { ", not touched" },
-            state = if *on { "on" } else { "off" },
+            "<span class=\"pip-row\" title=\"{n} {name} pips\">",
+            name = RESOURCE_NAMES[res],
+        );
+        for _ in 0..*n {
+            let _ = write!(out, "{}", hex(&format!("on r{res}"), ""));
+        }
+        out.push_str("</span>");
+    }
+    out.push_str("</span>");
+    out
+}
+
+/// The same pips as cards a turn, on the same five rows.
+fn turn_rows(per_turn: &[f64; 5]) -> String {
+    let mut out = String::from("<span class=\"pips rates\">");
+    for (res, v) in per_turn.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<span class=\"pip-row\" title=\"{name}\">{}</span>",
+            if *v < 0.005 {
+                NONE.to_string()
+            } else {
+                format!("{v:.2}")
+            },
+            name = RESOURCE_NAMES[res],
         );
     }
     out.push_str("</span>");
     out
+}
+
+/// The numbers a placement sits on, as the board draws them.
+///
+/// Six and eight in the board's own red, because on a board they are the two
+/// everybody looks for and reading them in the same ink as the rest would lose
+/// what the colour is for.
+fn discs(numbers: &[u8]) -> String {
+    if numbers.is_empty() {
+        return NONE.to_string();
+    }
+    let mut out = String::from("<span class=\"discs\">");
+    for n in numbers {
+        let hot = *n == 6 || *n == 8;
+        let _ = write!(
+            out,
+            "<span class=\"disc{}\" title=\"{n}, {ways} ways\">{n}</span>",
+            if hot { " hot" } else { "" },
+            ways = 6 - (i32::from(*n) - 7).abs(),
+        );
+    }
+    out.push_str("</span>");
+    out
+}
+
+/// Ports, at the rate they trade.
+fn port_marks(ports: &[Option<usize>]) -> String {
+    if ports.is_empty() {
+        return NONE.to_string();
+    }
+    let mut out = String::from("<span class=\"discs\">");
+    for p in ports {
+        match p {
+            Some(res) => {
+                let _ = write!(
+                    out,
+                    "<span class=\"port r{res}\" title=\"two to one, {}\">2:1</span>",
+                    RESOURCE_NAMES[*res],
+                );
+            }
+            None => {
+                out.push_str("<span class=\"port any\" title=\"three to one, anything\">3:1</span>")
+            }
+        }
+    }
+    out.push_str("</span>");
+    out
+}
+
+/// One board tile, at the size of a line of text.
+fn hex(class: &str, title: &str) -> String {
+    // A flat-top hex, the shape the board is made of.
+    const PATH: &str = "M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z";
+    let title = if title.is_empty() {
+        String::new()
+    } else {
+        format!("<title>{}</title>", esc(title))
+    };
+    format!(
+        "<svg viewBox=\"-1 -1 20 22.8\" class=\"tile\">{title}\
+         <path class=\"{class}\" d=\"{PATH}\"/></svg>"
+    )
 }
 
 /// A count with a second, smaller count in brackets after it.
@@ -1432,6 +1510,19 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             .map(|s| study.ledger[s].held.to_string())
             .collect::<Vec<_>>(),
     ));
+    b.push_str(&row(
+        &std::iter::once(format!(
+            "<span title=\"{}\">most at once</span>",
+            esc(
+                "The most cards this seat ever held at one time. Not part of \
+                 the ledger's arithmetic: a peak is a moment rather than a \
+                 flow, and it is here because it is a fact about the same hand."
+            )
+        ))
+        .chain((0..seats).map(|s| r.peak_hand[s].to_string()))
+        .collect::<Vec<_>>(),
+        false,
+    ));
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
 
@@ -1595,55 +1686,53 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ("", ""),
         (
             "pips",
-            "The dots on every number the starting settlements touch, which is \
-             the standard measure of how much production a placement buys.",
+            "A row per resource, a hex per dot. The dots on every number the \
+             two settlements touch are the standard measure of how much \
+             production a placement buys, and split by resource they also say \
+             what it buys. A row with nothing on it is a resource this opening \
+             cannot produce at all.",
         ),
         (
-            "resources",
-            "Which of the five the opening touches at all, in the colours their \
-             terrain wears on the board, with the ones it misses left hollow. A \
-             placement can be rich in pips and still be missing something it \
-             will need. Per placement, so it has no total.",
+            "a turn",
+            "The same pips as cards a turn at fair odds, which is the unit \
+             somebody plays in. A pip is a thirty-sixth of a card.",
         ),
-        ("ports", "Ports the starting settlements sit on."),
         (
-            "biggest hand",
-            "The most cards this seat ever held at once, anywhere in the game. \
-             Not an opening figure, and here because it is the other half of \
-             the same question: what the placement turned into. A maximum, so \
-             it has no total.",
+            "numbers",
+            "Every number the placement sits on, drawn as the board draws them. \
+             A number twice is two settlements on it.",
+        ),
+        (
+            "coverage",
+            "The chance a roll pays this placement anything at all. Pips say \
+             how much an opening collects; this says how often. Eight pips on \
+             one number and eight spread over three are the same production and \
+             a very different game, and only this tells them apart.",
+        ),
+        (
+            "ports",
+            "Ports the two settlements sit on, at the rate they trade.",
         ),
     ]));
     b.push_str("</thead><tbody>");
     for s in 0..seats {
+        let o = &study.opening[s];
         b.push_str(&row(
             &[
                 placed(s, &who[s], place[s]),
-                r.opening[s].pips.to_string(),
-                tiles(&study.opening_touches[s]),
-                r.opening[s].ports.to_string(),
-                r.peak_hand[s].to_string(),
+                pip_rows(&o.pips),
+                turn_rows(&o.per_turn),
+                discs(&o.numbers),
+                format!("{:.0}%", o.coverage * 100.0),
+                port_marks(&o.ports),
             ],
             false,
         ));
     }
     b.push_str("</tbody>");
-    b.push_str(&totals(&[
-        "the board".to_string(),
-        r.opening[..seats]
-            .iter()
-            .map(|o| o.pips)
-            .sum::<u32>()
-            .to_string(),
-        // Diversity is per placement and a peak is a maximum. Neither adds.
-        NONE.to_string(),
-        r.opening[..seats]
-            .iter()
-            .map(|o| o.ports)
-            .sum::<u32>()
-            .to_string(),
-        NONE.to_string(),
-    ]));
+    // No totals row. Four openings' pips added together is a number about the
+    // board rather than about anybody, and drawn as fifty hexes it is a picture
+    // of nothing; numbers, coverage and ports are all per placement.
     b.push_str(T_CLOSE);
     b.push_str("</section>");
 
@@ -1750,7 +1839,13 @@ thead th { font-weight: 500; color: var(--muted-foreground); white-space: nowrap
 tbody tr { transition: background .12s ease; }
 tbody tr:hover { background: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
-.rolls th, .rolls td { padding: .7em .45em; }
+/* Fixed layout, so the eleven number columns are the same width and the bars
+   above them are too. Left to itself the table sizes each column to its
+   content, and a three-figure number is wider than a one-figure one, which put
+   the bars out of step with each other and with the figures under them. */
+.rolls { table-layout: fixed; }
+.rolls th:first-child, .rolls td:first-child { width: 5.5rem; }
+.rolls th, .rolls td { padding: .7em .3em; }
 
 /* ---- the roll chart ----
    A row of the table, so a bar and its column are aligned by the table rather
@@ -1774,13 +1869,33 @@ tbody tr:last-child td { border-bottom: 0; }
 tfoot tr:hover { background: transparent; }
 /* What a thing was worth, beside how many of it there were. */
 .worth { color: var(--muted-foreground); }
-/* The five resources as tiles: touched ones filled, missed ones hollow. */
-.tiles { display: inline-flex; gap: 3px; vertical-align: -3px; }
-.tile { width: 15px; height: auto; overflow: visible; }
-.tile .off { fill: none; stroke: var(--border); stroke-width: 1.5; }
+/* ---- the opening ----
+   Pips as tiles, a row per resource, so a column of them lines up down the
+   table and a resource nobody can produce reads as the gap it is. */
+.tile { width: 13px; height: auto; overflow: visible; }
 .tile .on.r0 { fill: #C0563B; } .tile .on.r1 { fill: #1F5E3A; }
 .tile .on.r2 { fill: #8DBE4A; } .tile .on.r3 { fill: #E2A32B; }
 .tile .on.r4 { fill: #5C6B78; }
+.pips { display: inline-flex; flex-direction: column; gap: 2px; }
+.pip-row { display: flex; justify-content: flex-end; gap: 2px; min-height: 15px;
+           align-items: center; }
+.pips.rates .pip-row { font-variant-numeric: tabular-nums; font-size: 13px;
+                       color: var(--muted-foreground); }
+/* Numbers and ports as the board draws them: a disc with the figure on it, and
+   six and eight in the red everybody looks for. */
+.discs { display: inline-flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; }
+.disc, .port { display: inline-flex; align-items: center; justify-content: center;
+               width: 26px; height: 26px; border-radius: 50%; background: #fff;
+               font: 600 12px Figtree, system-ui, sans-serif; color: var(--foreground);
+               font-variant-numeric: tabular-nums; }
+.disc.hot { color: #C2492A; }
+.port { font-size: 10px; font-weight: 700; color: #fff; }
+.port.any { background: var(--muted); color: var(--muted-foreground);
+            box-shadow: inset 0 0 0 1px var(--border); }
+.port.r0 { background: #C0563B; } .port.r1 { background: #1F5E3A; }
+.port.r2 { background: #8DBE4A; color: var(--foreground); }
+.port.r3 { background: #E2A32B; color: var(--foreground); }
+.port.r4 { background: #5C6B78; }
 
 /* A subtotal inside the body, ruled off from what it adds up. */
 tbody tr.sub td { font-weight: 600; color: var(--foreground);
@@ -2192,8 +2307,12 @@ mod tests {
         assert!(html.matches("<tfoot>").count() >= 4, "the summable tables");
         // The turns add across: the seats' turns are the game's turns.
         assert!(html.contains(&format!("<td>{}</td>", s.turns.len())));
-        // A maximum is not totalled, and the column that carries it says why.
-        assert!(html.contains("A maximum, so it has no total."));
+        // A figure that does not belong to the arithmetic around it says so
+        // rather than being quietly left out of it.
+        assert!(
+            html.contains("Not part of the ledger's arithmetic"),
+            "the peak says why it is not in the sums"
+        );
     }
 
     #[test]

@@ -1549,10 +1549,24 @@ is paired with an effect size.
   end: a card is drawn once and then either played or held, and a played card
   never goes back to the deck (R-8.10). The foot row is therefore the deck's own
   composition, which is a standing check on the whole table.
-- **Opening**, with the resources drawn as board tiles rather than counted as a
-  fraction. "5 of 5" says how many without saying which, and which is the
-  question: a placement short of ore plays differently from one short of brick.
-  Touched tiles are filled in their terrain's colour; missed ones are hollow.
+- **Opening**. The pips and resources columns are one: a row per resource, a
+  hex per dot, so the cell says how much production the placement bought *and*
+  what it bought, and a resource nobody can produce reads as the gap it is.
+  Beside it the same pips as cards a turn, which is the unit somebody plays in,
+  a pip being a thirty-sixth of a card. Then the numbers the placement sits on,
+  drawn as the board draws them with six and eight in the board's red. Then
+  **coverage**: the chance a roll pays the placement anything at all, being the
+  distinct numbers it touches weighted by how often each comes up. Pips say how
+  much an opening collects; coverage says how often, and only the two together
+  tell eight pips on one number from eight spread over three. A test finds real
+  pairs of openings with equal pips and unequal coverage. Then the ports, at the
+  rate they trade.
+
+  No totals row: four openings' pips added together is a number about the board
+  rather than about anybody, and drawn as fifty hexes it is a picture of
+  nothing. Biggest hand left this card for the ledger, which is the card about
+  hands; it was never an opening figure.
+
 Seat win rates were on this page and are not any more. They are a claim about
 many games, and a report on one game is the wrong place to make it; they belong
 on a page that reads the whole store, which is the cumulative statistics work
