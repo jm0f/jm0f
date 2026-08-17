@@ -963,6 +963,19 @@
      of them would be true. */
   .bigClock.quiet { color: var(--dim); }
 
+  /* Watching, not playing. Everything private in the view is already nought,
+     so nothing here is hiding information: this hides the controls for a seat
+     the reader does not have, which would otherwise sit there refusing. */
+  body.watching .dockGroup:not(.pushed) .stacks,
+  body.watching #actions,
+  body.watching #building,
+  body.watching #prompt,
+  body.watching #tradeBar { display: none; }
+  body.watching .dock::after {
+    content: 'Watching. Every seat at this table is taken.';
+    color: var(--dim); font-size: 1.1em; align-self: center;
+  }
+
   /* ---- lobby ------------------------------------------------------------ */
   .lobby[hidden] { display: none; }
   .lobby {
@@ -2243,6 +2256,11 @@ function render() {
   const turn = v.winner !== null
     ? (v.winner === v.you ? `You won${how}` : `${seatName(v, v.winner)} won${how}`)
     : (v.yourTurn ? `Your move, ${v.phase}` : `${seatName(v, v.toAct)} is playing`);
+  // Watching rather than playing: the table is full and this is somebody
+  // standing behind the players. Everything private is already nought in the
+  // view they were sent, so the only thing left to do is not offer them
+  // controls for a seat they do not have.
+  document.body.classList.toggle('watching', watching(v));
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.title = `${turn} · Carranta`;
   document.getElementById('note').textContent = v.note || '';
@@ -2369,7 +2387,17 @@ let give = [0, 0, 0, 0, 0], want = [0, 0, 0, 0, 0], to = '';
 // offer from a name reads as coming from someone. Placeholder until told
 // otherwise, docs/ui.md §10.
 const BOT_NAMES = ['Ada', 'Bram', 'Ines', 'Odd'];
-const seatName = (v, s) => (s === v.you ? (v.youName || 'you') : BOT_NAMES[s]);
+// Whose seat this is, in a word. Yours is you; a seat with somebody else in it
+// is a player, because we do not know their name and calling them Bram because
+// seat two is usually a bot would be a small lie told every turn; everything
+// else is the house bot, which does have a name.
+const seatName = (v, s) => {
+  if (s === v.you) return v.youName || 'you';
+  if ((v.people || []).includes(s)) return `Player ${s + 1}`;
+  return BOT_NAMES[s];
+};
+// Whether anybody is at the keyboard for this page, or it is being watched.
+const watching = (v) => v.you < 0;
 
 // ---- placeholder art -------------------------------------------------------
 // The five resources used to be isometric solids on a paper card, each in the
@@ -3284,6 +3312,9 @@ function tableQuery(withName) {
     game: lobby.game,
     pace: lobby.pace,
     bank: lobby.bank,
+    // Who is in each seat, in seat order. Seat nought is whoever deals it,
+    // whatever this says, so the word there is only ever read as a placeholder.
+    roles: lobby.roles.join(','),
   });
   if (withName) q.set('name', lobby.name);
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
@@ -3498,22 +3529,21 @@ function renderLobby() {
   document.getElementById('lobbySeed').value = lobby.seed;
   document.getElementById('lobbyLink').value = inviteLink();
 
-  // A seat still waiting has nobody in it, and dealing would quietly turn it
-  // into a bot. Better to refuse and say which seats are short than to let a
-  // mis-click decide who is playing.
+  // An open seat is dealt open now. It used to refuse, because the server could
+  // not seat a person and dealing would have turned the seat into a bot behind
+  // your back; it can, so waiting for somebody is an answer rather than an
+  // unfinished form. The house bot plays the chair until they arrive, because
+  // the rules need every seat to move and a game that waits for a stranger
+  // before it starts is a game nobody plays.
   const short = lobby.roles.filter(r => r === 'open').length;
   const start = document.getElementById('lobbyStart');
-  if (short) {
-    start.setAttribute('aria-disabled', 'true');
-    start.setAttribute('data-tip', short === 1
-      ? 'One seat is still waiting. Add a bot to it, or drop to three players.'
-      : `${short} seats are still waiting. Add bots to them, or drop to three players.`);
-    start.textContent = short === 1 ? 'One seat still waiting' : `${short} seats still waiting`;
-  } else {
-    start.removeAttribute('aria-disabled');
-    start.setAttribute('data-tip', 'Deal the board');
-    start.textContent = 'Deal the board';
-  }
+  start.removeAttribute('aria-disabled');
+  start.setAttribute('data-tip', short
+    ? 'Deals the board and holds the open seats. Share the link and whoever opens it takes one.'
+    : 'Deal the board');
+  start.textContent = short === 1
+    ? 'Deal, and hold a seat'
+    : short ? `Deal, and hold ${short} seats` : 'Deal the board';
 }
 
 function openLobby() {

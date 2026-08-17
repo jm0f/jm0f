@@ -13,8 +13,16 @@ use carranta_core::rng::{Rng, Stream};
 use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Offer, Phase, State, TradeMode};
 use carranta_record::fog::{Fog, Viewer, fog};
 
-/// The seat a person plays.
+/// The seat the person who dealt the table plays.
+///
+/// Kept as a name rather than dissolved into `people`, because it is still what
+/// a table with nobody else at it means: the host sits at nought and the bots
+/// fill in behind them. What it stopped being is the definition of "a person",
+/// which is what let a second one sit down.
 pub const HUMAN: u8 = 0;
+
+/// The most seats a table can have, which is what the rules allow (R-1).
+pub const SEATS: usize = 4;
 
 /// How long a seven's discard gets when the lobby does not say otherwise.
 ///
@@ -284,6 +292,13 @@ pub struct Session {
     /// be rebuilt from its file without the caller having to remember them.
     seats: u8,
     mode: TradeMode,
+    /// Which seats a person is sitting in. Everything else is played by the
+    /// house bot, and the difference is the whole of what "a person" means here:
+    /// a person's seat waits to be asked, a bot's answers immediately.
+    ///
+    /// Seat nought alone by default, so a table nobody has joined is the game
+    /// this was before anybody could join one.
+    people: [bool; SEATS],
     bots: Vec<Heuristic>,
     /// Bumped on every applied action, so a click made against a stale board is
     /// refused rather than applied to a different position.
@@ -386,6 +401,11 @@ impl Session {
             times: Vec::new(),
             seats,
             mode,
+            people: {
+                let mut who = [false; SEATS];
+                who[HUMAN as usize] = true;
+                who
+            },
             bots: (0..seats)
                 .map(|s| Heuristic::new(seed.wrapping_mul(31).wrapping_add(s as u64 + 1)))
                 .collect(),
@@ -563,6 +583,46 @@ impl Session {
     /// A property of the table rather than of the browser that dealt it: the
     /// listing will be read from here, not from whoever happens to be looking.
     /// Nothing lists tables yet, so nothing reads this yet either.
+    /// Sit people in these seats, and bots in the rest.
+    ///
+    /// The host is always one of them: a table with nobody at it is a table
+    /// nobody asked for, and every path that deals one seats its dealer.
+    pub fn with_people(mut self, seats: &[u8]) -> Self {
+        self.seat_people(seats);
+        self
+    }
+
+    /// The same, on a table already dealt, which is what somebody sitting down
+    /// mid-game is.
+    pub fn seat_people(&mut self, seats: &[u8]) {
+        self.people = [false; SEATS];
+        self.people[HUMAN as usize] = true;
+        for &s in seats {
+            if (s as usize) < SEATS {
+                self.people[s as usize] = true;
+            }
+        }
+    }
+
+    /// Whether a person is sitting in this seat, rather than the house bot.
+    pub fn is_person(&self, seat: u8) -> bool {
+        self.people.get(seat as usize).copied().unwrap_or(false)
+    }
+
+    /// The seats people are sitting in, in seat order.
+    pub fn people(&self) -> Vec<u8> {
+        (0..self.seats).filter(|&s| self.is_person(s)).collect()
+    }
+
+    /// Whether anything is being asked of any person at the table.
+    ///
+    /// What stops the bots. It used to be "is anything being asked of the
+    /// human", which is the same sentence with one seat in it, and is why a
+    /// second person's turn would have been played over the top of them.
+    fn waiting_on_a_person(&self) -> bool {
+        (0..self.seats).any(|s| self.is_person(s) && !self.choices_for(s).is_empty())
+    }
+
     pub fn with_public(mut self, public: bool) -> Self {
         self.public = public;
         self
@@ -677,13 +737,24 @@ impl Session {
         self.note_at(at, seat, text);
     }
 
+    /// Say something to the whole table that is not a move.
+    ///
+    /// Somebody sitting down, which happens to a game rather than in it: it
+    /// changes who is answering for a seat and changes nothing about the
+    /// position, so it is a line in the log and not a step in the record. A
+    /// game replayed from its file is the same game whether or not anybody
+    /// joined it halfway.
+    pub fn note_to_table(&mut self, text: String) {
+        self.note(None, text);
+    }
+
     /// Wave away every offer currently open, as declining does.
-    fn decline_open_offers(&mut self) {
+    fn decline_open_offers(&mut self, seat: u8) {
         // Everything put to you, not only what you could have taken: turning
         // down an offer you cannot cover is the same answer and the table needs
         // it just as much.
-        for i in self.offers_to_me() {
-            self.answer(i, HUMAN, Answer::No);
+        for i in self.offers_to(seat) {
+            self.answer(i, seat, Answer::No);
         }
     }
 
@@ -887,26 +958,35 @@ impl Session {
             // on a passive player who never clicked, and it is the only thing a
             // turn's clock does to a seat that is not holding the turn.
             //
-            // Everything put to you, not only what you could have covered. What
-            // blocks the table is being *asked*: `choices` offers a decline for
-            // any question put to the human, and a pending choice is what stops
-            // the bots. Keying the escape on what the human could have accepted
-            // meant an offer they could not afford blocked the turn and then
-            // was not cleared when the clock ran out, so the table sat at 0:00
-            // waiting on an answer to an offer nobody could take.
-            if !self.offers_to_me().is_empty() {
-                self.decline_open_offers();
-                self.note(Some(HUMAN), "Time ran out, declined the offers".to_string());
+            // Everything put to any person, not only what they could have
+            // covered. What blocks the table is being *asked*: `choices_for`
+            // offers a decline for any question put to a seat, and a pending
+            // choice is what stops the bots. Keying the escape on what could
+            // have been accepted meant an offer nobody could afford blocked the
+            // turn and then was not cleared when the clock ran out, so the table
+            // sat at 0:00 waiting on an answer to an offer nobody could take.
+            //
+            // Every person's, not only the turn holder's: an offer is put to the
+            // whole table, and one unanswered question anywhere stops it.
+            let asked: Vec<u8> = (0..self.seats)
+                .filter(|&s| self.is_person(s) && !self.offers_to(s).is_empty())
+                .collect();
+            if !asked.is_empty() {
+                for seat in asked {
+                    self.decline_open_offers(seat);
+                    self.note(Some(seat), "Time ran out, declined the offers".to_string());
+                }
                 self.finish_move();
                 continue;
             }
-            // What is left to force is a turn, and only the human's turns need
+            // What is left to force is a turn, and only a person's turns need
             // forcing: a bot moves the moment it is asked to, so its allowance
             // runs out only while something blocks it, which the offers above
             // are the only thing that can. A mandatory answer owed by a passive
             // player, discarding on a seven, is not the clock's to skip, since
             // the position would be illegal without it. That turn waits.
-            if holder != HUMAN || self.state.decider() != HUMAN {
+            let acting = self.state.decider();
+            if holder != acting || !self.is_person(acting) {
                 return;
             }
             let mut buf = Vec::new();
@@ -950,10 +1030,10 @@ impl Session {
                 Action::Roll => format!("{} for you", lower_first(rolled(&self.state))),
                 other => format!(
                     "{} for you",
-                    lower_first(log_phrase(&other, &self.state, HUMAN as usize))
+                    lower_first(log_phrase(&other, &self.state, acting as usize))
                 ),
             };
-            self.note_at(at, Some(HUMAN), format!("Time ran out, {what}"));
+            self.note_at(at, Some(acting), format!("Time ran out, {what}"));
             // A forced move pays out exactly like a chosen one, because the
             // engine does not know the difference: the same roll deals the same
             // cards to the same seats. What was missing was the record of it.
@@ -962,7 +1042,7 @@ impl Session {
             if pays_out(&forced) {
                 self.note_production(at, &purse);
             }
-            self.note_steal(at, &forced, HUMAN, &purse);
+            self.note_steal(at, &forced, acting, &purse);
             self.sync_deals();
             self.finish_move();
         }
@@ -1048,7 +1128,7 @@ impl Session {
             //
             // Every seat, the human's included, because in a game played out
             // there is nobody here to ask and the seat is the table's own hand.
-            self.settle_between_bots(HUMAN);
+            self.settle_between_bots(true);
         }
         self.note_winner();
     }
@@ -1138,8 +1218,13 @@ impl Session {
             offer: at,
             by: seat,
         });
-        if seat == HUMAN {
-            self.note(Some(HUMAN), "Passed on the offers".to_string());
+        // First person for a person's seat, because the page prefixes a line
+        // with whose it is unless it is yours: "Passed on the offers" reads
+        // right on your own screen and as "Ines passed on the offers" on
+        // somebody else's. A bot's line names the offer it turned down, since
+        // nobody is reading it as their own.
+        if self.is_person(seat) {
+            self.note(Some(seat), "Passed on the offers".to_string());
         } else {
             self.note(Some(seat), format!("Passed on seat {from}'s offer"));
         }
@@ -1150,7 +1235,11 @@ impl Session {
     /// The line that closes a finished game, wherever the game finished.
     fn note_winner(&mut self) {
         if let Phase::GameOver { winner } = self.state.phase {
-            let who = if winner == HUMAN {
+            // One person at the table and they won: "You win" is addressed to
+            // the only reader there is. With two, the log is shared and read
+            // from two seats at once, so the line has to name the winner rather
+            // than address one of them.
+            let who = if self.people().len() == 1 && self.is_person(winner) {
                 "You win".to_string()
             } else {
                 format!("Seat {winner} wins")
@@ -1200,40 +1289,55 @@ impl Session {
         &self.log
     }
 
-    /// What the human is entitled to see.
+    /// What the seat at the keyboard is entitled to see.
     pub fn view(&self) -> Fog {
-        fog(&self.state, Viewer::Seat(HUMAN))
+        self.view_for(HUMAN)
     }
 
-    /// The choices to put in front of the human, in a stable order.
-    ///
-    /// Empty while it is a bot's turn and nothing is being asked of the human.
+    /// What one seat is entitled to see.
+    pub fn view_for(&self, seat: u8) -> Fog {
+        fog(&self.state, Viewer::Seat(seat))
+    }
+
+    /// What somebody watching the table is entitled to see: the public position
+    /// and nobody's hand, which is what a person standing behind the players
+    /// sees (P-6).
+    pub fn view_watching(&self) -> Fog {
+        fog(&self.state, Viewer::Spectator)
+    }
+
+    /// The choices to put in front of the seat at the keyboard.
     pub fn choices(&self) -> Vec<Choice> {
+        self.choices_for(HUMAN)
+    }
+
+    /// The choices to put in front of one seat, in a stable order.
+    ///
+    /// Empty while it is somebody else's turn and nothing is being asked of
+    /// this seat. Every action arrives with an index into this list, so the
+    /// order is part of the interface and the list is per seat: two people at
+    /// one table are looking at two different lists at the same moment.
+    pub fn choices_for(&self, seat: u8) -> Vec<Choice> {
         if matches!(self.state.phase, Phase::GameOver { .. }) {
             return Vec::new();
         }
-        if self.state.decider() == HUMAN {
+        if self.state.decider() == seat {
             let mut buf = Vec::new();
             self.state.legal_into(&mut buf);
             return buf.into_iter().map(Choice::Play).collect();
         }
         // Not their turn, but an offer may be waiting for them.
         let mut out: Vec<Choice> = self
-            .open_offers()
+            .open_offers_for(seat)
             .into_iter()
-            .map(|i| {
-                Choice::Play(Action::AcceptTrade {
-                    offer: i,
-                    by: HUMAN,
-                })
-            })
+            .map(|i| Choice::Play(Action::AcceptTrade { offer: i, by: seat }))
             .collect();
         // Saying no is offered for anything put to you, not only for what you
         // could say yes to. An offer you cannot cover is still a question, and
         // one you can neither take nor turn down is a question with no answer:
         // it sat there invisible, and the table waited on it until the turn ran
         // out.
-        if !self.offers_to_me().is_empty() {
+        if !self.offers_to(seat).is_empty() {
             out.push(Choice::Decline);
         }
         out
@@ -1245,6 +1349,11 @@ impl Session {
     /// per-turn allowance is spent, and a form that cannot succeed is worse
     /// than one that is not shown.
     pub fn can_propose(&self) -> bool {
+        self.can_propose_for(HUMAN)
+    }
+
+    /// The same question for one seat.
+    pub fn can_propose_for(&self, seat: u8) -> bool {
         if self.state.trade_mode == TradeMode::Disabled {
             return false;
         }
@@ -1254,7 +1363,7 @@ impl Session {
         // A probe rather than a second copy of the rules: whatever the engine
         // would accept is what the form should allow.
         for r in 0..5 {
-            if self.state.hand[HUMAN as usize][r] == 0 {
+            if self.state.hand[seat as usize][r] == 0 {
                 continue;
             }
             let mut give = [0u8; 5];
@@ -1264,7 +1373,7 @@ impl Session {
             let mut probe = self.state;
             if probe
                 .apply(Action::ProposeTrade {
-                    by: HUMAN,
+                    by: seat,
                     to: None,
                     give,
                     want,
@@ -1278,16 +1387,13 @@ impl Session {
     }
 
     /// Offers the human could take and has not already waved away.
-    fn open_offers(&self) -> Vec<u8> {
-        self.offers_to_me()
+    fn open_offers_for(&self, seat: u8) -> Vec<u8> {
+        self.offers_to(seat)
             .into_iter()
             .filter(|&i| {
                 let mut probe = self.state;
                 probe
-                    .apply(Action::AcceptTrade {
-                        offer: i,
-                        by: HUMAN,
-                    })
+                    .apply(Action::AcceptTrade { offer: i, by: seat })
                     .is_ok()
             })
             .collect()
@@ -1307,7 +1413,7 @@ impl Session {
     /// a passive player's offer goes to the active player alone, so on a bot's
     /// turn another bot's offer is genuinely not yours to answer, and no card
     /// for that one is right.
-    fn offers_to_me(&self) -> Vec<u8> {
+    fn offers_to(&self, seat: u8) -> Vec<u8> {
         if self.state.trade_mode == TradeMode::Disabled {
             return Vec::new();
         }
@@ -1319,22 +1425,33 @@ impl Session {
                 self.deals
                     .iter()
                     .find(|d| d.at == Some(i))
-                    .is_none_or(|d| d.answers[HUMAN as usize] == Answer::Waiting)
+                    .is_none_or(|d| d.answers[seat as usize] == Answer::Waiting)
             })
             .filter(|&i| {
                 self.state
-                    .may_accept(HUMAN as usize, &self.state.offers[i as usize])
+                    .may_accept(seat as usize, &self.state.offers[i as usize])
             })
             .collect()
     }
 
-    /// Apply the human's choice, then let the bots run on.
+    /// Apply the choice of the seat at the keyboard, then let the bots run on.
     pub fn act(&mut self, index: usize, version: u64) -> Result<(), Refused> {
+        self.act_as(HUMAN, index, version)
+    }
+
+    /// Apply one seat's choice, then let the bots run on.
+    ///
+    /// The index is into that seat's own `choices_for`, so a click from one
+    /// person cannot land on another person's list: the worst a stale or
+    /// mischievous index can do is name a choice this seat does not have, which
+    /// is refused. Whether the seat is one this caller is allowed to play is a
+    /// question about who is asking and belongs to the server, which knows.
+    pub fn act_as(&mut self, seat: u8, index: usize, version: u64) -> Result<(), Refused> {
         if version != self.version {
             return Err(Refused::Stale);
         }
         let choice = self
-            .choices()
+            .choices_for(seat)
             .into_iter()
             .nth(index)
             .ok_or(Refused::NoSuchChoice)?;
@@ -1342,13 +1459,13 @@ impl Session {
         match choice {
             Choice::Decline => {
                 self.undo = None;
-                self.decline_open_offers();
-                self.note(Some(HUMAN), "Passed on the offers".to_string());
+                self.decline_open_offers(seat);
+                self.note(Some(seat), "Passed on the offers".to_string());
             }
             Choice::Play(action) => {
                 // Named before it is applied: a phrase describes the position
                 // the action was taken in, not the one it produced.
-                let phrase = log_phrase(&action, &self.state, HUMAN as usize);
+                let phrase = log_phrase(&action, &self.state, seat as usize);
                 let at = self.stamp();
                 let purse = self.state.hand;
                 // A militia is not one decision but two, and the card is spent
@@ -1359,7 +1476,7 @@ impl Session {
                 // Recorded before it is applied, because taking an offer is
                 // what removes it: afterwards there is no offer to answer.
                 if let Action::AcceptTrade { offer, .. } = action {
-                    self.answer(offer, HUMAN, Answer::Yes);
+                    self.answer(offer, seat, Answer::Yes);
                 }
                 self.state.apply(action).map_err(Refused::Illegal)?;
                 self.record(Step::Move(action));
@@ -1369,11 +1486,11 @@ impl Session {
                     Action::Roll => rolled(&self.state),
                     _ => phrase,
                 };
-                self.note_at(at, Some(HUMAN), phrase);
+                self.note_at(at, Some(seat), phrase);
                 if pays_out(&action) {
                     self.note_production(at, &purse);
                 }
-                self.note_steal(at, &action, HUMAN, &purse);
+                self.note_steal(at, &action, seat, &purse);
                 self.sync_deals();
             }
         }
@@ -1388,8 +1505,14 @@ impl Session {
     /// every place a move can come from means a path nobody thought of cannot
     /// leave a stale offer to undo something else.
     pub fn can_cancel(&self) -> bool {
+        self.can_cancel_for(HUMAN)
+    }
+
+    /// The same question for one seat: only the seat that played the card can
+    /// put it back, which is the seat now being asked where the robber goes.
+    pub fn can_cancel_for(&self, seat: u8) -> bool {
         self.undo.is_some()
-            && self.state.decider() == HUMAN
+            && self.state.decider() == seat
             && matches!(self.state.phase, Phase::MoveRobber { from_militia: true })
     }
 
@@ -1406,10 +1529,15 @@ impl Session {
     /// It is dropped the moment anything else happens, so there is never more
     /// than the current half-move to take back.
     pub fn cancel(&mut self, version: u64) -> Result<(), Refused> {
+        self.cancel_as(HUMAN, version)
+    }
+
+    /// The same, for one seat.
+    pub fn cancel_as(&mut self, seat: u8, version: u64) -> Result<(), Refused> {
         if version != self.version {
             return Err(Refused::Stale);
         }
-        if !self.can_cancel() {
+        if !self.can_cancel_for(seat) {
             self.undo = None;
             return Err(Refused::NoSuchChoice);
         }
@@ -1441,21 +1569,33 @@ impl Session {
         want: [u8; 5],
         version: u64,
     ) -> Result<(), Refused> {
+        self.propose_as(HUMAN, to, give, want, version)
+    }
+
+    /// The same, from one seat.
+    pub fn propose_as(
+        &mut self,
+        seat: u8,
+        to: Option<u8>,
+        give: [u8; 5],
+        want: [u8; 5],
+        version: u64,
+    ) -> Result<(), Refused> {
         if version != self.version {
             return Err(Refused::Stale);
         }
         let action = Action::ProposeTrade {
-            by: HUMAN,
+            by: seat,
             to,
             give,
             want,
         };
-        let phrase = log_phrase(&action, &self.state, HUMAN as usize);
+        let phrase = log_phrase(&action, &self.state, seat as usize);
         let at = self.stamp();
         self.state.apply(action).map_err(Refused::Illegal)?;
         self.record(Step::Move(action));
         self.version += 1;
-        self.note_at(at, Some(HUMAN), phrase);
+        self.note_at(at, Some(seat), phrase);
         self.sync_deals();
         self.finish_move();
         Ok(())
@@ -1476,7 +1616,7 @@ impl Session {
         // refilled and an expired clock forfeited the next turn too. In setup
         // that meant one timeout took both of a player's placements.
         self.hand_over_clock();
-        self.settle_between_bots(HUMAN + 1);
+        self.settle_between_bots(false);
         self.run_bots();
         self.hand_over_clock();
     }
@@ -1503,7 +1643,12 @@ impl Session {
         // An offer on the table is a bot about to answer it, whoever's turn it
         // is, so the page has to keep asking or the answer arrives whenever the
         // idle poll next happens to land.
-        self.state.offer_count > 0 || (self.state.decider() != HUMAN && self.choices().is_empty())
+        // A bot is mid-move when the seat deciding is not a person and nothing
+        // is being asked of anybody: the same question as before with "a person"
+        // in place of "seat nought", so a table with two people at it does not
+        // poll fast through both of their turns.
+        self.state.offer_count > 0
+            || (!self.is_person(self.state.decider()) && !self.waiting_on_a_person())
     }
 
     /// Let a paced table move on when the wait for the next move is up.
@@ -1554,7 +1699,10 @@ impl Session {
             if matches!(self.state.phase, Phase::GameOver { .. }) {
                 break;
             }
-            if self.state.decider() == HUMAN || !self.choices().is_empty() {
+            // Somebody's move, or somebody's question: either way the table
+            // waits. This used to name one seat, which is exactly the sentence
+            // that made a second person impossible.
+            if self.is_person(self.state.decider()) || self.waiting_on_a_person() {
                 break;
             }
             if !self.beat_due(self.pace.window()) {
@@ -1596,7 +1744,7 @@ impl Session {
             // Each bot pays for its own thinking, and the turn passing between
             // two bots is still the turn passing.
             self.hand_over_clock();
-            self.settle_between_bots(HUMAN + 1);
+            self.settle_between_bots(false);
         }
         self.note_winner();
     }
@@ -1614,7 +1762,7 @@ impl Session {
     /// `from` is the lowest seat to ask. It is seat one while somebody is
     /// playing, since the human answers for themselves by being offered the
     /// choice, and seat nought in a game played out, where nobody is.
-    fn settle_between_bots(&mut self, from: u8) {
+    fn settle_between_bots(&mut self, everyone: bool) {
         if self.state.trade_mode == TradeMode::Disabled {
             return;
         }
@@ -1638,7 +1786,14 @@ impl Session {
             let mut next = None;
             'outer: for d in self.deals.iter() {
                 let Some(i) = d.at else { continue };
-                for seat in from..self.state.players {
+                for seat in 0..self.state.players {
+                    // A person answers for themselves. Their card is on their
+                    // screen and the table waits for it, which is the whole
+                    // difference between a seat with somebody in it and a seat
+                    // with the house bot in it.
+                    if !everyone && self.is_person(seat) {
+                        continue;
+                    }
                     // Only the seats it was actually put to. A seat that was
                     // never asked has nothing to say and is not left waiting
                     // on the card for the rest of the turn.
@@ -2180,6 +2335,94 @@ mod tests {
                     Ok(()) => {}
                     Err(e) => panic!("seed {seed}: offered choice refused: {e:?}"),
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn the_bots_wait_for_every_person_at_the_table() {
+        // The sentence that used to make a second person impossible was "stop
+        // when it is seat nought's turn". Two people means stopping for either.
+        let mut s = Session::new(4, 9, TradeMode::Full).with_people(&[0, 2]);
+        assert!(s.is_person(0) && s.is_person(2));
+        assert!(!s.is_person(1) && !s.is_person(3));
+        assert_eq!(s.people(), vec![0, 2]);
+
+        // Play whichever person is being asked, for as long as either is. The
+        // invariant under it is the point: control comes back either on a
+        // person's turn, or on a bot's with a question waiting for a person,
+        // and never on a bot's turn with nothing asked of anybody, which would
+        // be the table stopped for no reason.
+        let mut asked = [0usize; 4];
+        for _ in 0..400 {
+            if s.winner().is_some() {
+                break;
+            }
+            let seat = s.state().decider();
+            let playing = if s.is_person(seat) {
+                seat
+            } else {
+                match (0..4).find(|&p| s.is_person(p) && !s.choices_for(p).is_empty()) {
+                    Some(p) => p,
+                    None => panic!("the table stopped on a bot with nothing asked of anybody"),
+                }
+            };
+            let v = s.version();
+            if s.act_as(playing, 0, v).is_err() {
+                break;
+            }
+            asked[playing as usize] += 1;
+        }
+        assert!(asked[0] > 0, "seat nought was asked");
+        assert!(asked[2] > 0, "and so was seat two");
+    }
+
+    #[test]
+    fn one_seat_cannot_play_the_move_of_another() {
+        // Choices are per seat and an action is an index into the seat's own
+        // list, so the worst a wrong index can do is name a choice that is not
+        // there. A seat with nothing to answer has no list at all.
+        let mut s = Session::new(4, 4, TradeMode::Full).with_people(&[0, 1]);
+        let holder = s.state().decider();
+        let other = if holder == 0 { 1 } else { 0 };
+        assert!(
+            s.choices_for(other).is_empty(),
+            "nothing is being asked of the seat that is not deciding"
+        );
+        let v = s.version();
+        assert!(matches!(s.act_as(other, 0, v), Err(Refused::NoSuchChoice)));
+        assert_eq!(s.version(), v, "and the board did not move");
+        // The seat that is being asked can play.
+        assert!(s.act_as(holder, 0, v).is_ok());
+        assert!(s.version() > v);
+    }
+
+    #[test]
+    fn nobody_answers_the_market_for_a_person() {
+        // What "a person is in this seat" means to the market: their card waits
+        // on their screen, where a bot's is answered as the table settles.
+        let mut s = Session::new(4, 6, TradeMode::Full)
+            .with_people(&[0, 1])
+            .with_pace(Pace::Instant);
+        for _ in 0..200 {
+            if s.winner().is_some() {
+                break;
+            }
+            let seat = s.state().decider();
+            if !s.is_person(seat) {
+                break;
+            }
+            let v = s.version();
+            if s.act_as(seat, 0, v).is_err() {
+                break;
+            }
+        }
+        for seat in s.people() {
+            for d in s.deals.iter() {
+                assert!(
+                    d.answers[seat as usize] == Answer::Waiting || d.offer.from == seat,
+                    "seat {seat} was answered for"
+                );
             }
         }
     }
@@ -3114,7 +3357,7 @@ mod tests {
                     break;
                 }
                 // An offer is on the table and it is not the human's turn.
-                if s.state.decider() != HUMAN && !s.open_offers().is_empty() {
+                if s.state.decider() != HUMAN && !s.open_offers_for(HUMAN).is_empty() {
                     found = Some(s);
                     break 'seeds;
                 }
@@ -3133,7 +3376,7 @@ mod tests {
 
         s = s.with_clock(Clock::PerTurn(1));
         let before = s.version();
-        let offers = s.open_offers().len();
+        let offers = s.open_offers_for(HUMAN).len();
         assert!(offers > 0);
         // The human is not on the clock, so their own allowance is untouched
         // and reads full while somebody else's turn runs down.
@@ -3149,7 +3392,7 @@ mod tests {
         // turn that made the offer has time left, the offer stands.
         s.enforce_clock();
         assert_eq!(
-            s.open_offers().len(),
+            s.open_offers_for(HUMAN).len(),
             offers,
             "an offer is answerable while the turn that made it has time"
         );
@@ -3158,7 +3401,7 @@ mod tests {
         s.enforce_clock();
 
         assert!(
-            s.open_offers().is_empty(),
+            s.open_offers_for(HUMAN).is_empty(),
             "silence is a refusal, so the table is cleared"
         );
         assert!(s.version() >= before, "and play carries on");
@@ -3287,8 +3530,8 @@ mod tests {
                 if matches!(s.state.phase, Phase::GameOver { .. }) {
                     break;
                 }
-                let asked = s.offers_to_me();
-                if !asked.is_empty() && s.open_offers().is_empty() {
+                let asked = s.offers_to(HUMAN);
+                if !asked.is_empty() && s.open_offers_for(HUMAN).is_empty() {
                     found = Some(s);
                     break 'seeds;
                 }
@@ -3308,7 +3551,7 @@ mod tests {
         // what they do next can put new offers on the table. Those are new
         // questions and being asked them again is right.
         let asked: Vec<Offer> = s
-            .offers_to_me()
+            .offers_to(HUMAN)
             .into_iter()
             .map(|i| s.state.offers[i as usize])
             .collect();
@@ -3322,7 +3565,7 @@ mod tests {
         s.act(i, v).expect("declining is a legal answer");
 
         let still: Vec<Offer> = s
-            .offers_to_me()
+            .offers_to(HUMAN)
             .into_iter()
             .map(|i| s.state.offers[i as usize])
             .collect();
@@ -3544,8 +3787,8 @@ mod tests {
                 }
                 // Asked, and could not cover it, on somebody else's turn.
                 if s.state.decider() != HUMAN
-                    && !s.offers_to_me().is_empty()
-                    && s.open_offers().is_empty()
+                    && !s.offers_to(HUMAN).is_empty()
+                    && s.open_offers_for(HUMAN).is_empty()
                 {
                     found = Some(s);
                     break 'seeds;
@@ -3570,7 +3813,7 @@ mod tests {
         // and what they do next can put new offers on the table. Those are new
         // questions and being asked them is right.
         let asked: Vec<Offer> = s
-            .offers_to_me()
+            .offers_to(HUMAN)
             .into_iter()
             .map(|i| s.state.offers[i as usize])
             .collect();
@@ -3582,7 +3825,7 @@ mod tests {
         s.enforce_clock();
 
         let still: Vec<Offer> = s
-            .offers_to_me()
+            .offers_to(HUMAN)
             .into_iter()
             .map(|i| s.state.offers[i as usize])
             .collect();

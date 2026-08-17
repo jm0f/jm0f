@@ -47,6 +47,10 @@ pub struct Open {
     pub age: u64,
     /// Whether the visitor asking is the one who dealt it.
     pub mine: bool,
+    /// Seats still waiting for somebody, which is what makes a table joinable.
+    pub waiting: usize,
+    /// Whether the visitor asking is already sitting at it.
+    pub seated: bool,
 }
 
 /// The page, rendered.
@@ -114,11 +118,13 @@ fn joining(open: &[Open]) -> String {
     ));
     // Somewhere to sit, which a finished game is not: a game with a winner is
     // history, and history is the card below. Your own unlisted tables are here
-    // because you have to be able to get back to a game you dealt; other
-    // people's are here only if they published them.
+    // because you have to be able to get back to a game you dealt, and so are
+    // ones you are sitting at, because a private table somebody invited you to
+    // is a game of yours whoever dealt it. Other people's are here only if they
+    // published them.
     let live: Vec<&Open> = open
         .iter()
-        .filter(|t| t.winner.is_none() && (t.mine || t.public))
+        .filter(|t| t.winner.is_none() && (t.mine || t.seated || t.public))
         .collect();
     if live.is_empty() {
         b.push_str(
@@ -152,17 +158,45 @@ fn joining(open: &[Open]) -> String {
         if t.public {
             tags.push_str("<span class=\"tag quiet\">listed</span> ");
         }
+        // The one that decides whether this row is an invitation. Loud rather
+        // than quiet: it is the only thing on this page you can be too late for.
+        if t.waiting > 0 && !t.seated {
+            let _ = write!(
+                tags,
+                "<span class=\"tag\">{}</span> ",
+                if t.waiting == 1 {
+                    "a seat free".to_string()
+                } else {
+                    format!("{} seats free", t.waiting)
+                }
+            );
+        }
         let _ = write!(
             b,
             "<tr><td>{name} {tags}</td>\
              <td>{seats}</td><td>{mode}</td><td>{played}</td><td>{age}</td>\
              <td class=\"act\">\
-             <a class=\"go small\" href=\"/{id}/\">Sit down</a></td></tr>",
+             <a class=\"go small{quiet}\" href=\"/{id}/\">{go}</a></td></tr>",
             name = table_name(t),
             seats = t.seats,
             mode = market(t.mode),
             age = ago(t.age),
             id = t.id,
+            // Sitting down is what a free seat offers and what a table you are
+            // already at does not: going back to your own game is not joining
+            // it, and saying so twice would make the loud word meaningless.
+            go = if t.seated {
+                "Back to it"
+            } else if t.waiting > 0 {
+                "Sit down"
+            } else {
+                "Watch"
+            },
+            quiet = if t.seated || t.waiting > 0 {
+                ""
+            } else {
+                " quiet"
+            },
         );
     }
     b.push_str("</tbody>");
@@ -382,6 +416,17 @@ mod tests {
             winner,
             age: 0,
             mine,
+            waiting: 0,
+            seated: mine,
+        }
+    }
+
+    /// A table with a chair nobody is in.
+    fn waiting_table(id: &str, seated: bool) -> Open {
+        Open {
+            waiting: 2,
+            seated,
+            ..table(id, true, false, None)
         }
     }
 
@@ -452,6 +497,54 @@ mod tests {
             .expect("a row before the link");
         assert!(row.contains(">yours</span>"));
         assert!(row.contains(">listed</span>"));
+    }
+
+    #[test]
+    fn a_table_with_a_chair_free_says_so_and_offers_it() {
+        // The one thing on this page you can be too late for, so it is the one
+        // tag that is not quiet.
+        let html = page(&[waiting_table("aaaa-aaaa-aaaa", false)], &[]);
+        assert!(html.contains(">2 seats free</span>"));
+        assert!(html.contains(">Sit down</a>"));
+        // One reads as one.
+        let one = Open {
+            waiting: 1,
+            ..waiting_table("bbbb-bbbb-bbbb", false)
+        };
+        assert!(page(&[one], &[]).contains(">a seat free</span>"));
+        // Already in it: going back to your own game is not joining it, and
+        // saying so twice would make the loud word mean nothing.
+        let html = page(&[waiting_table("cccc-cccc-cccc", true)], &[]);
+        assert!(html.contains(">Back to it</a>"));
+        assert!(!html.contains("seats free"));
+        // A full table is somewhere to watch, quietly.
+        let full = Open {
+            waiting: 0,
+            seated: false,
+            ..waiting_table("dddd-dddd-dddd", false)
+        };
+        let html = page(&[full], &[]);
+        assert!(html.contains(">Watch</a>"));
+        assert!(html.contains("go small quiet"));
+    }
+
+    #[test]
+    fn a_table_you_are_sitting_at_is_on_your_page_whoever_dealt_it() {
+        // Somebody else's private table that you were invited to. Not yours,
+        // not listed, and yours to get back to.
+        let theirs = Open {
+            public: false,
+            mine: false,
+            seated: true,
+            waiting: 0,
+            ..table("eeee-eeee-eeee", false, false, None)
+        };
+        let html = page(&[theirs], &[]);
+        assert!(html.contains("eeee-eeee-eeee"), "it is on their page");
+        assert!(
+            !html.contains(">yours</span>"),
+            "without claiming they dealt it"
+        );
     }
 
     #[test]

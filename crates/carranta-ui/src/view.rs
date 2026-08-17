@@ -10,6 +10,8 @@ use carranta_core::topology::{
     vertex_bit,
 };
 
+use carranta_record::fog::Own;
+
 use crate::game::{Answer, HUMAN, Session, Target};
 use crate::json::Json;
 
@@ -38,13 +40,43 @@ const DEV_CARDS: [&str; 5] = [
 ];
 
 pub fn render(session: &Session) -> String {
-    render_inner(session, None)
+    render_inner(session, HUMAN, None)
 }
 
 /// The same, with something to tell the player, a refused click, usually.
 pub fn render_with_note(session: &Session, note: &str) -> String {
-    render_inner(session, Some(note))
+    render_inner(session, HUMAN, Some(note))
 }
+
+/// The table as one seat sees it.
+///
+/// Everything private is keyed to this seat: the hand, the development cards,
+/// whose turn it is, which offers are yours and which are being put to you, and
+/// the numbered list of choices a click comes back as. Two people at one table
+/// are served two of these, and neither can see the other's cards or press the
+/// other's buttons, because neither is ever sent them.
+pub fn render_for(session: &Session, seat: u8) -> String {
+    render_inner(session, seat, None)
+}
+
+/// The same, with something to tell that seat.
+pub fn render_for_with_note(session: &Session, seat: u8, note: &str) -> String {
+    render_inner(session, seat, Some(note))
+}
+
+/// The table as somebody watching it sees it: the public position, nobody's
+/// hand, and nothing to press.
+///
+/// Rendered for a seat that does not exist, which is what makes it safe: every
+/// private field is keyed off that seat, so a hand it is not holding is a hand
+/// of nothing and a turn it does not have is never its turn. The fog is the
+/// spectator's, so the counts other people can see are still there.
+pub fn render_watching(session: &Session) -> String {
+    render_inner(session, NOBODY, None)
+}
+
+/// A seat number no table has, for somebody who is not sitting at one.
+const NOBODY: u8 = u8::MAX;
 
 fn phase_name(p: Phase) -> &'static str {
     match p {
@@ -58,8 +90,12 @@ fn phase_name(p: Phase) -> &'static str {
     }
 }
 
-fn render_inner(session: &Session, note: Option<&str>) -> String {
-    let v = session.view();
+fn render_inner(session: &Session, seat: u8, note: Option<&str>) -> String {
+    let v = if seat == NOBODY {
+        session.view_watching()
+    } else {
+        session.view_for(seat)
+    };
     let seats = v.players as usize;
     let mut j = Json::object();
 
@@ -72,11 +108,13 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     // Which build is serving this, so a stale process is visible rather than
     // mistaken for a change that did not work.
     j.str("build", env!("CARRANTA_BUILD"));
-    j.int("you", HUMAN as i64);
+    // Minus one for somebody watching, which the page reads as "no seat of
+    // mine": no hand, no turn, nothing to press.
+    j.int("you", if seat == NOBODY { -1 } else { seat as i64 });
     j.int("players", seats as i64);
     j.int("toAct", v.to_act as i64);
     j.str("phase", phase_name(v.phase));
-    j.bool("yourTurn", session.state().decider() == HUMAN);
+    j.bool("yourTurn", session.state().decider() == seat);
     // The session's verdict, not the engine's: a game stopped by the clock has
     // a winner the engine knows nothing about.
     j.opt_int("winner", session.winner().map(|w| w as i64));
@@ -167,14 +205,25 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
                 .bool("onClock", session.on_clock() == p as u8);
         }
     });
-    let own = v
-        .own
-        .unwrap_or_else(|| unreachable!("the human has a seat"));
+    // Somebody watching holds nothing, so the private half of the view is
+    // empty rather than absent: the page draws the same shapes either way and
+    // finds them all at nought, which is exactly true of a person with no seat.
+    let own = v.own.unwrap_or(Own {
+        seat: 0,
+        hand: [0; 5],
+        dev_held: [0; 5],
+        dev_fresh: [0; 5],
+        victory_points: 0,
+    });
     j.ints("yourHand", own.hand.iter().map(|&n| n as i64));
     j.ints("yourDev", own.dev_held.iter().map(|&n| n as i64));
     j.ints("yourFresh", own.dev_fresh.iter().map(|&n| n as i64));
     j.int("yourVp", own.victory_points as i64);
-    j.bool("canPropose", session.can_propose());
+    // Which seats have people in them, so the page can name them. A seat that is
+    // not yours and not a bot is somebody, and calling them Bram because seat two
+    // is usually a bot would be the page telling a small lie every turn.
+    j.ints("people", session.people().iter().map(|&s| s as i64));
+    j.bool("canPropose", session.can_propose_for(seat));
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);
     // Roads still owed by a played road building card (R-9.10). Public: the
@@ -203,7 +252,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.bool("inSetup", session.in_setup());
     j.bool("logShown", session.log_shown());
     // Whether a development card is half played and can still be put back.
-    j.bool("canCancel", session.can_cancel());
+    j.bool("canCancel", session.can_cancel_for(seat));
     j.bool("bankExact", session.bank_exact());
     // How the bots are paced, and whether one is mid-thought, so the page can
     // poll quickly while the table is moving and slowly while it is not.
@@ -219,7 +268,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     j.array("offers", session.deals(), |o, d| {
         o.opt_int("i", d.at.map(|i| i as i64))
             .int("from", d.offer.from as i64)
-            .bool("mine", d.offer.from == HUMAN)
+            .bool("mine", d.offer.from == seat)
             .bool("live", d.live())
             .opt_int("to", d.offer.to.map(|t| t as i64))
             .ints("give", d.offer.give.iter().map(|&n| n as i64))
@@ -245,7 +294,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
     });
 
     // ---- What the human may do now ----
-    let choices = session.choices();
+    let choices = session.choices_for(seat);
     j.array("choices", choices.iter().enumerate(), |o, (i, c)| {
         o.int("i", i as i64)
             .str("label", &c.label(session.state()))
@@ -289,7 +338,7 @@ fn render_inner(session: &Session, note: Option<&str>) -> String {
                 carranta_core::action::Action::Trade { give, take } => {
                     o.int("give", give as i64).int("take", take as i64).int(
                         "rate",
-                        session.state().trade_rate(HUMAN as usize, give) as i64,
+                        session.state().trade_rate(seat as usize, give) as i64,
                     );
                 }
                 _ => {}

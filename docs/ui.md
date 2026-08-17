@@ -985,14 +985,17 @@ page all point at `/lobby`. Its way out, **Back to the home page**, is a way out
 rather than the sheet closing, which the auto-opening version never needed because
 the only exit was to deal.
 
-**Seats hold bots by default, and used to wait for people.** Waiting was right
-while the lobby was a side door reached from a board somebody was already sitting
-at. It is the front door now, reached from the home page, and a front door whose
-one button refuses until you have pressed three others is the wrong first screen.
-A seat can still be set to wait, it still says so plainly on the screen, and
-dealing still refuses while any seat is waiting, so nothing became a decision made
-by a mis-click. The default is simply the answer the server can actually carry out
-today.
+**Seats hold bots by default and can be left open.** Waiting for people was the
+default while the lobby was a side door reached from a board somebody was already
+sitting at; it is the front door now, and a front door whose one button refuses
+until you have pressed three others is the wrong first screen. So the default is
+bots, and opening a chair is a click a seat.
+
+**Dealing with an open seat used to be refused** and is not any more, because the
+refusal was about the server rather than about the table: it could not seat a
+person, so dealing would have quietly turned a waiting seat into a bot. It can
+(§16), so the button says what it will do, **Deal, and hold a seat**, and does
+it.
 
 **Your name is editable because nobody is signed in.** It is kept in the
 browser between games, which is the closest thing to being remembered without
@@ -2312,6 +2315,91 @@ a tile, so the dock wrapped at the moment you took the longest road.
 
 ---
 
+## 16. The second seat
+
+Two people at one table. The engine was always able to run a four-player game;
+what could not was everything around it, and all of it for the same reason: one
+sentence, written in about forty places, saying *the human is seat nought*.
+
+**A person is a property of a seat, not a constant.** `Session` carries which
+seats have people in them, and every question that used to be asked about seat
+nought is asked about a seat: what you can see, what you may choose, whose turn
+it is, whose offers are yours, which card is waiting on you. The seat-nought
+versions are still there as one-line wrappers, because a table with nobody else
+at it is still the common case and should read like one.
+
+**What the difference between a person and a bot actually is**, once it is
+written down: a person's seat waits to be asked and a bot's answers immediately.
+That is the whole of it, and it turns up in three places.
+
+- **The bots stop for anybody.** The loop used to break on "it is seat nought's
+  turn, or something is being asked of seat nought". It breaks on any person's
+  turn and any person's pending question, which is the same sentence with the
+  seat quantified.
+- **The market is settled for bots only.** A person's card sits on their screen
+  and the table waits for it. Before, the settle ran from seat one upwards, which
+  is the same thing as long as the only person is at nought.
+- **The clock forces a person's turn**, whoever holds it, and clears every
+  person's unanswered offers rather than one seat's.
+
+**Every seat gets its own view.** The page is rendered per seat: the hand, the
+development cards, whose turn it is, which offers are yours, and the numbered
+list of choices a click comes back as. Two people are served two of these and
+neither is ever sent the other's cards, so there is nothing to hide in the page
+because nothing private ever arrives in it.
+
+An action names an index into *that seat's* list, and the server applies it as
+the seat the asking key is sitting in. So one person cannot press another's
+button: the only thing they can name is something on their own screen, and a
+seat with nothing being asked of it has no list at all.
+
+### Joining
+
+**Opening a table with a chair free is joining it.** No button, no lobby to wait
+in, no ready-check, because there is nothing left to decide once you have arrived
+at a table with a seat going. The chair is yours from that moment and the bots
+stop playing it.
+
+**An open seat is played by the house bot until somebody takes it.** The rules
+need every seat to move, and a game that waits for a stranger before it starts is
+a game nobody plays. So a table with an open chair is a game in progress, and
+joining is sitting down at one, not starting one.
+
+**A full table is somewhere to watch.** Somebody with no seat gets the
+spectator's fog, which is the public position and nobody's hand (P-6). It is
+rendered for a seat no table has, which is what makes it safe rather than
+careful: every private field is keyed off that seat, so the hand it is not
+holding is a hand of nothing. The page marks itself as watching and puts the
+controls away, because they would be controls for a seat the reader does not
+have.
+
+**The seating is written down** (format 5, `chairs`): a person's key, `bot`, or
+`open`, in seat order. So a restart puts everybody back in the chair they were
+in, and a game you were invited to is on *your* home page as well as the host's,
+because the chairs say you played it and the dealer's key alone never could.
+
+**On the home page** a table with a chair free says so, in the one tag on that
+page that is not quiet: it is the only thing there you can be too late for. The
+action reads **Sit down** for a chair going, **Back to it** for a table you are
+already at, and a quiet **Watch** for a full one.
+
+### What is still missing
+
+- **Names.** A second person is *Player 2*, because the file records one name,
+  the host's. Calling them Bram because seat two is usually a bot would be a
+  small lie told every turn, so the seat says what is known about it.
+- **Leaving.** A chair, once taken, is taken: there is no standing up, and no
+  timeout that gives a seat back to the table. A person who closes the tab
+  freezes their seat until the turn clock forfeits it, which the clock will do
+  move by move but not to the point of handing the seat back.
+- **Waiting to start.** A table starts the moment it is dealt, so somebody who
+  joins on turn forty joins a game already in progress, holding whatever the bot
+  built for them. That is the honest consequence of an open seat being played
+  meanwhile, and it is the right trade while a table is more likely to be waiting
+  for nobody than for somebody.
+
+---
+
 ## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a
@@ -2321,11 +2409,6 @@ a tile, so the dock wrapped at the moment you took the longest road.
   ports on them. Carranta draws ports as discs on leader lines outside the
   coast. The board itself is not up for debate, but whether the frame counts
   as board was never settled.
-- **A second person at a table.** The tables list is the shape a joinable game
-  needs, and joining is what it cannot do yet: opening somebody else's table puts
-  you at the same seat as them, because the server seats one person and plays the
-  rest. The list is what seats will be reached from, so the page is right and the
-  server is not there yet.
 - **The board does not fit a phone.** Its three columns have minimum widths of
   224 and 260 pixels, so below about 560 the layout is wider than the window and
   the page scrolls sideways: 630 pixels of content in a 420 pixel window. The home

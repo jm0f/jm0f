@@ -46,6 +46,17 @@ pub struct Setup {
     pub bank_exact: bool,
     /// Whether the table keeps a log.
     pub log: bool,
+    /// Who is in each seat, in seat order: `bot`, `open`, or a person's key.
+    ///
+    /// Strings rather than a type of their own, because the store's job is to
+    /// write down what it was told and the server owns what the words mean. It
+    /// also keeps the format readable, which is the whole argument for it: a
+    /// line of `chairs` says who was at the table in words you can check.
+    ///
+    /// Empty for a game written before there were chairs, and for one nobody
+    /// was sitting at. The server reads that as the table it used to be: the
+    /// dealer at seat nought and bots behind them.
+    pub chairs: Vec<String>,
 }
 
 impl Default for Setup {
@@ -65,6 +76,7 @@ impl Default for Setup {
             discard_secs: crate::game::DEFAULT_DISCARD_SECS,
             bank_exact: true,
             log: true,
+            chairs: Vec::new(),
         }
     }
 }
@@ -158,11 +170,13 @@ pub fn is_game_id(s: &str) -> bool {
 /// Version 2 added the `at` lines, which say when each step landed. Version 3
 /// added `by`, the key of whoever dealt the table. Version 4 added the lobby's
 /// settings: what the table is called, whether it is listed, the pace, the clock,
-/// the discard allowance, the bank and the log. Older files are still read and
-/// simply have less to say: every addition sits beside the moves rather than
-/// inside them, so an older game is not an unreadable game, and one written
-/// before version 4 comes back on a table set up the way a fresh one is.
-const VERSION: u32 = 4;
+/// the discard allowance, the bank and the log. Version 5 added `chairs`, who is
+/// sitting in each seat, once more than one person could be. Older files are
+/// still read and simply have less to say: every addition sits beside the moves
+/// rather than inside them, so an older game is not an unreadable game, one
+/// written before version 4 comes back on a table set up the way a fresh one is,
+/// and one written before version 5 comes back with its dealer alone at it.
+const VERSION: u32 = 5;
 
 /// Times per `at` line. Forty numbers is a line you can still read.
 const TIMES_PER_LINE: usize = 40;
@@ -376,6 +390,12 @@ pub fn encode(g: &Saved) -> String {
     let _ = writeln!(out, "discard {}", s.discard_secs);
     let _ = writeln!(out, "bank {}", if s.bank_exact { "exact" } else { "rough" });
     let _ = writeln!(out, "log {}", yes_no(s.log));
+    // Only when somebody is at the table. A game the server played itself has
+    // nobody in any seat, and a line of four `bot`s says the same thing as no
+    // line at all in more words.
+    if !s.chairs.is_empty() {
+        let _ = writeln!(out, "chairs {}", s.chairs.join(","));
+    }
     for step in &g.moves {
         let _ = writeln!(out, "{}", step_line(step));
     }
@@ -444,6 +464,7 @@ pub fn decode(text: &str) -> Option<Saved> {
             "discard" => g.setup.discard_secs = rest.parse().ok()?,
             "bank" => g.setup.bank_exact = rest != "rough",
             "log" => g.setup.log = is_yes(rest),
+            "chairs" => g.setup.chairs = rest.split(',').map(str::to_string).collect(),
             "at" => {
                 for n in rest.split(',') {
                     g.times.push(n.parse().ok()?);
@@ -633,6 +654,11 @@ mod tests {
                 discard_secs: 25,
                 bank_exact: false,
                 log: false,
+                chairs: vec![
+                    "keytest0000000000".to_string(),
+                    "bot".to_string(),
+                    "open".to_string(),
+                ],
             },
             moves: vec![Step::Move(Action::Roll)],
             times: vec![4],
