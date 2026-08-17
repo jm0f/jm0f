@@ -688,8 +688,57 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
             .collect();
         b.push_str(&plot(p + 1, &each, s.ceiling_of(p), s.turns()));
     }
-    b.push_str("</div></section>");
+    b.push_str("</div>");
+
+    // And the same thing as a table, since a line says the shape of a game and
+    // a figure says how much: what arrived, with what was owed in brackets.
+    let last = s.turns() - 1;
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![("", "")];
+    heads.extend(RESOURCE_NAMES.iter().map(|n| (*n, "")));
+    heads.push((
+        "total",
+        "Every card the board paid this seat, against everything the pips owed \
+         them. The gap is the robber and the dice together, which the ledger \
+         above splits apart.",
+    ));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    let (mut got, mut owed) = ([0u32; 5], [0.0f64; 5]);
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for res in 0..5 {
+            got[res] += s.actual[last][p][res];
+            owed[res] += s.expected[last][p][res];
+            cells.push(against(s.actual[last][p][res], s.expected[last][p][res]));
+        }
+        cells.push(against(
+            s.actual[last][p].iter().sum(),
+            s.expected[last][p].iter().sum(),
+        ));
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    let mut foot = vec!["the board".to_string()];
+    foot.extend((0..5).map(|res| against(got[res], owed[res])));
+    foot.push(against(got.iter().sum(), owed.iter().sum()));
+    b.push_str(&totals(&foot));
+    b.push_str(T_CLOSE);
+    b.push_str("</section>");
     b
+}
+
+/// What arrived, with what was owed in brackets.
+///
+/// The same shape the result table uses for points and the development table
+/// for cards: two figures that belong together, read off one another.
+fn against(got: u32, owed: f64) -> String {
+    if got == 0 && owed < 0.05 {
+        NONE.to_string()
+    } else {
+        format!("{got} <span class=\"worth\">({owed:.1})</span>")
+    }
 }
 
 /// About how many labels an axis wants before it is a wall of numbers.
@@ -1303,7 +1352,6 @@ pub fn page(saved: &Saved, study: &Study) -> String {
          circle above counts each trade once, and takes the bank and the ports \
          as parties, since a trade with the supply is still a trade.",
     ));
-    b.push_str("<div class=\"market\">");
     b.push_str(&chord(study, &who, &place, seats));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -1350,7 +1398,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         sum(&r.supply_trades),
     ]));
     b.push_str(T_CLOSE);
-    b.push_str("</div></section>");
+    b.push_str("</section>");
 
     // ---- development cards --------------------------------------------------
     b.push_str("<section>");
@@ -1694,15 +1742,10 @@ tbody tr.sub:hover { background: transparent; }
 /* ---- the trade ring ----
    A chord, because trading is symmetric: there is no side a trade goes from,
    and a sankey would invent a direction the game does not have. */
-/* The circle and its table side by side while there is width for it, so the
-   card is not a drawing floating in a field of nothing. */
-.market { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: center; }
-/* The table needs its columns; the circle only needs to be legible. So the
-   circle takes a fixed slice and the table takes the rest, and they wrap onto
-   two rows before either is squeezed. */
-.market > .ring { flex: 0 1 290px; min-width: 0; }
-.market > .tw { flex: 1 1 470px; min-width: 0; }
-.ring svg { display: block; width: 100%; height: auto; }
+/* Over the table and across the whole card. Beside it, the circle was small
+   and the table was squeezed out of its own columns; the card has one measure
+   and both of them want all of it. */
+.ring svg { display: block; width: 100%; height: auto; margin: 0 0 1rem; }
 .chord { opacity: .4; }
 .chord:hover { opacity: .75; }
 .rim.supply { fill: var(--muted-foreground); }
@@ -1924,7 +1967,11 @@ mod tests {
         // of that name was quietly absolutely-positioning it.
         assert_eq!(html.matches("class=\"owed\"").count(), 11);
         assert_eq!(html.matches("class=\"mark\"").count(), 1, "the wordmark");
-        assert!(!html.contains(">total<"));
+        let dice = &html[html.find("class=\"rolls\"").expect("the histogram")..];
+        assert!(
+            !dice[..dice.find("</table>").unwrap()].contains(">total<"),
+            "the histogram has no total column"
+        );
         // Both scaled to the same axis, so the tallest thing on it is full
         // height and everything else is its true fraction of that.
         let total: u32 = r.rolls.iter().sum();

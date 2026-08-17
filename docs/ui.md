@@ -1506,7 +1506,15 @@ is paired with an effect size.
 
   The last point is the end of the game rather than the end of the last
   completed turn: the winning turn never ends, and dropping its cards would put
-  the chart out of step with the ledger above it.
+  the chart out of step with the ledger above it. The opening settlement's
+  payout counts on **both** lines, because it is a certainty rather than a
+  wager: it pays what it touches, once, with no dice involved, so it is owed
+  exactly what it paid. Counting it on one line only offset every seat by a few
+  cards for the whole game.
+
+  Under the chart, the same thing as a table: production per resource per seat
+  with what the pips owed in brackets, and a foot row for the board. A line says
+  the shape of a game and a figure says how much.
 - **Militia**, as a sankey: thieves down the left, victims down the right, a
   ribbon between each pair as thick as the cards that moved along it. Laid out
   on the server like everything else here, since every position is a fraction of

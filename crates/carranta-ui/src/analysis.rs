@@ -457,7 +457,16 @@ fn series_of(saved: &Saved) -> Series {
         if matches!(action, Action::Roll | Action::PlaceSettlement(_)) {
             for p in 0..seats {
                 for res in 0..5 {
-                    actual[p][res] += u32::from(state.hand[p][res].saturating_sub(before[p][res]));
+                    let got = u32::from(state.hand[p][res].saturating_sub(before[p][res]));
+                    actual[p][res] += got;
+                    // The opening settlement's payout is a certainty rather
+                    // than a wager: it pays what it touches, once, with no
+                    // dice involved. So it is owed exactly what it paid.
+                    // Counting it in one line and not the other would offset
+                    // every seat by a few cards for the whole game.
+                    if owed.is_none() {
+                        expected[p][res] += f64::from(got);
+                    }
                 }
             }
         }
