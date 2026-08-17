@@ -17,7 +17,57 @@ use std::path::{Path, PathBuf};
 use carranta_core::action::Action;
 use carranta_core::state::{RESOURCES, Resource, TradeMode};
 
-use crate::game::Step;
+use crate::game::{Clock, Pace, Step};
+
+/// How the table was set up to play, as the lobby asked for it.
+///
+/// Separate from the game rather than beside it, because it is a different kind
+/// of fact. Seats, seed and moves *are* the game and rebuild it exactly; these
+/// are the arrangements around it, and a file that has lost them is still a whole
+/// game played under arrangements nobody wrote down. Grouped here so that reads
+/// out of the type rather than out of a comment.
+///
+/// They were not written down at all until version 4, which showed up the moment
+/// a game could be taken up again after a restart: the position came back exact
+/// and the table came back with a different clock on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Setup {
+    /// What the table is called, or empty.
+    pub game: String,
+    /// Whether it was dealt as a listed table.
+    pub public: bool,
+    /// How fast the bots move.
+    pub pace: Pace,
+    pub clock: Clock,
+    /// The discard's own allowance, which is not the turn clock: a seven is an
+    /// interruption rather than part of anybody's turn.
+    pub discard_secs: u64,
+    /// Whether the bank shows exact counts or stack sizes.
+    pub bank_exact: bool,
+    /// Whether the table keeps a log.
+    pub log: bool,
+}
+
+impl Default for Setup {
+    /// What a session is when nobody has said otherwise, matched to
+    /// `Session::new` so that a file written before version 4 comes back as the
+    /// game it was rather than as a differently arranged one.
+    ///
+    /// The one exception is the pace, which is `Instant` in `Session::new` so
+    /// that tests do not wait on a wall clock, and is the lobby's default here
+    /// because a game read off disk is a game somebody is going to watch.
+    fn default() -> Self {
+        Setup {
+            game: String::new(),
+            public: false,
+            pace: Pace::parse(None),
+            clock: Clock::Off,
+            discard_secs: crate::game::DEFAULT_DISCARD_SECS,
+            bank_exact: true,
+            log: true,
+        }
+    }
+}
 
 /// What one file says.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +101,8 @@ pub struct Saved {
     /// Set once somebody has won, so a finished game can be told from one that
     /// was abandoned halfway.
     pub winner: Option<u8>,
+    /// The lobby's answers, so a table taken up again is the table it was.
+    pub setup: Setup,
     pub moves: Vec<Step>,
     /// Milliseconds from the deal to each step, one per entry in `moves`.
     ///
@@ -104,10 +156,13 @@ pub fn is_game_id(s: &str) -> bool {
 /// What this build writes.
 ///
 /// Version 2 added the `at` lines, which say when each step landed. Version 3
-/// added `by`, the key of whoever dealt the table. Older files are still read
-/// and simply have less to say: both additions sit beside the moves rather than
-/// inside them, so an older game is not an unreadable game.
-const VERSION: u32 = 3;
+/// added `by`, the key of whoever dealt the table. Version 4 added the lobby's
+/// settings: what the table is called, whether it is listed, the pace, the clock,
+/// the discard allowance, the bank and the log. Older files are still read and
+/// simply have less to say: every addition sits beside the moves rather than
+/// inside them, so an older game is not an unreadable game, and one written
+/// before version 4 comes back on a table set up the way a fresh one is.
+const VERSION: u32 = 4;
 
 /// Times per `at` line. Forty numbers is a line you can still read.
 const TIMES_PER_LINE: usize = 40;
@@ -248,6 +303,18 @@ fn move_of(line: &str) -> Option<Action> {
     t.next().is_none().then_some(a)
 }
 
+/// A flag, as a word. `on`/`off` rather than `true`/`false` because the file is
+/// meant to be read, and these are settings rather than assertions.
+fn yes_no(v: bool) -> &'static str {
+    if v { "on" } else { "off" }
+}
+
+/// Anything but an explicit `on` is off, so a line this build does not
+/// understand leaves the setting alone rather than turning it on.
+fn is_yes(s: &str) -> bool {
+    s == "on"
+}
+
 fn mode_code(m: TradeMode) -> &'static str {
     match m {
         TradeMode::Disabled => "off",
@@ -285,6 +352,30 @@ pub fn encode(g: &Saved) -> String {
     if let Some(w) = g.winner {
         let _ = writeln!(out, "winner {w}");
     }
+    // The lobby's answers. Written out in full rather than only where they
+    // differ from the defaults: a setting that is absent because nobody chose it
+    // and one that is absent because it happens to match today's default read
+    // the same in the file and stop reading the same the day a default changes.
+    // The table's name is the exception, and is omitted when there is none, the
+    // way `by` is: an empty name is not a name.
+    let s = &g.setup;
+    if !s.game.is_empty() {
+        let _ = writeln!(out, "game {}", s.game);
+    }
+    let _ = writeln!(out, "public {}", yes_no(s.public));
+    let _ = writeln!(out, "pace {}", s.pace.name());
+    // Kind, seconds and increment on one line, which is exactly what `Clock`
+    // parses: the file says what the lobby said.
+    let _ = writeln!(
+        out,
+        "clock {} {} {}",
+        s.clock.name(),
+        s.clock.secs(),
+        s.clock.increment()
+    );
+    let _ = writeln!(out, "discard {}", s.discard_secs);
+    let _ = writeln!(out, "bank {}", if s.bank_exact { "exact" } else { "rough" });
+    let _ = writeln!(out, "log {}", yes_no(s.log));
     for step in &g.moves {
         let _ = writeln!(out, "{}", step_line(step));
     }
@@ -315,6 +406,9 @@ pub fn decode(text: &str) -> Option<Saved> {
         by: String::new(),
         dealt: 0,
         winner: None,
+        // The defaults, so a file written before version 4 comes back as a table
+        // set up the way a fresh one is rather than as an unreadable file.
+        setup: Setup::default(),
         moves: Vec::new(),
         times: Vec::new(),
     };
@@ -335,6 +429,21 @@ pub fn decode(text: &str) -> Option<Saved> {
             "by" => g.by = rest.to_string(),
             "dealt" => g.dealt = rest.parse().ok()?,
             "winner" => g.winner = Some(rest.parse().ok()?),
+            "game" => g.setup.game = rest.to_string(),
+            "public" => g.setup.public = is_yes(rest),
+            "pace" => g.setup.pace = Pace::parse(Some(rest)),
+            "clock" => {
+                // Kind, seconds, increment: whatever `Clock::parse` is given, so
+                // the file cannot describe a clock the lobby could not ask for.
+                let mut t = rest.split_whitespace();
+                let kind = t.next()?;
+                let secs = t.next()?.parse().ok()?;
+                let inc = t.next()?.parse().ok()?;
+                g.setup.clock = Clock::parse(Some(kind), secs, inc);
+            }
+            "discard" => g.setup.discard_secs = rest.parse().ok()?,
+            "bank" => g.setup.bank_exact = rest != "rough",
+            "log" => g.setup.log = is_yes(rest),
             "at" => {
                 for n in rest.split(',') {
                     g.times.push(n.parse().ok()?);
@@ -492,10 +601,97 @@ mod tests {
             by: String::new(),
             dealt: 1_755_300_000,
             winner: Some(2),
+            setup: Setup::default(),
             moves: one_of_each(),
             times: Vec::new(),
         };
         assert_eq!(decode(&encode(&g)), Some(g));
+    }
+
+    #[test]
+    fn the_lobby_s_answers_survive_the_round_trip() {
+        // Every one of them different from its default, so a setting that is
+        // written but never read, or read into the wrong field, fails here
+        // rather than showing up as a table that came back with the wrong clock.
+        let g = Saved {
+            id: game_id(4),
+            seats: 3,
+            seed: 7,
+            mode: TradeMode::Full,
+            name: "Egon".to_string(),
+            by: "keytest0000000000".to_string(),
+            dealt: 9,
+            winner: None,
+            setup: Setup {
+                game: "Kitchen table".to_string(),
+                public: true,
+                pace: Pace::Slow,
+                clock: Clock::Chess {
+                    bank: 300,
+                    increment: 5,
+                },
+                discard_secs: 25,
+                bank_exact: false,
+                log: false,
+            },
+            moves: vec![Step::Move(Action::Roll)],
+            times: vec![4],
+        };
+        let back = decode(&encode(&g)).expect("a whole game");
+        assert_eq!(back, g);
+        // And the file says so in words, because a file you can open is the
+        // point of this format.
+        let text = encode(&g);
+        for line in [
+            "game Kitchen table",
+            "public on",
+            "pace slow",
+            "clock chess 300 5",
+            "discard 25",
+            "bank rough",
+            "log off",
+        ] {
+            assert!(text.contains(line), "the file says `{line}`");
+        }
+    }
+
+    #[test]
+    fn a_setting_is_written_even_when_it_matches_the_default() {
+        // A setting absent because nobody chose it and one absent because it
+        // happens to match today's default read the same in the file, and stop
+        // reading the same the day a default changes.
+        let g = Saved {
+            id: game_id(5),
+            seats: 4,
+            seed: 1,
+            mode: TradeMode::Full,
+            name: String::new(),
+            by: String::new(),
+            dealt: 0,
+            winner: None,
+            setup: Setup::default(),
+            moves: Vec::new(),
+            times: Vec::new(),
+        };
+        let text = encode(&g);
+        for head in ["public ", "pace ", "clock ", "discard ", "bank ", "log "] {
+            assert!(text.contains(head), "the file says `{head}`");
+        }
+        // The table's name is the exception: an empty name is not a name, the
+        // same way an empty owner is not one.
+        assert!(!text.contains("\ngame "), "and says nothing about a name");
+    }
+
+    #[test]
+    fn a_game_written_before_the_settings_were_kept_still_reads() {
+        // Version 3 knew the game and nothing about the table it was played at.
+        // It comes back as a table set up the way a fresh one is, which is what
+        // it was doing before any of this was written down.
+        let text = "carranta 3\nid 9222-2222-2222\nseats 4\nseed 3\nmode full\n\
+                    name Egon\ndealt 5\nroll\nat 7\n";
+        let g = decode(text).expect("an older file is still a game");
+        assert_eq!(g.setup, Setup::default());
+        assert_eq!(g.moves.len(), 1);
     }
 
     #[test]
@@ -509,6 +705,7 @@ mod tests {
             by: String::new(),
             dealt: 1,
             winner: None,
+            setup: Setup::default(),
             moves: vec![Step::Move(Action::Roll)],
             times: vec![7],
         };
@@ -529,6 +726,7 @@ mod tests {
             by: String::new(),
             dealt: 0,
             winner: None,
+            setup: Setup::default(),
             moves: vec![Step::Move(Action::Roll)],
             times: vec![7],
         };
@@ -571,6 +769,7 @@ mod tests {
             by: String::new(),
             dealt: 5,
             winner: Some(1),
+            setup: Setup::default(),
             moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
             times: vec![120, 340],
         };
@@ -608,6 +807,7 @@ mod tests {
             by: String::new(),
             dealt: 0,
             winner: None,
+            setup: Setup::default(),
             moves: vec![Step::Move(Action::Roll), Step::Move(Action::EndTurn)],
             times: vec![1, 2],
         };
@@ -675,6 +875,7 @@ mod tests {
                 by: String::new(),
                 dealt: seed,
                 winner: s.winner(),
+                setup: Setup::default(),
                 moves: s.moves().to_vec(),
                 times: s.times().to_vec(),
             };
@@ -705,6 +906,7 @@ mod tests {
                 by: String::new(),
                 dealt,
                 winner: None,
+                setup: Setup::default(),
                 moves: vec![Step::Move(Action::Roll)],
                 times: vec![3],
             };

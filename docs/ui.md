@@ -2127,10 +2127,26 @@ recorded times are put back and the session's own origin is wound back to the la
 of them: what happens next lands after everything that already has. The time the
 server spent stopped is not counted, because nobody was thinking during it.
 
-What does not come back is how the table was set up to play: the pace, the clock
-and whether a log was kept are the lobby's answers and were never written down, so
-a resumed game gets the defaults. That is a gap in the format rather than a reason
-to refuse to resume a game.
+**The table comes back too.** The file carries the lobby's answers as well as the
+game: what the table is called, whether it is listed, the pace, the clock and its
+increment, the discard allowance, whether the bank shows exact counts, and whether
+a log is kept. They were not written down at all until the moment a game could be
+taken up again, which is when it showed: the position came back exact and the
+table came back with a different clock on it, which is the sort of thing you
+notice second and cannot explain.
+
+They live in a `Setup` beside the game rather than among it, because they are a
+different kind of fact. Seats, seed and moves *are* the game and rebuild it
+exactly; these are the arrangements around it, and a file that has lost them is
+still a whole game played under arrangements nobody wrote down. Which is what a
+version 3 file is, and it still reads: the settings default to what a fresh table
+is, which is what those games were already coming back as.
+
+Every setting is written out even when it matches today's default. A setting
+absent because nobody chose it and one absent because it happens to match the
+default read the same in the file, and stop reading the same the day a default
+changes. The table's name is the one exception and is omitted when there is none,
+the way the owner key is: an empty name is not a name.
 
 **A game this build cannot replay is deleted.** If the rules have moved under it,
 it is not a game any more, and leaving it is a row on the home page that refuses to
@@ -2292,12 +2308,6 @@ a tile, so the dock wrapped at the moment you took the longest road.
   not, and it needs a layout for one column rather than a smaller gutter. Long
   standing, and measured here rather than assumed: the shared gutter costs eight
   pixels of it and did not cause it.
-- **The file does not record how a table was set up.** Seats, seed, market, name,
-  owner, moves and times are written down; the pace, the clock, the discard
-  allowance, the bank and whether a log was kept are not. A game resumed after a
-  restart therefore comes back with the defaults for all five. The game itself is
-  exact, which is why resuming is worth doing at all, but a table with a chess clock
-  on it comes back untimed.
 - **The lobby's invite link goes nowhere.** It reads
   `/join?table=<seed>&seats=N`, and the server has no `/join`, so the one control
   on that screen that promises to bring somebody else in returns a 404. It was

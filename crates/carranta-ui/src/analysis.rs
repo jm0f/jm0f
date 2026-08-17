@@ -2142,7 +2142,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
 mod tests {
     use super::*;
     use crate::game::Session;
-    use crate::store::game_id;
+    use crate::store::{Setup, game_id};
     use carranta_core::state::TradeMode;
 
     /// Play one out and save it, the way the server would.
@@ -2164,6 +2164,7 @@ mod tests {
             by: String::new(),
             dealt: seed,
             winner: s.winner(),
+            setup: Setup::default(),
             moves: s.moves().to_vec(),
             times: s.times().to_vec(),
         }

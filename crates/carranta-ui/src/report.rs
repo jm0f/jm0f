@@ -4989,7 +4989,7 @@ mod tests {
     use super::*;
     use crate::analysis::study;
     use crate::game::Session;
-    use crate::store::game_id;
+    use crate::store::{Setup, game_id};
     use carranta_core::state::TradeMode;
 
     fn played(seed: u64) -> Saved {
@@ -5010,6 +5010,7 @@ mod tests {
             by: String::new(),
             dealt: seed,
             winner: s.winner(),
+            setup: Setup::default(),
             moves: s.moves().to_vec(),
             times: s.times().to_vec(),
         }

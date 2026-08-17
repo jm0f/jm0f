@@ -26,7 +26,7 @@ use carranta_core::action::Illegal;
 
 use crate::game::{Clock, DEFAULT_DISCARD_SECS, Pace, Refused, Session};
 use crate::json;
-use crate::store::{Saved, Store, game_id, is_game_id};
+use crate::store::{Saved, Setup, Store, game_id, is_game_id};
 use crate::view;
 
 const PAGE: &str = include_str!("../assets/index.html");
@@ -164,6 +164,15 @@ fn saved_of(t: &Table) -> Saved {
         by: t.by.clone(),
         dealt: t.dealt,
         winner: t.session.winner(),
+        setup: Setup {
+            game: t.session.game().to_string(),
+            public: t.session.is_public(),
+            pace: t.session.pace(),
+            clock: t.session.clock(),
+            discard_secs: t.session.discard_secs(),
+            bank_exact: t.session.bank_exact(),
+            log: t.session.log_shown(),
+        },
         moves: t.session.moves().to_vec(),
         times: t.session.times().to_vec(),
     }
@@ -378,14 +387,20 @@ impl Server {
             self.store.remove(id);
             return false;
         };
-        // The file carries the game. It does not carry how the table was set up
-        // to play it: the pace, the clock and whether a log was kept are the
-        // lobby's answers and were never written down, so a resumed game gets
-        // the defaults. Worth fixing in the format; not worth refusing to resume
-        // a game over.
+        // The position comes out of the moves and the arrangements out of the
+        // file's settings, so a table taken up again is the table it was: the
+        // same clock, the same pace, the same listing. It used to be the same
+        // game on a differently arranged table, which was the thing you noticed
+        // second, right after noticing that the game had come back at all.
         let session = session
             .with_name(&saved.name)
-            .with_pace(Pace::parse(None))
+            .with_game(&saved.setup.game)
+            .with_public(saved.setup.public)
+            .with_pace(saved.setup.pace)
+            .with_clock(saved.setup.clock)
+            .with_discard_secs(saved.setup.discard_secs)
+            .with_bank_exact(saved.setup.bank_exact)
+            .with_log(saved.setup.log)
             .with_record(saved.times.clone());
         self.add(Table {
             id: saved.id.clone(),
@@ -1169,7 +1184,21 @@ mod tests {
         let server = Server::new(4, 12, TradeMode::Full, &dir);
         let id = server.add(Table {
             id: mint_id(),
-            session: Session::new(4, 12, TradeMode::Full).with_name("Egon"),
+            // Set up the way a lobby would set it up, and not the way a fresh
+            // session is: the arrangements have to come back too, or the game
+            // returns to a differently arranged table.
+            session: Session::new(4, 12, TradeMode::Full)
+                .with_name("Egon")
+                .with_game("Kitchen table")
+                .with_public(true)
+                // Instant so the bots answer inside this loop rather than
+                // holding their move; it is not the default the file falls back
+                // to either, so it still proves the pace came back.
+                .with_pace(Pace::Instant)
+                .with_clock(Clock::PerTurn(45))
+                .with_discard_secs(20)
+                .with_bank_exact(false)
+                .with_log(false),
             dealt: now(),
             by: "keytest0000000000".to_string(),
         });
@@ -1197,6 +1226,19 @@ mod tests {
             assert_eq!(t.session.times(), &before.times[..], "with its own clock");
             assert_eq!(t.by, before.by, "still theirs");
             assert_eq!(t.dealt, before.dealt, "and still as old as it is");
+            // And the same table: the lobby's answers came back with the game.
+            assert_eq!(t.session.game(), "Kitchen table");
+            assert!(t.session.is_public());
+            assert_eq!(t.session.pace(), Pace::Instant);
+            assert_ne!(
+                Setup::default().pace,
+                Pace::Instant,
+                "which is not what a file with no pace in it falls back to"
+            );
+            assert_eq!(t.session.clock(), Clock::PerTurn(45));
+            assert_eq!(t.session.discard_secs(), 20);
+            assert!(!t.session.bank_exact());
+            assert!(!t.session.log_shown());
             // And it can be played on, which is the whole point.
             let v = t.session.version();
             t.session.act(0, v).expect("playable");
@@ -1251,6 +1293,7 @@ mod tests {
             by: "keytest0000000000".to_string(),
             dealt: now(),
             winner: None,
+            setup: Setup::default(),
             // Ending a turn before the board has been dealt is not a move any
             // build of these rules will replay.
             moves: vec![crate::game::Step::Move(

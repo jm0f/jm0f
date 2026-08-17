@@ -366,6 +366,7 @@ td.act { text-align: right; white-space: nowrap; }
 mod tests {
     use super::*;
     use crate::game::Step;
+    use crate::store::Setup;
     use carranta_core::action::Action;
 
     fn table(id: &str, public: bool, mine: bool, winner: Option<u8>) -> Open {
@@ -394,6 +395,7 @@ mod tests {
             by: String::new(),
             dealt: 0,
             winner,
+            setup: Setup::default(),
             moves: vec![
                 Step::Move(Action::Roll),
                 Step::Move(Action::EndTurn),
