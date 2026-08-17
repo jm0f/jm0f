@@ -373,172 +373,6 @@ fn sankey(
     b
 }
 
-/// Production against expectation, turn by turn, with a switch above it.
-///
-/// The default is every seat at once: a solid line for what each collected and
-/// a dotted one, in the same colour, for what the pips owed them. Pick a seat
-/// and the same chart is drawn a resource at a time, which is the only way to
-/// see *which* card a placement was short of.
-///
-/// The switch is five radio inputs and a sibling selector, so the page still
-/// carries no script. Every view is drawn into the page and CSS decides which
-/// one is visible: five charts of a few hundred points each is a smaller thing
-/// to ship than a script that would build one.
-fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
-    let s = &study.series;
-    if s.turns() < 2 {
-        return String::new();
-    }
-
-    let mut b = String::from("<section>");
-    b.push_str(&card_head(
-        "Production per turn",
-        "Solid is what the board actually paid; dotted is what the pips through \
-         the buildings standing at each roll owed at fair odds. Both running \
-         totals, so each line only climbs and the gap between a pair is \
-         everything that has happened to that seat so far. The robber is \
-         ignored in the expectation, so a seat under blockade watches its solid \
-         line fall away from its dotted one, which is what a blockade costs.",
-    ));
-
-    // The switch. One radio per view, named together so they are one control.
-    b.push_str("<div class=\"modes\">");
-    for (i, label) in std::iter::once("everybody".to_string())
-        .chain((0..seats).map(|p| esc(&who[p])))
-        .enumerate()
-    {
-        let _ = write!(
-            b,
-            "<input type=\"radio\" name=\"view\" id=\"view{i}\"{on}>\
-             <label for=\"view{i}\">{label}</label>",
-            on = if i == 0 { " checked" } else { "" },
-        );
-    }
-    b.push_str("</div><div class=\"views\">");
-
-    // Everybody: two lines a seat, in the seat's colour.
-    let ceiling = s.ceiling(seats);
-    let mut lines = Vec::new();
-    for p in 0..seats {
-        lines.push((
-            format!("f{p}"),
-            true,
-            label(&who[p], place[p]),
-            (0..s.turns())
-                .map(|i| f64::from(s.actual[i][p].iter().sum::<u32>()))
-                .collect::<Vec<f64>>(),
-        ));
-        lines.push((
-            format!("f{p}"),
-            false,
-            format!("{} expected", label(&who[p], place[p])),
-            (0..s.turns())
-                .map(|i| s.expected[i][p].iter().sum::<f64>())
-                .collect(),
-        ));
-    }
-    b.push_str(&plot(&lines, ceiling, s.turns(), "cards"));
-
-    // And one view a seat, drawn a resource at a time.
-    for p in 0..seats {
-        let ceiling = s.ceiling_of(p);
-        let mut lines = Vec::new();
-        for (res, name) in RESOURCE_NAMES.iter().enumerate() {
-            lines.push((
-                format!("r{res}"),
-                true,
-                (*name).to_string(),
-                (0..s.turns())
-                    .map(|i| f64::from(s.actual[i][p][res]))
-                    .collect::<Vec<f64>>(),
-            ));
-            lines.push((
-                format!("r{res}"),
-                false,
-                format!("{name} expected"),
-                (0..s.turns()).map(|i| s.expected[i][p][res]).collect(),
-            ));
-        }
-        b.push_str(&plot(&lines, ceiling, s.turns(), "cards"));
-    }
-    b.push_str("</div></section>");
-    b
-}
-
-/// One chart: a polyline per series, on one axis.
-///
-/// `lines` is (colour class, solid, name, points). Every series shares the
-/// ceiling, or the gap between a pair of them would be a picture of two scales
-/// rather than of a difference.
-fn plot(
-    lines: &[(String, bool, String, Vec<f64>)],
-    ceiling: f64,
-    turns: usize,
-    unit: &str,
-) -> String {
-    const W: f64 = 720.0;
-    const H: f64 = 260.0;
-    const PAD: f64 = 34.0;
-    let top = if ceiling > 0.0 { ceiling } else { 1.0 };
-    let x = |i: usize| PAD + (W - PAD * 2.0) * i as f64 / (turns - 1).max(1) as f64;
-    let y = |v: f64| H - PAD - (H - PAD * 2.0) * v / top;
-
-    let mut b = format!(
-        "<div class=\"view\"><svg viewBox=\"0 0 {W} {H}\" role=\"img\" \
-         aria-label=\"Cumulative production against expectation\">"
-    );
-    // Four gridlines and their values, so the height of a line can be read.
-    for k in 1..=4 {
-        let v = top * f64::from(k) / 4.0;
-        let _ = write!(
-            b,
-            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
-             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{v:.0}</text>",
-            r = W - PAD,
-            gy = y(v),
-            tx = PAD - 6.0,
-            ty = y(v) + 4.0,
-        );
-    }
-    let _ = write!(
-        b,
-        "<text class=\"axis start\" x=\"{PAD}\" y=\"{ty}\">turn 1</text>\
-         <text class=\"axis\" x=\"{r}\" y=\"{ty}\">turn {turns}</text>\
-         <text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">{unit}</text>",
-        r = W - PAD,
-        ty = H - 10.0,
-    );
-    for (colour, solid, name, points) in lines {
-        let path: String = points
-            .iter()
-            .enumerate()
-            .map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let _ = write!(
-            b,
-            "<polyline class=\"line {colour}{dash}\" points=\"{path}\">\
-             <title>{name}</title></polyline>",
-            dash = if *solid { "" } else { " owed" },
-            name = esc(name),
-        );
-    }
-    b.push_str("</svg><div class=\"key\">");
-    // A key, since eight lines in four colours need saying once.
-    for (colour, solid, name, _) in lines {
-        if !solid {
-            continue;
-        }
-        let _ = write!(
-            b,
-            "<span class=\"pair\"><span class=\"swatch {colour}\"></span>{}</span>",
-            esc(name)
-        );
-    }
-    b.push_str("</div></div>");
-    b
-}
-
 /// A hand of cards, named. `4 wheat`, `2 wood and 1 ore`.
 fn hand_text(cards: &[u8; 5]) -> String {
     let parts: Vec<String> = cards
@@ -772,6 +606,225 @@ fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
     b
 }
 
+/// One thing drawn: what arrived, and what was owed.
+struct Curve {
+    /// The colour class, shared by the solid line and the dotted one.
+    colour: String,
+    name: String,
+    actual: Vec<f64>,
+    owed: Vec<f64>,
+}
+
+/// Production against expectation, turn by turn, with a switch above it.
+///
+/// The default is every seat at once: a solid line for what each collected and
+/// a dotted one, in the same colour, for what the pips owed them. Pick a seat
+/// and the same chart is drawn a resource at a time, which is the only way to
+/// see *which* card a placement was short of.
+///
+/// The switch is radio inputs and a sibling selector, and the legend below is
+/// checkboxes doing the same trick, so the page still carries no script.
+fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let s = &study.series;
+    if s.turns() < 2 {
+        return String::new();
+    }
+
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "Production per turn",
+        "Solid is what the board actually paid; dotted is what the pips through \
+         the buildings standing at each roll owed at fair odds. Both running \
+         totals, so each line only climbs and the gap between a pair is \
+         everything that has happened to that seat so far. The robber is \
+         ignored in the expectation, so a seat under blockade watches its solid \
+         line fall away from its dotted one, which is what a blockade costs. \
+         Click a name below a chart to take its lines off it.",
+    ));
+
+    // The switch. One radio per view, named together so they are one control.
+    b.push_str("<div class=\"modes\">");
+    for (i, label) in std::iter::once("everybody".to_string())
+        .chain((0..seats).map(|p| esc(&who[p])))
+        .enumerate()
+    {
+        let _ = write!(
+            b,
+            "<input type=\"radio\" name=\"view\" id=\"view{i}\"{on}>\
+             <label for=\"view{i}\">{label}</label>",
+            on = if i == 0 { " checked" } else { "" },
+        );
+    }
+    b.push_str("</div><div class=\"views\">");
+
+    // Everybody: two lines a seat, in the seat's colour.
+    let all: Vec<Curve> = (0..seats)
+        .map(|p| Curve {
+            colour: format!("f{p}"),
+            name: label(&who[p], place[p]),
+            actual: (0..s.turns())
+                .map(|i| f64::from(s.actual[i][p].iter().sum::<u32>()))
+                .collect(),
+            owed: (0..s.turns())
+                .map(|i| s.expected[i][p].iter().sum::<f64>())
+                .collect(),
+        })
+        .collect();
+    b.push_str(&plot(0, &all, s.ceiling(seats), s.turns()));
+
+    // And one view a seat, drawn a resource at a time.
+    for p in 0..seats {
+        let each: Vec<Curve> = RESOURCE_NAMES
+            .iter()
+            .enumerate()
+            .map(|(res, name)| Curve {
+                colour: format!("r{res}"),
+                name: (*name).to_string(),
+                actual: (0..s.turns())
+                    .map(|i| f64::from(s.actual[i][p][res]))
+                    .collect(),
+                owed: (0..s.turns()).map(|i| s.expected[i][p][res]).collect(),
+            })
+            .collect();
+        b.push_str(&plot(p + 1, &each, s.ceiling_of(p), s.turns()));
+    }
+    b.push_str("</div></section>");
+    b
+}
+
+/// About how many labels an axis wants before it is a wall of numbers.
+const TICKS: usize = 8;
+
+/// A step for the turn axis that lands on numbers somebody would choose.
+fn nice_step(turns: usize) -> usize {
+    [1, 2, 5, 10, 20, 25, 50, 100, 200]
+        .into_iter()
+        .find(|s| turns / s <= TICKS)
+        .unwrap_or(turns.max(1))
+}
+
+/// One chart: a pair of lines per curve, on one axis.
+///
+/// Every curve shares the ceiling, or the gap between a solid line and its
+/// dotted one would be a picture of two scales rather than of a difference.
+fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize) -> String {
+    const W: f64 = 720.0;
+    const H: f64 = 280.0;
+    const PAD: f64 = 36.0;
+    const FOOT: f64 = 26.0;
+    let top = if ceiling > 0.0 { ceiling } else { 1.0 };
+    let x = |i: usize| PAD + (W - PAD * 2.0) * i as f64 / (turns - 1).max(1) as f64;
+    let y = |v: f64| H - FOOT - PAD - (H - FOOT - PAD * 2.0) * v / top;
+
+    let mut b = format!(
+        "<div class=\"view\"><svg viewBox=\"0 0 {W} {H}\" role=\"img\" \
+         aria-label=\"Cumulative production against expectation\">"
+    );
+    // Gridlines and their values, so the height of a line can be read.
+    for k in 1..=4 {
+        let v = top * f64::from(k) / 4.0;
+        let _ = write!(
+            b,
+            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
+             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{v:.0}</text>",
+            r = W - PAD,
+            gy = y(v),
+            tx = PAD - 6.0,
+            ty = y(v) + 4.0,
+        );
+    }
+    // Turns along the bottom, at a step somebody would have chosen, with the
+    // last one always named: where the game ended is the one turn a reader
+    // looks for and an even step will usually miss it.
+    let step = nice_step(turns);
+    let base = H - FOOT - PAD;
+    let mut ticks: Vec<usize> = (0..turns).step_by(step).collect();
+    if ticks.last() != Some(&(turns - 1)) {
+        // Drop a label that would collide with the last one.
+        if ticks.last().is_some_and(|last| turns - 1 - last < step / 2) {
+            ticks.pop();
+        }
+        ticks.push(turns - 1);
+    }
+    for i in ticks {
+        let _ = write!(
+            b,
+            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base}\" y2=\"{end}\"/>\
+             <text class=\"axis mid\" x=\"{tx:.1}\" y=\"{ly}\">{n}</text>",
+            tx = x(i),
+            end = base + 5.0,
+            ly = base + 18.0,
+            n = i + 1,
+        );
+    }
+    // Only the vertical axis is named. "Turn" on the horizontal would collide
+    // with the last tick, and the heading above already says per turn.
+    let _ = write!(
+        b,
+        "<text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">cards</text>"
+    );
+
+    for (k, c) in curves.iter().enumerate() {
+        for (points, dash) in [(&c.actual, ""), (&c.owed, " owed")] {
+            let path: String = points
+                .iter()
+                .enumerate()
+                .map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let _ = write!(
+                b,
+                "<polyline class=\"line k{n} {colour}{dash}\" points=\"{path}\">\
+                 <title>{name}</title></polyline>",
+                n = k + 1,
+                colour = c.colour,
+                name = esc(&c.name),
+            );
+        }
+    }
+
+    // A slot per turn, over everything, carrying that turn's figures and a
+    // guide under the pointer. The whole tooltip is a `title`, which is the
+    // only kind this page can have and the only kind it needs.
+    let slot = (W - PAD * 2.0) / (turns - 1).max(1) as f64;
+    for i in 0..turns {
+        let mut said = format!("Turn {}", i + 1);
+        for c in curves {
+            let _ = write!(
+                said,
+                "\n{}: {:.0}, owed {:.1}",
+                c.name, c.actual[i], c.owed[i]
+            );
+        }
+        let _ = write!(
+            b,
+            "<g class=\"slot\"><rect x=\"{rx:.1}\" y=\"{PAD}\" width=\"{slot:.2}\" \
+             height=\"{h}\"/><line class=\"guide\" x1=\"{gx:.1}\" x2=\"{gx:.1}\" \
+             y1=\"{PAD}\" y2=\"{base}\"/><title>{}</title></g>",
+            esc(&said),
+            rx = x(i) - slot / 2.0,
+            gx = x(i),
+            h = base - PAD,
+        );
+    }
+    b.push_str("</svg>");
+
+    // The legend, which is also the control: a checkbox a curve, so clicking a
+    // name takes its two lines off the chart.
+    b.push_str("<div class=\"key\">");
+    for (k, c) in curves.iter().enumerate() {
+        let _ = write!(
+            b,
+            "<input type=\"checkbox\" id=\"k{view}-{k}\" checked>\
+             <label for=\"k{view}-{k}\"><span class=\"swatch {colour}\"></span>{name}</label>",
+            colour = c.colour,
+            name = esc(&c.name),
+        );
+    }
+    b.push_str("</div></div>");
+    b
+}
+
 /// A place, written as a place: 1st, 2nd, 3rd, 4th.
 ///
 /// A rank is an ordinal and a bare "2" in a column of figures reads as a
@@ -788,7 +841,7 @@ fn ordinal(n: usize) -> String {
     format!("{n}{suffix}")
 }
 
-/// A duration, at whatever precision it is worth reading at.
+/// A duration, at whatever precision it is worth reading at./// A duration, at whatever precision it is worth reading at.
 ///
 /// A game somebody played takes minutes a turn; a game the computer played out
 /// to itself takes microseconds. One format cannot show both, so the scale
@@ -1596,11 +1649,37 @@ tbody tr.sub:hover { background: transparent; }
 .axis { font: 400 11px Figtree, system-ui, sans-serif; fill: var(--muted-foreground);
         text-anchor: end; }
 .axis.start { text-anchor: start; }
+.axis.mid { text-anchor: middle; }
 .axis.unit { font-weight: 500; }
-.key { display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; margin: .6rem 0 0;
-       font-size: 13px; color: var(--muted-foreground); }
-.pair { display: inline-flex; align-items: center; gap: .45em; }
+/* The legend is centred, and it is also the control: a checkbox a curve, so
+   clicking a name takes its two lines off the chart. */
+.key { display: flex; flex-wrap: wrap; justify-content: center;
+       gap: .3rem .5rem; margin: .5rem 0 0; font-size: 13px; }
+.key input { position: absolute; opacity: 0; pointer-events: none; }
+.key label { display: inline-flex; align-items: center; gap: .45em;
+             cursor: pointer; padding: .15em .55em; border-radius: 999px;
+             color: var(--muted-foreground); }
+.key label:hover { background: var(--muted); color: var(--foreground); }
+/* A curve that has been switched off says so: its name greys and its swatch
+   goes hollow, which is the same language the opening tiles use. */
+.key input:not(:checked) + label { opacity: .45; }
+.key input:not(:checked) + label .swatch { background: none;
+                                           box-shadow: inset 0 0 0 1.5px currentColor; }
+.key input:focus-visible + label { outline: 2px solid var(--primary);
+                                   outline-offset: 1px; }
 .swatch { width: .7em; height: .7em; border-radius: 2px; }
+/* Which checkbox is off decides which pair of lines is hidden. Positional
+   rather than by id, so one rule covers the same curve in every view. */
+.view:has(.key input:nth-of-type(1):not(:checked)) .line.k1,
+.view:has(.key input:nth-of-type(2):not(:checked)) .line.k2,
+.view:has(.key input:nth-of-type(3):not(:checked)) .line.k3,
+.view:has(.key input:nth-of-type(4):not(:checked)) .line.k4,
+.view:has(.key input:nth-of-type(5):not(:checked)) .line.k5 { display: none; }
+/* One slot per turn, over everything, carrying that turn's figures. */
+.slot rect { fill: transparent; }
+.slot .guide { stroke: var(--muted-foreground); stroke-width: 1; opacity: 0; }
+.slot:hover .guide { opacity: .55; }
+.tick { stroke: var(--border); stroke-width: 1; }
 .f0, .swatch.f0 { stroke: var(--p0); background: var(--p0); }
 .f1, .swatch.f1 { stroke: var(--p1); background: var(--p1); }
 .f2, .swatch.f2 { stroke: var(--p2); background: var(--p2); }
@@ -1779,6 +1858,36 @@ mod tests {
         // Explanations live on the columns now, not under the table.
         assert!(!html.contains("class=\"note\">Length is measured"));
         assert!(html.contains("Wall-clock time inside their turns"));
+    }
+
+    #[test]
+    fn a_chart_can_be_read_and_taken_apart() {
+        let g = played(4);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        let turns = s.series.turns();
+        // A slot per turn in every view, each carrying that turn's figures.
+        assert_eq!(
+            html.matches("class=\"slot\"").count(),
+            turns * (1 + s.report.players as usize)
+        );
+        assert!(html.contains(&format!("Turn {turns}")));
+        assert!(
+            html.contains(", owed "),
+            "a slot says what was owed as well"
+        );
+        // A checkbox per curve, checked, so every line starts on the chart.
+        let boxes = html.matches("type=\"checkbox\"").count();
+        // One a seat in the first view, then five a seat in their own view.
+        let seats = s.report.players as usize;
+        assert_eq!(boxes, seats + seats * RESOURCE_NAMES.len());
+        assert_eq!(html.matches("checkbox\" id=\"k").count(), boxes);
+        // And each curve's two lines carry the class its checkbox switches.
+        for k in 1..=RESOURCE_NAMES.len() {
+            assert!(html.contains(&format!("line k{k} ")), "k{k} is drawn");
+        }
+        // The turn axis is labelled along its length, not just at its ends.
+        assert!(html.matches("class=\"tick\"").count() >= 4 * (1 + s.report.players as usize));
     }
 
     #[test]

@@ -1494,6 +1494,16 @@ is paired with an effect size.
   script that would build one. Per-player URLs are a later thing, for when
   profiles and profile history need linking.
 
+  The legend below each chart is centred and is also its control: a checkbox a
+  curve, so clicking a name takes that pair of lines off the chart, and the name
+  greys with its swatch gone hollow to say so. The rule is positional rather
+  than by id, so five lines of CSS cover the same curve in every view. The turn
+  axis is labelled along its length at a step somebody would have chosen, with
+  the last turn always named, since where the game ended is the turn a reader
+  looks for and an even step usually misses it. And a slot per turn sits over
+  the whole plot carrying that turn's figures for every curve, with a guide
+  under the pointer.
+
   The last point is the end of the game rather than the end of the last
   completed turn: the winning turn never ends, and dropping its cards would put
   the chart out of step with the ledger above it.
