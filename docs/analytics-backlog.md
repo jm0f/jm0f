@@ -6,8 +6,9 @@ kinds of thing live here:
 - **Across games.** A report on one game is the wrong place to make a claim about
   many, so anything that needs a corpus waits for the page that reads the whole
   store. Most of this file is that page's brief.
-- **Per game, not yet built.** The gaps a review of the per-game page turned up
-  that have not been closed. Six were, and the section says which.
+- **Per game, not yet built.** The gaps two reviews of the per-game page turned up.
+  All twelve are closed now, and that section says what is left instead: the two
+  kinds of question one recorded game cannot answer.
 
 Nothing here is a promise about order. The rule from §10.1 governs all of it:
 **small n makes p-values invalid, large n makes them uninformative**, so
@@ -71,8 +72,10 @@ promised is not duplicated here. Every one is a corpus question.
     bank or a port rather than against a person, which is a proxy for a table
     that would not deal with you.
 13. **Robber targeting.** Is the leader targeted? Robber placements against the
-    target's score at the time, pooled. Needs the per-turn score the report
-    already samples, which is not yet stored across games.
+    target's score at the time, pooled. Needs the per-turn score the report already
+    samples, which is not yet stored across games. The per-game blockade table
+    already shows the demo's winner was blockaded most, which is one game and
+    therefore not evidence.
 14. **Discard exposure and outcome.** Win rate by turns spent over the discard
     limit, which the per-game ledger now counts.
 15. **Turn order and length.** Does the seat-order advantage change with game
@@ -116,30 +119,24 @@ about the analytics.
 
 ## Per game: still missing
 
-Six gaps from the first review have been closed: the built column is split by what
-it bought, the offers carry their ask, roads have a length, blocked builds are
-counted, the endgame is measured as a race, and coverage is reported per resource.
-What is left:
+The twelve gaps two reviews turned up are closed. The per-game report now splits
+spending four ways, measures what each road did, counts the three walls a seat can
+be stuck behind, carries the ask that was in every offer and what it was asking
+for, times every development card from draw to play, breaks discards down by card,
+measures the endgame as a race, reports coverage per resource, and says what kind
+of board was dealt.
 
-- **What a road was built *towards*.** The building card gives a road network's
-  length. It does not say whether a road opened a new settlement spot, chased the
-  tile, or went nowhere, which is the difference between a plan and a habit. Needs
-  the spots reachable before and after each road, which `settlement_spots` can
-  answer at every step.
-- **Blocked cities and roads.** Stuck counts settlements only. A seat holding a
-  city's price with no settlement of its own to upgrade is in the same position,
-  and so is a seat out of road pieces.
-- **Offers by counterparty.** The ask is a per-seat average. Who each seat aimed
-  its offers at, and whether the ask changed with the target, is the difference
-  between a bad price and a grudge.
-- **Development cards in time.** The timeline marks a card bought. When each kind
-  was *played*, and how long it sat in hand first, is recorded in the moves and
-  unshown: a militia held for forty turns is a different decision from one played
-  on draw.
-- **Discard composition.** The ledger counts cards discarded and the exposure
-  behind them. Which cards a seat chose to throw away is a decision, and it is in
-  the moves.
-- **The board's own difficulty.** The board card compares this deal to an average
-  one for pips. Whether the *numbers* clustered, whether the resources clumped, and
-  whether any intersection was worth more than any other on this deal, is a
-  board-quality question the card only half answers.
+What is left is not gaps in the per-game page. It is the corpus page above, and two
+things the per-game page cannot answer by construction:
+
+- **Anything that needs a counterfactual.** "Could the table have stopped them"
+  wants a game that was not played. The race table gives the turns available, which
+  is as close as one recorded game gets, and the honest answer to the rest is a
+  search rather than a report.
+- **Anything that needs a second opinion.** Whether an opening was *good* is a
+  question about every board and every game, not about this one. That is the corpus
+  page, and the fifteen above are its brief.
+
+A per-game figure worth adding will most likely come out of the corpus work rather
+than out of another read of the page: the moment there is a distribution to sit a
+game against, half the columns here gain a percentile they cannot have today.

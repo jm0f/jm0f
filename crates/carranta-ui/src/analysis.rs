@@ -472,14 +472,24 @@ fn watch(
 
     built.turns += 1;
     for p in 0..seats {
-        // Holding the price of a settlement and having nowhere legal to put it.
-        // Both halves matter: nowhere to build is only a problem for a seat that
-        // could have built, and cards in hand are only stuck if there is nowhere
-        // for them to go.
-        if state.holds(p, &carranta_core::action::SETTLEMENT_COST)
-            && state.settlement_spots(p, false) == 0
-        {
-            built.stuck[p] += 1;
+        // Able to pay and unable to build, which is a different thing from
+        // saving up: those cards cannot be spent, and they sit in the hand
+        // waiting for a seven to take half of them. Both halves matter in each
+        // case: nowhere to build is only a problem for a seat that could have
+        // paid, and a full hand is only stuck if there is nothing to spend it on.
+        use carranta_core::action::{CITY_COST, ROAD_COST, SETTLEMENT_COST};
+        let cannot = [
+            state.holds(p, &SETTLEMENT_COST)
+                && (state.settlement_spots(p, false) == 0 || state.settlements_left[p] == 0),
+            // A city is an upgrade, so the wall is having no settlement of your
+            // own left standing to upgrade, or no city pieces left.
+            state.holds(p, &CITY_COST) && (state.settlements[p] == 0 || state.cities_left[p] == 0),
+            state.holds(p, &ROAD_COST) && (state.road_spots(p) == 0 || state.roads_left[p] == 0),
+        ];
+        for (kind, blocked) in cannot.iter().enumerate() {
+            if *blocked {
+                built.stuck[p][kind] += 1;
+            }
         }
         // The length is recomputed rather than remembered: a road's length can
         // *fall* when somebody builds a settlement through the middle of it
@@ -541,6 +551,12 @@ fn series_of(saved: &Saved) -> Sampled {
         let owed = matches!(action, Action::Roll)
             .then(|| carranta_analytics::production::expectation(&state));
         let before = state.hand;
+        // A discard names its own player and its own card, so it needs no diffing.
+        if let Action::Discard { player, resource } = action
+            && usize::from(player) < seats
+        {
+            hands.thrown[usize::from(player)][resource as usize] += 1;
+        }
         // Which of the four things this move bought, if any, and whose it was.
         let buying = match action {
             Action::BuildRoad(_) => Some(0),
@@ -550,8 +566,33 @@ fn series_of(saved: &Saved) -> Sampled {
             _ => None,
         };
         let buyer = state.to_act as usize;
+        // What a road is worth is the difference it makes, so both halves of the
+        // difference are read either side of the move: the spots the seat may
+        // build a settlement on, and the length of their longest run.
+        let reach = (buying == Some(0) && buyer < seats).then(|| {
+            (
+                state.settlement_spots(buyer, false).count_ones(),
+                carranta_core::longest_road::longest_road(
+                    state.roads[buyer],
+                    state.blocking(buyer),
+                ),
+            )
+        });
         if state.apply(action).is_err() {
             break;
+        }
+        if let Some((spots, chain)) = reach {
+            let now = state.settlement_spots(buyer, false).count_ones();
+            let long = carranta_core::longest_road::longest_road(
+                state.roads[buyer],
+                state.blocking(buyer),
+            );
+            let opened = now > spots;
+            let stretched = long > chain;
+            built.spots[buyer] += now.saturating_sub(spots);
+            built.opened[buyer] += u32::from(opened);
+            built.stretched[buyer] += u32::from(stretched);
+            built.idle[buyer] += u32::from(!opened && !stretched);
         }
         if let Some(kind) = buying
             && buyer < seats
@@ -805,6 +846,110 @@ fn r_squared(pts: &[(f64, f64)]) -> f64 {
     (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
 }
 
+/// How long a development card sat in hand before it was played.
+///
+/// The cards table says how many of each kind were bought and how many played.
+/// It cannot say *when*: a militia played the turn it was drawn and a militia held
+/// for forty turns are the same row, and they are not the same decision. One is a
+/// seven happening to somebody; the other is a player waiting for the robber to be
+/// worth moving.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Waits {
+    /// Turns held before being played, one list a kind, in deck order.
+    pub held: [Vec<u32>; 5],
+    /// Cards of each kind still in a hand when the game ended, and how long they
+    /// had been there. A card held to the end is a decision too, and a mean over
+    /// played cards alone would quietly leave it out.
+    pub kept: [Vec<u32>; 5],
+}
+
+impl Waits {
+    /// The mean wait for a kind that was played, or `None` if none was.
+    pub fn mean(&self, kind: usize) -> Option<f64> {
+        let held = &self.held[kind];
+        (!held.is_empty())
+            .then(|| held.iter().map(|t| f64::from(*t)).sum::<f64>() / held.len() as f64)
+    }
+
+    /// The longest a card of this kind waited before it was played.
+    pub fn longest(&self, kind: usize) -> Option<u32> {
+        self.held[kind].iter().copied().max()
+    }
+}
+
+/// Match every card played back to the turn it was drawn on.
+///
+/// Cards of a kind are interchangeable, so a play is matched to the *oldest*
+/// unplayed card of that kind. Any other convention would be arbitrary in the
+/// same way and read worse: first in, first out is what a hand of identical cards
+/// means.
+///
+/// The kind drawn is read off the hand rather than from the action, since buying
+/// a card is one action whatever it turns out to be.
+fn waits_of(saved: &Saved) -> Waits {
+    use carranta_core::action::Action;
+    use carranta_core::state::{DevCard, Phase};
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let seats = state.players as usize;
+    let mut out = Waits::default();
+    // Drawn and not yet played, per seat and kind: the turns they arrived on.
+    let mut queue: Vec<[Vec<u32>; 5]> = vec![Default::default(); MAX_PLAYERS];
+    let mut turn = 0u32;
+    let mut playing = false;
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        let actor = state.to_act as usize;
+        let before = state.dev_held;
+        let played = match action {
+            Action::PlayMilitia => Some(DevCard::Militia as usize),
+            Action::PlayRoadBuilding => Some(DevCard::RoadBuilding as usize),
+            Action::PlayInvention(_) => Some(DevCard::Invention as usize),
+            Action::PlayMonopoly(_) => Some(DevCard::Monopoly as usize),
+            _ => None,
+        };
+        if state.apply(action).is_err() {
+            break;
+        }
+        let at = turn.max(1);
+        if actor < seats {
+            if matches!(action, Action::BuyDev) {
+                // Whichever count went up is the card that was drawn.
+                for kind in 0..5 {
+                    if state.dev_held[actor][kind] > before[actor][kind] {
+                        queue[actor][kind].push(at);
+                    }
+                }
+            }
+            if let Some(kind) = played {
+                // The oldest of that kind, or nothing to match against if the
+                // records disagree, which a replay would already have refused.
+                if !queue[actor][kind].is_empty() {
+                    let drawn = queue[actor][kind].remove(0);
+                    out.held[kind].push(at.saturating_sub(drawn));
+                }
+            }
+        }
+        if playing && action == Action::EndTurn {
+            turn += 1;
+        }
+        if matches!(state.phase, Phase::PreRoll) && !playing {
+            playing = true;
+            turn = 1;
+        }
+    }
+    // Whatever is left was held to the end.
+    let last = turn.max(1);
+    for seat in queue.iter().take(seats) {
+        for (kind, drawn) in seat.iter().enumerate() {
+            for at in drawn {
+                out.kept[kind].push(last.saturating_sub(*at));
+            }
+        }
+    }
+    out
+}
+
 /// What was actually *in* the offers a seat made.
 ///
 /// The trades card counts offers made, withdrawn and turned down. It cannot say
@@ -819,6 +964,21 @@ pub struct Asks {
     pub given: [u32; MAX_PLAYERS],
     /// Offers of theirs that somebody took.
     pub taken: [u32; MAX_PLAYERS],
+    /// Cards asked for and cards put up, resource by resource.
+    ///
+    /// What a seat was short of, in its own words. The production card says what
+    /// the board failed to pay them; this says what they went looking for, which
+    /// is not always the same thing and is the more interesting of the two when
+    /// they differ.
+    pub wanted_each: [[u32; 5]; MAX_PLAYERS],
+    pub given_each: [[u32; 5]; MAX_PLAYERS],
+    /// Offers addressed to one seat rather than to the table.
+    ///
+    /// The generator only ever makes open offers, on purpose: an addressed offer
+    /// multiplies the action space by the number of opponents for no gain to a
+    /// search. So this is nought in every bot game, and a human client may still
+    /// address one, which is why it is counted rather than assumed away.
+    pub addressed: [u32; MAX_PLAYERS],
 }
 
 impl Asks {
@@ -845,11 +1005,16 @@ fn asks_of(saved: &Saved) -> Asks {
     for step in &saved.moves {
         let Step::Move(action) = *step else { continue };
         match action {
-            Action::ProposeTrade { by, give, want, .. } if usize::from(by) < seats => {
+            Action::ProposeTrade { by, to, give, want } if usize::from(by) < seats => {
                 let p = usize::from(by);
                 out.offers[p] += 1;
+                out.addressed[p] += u32::from(to.is_some());
                 out.given[p] += give.iter().map(|n| u32::from(*n)).sum::<u32>();
                 out.wanted[p] += want.iter().map(|n| u32::from(*n)).sum::<u32>();
+                for res in 0..5 {
+                    out.given_each[p][res] += u32::from(give[res]);
+                    out.wanted_each[p][res] += u32::from(want[res]);
+                }
             }
             Action::AcceptTrade { offer, .. } => {
                 if let Some(o) = state.live_offers().get(usize::from(offer)) {
@@ -888,8 +1053,22 @@ pub struct Built {
     pub spent: [[u32; 4]; MAX_PLAYERS],
     /// The longest continuous road each seat finished with (R-10.3).
     pub chain: [u32; MAX_PLAYERS],
-    /// Turns ended able to afford a settlement with no legal place for one.
-    pub stuck: [u32; MAX_PLAYERS],
+    /// What each road did, per seat: opened at least one new settlement spot,
+    /// lengthened the longest chain, neither.
+    ///
+    /// A road can do both, so the first two overlap and only `idle` is exclusive.
+    /// A road that does neither is not necessarily wasted, since a network can be
+    /// grown towards a spot two roads away, but a seat whose roads are mostly
+    /// idle was building without a plan or building into a wall.
+    pub opened: [u32; MAX_PLAYERS],
+    pub stretched: [u32; MAX_PLAYERS],
+    pub idle: [u32; MAX_PLAYERS],
+    /// Settlement spots the roads opened, counted as they arrived.
+    pub spots: [u32; MAX_PLAYERS],
+    /// Turns ended able to afford a thing and unable to build it, one count per
+    /// kind: a settlement with nowhere legal, a city with no settlement of their
+    /// own to upgrade, a road with nowhere to put it or none left.
+    pub stuck: [[u32; 3]; MAX_PLAYERS],
     /// Turns sampled, for the share.
     pub turns: usize,
 }
@@ -897,6 +1076,9 @@ pub struct Built {
 impl Built {
     /// The four kinds, in the order they are stored.
     pub const KINDS: [&'static str; 4] = ["roads", "settlements", "cities", "cards"];
+
+    /// The three things a seat can be stuck on, in the order they are stored.
+    pub const STUCK: [&'static str; 3] = ["a settlement", "a city", "a road"];
 
     /// Cards this seat spent on building, all four kinds together. The ledger's
     /// `built` row by another route, which is what makes it a check.
@@ -1166,6 +1348,12 @@ pub struct Hands {
     pub over: [u32; MAX_PLAYERS],
     /// Turns sampled.
     pub turns: usize,
+    /// Cards thrown away to a seven, resource by resource.
+    ///
+    /// A discard is a decision: the rule takes half a hand and the player picks
+    /// which half. What a seat threw away is what it had decided it did not need,
+    /// and the ledger's single total cannot say that.
+    pub thrown: [[u32; 5]; MAX_PLAYERS],
 }
 
 /// How often the board paid each seat anything, turn by turn.
@@ -1400,7 +1588,7 @@ fn trades_of(saved: &Saved) -> Trades {
 /// five resources always add to the same total and the card is a pure
 /// redistribution. The question it answers is which resource got the good
 /// numbers this time.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Board {
     /// Hexes of each resource, which is fixed by the tile set.
     pub hexes: [u32; 5],
@@ -1411,6 +1599,29 @@ pub struct Board {
     /// Per port kind: index 0 is the generic three to one, the rest are the two
     /// to ones in resource order.
     pub ports: [PortLand; PORT_KINDS],
+    /// Pairs of neighbouring hexes that make the same resource, and how many a
+    /// random deal would be expected to produce.
+    ///
+    /// Clumping is what the pip totals cannot see: two boards can owe every
+    /// resource the same pips and play completely differently if one of them has
+    /// all its ore in a corner. The expectation is exact rather than simulated,
+    /// which the shape of the problem allows: the adjacency graph is fixed, so it
+    /// is the number of neighbouring pairs times the chance that two tiles drawn
+    /// from the set without replacement match.
+    pub same: u32,
+    pub same_expected: f64,
+    /// Whether a six sits next to an eight. Some rule sets forbid it outright;
+    /// this one deals as it deals, and it is worth knowing which happened.
+    pub reds_touch: bool,
+    /// The best intersection on the board: pips on the hexes it touches, and the
+    /// numbers themselves, best first.
+    pub best: u32,
+    pub best_numbers: Vec<u8>,
+    /// Intersections whose pips are at least [`Board::RICH`].
+    pub rich: u32,
+    /// Mean pips over every intersection touching land, which is what "the best
+    /// intersection" has to be read against.
+    pub spot_mean: f64,
 }
 
 /// The land a port kind can be built on.
@@ -1426,6 +1637,12 @@ pub struct PortLand {
 }
 
 impl Board {
+    /// Pips at an intersection worth calling rich.
+    ///
+    /// Ten is the round number a player uses: three hexes averaging better than
+    /// three pips each, which is a placement worth planning a game around.
+    pub const RICH: u32 = 10;
+
     /// What a random deal would have put on this resource's hexes.
     pub fn expected(&self, res: usize) -> f64 {
         f64::from(self.hexes[res]) * self.mean
@@ -1456,6 +1673,74 @@ fn board_of(saved: &Saved) -> Board {
         b.hexes[res as usize] += 1;
         b.pips[res as usize] += ways(state.number[h]);
     }
+    // Clumping: neighbouring hexes making the same thing, against the number a
+    // random deal would be expected to produce. Both halves are exact. The graph
+    // is fixed, so the pairs can be counted; and for a shuffled set of tiles, the
+    // chance any given pair matches is the chance two tiles drawn without
+    // replacement are the same terrain, which is a sum over the set.
+    let mut pairs = 0u32;
+    for a in 0..HEX_COUNT as u8 {
+        for c in a + 1..HEX_COUNT as u8 {
+            // Two hexes are neighbours when they share an edge, which is two of
+            // the six corners.
+            if (hex_vertices(a) & hex_vertices(c)).count_ones() != 2 {
+                continue;
+            }
+            pairs += 1;
+            let (x, y) = (state.terrain[a as usize], state.terrain[c as usize]);
+            if x == y && x.yields().is_some() {
+                b.same += 1;
+            }
+        }
+    }
+    let mut kinds = [0u32; 5];
+    for h in 0..HEX_COUNT {
+        if let Some(res) = state.terrain[h].yields() {
+            kinds[res as usize] += 1;
+        }
+    }
+    let tiles = f64::from(HEX_COUNT as u32);
+    let matching: f64 = kinds
+        .iter()
+        .map(|n| f64::from(*n) * f64::from(n.saturating_sub(1)))
+        .sum();
+    b.same_expected = f64::from(pairs) * matching / (tiles * (tiles - 1.0));
+    b.reds_touch = carranta_core::state::red_numbers_touch(&state.number);
+
+    // Every intersection, so the best one can be read against the ordinary one.
+    let mut spots = 0u32;
+    let mut total = 0u32;
+    for v in 0..carranta_core::topology::VERTEX_COUNT as u8 {
+        let bit = carranta_core::topology::vertex_bit(v);
+        let mut pips = 0u32;
+        let mut numbers = Vec::new();
+        for h in 0..HEX_COUNT {
+            if hex_vertices(h as u8) & bit == 0 || state.terrain[h].yields().is_none() {
+                continue;
+            }
+            pips += ways(state.number[h]);
+            numbers.push(state.number[h]);
+        }
+        if numbers.is_empty() {
+            continue; // a corner of the sea and the desert only
+        }
+        spots += 1;
+        total += pips;
+        if pips >= Board::RICH {
+            b.rich += 1;
+        }
+        if pips > b.best {
+            b.best = pips;
+            numbers.sort_unstable_by(|a, c| ways(*c).cmp(&ways(*a)).then(a.cmp(c)));
+            b.best_numbers = numbers;
+        }
+    }
+    b.spot_mean = if spots == 0 {
+        0.0
+    } else {
+        f64::from(total) / f64::from(spots)
+    };
+
     for (kind, land) in b.ports.iter_mut().enumerate() {
         let spots = state.ports[kind];
         land.spots = spots.count_ones();
@@ -1684,6 +1969,8 @@ pub struct Study {
     pub built: Built,
     /// What was in the offers each seat made.
     pub asks: Asks,
+    /// How long each development card waited in hand.
+    pub waits: Waits,
     /// Where the clock went, by kind of decision, when there is a clock.
     pub spent: Option<Spent>,
     /// What happened and when, for the strip that anchors every other chart.
@@ -1833,6 +2120,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         hands,
         built,
         asks: asks_of(saved),
+        waits: waits_of(saved),
         spent: spent_of(saved),
         events: events_of(saved),
         trades,

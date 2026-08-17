@@ -1159,21 +1159,6 @@ fn building(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
              reached by another route. If the two ever disagree, one of them is \
              wrong.",
         ),
-        (
-            "longest chain",
-            "The longest continuous road this seat finished with (R-10.3). What \
-             the road tile is contested on, and the one thing a seat builds that \
-             nothing else here shows unless they won it. It can fall as well as \
-             rise: a settlement built through the middle of a road cuts it in \
-             two.",
-        ),
-        (
-            "stuck",
-            "Turns that ended with this seat able to afford a settlement and \
-             nowhere legal to put one. Not thrift: a seat in this position cannot \
-             spend, and the cards sit in the hand waiting for a seven to take \
-             half of them.",
-        ),
     ]));
     b.push_str("</thead><tbody>");
     let mut foot = [0u32; 4];
@@ -1186,20 +1171,6 @@ fn building(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
         }
         all_spent += bt.spent_all(p);
         cells.push(bt.spent_all(p).to_string());
-        cells.push(if bt.chain[p] == 0 {
-            NONE.to_string()
-        } else {
-            bt.chain[p].to_string()
-        });
-        cells.push(if bt.stuck[p] == 0 {
-            NONE.to_string()
-        } else {
-            format!(
-                "{} <span class=\"worth\">({:.0}%)</span>",
-                bt.stuck[p],
-                100.0 * f64::from(bt.stuck[p]) / bt.turns as f64
-            )
-        });
         b.push_str(&row(&cells, false));
     }
     b.push_str("</tbody>");
@@ -1208,13 +1179,138 @@ fn building(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
         cells.push(foot[kind].to_string());
     }
     cells.push(all_spent.to_string());
-    // A longest chain and a count of stuck turns belong to a seat and add to
-    // nothing, so those two columns have no total.
-    cells.push(NONE.to_string());
-    cells.push(NONE.to_string());
     b.push_str(&totals(&cells));
     b.push_str(T_CLOSE);
+    b.push_str(&roads(study, who, place, seats));
+    b.push_str(&walls(study, who, place, seats));
     b.push_str("</section>");
+    b
+}
+
+/// What the roads actually did.
+///
+/// Roads are the one thing on the board with no score and no production, so a
+/// count of them says nothing at all: two seats can build eight each and one of
+/// them has opened four places to live while the other has built into a wall. A
+/// road is worth the difference it made, so the difference is measured either
+/// side of the move that built it.
+fn roads(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let bt = &study.built;
+    if bt.pieces[..seats].iter().map(|k| k[0]).sum::<u32>() == 0 {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "longest chain",
+            "The longest continuous road this seat finished with (R-10.3). What \
+             the road tile is contested on, and the one thing a seat builds that \
+             nothing else here shows unless they won it. It can fall as well as \
+             rise: a settlement built through the middle of a road cuts it in two.",
+        ),
+        (
+            "opened a spot",
+            "Roads that made at least one new intersection legal for this seat to \
+             settle on, with the spots they opened in brackets. This is what a \
+             road is for.",
+        ),
+        (
+            "lengthened",
+            "Roads that made the longest chain longer, which is what a road is \
+             for if the tile is what you are after. A road can do both, so this \
+             and the column beside it overlap.",
+        ),
+        (
+            "neither",
+            "Roads that opened nothing and lengthened nothing. Not necessarily \
+             wasted, since a network can be grown towards a spot two roads away, \
+             but a seat whose roads are mostly here was building without a plan \
+             or building into a wall.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        b.push_str(&row(
+            &[
+                placed(p, &who[p], place[p]),
+                if bt.chain[p] == 0 {
+                    NONE.to_string()
+                } else {
+                    bt.chain[p].to_string()
+                },
+                bracketed(bt.opened[p], bt.spots[p]),
+                if bt.stretched[p] == 0 {
+                    NONE.to_string()
+                } else {
+                    bt.stretched[p].to_string()
+                },
+                if bt.idle[p] == 0 {
+                    NONE.to_string()
+                } else {
+                    bt.idle[p].to_string()
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// Turns a seat could pay for something and could not build it.
+///
+/// Three walls, and they are different walls. A settlement with nowhere legal
+/// means the board is full or the roads have not reached; a city with nothing to
+/// upgrade means every settlement is already a city or was never built; a road
+/// with nowhere to go means the network is boxed in or the pieces have run out.
+/// None of the three leaves a mark anywhere else on this page, and a seat sitting
+/// behind one is holding cards it cannot spend while sevens go on being rolled.
+fn walls(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let bt = &study.built;
+    if bt.turns == 0
+        || (0..seats)
+            .flat_map(|p| bt.stuck[p].iter().copied())
+            .sum::<u32>()
+            == 0
+    {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![(
+        "",
+        "Turns that ended with the seat holding the price of the thing in the \
+         column and unable to build it, with the share of the game in brackets. \
+         Three different walls: a settlement with nowhere legal to stand, a city \
+         with no settlement of their own left to upgrade, a road with nowhere to \
+         go or none left in the box. Able to pay is half of it, since a board with \
+         nowhere to build costs nothing to a seat that could not have paid anyway.",
+    )];
+    // The columns are named for the thing that could not be built, and the row
+    // header carries what the count means, so they need no repeated preamble.
+    heads.extend(crate::analysis::Built::STUCK.iter().map(|kind| (*kind, "")));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for kind in 0..3 {
+            let turns = bt.stuck[p][kind];
+            cells.push(if turns == 0 {
+                NONE.to_string()
+            } else {
+                format!(
+                    "{turns} <span class=\"worth\">({:.0}%)</span>",
+                    100.0 * f64::from(turns) / bt.turns as f64
+                )
+            });
+        }
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b
 }
 
@@ -1549,6 +1645,313 @@ fn offers(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
             sum(&asks.taken).to_string()
         },
     ]));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// What kind of board this was, beyond how the pips were shared out.
+///
+/// The tables above answer "which resource did the deal favour". They cannot
+/// answer "what sort of board is this", and two boards can owe every resource the
+/// same pips and play completely differently: one with its ore spread around the
+/// island and one with all of it in a corner are not the same game.
+///
+/// The clumping expectation is exact rather than simulated, which the shape of the
+/// problem allows. The adjacency graph is fixed, so the neighbouring pairs can be
+/// counted; and for a shuffled set of tiles the chance any given pair matches is
+/// the chance two tiles drawn without replacement are the same terrain.
+fn deal(study: &Study) -> String {
+    let bd = &study.board;
+    if bd.best == 0 {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        ("this board", "What was dealt."),
+        (
+            "an average board",
+            "What a random deal of the same tiles gives, where that is a figure \
+             rather than a coin toss. Blank where the question has no average: \
+             the best intersection on a board is a maximum, and a maximum has no \
+             closed form worth printing.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    b.push_str(&row(
+        &[
+            format!(
+                "<span data-tip=\"{}\">neighbours making the same thing</span>",
+                esc(
+                    "Pairs of touching hexes that produce the same resource.                      Clumping is what a pip total cannot see, and it decides                      whether a resource can be shut off by one robber or has to                      be chased around the island."
+                )
+            ),
+            bd.same.to_string(),
+            format!("{:.1}", bd.same_expected),
+        ],
+        false,
+    ));
+    b.push_str(&row(
+        &[
+            format!(
+                "<span data-tip=\"{}\">a six beside an eight</span>",
+                esc(
+                    "Whether the two most likely numbers were dealt next to each                      other. Some rule sets forbid it and redeal; this one deals                      as it deals, so it is worth knowing which happened."
+                )
+            ),
+            if bd.reds_touch {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            },
+            NONE.to_string(),
+        ],
+        false,
+    ));
+    b.push_str(&row(
+        &[
+            format!(
+                "<span data-tip=\"{}\">the best intersection</span>",
+                esc(
+                    "Pips on the hexes around the best spot on the board, with                      its numbers beside it. Whether anybody took it is the                      opening card's business."
+                )
+            ),
+            format!(
+                "{} <span class=\"worth\">{}</span>",
+                bd.best,
+                discs(&bd.best_numbers)
+            ),
+            NONE.to_string(),
+        ],
+        false,
+    ));
+    b.push_str(&row(
+        &[
+            format!(
+                "<span data-tip=\"{}\">intersections over {} pips</span>",
+                esc(
+                    "How many places on the board were worth planning a game                      around: three hexes averaging better than three pips each.                      A board with two of them is a fight; a board with ten is a                      different game."
+                ),
+                crate::analysis::Board::RICH
+            ),
+            bd.rich.to_string(),
+            NONE.to_string(),
+        ],
+        false,
+    ));
+    b.push_str(&row(
+        &[
+            format!(
+                "<span data-tip=\"{}\">the ordinary intersection</span>",
+                esc(
+                    "Mean pips over every intersection touching land, which is                      what the best one has to be read against."
+                )
+            ),
+            format!("{:.1}", bd.spot_mean),
+            NONE.to_string(),
+        ],
+        false,
+    ));
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// Which cards a seat chose to throw away.
+///
+/// The rule takes half a hand on a seven (R-6.2) and the player picks which half,
+/// so a discard is a decision and the ledger's single total cannot show it. What a
+/// seat threw away is what it had decided it did not need, and read against the
+/// production table it is often the resource the board was giving it most of.
+fn thrown(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let h = &study.hands;
+    if seats == 0
+        || (0..seats)
+            .flat_map(|p| h.thrown[p].iter().copied())
+            .sum::<u32>()
+            == 0
+    {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![(
+        "",
+        "Cards thrown away to a seven, resource by resource. The rule takes half \
+         the hand and the player chooses which half, so this is a decision rather \
+         than a toll.",
+    )];
+    heads.extend(RESOURCE_NAMES.iter().map(|n| (*n, "")));
+    heads.push((
+        "all of it",
+        "Every card this seat discarded, which is the ledger's discarded row \
+         above reached from the other side.",
+    ));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    let mut foot = [0u32; 5];
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for res in 0..5 {
+            foot[res] += h.thrown[p][res];
+            cells.push(if h.thrown[p][res] == 0 {
+                NONE.to_string()
+            } else {
+                h.thrown[p][res].to_string()
+            });
+        }
+        let all: u32 = h.thrown[p].iter().sum();
+        cells.push(if all == 0 {
+            NONE.to_string()
+        } else {
+            all.to_string()
+        });
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    let mut cells = vec!["the table".to_string()];
+    cells.extend(foot.iter().map(|n| n.to_string()));
+    cells.push(foot.iter().sum::<u32>().to_string());
+    b.push_str(&totals(&cells));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// How long each kind of development card sat in a hand before it was played.
+///
+/// The table above says how many were bought and how many were played. It cannot
+/// say when, and a militia played on the turn it was drawn is a different decision
+/// from one held for forty turns: the first is a seven happening to somebody, the
+/// second is a player waiting until the robber was worth moving.
+///
+/// A card is matched to the oldest unplayed card of its kind, since cards of a kind
+/// are interchangeable and any other rule would be arbitrary in the same way while
+/// reading worse.
+fn waiting(study: &Study) -> String {
+    let w = &study.waits;
+    let any = (0..5).any(|k| !w.held[k].is_empty() || !w.kept[k].is_empty());
+    if !any {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "played",
+            "Cards of this kind that were played, across every seat. The game's \
+             count, not anybody's.",
+        ),
+        (
+            "waited",
+            "Turns between drawing a card and playing it, on average. Table turns, \
+             not the holder's own: in a four-player game their next turn is four \
+             of these, so four is a card played at the first opportunity, which \
+             is also the earliest the rules allow (R-9.4).",
+        ),
+        (
+            "longest wait",
+            "The longest any one of them sat in a hand before it was played.",
+        ),
+        (
+            "still held",
+            "Cards of this kind in a hand when the game ended, with how long they \
+             had been there on average. A card held to the end is a decision too, \
+             and a mean over played cards alone would quietly leave it out. A \
+             victory point card is never played at all (R-9.11), so all of them \
+             are here.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for kind in 0..5 {
+        let played = w.held[kind].len() as u32;
+        let kept = &w.kept[kind];
+        if played == 0 && kept.is_empty() {
+            continue;
+        }
+        b.push_str(&row(
+            &[
+                format!("<span class=\"dot dev\"></span>{}", DEV_NAMES[kind]),
+                if played == 0 {
+                    NONE.to_string()
+                } else {
+                    played.to_string()
+                },
+                match w.mean(kind) {
+                    Some(t) => format!("{t:.0}"),
+                    None => NONE.to_string(),
+                },
+                match w.longest(kind) {
+                    Some(t) => t.to_string(),
+                    None => NONE.to_string(),
+                },
+                if kept.is_empty() {
+                    NONE.to_string()
+                } else {
+                    format!(
+                        "{} <span class=\"worth\">({:.0})</span>",
+                        kept.len(),
+                        kept.iter().map(|t| f64::from(*t)).sum::<f64>() / kept.len() as f64
+                    )
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// What the offers were asking *for*, resource by resource.
+///
+/// The counterparty question cannot be asked of these games: the offer generator
+/// only ever makes open offers, on purpose, since addressing one multiplies the
+/// action space by the number of opponents for nothing. So "who did they aim it
+/// at" is nought for every seat, and the useful question about an offer is what
+/// was in it.
+///
+/// Positive is a seat trying to buy that card, negative a seat trying to sell it.
+/// Read beside the production card it says something neither says alone: whether a
+/// seat went looking for what the board was failing to pay it, or for something
+/// else entirely.
+fn demand(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let asks = &study.asks;
+    if seats == 0 || asks.offers[..seats].iter().sum::<u32>() == 0 {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![(
+        "",
+        "Cards asked for less cards put up, resource by resource, across every \
+         offer this seat made. Positive is a seat trying to buy that card, \
+         negative a seat trying to sell it. Offers, not trades, so this is what \
+         they went looking for rather than what they got.",
+    )];
+    heads.extend(RESOURCE_NAMES.iter().map(|n| (*n, "")));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for res in 0..5 {
+            let net = f64::from(asks.wanted_each[p][res]) - f64::from(asks.given_each[p][res]);
+            cells.push(cards(net));
+        }
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    // Every seat wanting the same card is a fact about the board rather than
+    // about any of them, which is what the foot is for.
+    let mut foot = vec!["the table".to_string()];
+    for res in 0..5 {
+        let net: f64 = (0..seats)
+            .map(|p| f64::from(asks.wanted_each[p][res]) - f64::from(asks.given_each[p][res]))
+            .sum();
+        foot.push(cards(net));
+    }
+    b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
     b
 }
@@ -3593,7 +3996,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     }
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
-
+    b.push_str(&thrown(study, &who, &place, seats));
     b.push_str("</section>");
 
     // ---- production per turn -------------------------------------------------
@@ -3701,6 +4104,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(T_CLOSE);
     b.push_str(&flows(study, &who, &place, seats));
     b.push_str(&offers(study, &who, &place, seats));
+    b.push_str(&demand(study, &who, &place, seats));
     b.push_str("</section>");
 
     // ---- building -----------------------------------------------------------
@@ -3768,6 +4172,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     }));
     b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
+    b.push_str(&waiting(study));
     b.push_str("</section>");
 
     // ---- the board ----------------------------------------------------------
@@ -3929,6 +4334,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ),
     ]));
     b.push_str(T_CLOSE);
+    b.push_str(&deal(study));
     b.push_str("</section>");
 
     // ---- the opening --------------------------------------------------------
@@ -4452,6 +4858,8 @@ section > p:last-child { margin-bottom: 0; }
 /* ---- the seat mark ----
    The colour a player played in, always immediately left of their name, so a
    row can be found by colour rather than by reading down the names. */
+/* A card is not a seat and not a resource, so its mark is the ink of the page. */
+.dot.dev { background: var(--muted-foreground); }
 .dot { display: inline-block; width: .55em; height: .55em; border-radius: 50%;
        margin-right: .55em; background: var(--muted-foreground);
        vertical-align: baseline; }

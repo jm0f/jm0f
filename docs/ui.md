@@ -1632,6 +1632,13 @@ is paired with an effect size.
   cards**. The discarded row says what a seven cost; this says how long the seat
   was exposed to it. Discarding nothing all game is careful play or a quiet table,
   and only the two rows together say which.
+
+  Beneath the ledger, **which cards were thrown away**. The rule takes half a hand
+  on a seven (R-6.2) and the player picks which half, so a discard is a decision and
+  one total cannot show it. The per-seat totals here are the ledger's discarded row
+  reached from the other side, which makes the two a check on each other, and the
+  composition is the new part: in the demo game the seat with four ore-heavy cities
+  threw away fourteen ore.
 - **Production per turn**, as a chart. Solid is what the board paid, dotted in
   the same colour is what the pips through the buildings standing at each roll
   owed at fair odds, and both are running totals, so each line only climbs and
@@ -1748,6 +1755,18 @@ is paired with an effect size.
   fifty-four of them. The market on this page is dead because the bots all price
   like that, which is a finding about the bot rather than about the market, and it
   is written down in `analytics-backlog.md` where the bot work can find it.
+
+  Last of all, **what the offers were asking for**, resource by resource: cards
+  wanted less cards put up, so positive is a seat trying to buy that card and
+  negative a seat trying to sell it. This is the honest answer to a question the
+  backlog asked differently. "Who did each seat aim its offers at" cannot be asked
+  of these games at all: the generator only ever makes open offers, on purpose,
+  since addressing one multiplies the action space by the number of opponents for
+  nothing, so the count of addressed offers is nought for every seat and is kept
+  only because a human client may still make one. What *is* in an offer is the
+  useful question, and it reads across to the rest of the page: the seat that spent
+  the game trying to sell ore is the same seat that threw fourteen ore away to
+  sevens and had four cities making it.
 - **Board**, what this board dealt against what an average one deals. The discs
   are a fixed set laid on a fixed set of hexes, so the average is not a
   simulation: it is the mean pips of a disc times the hexes a resource has.
@@ -1763,7 +1782,23 @@ is paired with an effect size.
   expected more pips than one reaching two. The layout is the same on every
   board, so only the difference column is luck. The **a hex** column divides
   that out and is the figure to compare ports on, against the board's mean of
-  3.2 pips a hex. A row is named by its disc alone, in the port's own colour, as
+  3.2 pips a hex.
+
+  A third table asks **what kind of board this was**, which the pip tables cannot:
+  two boards can owe every resource the same pips and play completely differently if
+  one has its ore spread around the island and the other has all of it in a corner.
+  Neighbouring hexes making the same resource, against what a random deal of the
+  same tiles would be expected to produce; whether a six was dealt beside an eight,
+  which some rule sets forbid and this one does not; the best intersection on the
+  board with its numbers; how many intersections were worth planning a game around;
+  and the mean intersection, which is what the best one has to be read against.
+
+  The clumping expectation is exact rather than simulated, which the shape of the
+  problem allows: the adjacency graph is fixed, so its forty-two neighbouring pairs
+  can be counted, and for a shuffled set of tiles the chance any given pair matches
+  is the chance two tiles drawn without replacement are the same terrain. The demo
+  board comes out at four against an expected 5.9, so it was slightly less clumped
+  than average. A row is named by its disc alone, in the port's own colour, as
   the board and the opening name it; the resource beside it was the same thing
   said twice, and it is on the disc for anybody still learning the colours.
 - **Development cards**, each column how many of that card were drawn with how
@@ -1773,6 +1808,22 @@ is paired with an effect size.
   end: a card is drawn once and then either played or held, and a played card
   never goes back to the deck (R-8.10). The foot row is therefore the deck's own
   composition, which is a standing check on the whole table.
+
+  Under it, **how long each kind waited in hand**. The counts cannot say when a card
+  was played, and a militia played the turn after it was drawn is a different
+  decision from one held for forty turns: the first is a seven happening to
+  somebody, the second is a player waiting until the robber was worth moving. A play
+  is matched to the oldest unplayed card of its kind, since cards of a kind are
+  interchangeable and any other rule would be arbitrary in the same way while
+  reading worse. Cards still in hand at the end get their own column, because a card
+  held to the end is a decision too and a mean over played cards alone would quietly
+  drop it.
+
+  The turns are table turns rather than the holder's own, so in a four-player game
+  four is a card played at the first opportunity the rules allow (R-9.4). Every
+  militia in the demo game waited exactly four, which says the bot plays them the
+  moment it may; the two Road Building cards were never played at all and sat in hand
+  for a hundred and five turns.
 - **Building**, where each seat's cards went and what stopped them spending more.
   The ledger says a seat spent forty-six cards on building; roads, settlements,
   cities and development cards are four different decisions, and one number for
@@ -1795,6 +1846,23 @@ is paired with an effect size.
   sit in the hand waiting for a seven to take half of them. It is a real way to
   lose a game and an invisible one, since nothing in a result or a ledger leaves a
   mark where a player wanted to build and could not.
+
+  Two tables under it. **What the roads did**, because roads are the one thing on
+  the board with no score and no production, so a count of them says nothing at all:
+  two seats can build eight each and one of them has opened four places to live
+  while the other built into a wall. A road is worth the difference it makes, so the
+  difference is measured either side of the move that built it: spots it opened,
+  whether it lengthened the longest chain, and neither. The first two overlap,
+  because a road can do both, and only "neither" is exclusive. In the demo game the
+  seat that finished third built seven roads and opened nothing with any of them,
+  and spent thirteen percent of the game unable to place a settlement, which is the
+  same fact told twice.
+
+  And **three walls**, because being stuck is three different problems: a settlement
+  with nowhere legal to stand, a city with no settlement of your own left to
+  upgrade, a road with nowhere to go or none left in the box. Able to pay is half of
+  each, since a board with nowhere to build costs nothing to a seat that could not
+  have paid anyway.
 - **Opening**. The pips and resources columns are one: a row per resource, a
   hex per dot, so the cell says how much production the placement bought *and*
   what it bought, and a resource nobody can produce reads as the gap it is.
