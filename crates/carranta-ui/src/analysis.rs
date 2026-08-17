@@ -431,7 +431,43 @@ type Sampled = (
     Vec<[u32; MAX_PLAYERS]>,
     Vec<[u32; MAX_PLAYERS]>,
     Vec<[f64; MAX_PLAYERS]>,
+    Robber,
+    Hands,
 );
+
+/// One turn's worth of the two things read off the board rather than off the
+/// moves: where the robber is sitting, and how full every hand is.
+fn watch(
+    state: &carranta_core::state::State,
+    seats: usize,
+    robber: &mut Robber,
+    hands: &mut Hands,
+) {
+    use carranta_core::topology::{HEX_COUNT, hex_vertices};
+    /// A hand this size or smaller survives a seven (R-6.2).
+    const KEEP: u32 = 7;
+
+    robber.turns += 1;
+    hands.turns += 1;
+    let sitting = state.robber as usize;
+    if sitting < HEX_COUNT {
+        robber.dwell[sitting] += 1;
+        let corners = hex_vertices(state.robber);
+        for p in 0..seats {
+            // A robber costs a seat nothing unless it sits on something they
+            // built on. The desert needs no special case: nobody builds around a
+            // hex that pays nothing, so it falls out on its own.
+            if (state.settlements[p] | state.cities[p]) & corners != 0 {
+                robber.blocked[p] += 1;
+            }
+        }
+    }
+    for p in 0..seats {
+        if state.hand[p].iter().map(|n| u32::from(*n)).sum::<u32>() > KEEP {
+            hands.over[p] += 1;
+        }
+    }
+}
 
 fn series_of(saved: &Saved) -> Sampled {
     use carranta_core::action::Action;
@@ -451,6 +487,8 @@ fn series_of(saved: &Saved) -> Sampled {
     let mut cover = Cover::default();
     let mut score: Vec<[u32; MAX_PLAYERS]> = Vec::new();
     let mut engine: Vec<[f64; MAX_PLAYERS]> = Vec::new();
+    let mut robber = Robber::default();
+    let mut hands = Hands::default();
     // What the board would pay each seat on one roll, given the buildings
     // standing at that moment. The engine itself rather than what it earned:
     // read off the board, so no number of rolls or dice can move it.
@@ -518,6 +556,7 @@ fn series_of(saved: &Saved) -> Sampled {
             score.push(scored(&state));
             seen.push(visible(&state));
             engine.push(sized(&state));
+            watch(&state, seats, &mut robber, &mut hands);
         }
         playing |= matches!(state.phase, Phase::PreRoll);
     }
@@ -532,8 +571,10 @@ fn series_of(saved: &Saved) -> Sampled {
         score.push(scored(&state));
         seen.push(visible(&state));
         engine.push(sized(&state));
+        watch(&state, seats, &mut robber, &mut hands);
     }
-    (out, cover, score, seen, engine)
+    robber.spots_of(&state);
+    (out, cover, score, seen, engine, robber, hands)
 }
 
 /// How fast a seat's engine grew, fitted as a rate compounding turn by turn.
@@ -716,6 +757,269 @@ fn r_squared(pts: &[(f64, f64)]) -> f64 {
     (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
 }
 
+/// One thing that happened, and when.
+///
+/// Enough to answer "what was going on around turn ninety", which is the question
+/// every other chart on the page provokes and none of them can answer: a line
+/// steps up and nothing says why. Buildings, cards and the two tiles, which is
+/// everything that changes a score or an engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Event {
+    /// The turn it landed in, counting the way the turns table counts.
+    pub turn: u32,
+    pub seat: usize,
+    pub what: Happened,
+}
+
+/// The kinds of thing worth a mark on a timeline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Happened {
+    Settlement,
+    City,
+    /// A development card bought. What it turned out to be is the deck's
+    /// business and the card cards' business, not the timeline's.
+    Card,
+    /// Longest road or largest militia arriving. Two points changing hands, and
+    /// the only marks here that can also be lost.
+    Tile,
+}
+
+impl Happened {
+    /// A class for the mark, and a word for its tooltip.
+    ///
+    /// The classes are prefixed because the obvious names are taken and taking
+    /// them again is a bug that has now happened twice: `mark` is the header's
+    /// wordmark, and `tile` is the hex in the opening card, whose `width` and
+    /// `height` apply to an SVG rect as CSS and silently flattened every one of
+    /// these to nothing.
+    pub fn mark(self) -> (&'static str, &'static str) {
+        match self {
+            Happened::Settlement => ("beat-house", "a settlement"),
+            Happened::City => ("beat-city", "a city"),
+            Happened::Card => ("beat-card", "a development card"),
+            Happened::Tile => ("beat-tile", "a tile"),
+        }
+    }
+}
+
+/// Read the timeline off the moves.
+///
+/// The two tiles are not moves at all, they are consequences, so they are read
+/// by watching who holds them either side of every action rather than by looking
+/// for an action that grants them.
+fn events_of(saved: &Saved) -> Vec<Event> {
+    use carranta_core::action::Action;
+    use carranta_core::state::Phase;
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let mut out = Vec::new();
+    let mut turn = 0u32;
+    let mut playing = false;
+    let (mut road, mut militia) = (state.longest_road, state.largest_militia);
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        let by = state.to_act as usize;
+        if state.apply(action).is_err() {
+            break;
+        }
+        // Setup placements come before anybody has a turn, so they are turn one:
+        // the opening card is where they are really reported.
+        let at = turn.max(1);
+        let what = match action {
+            Action::BuildSettlement(_) | Action::PlaceSettlement(_) => Some(Happened::Settlement),
+            Action::BuildCity(_) => Some(Happened::City),
+            Action::BuyDev => Some(Happened::Card),
+            _ => None,
+        };
+        if let Some(what) = what {
+            out.push(Event {
+                turn: at,
+                seat: by,
+                what,
+            });
+        }
+        // A tile arriving is a change of holder, whoever's action caused it.
+        for (held, was) in [
+            (state.longest_road, &mut road),
+            (state.largest_militia, &mut militia),
+        ] {
+            if held != *was {
+                if let Some(now) = held {
+                    out.push(Event {
+                        turn: at,
+                        seat: now as usize,
+                        what: Happened::Tile,
+                    });
+                }
+                *was = held;
+            }
+        }
+        if playing && action == Action::EndTurn {
+            turn += 1;
+        }
+        if matches!(state.phase, Phase::PreRoll) && !playing {
+            playing = true;
+            turn = 1;
+        }
+    }
+    out
+}
+
+/// Where a game's wall-clock time went, by the kind of decision it went on.
+///
+/// The clock in a version 2 file is stamped per move, and the page only ever
+/// added it up per seat: a hundred and fifty turns of "twelve seconds each" and
+/// no way to ask what the twelve seconds were spent on. The recorded dimension
+/// was there and unused, which made it the cheapest gap on the page to close.
+///
+/// Time is charged to the move that *ends* the wait, not the one before it: the
+/// gap between two stamps is somebody deciding what to do next, and what they
+/// decided is the move that lands. The very first stamp measures from the deal,
+/// which is the setup thinking about its own first placement.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Spent {
+    /// Milliseconds and moves, one bucket a kind, in [`KINDS`] order.
+    pub by_kind: [(u32, u32); KINDS.len()],
+}
+
+/// The kinds a decision is charged to, in the order they are worth reading.
+pub const KINDS: [&str; 8] = [
+    "setup",
+    "rolling",
+    "building",
+    "development cards",
+    "trading",
+    "the robber",
+    "discarding",
+    "ending a turn",
+];
+
+impl Spent {
+    /// Every millisecond charged to something.
+    pub fn total(&self) -> u32 {
+        self.by_kind.iter().map(|(ms, _)| ms).sum()
+    }
+
+    /// Which bucket a move belongs in.
+    fn kind_of(action: &carranta_core::action::Action) -> usize {
+        use carranta_core::action::Action as A;
+        match action {
+            A::PlaceSettlement(_) | A::PlaceRoad(_) => 0,
+            A::Roll => 1,
+            A::BuildRoad(_) | A::BuildSettlement(_) | A::BuildCity(_) => 2,
+            A::BuyDev
+            | A::PlayMilitia
+            | A::PlayRoadBuilding
+            | A::PlayInvention(_)
+            | A::PlayMonopoly(_) => 3,
+            A::Trade { .. }
+            | A::ProposeTrade { .. }
+            | A::AcceptTrade { .. }
+            | A::WithdrawTrade { .. } => 4,
+            A::MoveRobber { .. } => 5,
+            A::Discard { .. } => 6,
+            A::EndTurn => 7,
+        }
+    }
+}
+
+/// Split a game's clock by what the time was spent deciding.
+///
+/// `None` for a game saved before there was a clock, which reads perfectly well
+/// and simply has nothing to say about time.
+fn spent_of(saved: &Saved) -> Option<Spent> {
+    if saved.times.is_empty() || saved.times.len() != saved.moves.len() {
+        return None;
+    }
+    let mut out = Spent::default();
+    let mut last = 0u32;
+    for (step, at) in saved.moves.iter().zip(&saved.times) {
+        let waited = at.saturating_sub(last);
+        last = *at;
+        // A refusal is a decision somebody took time over too, and it is a
+        // trading decision: it is an offer being turned down.
+        let kind = match step {
+            Step::Move(action) => Spent::kind_of(action),
+            Step::Passed { .. } => 4,
+        };
+        out.by_kind[kind].0 += waited;
+        out.by_kind[kind].1 += 1;
+    }
+    Some(out)
+}
+
+/// Where the robber sat, and who it sat on.
+///
+/// The sankey says who took cards from whom, which is the robber's *other* job.
+/// This is the blockade: a robber on a hex nobody is building on costs nobody
+/// anything, and a robber parked on the wheat 8 for thirty turns decides a game
+/// without ever stealing a card. The two are separate facts and only one of them
+/// was on the page.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Robber {
+    /// Turns spent on each hex, hex by hex.
+    pub dwell: [u32; carranta_core::topology::HEX_COUNT],
+    /// Turns spent on a hex touching each seat's buildings, which is the only
+    /// robber position that costs that seat anything.
+    pub blocked: [u32; MAX_PLAYERS],
+    /// Turns sampled, so a share has a denominator.
+    pub turns: usize,
+    /// The hexes it sat on, longest first.
+    pub spots: Vec<Spot>,
+}
+
+/// One hex the robber sat on, named the way a player would name it.
+///
+/// The number and what the hex makes, not the hex index: "the wheat 8" is a
+/// thing somebody remembers and "hex 11" is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spot {
+    pub number: u8,
+    pub resource: Option<usize>,
+    pub turns: u32,
+}
+
+impl Robber {
+    /// Where it sat, longest first, resolved against the board it sat on.
+    fn spots_of(&mut self, state: &carranta_core::state::State) {
+        let mut out: Vec<(usize, Spot)> = self
+            .dwell
+            .iter()
+            .enumerate()
+            .filter(|(_, turns)| **turns > 0)
+            .map(|(h, turns)| {
+                (
+                    h,
+                    Spot {
+                        number: state.number[h],
+                        resource: state.terrain[h].yields().map(|r| r as usize),
+                        turns: *turns,
+                    },
+                )
+            })
+            .collect();
+        // Longest first, and the hex index breaks a tie, so the answer is stable
+        // rather than whatever the sort happened to do with equal turns.
+        out.sort_by(|a, b| b.1.turns.cmp(&a.1.turns).then(a.0.cmp(&b.0)));
+        self.spots = out.into_iter().map(|(_, spot)| spot).collect();
+    }
+}
+
+/// How full each seat's hand got, turn by turn.
+///
+/// The ledger counts cards discarded, which is what a seven cost. This is the
+/// exposure that made it possible: a seat sitting on eight cards is holding a bet
+/// that the next seven belongs to somebody else, and the two facts read
+/// completely differently. Discarding nothing all game is either careful play or
+/// a quiet table, and only this tells them apart.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Hands {
+    /// Turns each seat ended holding more than the discard limit (R-6.2).
+    pub over: [u32; MAX_PLAYERS],
+    /// Turns sampled.
+    pub turns: usize,
+}
+
 /// How often the board paid each seat anything, turn by turn.
 ///
 /// The companion to [`Series`]: that follows how much a seat collected, this
@@ -799,6 +1103,46 @@ impl Trades {
             .iter()
             .filter(|d| d.seat == seat && d.with == counter)
             .count() as u32
+    }
+
+    /// Cards a seat handed over and cards it took back, across every trade it
+    /// was a party to.
+    ///
+    /// A deal is recorded from one side, so the other side's cards are the same
+    /// two hands read the other way round. Counting only the recorded side would
+    /// make every counterparty look like it never traded.
+    pub fn cards(&self, seat: usize) -> (u32, u32) {
+        let (mut gave, mut took) = (0, 0);
+        for d in &self.deals {
+            let sum = |h: &[u8; 5]| h.iter().map(|n| u32::from(*n)).sum::<u32>();
+            if d.seat == seat {
+                gave += sum(&d.gave);
+                took += sum(&d.took);
+            } else if d.with == seat {
+                gave += sum(&d.took);
+                took += sum(&d.gave);
+            }
+        }
+        (gave, took)
+    }
+
+    /// The same, restricted to trades between two particular seats.
+    ///
+    /// What one seat handed another across the game, which is the figure behind
+    /// "who fed the winner": a table can lose to the seat it kept trading with.
+    pub fn cards_between(&self, seat: usize, other: usize) -> (u32, u32) {
+        let (mut gave, mut took) = (0, 0);
+        for d in &self.deals {
+            let sum = |h: &[u8; 5]| h.iter().map(|n| u32::from(*n)).sum::<u32>();
+            if d.seat == seat && d.with == other {
+                gave += sum(&d.gave);
+                took += sum(&d.took);
+            } else if d.seat == other && d.with == seat {
+                gave += sum(&d.took);
+                took += sum(&d.gave);
+            }
+        }
+        (gave, took)
     }
 }
 
@@ -1168,6 +1512,14 @@ pub struct Study {
     /// the engine they had built by then, read off the board rather than off
     /// what it happened to pay.
     pub engine: Vec<[f64; MAX_PLAYERS]>,
+    /// Where the robber sat and who it sat on.
+    pub robber: Robber,
+    /// How exposed each hand was to a seven.
+    pub hands: Hands,
+    /// Where the clock went, by kind of decision, when there is a clock.
+    pub spent: Option<Spent>,
+    /// What happened and when, for the strip that anchors every other chart.
+    pub events: Vec<Event>,
     /// Who traded with whom, and at what counter.
     pub trades: Trades,
     /// Development cards still in each hand at the end, by kind. With what was
@@ -1222,7 +1574,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let board = board_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
-    let (series, cover, score, seen, engine) = series_of(saved);
+    let (series, cover, score, seen, engine, robber, hands) = series_of(saved);
     let trades = trades_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
@@ -1309,6 +1661,10 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         score,
         seen,
         engine,
+        robber,
+        hands,
+        spent: spent_of(saved),
+        events: events_of(saved),
         trades,
         dev_held,
         opening,

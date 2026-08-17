@@ -254,7 +254,8 @@ fn discs(numbers: &[u8]) -> String {
         let hot = *n == 6 || *n == 8;
         let _ = write!(
             out,
-            "<span class=\"disc{}\" data-tip=\"{n}, {ways} ways\">{n}</span>",
+            "<span class=\"disc{}\" data-tip=\"{n} comes up on {ways} rolls in \
+             36\">{n}</span>",
             if hot { " hot" } else { "" },
             ways = 6 - (i32::from(*n) - 7).abs(),
         );
@@ -813,6 +814,7 @@ fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
     }
     b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
+    b.push_str(&clock_split(study));
     b.push_str("</section>");
     b
 }
@@ -963,6 +965,475 @@ fn cost(v: f64) -> String {
     } else {
         format!("<span class=\"down\">-{v:.1}</span>")
     }
+}
+
+/// What happened and when: a lane a seat, a mark a thing.
+///
+/// Every chart on this page provokes the same question and none of them can
+/// answer it: a line steps up around turn ninety and nothing says why. This is
+/// the answer, on the same turn axis as the chart above it, so the two read
+/// together: settlements, cities, cards bought, and the two tiles arriving.
+///
+/// A strip rather than another line chart, because these are events and not
+/// quantities. Nothing is being measured up the page, so nothing pretends to be.
+fn timeline(study: &Study, who: &[String], seats: usize) -> String {
+    const W: f64 = 720.0;
+    const PAD: f64 = 36.0;
+    const LANE: f64 = 26.0;
+    const FOOT: f64 = 22.0;
+
+    let turns = study.score.len();
+    if study.events.is_empty() || turns < 2 || seats == 0 {
+        return String::new();
+    }
+    let h = LANE * seats as f64 + FOOT + 10.0;
+    let x = |turn: u32| {
+        let i = (turn.max(1) - 1) as f64;
+        PAD + (W - PAD * 2.0) * i / (turns - 1).max(1) as f64
+    };
+    let y = |seat: usize| 8.0 + LANE * seat as f64 + LANE / 2.0;
+
+    let mut b = format!(
+        "<div class=\"strip\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {h:.0}\" \
+         role=\"img\" aria-label=\"What each seat did, turn by turn\">"
+    );
+    // A rule a seat to hang the marks on, so an empty lane reads as a seat that
+    // built nothing rather than as a missing row.
+    for p in 0..seats {
+        let _ = write!(
+            b,
+            "<line class=\"lane\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{ly:.1}\" \
+             y2=\"{ly:.1}\"/>",
+            r = W - PAD,
+            ly = y(p),
+        );
+    }
+    let base = LANE * seats as f64 + 8.0;
+    let step = nice_step(turns);
+    let mut ticks: Vec<usize> = (0..turns).step_by(step).collect();
+    if ticks.last() != Some(&(turns - 1)) {
+        if ticks.last().is_some_and(|last| turns - 1 - last < step / 2) {
+            ticks.pop();
+        }
+        ticks.push(turns - 1);
+    }
+    for i in ticks {
+        let _ = write!(
+            b,
+            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base:.1}\" \
+             y2=\"{end:.1}\"/><text class=\"axis mid\" x=\"{tx:.1}\" \
+             y=\"{ly:.1}\">{n}</text>",
+            tx = x(i as u32 + 1),
+            end = base + 5.0,
+            ly = base + 18.0,
+            n = i + 1,
+        );
+    }
+
+    // The marks, and a tooltip a mark, in the layer over the drawing.
+    let mut tips = String::from("<div class=\"over\">");
+    let mut shape = 0;
+    for e in &study.events {
+        if e.seat >= seats {
+            continue;
+        }
+        let (class, said) = e.what.mark();
+        // A tile rides just above the lane rather than on it. It is not a
+        // building and it lands on the same turn as one often enough that on the
+        // line the two marks sat on top of each other.
+        let lift = if matches!(e.what, crate::analysis::Happened::Tile) {
+            8.0
+        } else {
+            0.0
+        };
+        let (cx, cy) = (x(e.turn), y(e.seat) - lift);
+        // Four shapes rather than four colours, since the colour is already
+        // saying which seat: a filled square is a building, the bigger one a
+        // city, a ring is a card bought, and a diamond is a tile changing hands.
+        let side = size(e.what);
+        let turned = matches!(e.what, crate::analysis::Happened::Tile);
+        let _ = write!(
+            b,
+            "<rect class=\"beat {class} f{p} k{shape}\" x=\"{:.1}\" y=\"{:.1}\" \
+             width=\"{side:.1}\" height=\"{side:.1}\" rx=\"{rx:.1}\"{spin}/>",
+            cx - side / 2.0,
+            cy - side / 2.0,
+            p = e.seat,
+            rx = match e.what {
+                crate::analysis::Happened::Card => side / 2.0,
+                // Sharp corners on the diamond, or it reads as a small square
+                // that somebody nudged.
+                crate::analysis::Happened::Tile => 0.0,
+                _ => 1.0,
+            },
+            spin = if turned {
+                format!(" transform=\"rotate(45 {cx:.1} {cy:.1})\"")
+            } else {
+                String::new()
+            },
+        );
+        tips.push_str(&over_tip(
+            shape,
+            cx,
+            cy,
+            W,
+            h,
+            &format!("Turn {}: {} took {said}", e.turn, who[e.seat]),
+        ));
+        shape += 1;
+    }
+    b.push_str("</svg>");
+    tips.push_str("</div>");
+    b.push_str(&tips);
+    b.push_str(&tip_rules(".strip", shape));
+    b.push_str("</div>");
+
+    // No names on the lanes. They needed an inset to fit, the inset pushed this
+    // drawing's turn axis out of step with the chart above it, and being read
+    // against that chart is the whole reason the strip exists. The legend between
+    // the two already says which colour is whom.
+    b.push_str(
+        "<div class=\"key shapes\">\
+         <span class=\"legend\"><span class=\"beat beat-house\"></span>settlement</span>\
+         <span class=\"legend\"><span class=\"beat beat-city\"></span>city</span>\
+         <span class=\"legend\"><span class=\"beat beat-card\"></span>card</span>\
+         <span class=\"legend\"><span class=\"beat beat-tile\"></span>tile</span></div>",
+    );
+    b.push_str("</div>");
+    b
+}
+
+/// How big a mark is, which is how much the thing it marks is worth.
+fn size(what: crate::analysis::Happened) -> f64 {
+    use crate::analysis::Happened;
+    match what {
+        Happened::Settlement => 7.0,
+        Happened::City => 10.0,
+        Happened::Card => 6.0,
+        Happened::Tile => 8.0,
+    }
+}
+
+/// Where the game's clock went, by the kind of decision it went on.
+///
+/// The card above says how long each seat took. This says what they were taking
+/// it over, which the file has recorded per move since format 2 and the page has
+/// never read. A table that spends a third of its game on the market is a
+/// different table from one that spends it on the robber.
+fn clock_split(study: &Study) -> String {
+    let Some(spent) = &study.spent else {
+        return String::new();
+    };
+    let total = spent.total();
+    let moves: u32 = spent.by_kind.iter().map(|(_, n)| n).sum();
+    if moves == 0 {
+        return String::new();
+    }
+    // A table of bots decides a whole game inside a few milliseconds, which is
+    // finer than the clock records. The counts still say what the game was made
+    // of; the time columns go blank rather than printing a column of noughts and
+    // inviting them to be read as findings.
+    const LEGIBLE: u32 = 1_000;
+    let timed = total >= LEGIBLE;
+
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "decisions",
+            "Moves of this kind, counting every seat's. A refusal counts as a \
+             trading decision, because that is what it is: an offer being turned \
+             down.",
+        ),
+        (
+            "share",
+            "How many of the game's decisions were of this kind. Not the same \
+             question as the time beside it: a kind can be most of the moves and \
+             almost none of the thinking.",
+        ),
+        (
+            "time",
+            "Wall clock from the previous move to this one, charged to the move \
+             that ends the wait rather than the one before it: the gap is \
+             somebody deciding what to do next, and what they decided is the move \
+             that lands. Blank for a game decided faster than the clock records, \
+             which is every game the bots play against each other.",
+        ),
+        (
+            "each",
+            "Time a decision of this kind took, on average. The interesting \
+             column when there is one: a kind can be a third of the clock \
+             because it is slow or because there are hundreds of it, and only \
+             this tells the two apart.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for (kind, (ms, n)) in crate::analysis::KINDS.iter().zip(&spent.by_kind) {
+        if *n == 0 {
+            continue;
+        }
+        b.push_str(&row(
+            &[
+                (*kind).to_string(),
+                n.to_string(),
+                format!("{:.0}%", 100.0 * f64::from(*n) / f64::from(moves)),
+                if timed { clock(*ms) } else { NONE.to_string() },
+                if timed {
+                    clock(ms / (*n).max(1))
+                } else {
+                    NONE.to_string()
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(&totals(&[
+        "the game".to_string(),
+        moves.to_string(),
+        NONE.to_string(),
+        if timed {
+            clock(total)
+        } else {
+            NONE.to_string()
+        },
+        if timed {
+            clock(total / moves.max(1))
+        } else {
+            NONE.to_string()
+        },
+    ]));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// A number of cards gained or lost, written with its sign and blank at nought.
+///
+/// Cards are whole things, so no decimal: the rating card's two places are for a
+/// quantity that genuinely has them.
+fn cards(v: f64) -> String {
+    if v.abs() < 0.5 {
+        return NONE.to_string();
+    }
+    format!(
+        "<span class=\"{}\">{v:+.0}</span>",
+        if v > 0.0 { "up" } else { "down" }
+    )
+}
+
+/// What the trading was worth, rather than how much of it there was.
+///
+/// The counts above say a seat traded eleven times. They cannot say whether it
+/// came out of those eleven ahead, what it paid, or which seat it spent the game
+/// feeding. Cards are the unit here, and every figure is derived from the list
+/// of deals the trades card already keeps, read from both sides: a deal is
+/// recorded once, from the offering seat, and counting only that side would make
+/// every counterparty look as though it had never traded.
+fn flows(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let tr = &study.trades;
+    if tr.deals.is_empty() || seats == 0 {
+        return String::new();
+    }
+    // Who to measure "fed" against. The winner, if there was one, since that is
+    // the question worth asking; otherwise nobody, and the column goes.
+    let winner = study
+        .report
+        .winner
+        .map(|w| w as usize)
+        .filter(|w| *w < seats);
+
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    let fed = winner.map(|w| format!("to {}", esc(&who[w])));
+    let mut heads = vec![
+        ("", ""),
+        (
+            "gave",
+            "Cards this seat handed over, across every trade it was a party to, \
+             with a person or with the supply.",
+        ),
+        ("took", "Cards it took back."),
+        (
+            "net",
+            "The difference. Trading with the supply always loses cards, since \
+             the supply charges two, three or four for one, so a seat that spent \
+             the game at the bank is deep in the red here and may still have \
+             played well: what it bought with them is the ledger's business.",
+        ),
+        (
+            "price",
+            "Cards handed over for each card taken back. One is an even swap \
+             with a person; four is the bank's own rate, and anything between is \
+             a mixture of the two.",
+        ),
+    ];
+    if let Some(f) = &fed {
+        heads.push((
+            f.as_str(),
+            "Cards handed to the seat that won, less cards taken back from them. \
+             Positive is a seat that fed the winner. A table can lose to the \
+             player it kept trading with, and this is the column that says so.",
+        ));
+    }
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    let (mut all_gave, mut all_took) = (0u32, 0u32);
+    for p in 0..seats {
+        let (gave, took) = tr.cards(p);
+        all_gave += gave;
+        all_took += took;
+        let mut cells = vec![
+            placed(p, &who[p], place[p]),
+            gave.to_string(),
+            took.to_string(),
+            cards(f64::from(took) - f64::from(gave)),
+            if took == 0 {
+                NONE.to_string()
+            } else {
+                format!("{:.1}", f64::from(gave) / f64::from(took))
+            },
+        ];
+        if let Some(w) = winner {
+            cells.push(if p == w {
+                NONE.to_string()
+            } else {
+                let (gave, took) = tr.cards_between(p, w);
+                cards(f64::from(gave) - f64::from(took))
+            });
+        }
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    // The two columns do not have to match, and where they do not is the
+    // interesting part: a trade between two people moves cards sideways, and a
+    // trade with the supply takes them out of the game. The gap is what the
+    // table paid the bank and the ports for the privilege.
+    let mut foot = vec![
+        "the table".to_string(),
+        all_gave.to_string(),
+        all_took.to_string(),
+        cards(f64::from(all_took) - f64::from(all_gave)),
+        NONE.to_string(),
+    ];
+    if winner.is_some() {
+        foot.push(NONE.to_string());
+    }
+    b.push_str(&totals(&foot));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// The robber as a blockade rather than as a thief.
+///
+/// The sankey above says who took cards from whom, which is the robber's other
+/// job and the noisier one. This is the quiet one: a robber parked on the wheat
+/// 8 for thirty turns decides a game without stealing a single card, and until
+/// now the page had no way to say so. Turns blockaded is the exposure; cards
+/// denied is what it cost, and comes from the decomposition card, so the two
+/// tables cannot disagree about the same robber.
+fn blockade(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let rb = &study.robber;
+    if rb.turns == 0 || seats == 0 {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "blockaded",
+            "Turns that ended with the robber sitting on a hex this seat had \
+             built on. Nothing to do with being robbed: this is the hex not \
+             paying, every roll, for as long as the piece sits there.",
+        ),
+        (
+            "share",
+            "How much of the game that was. A third here is a third of the game \
+             played a hex short.",
+        ),
+        (
+            "cards denied",
+            "What those turns cost, in cards, from the deviation card above. \
+             This is the robber column there, and the same figure by \
+             construction.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let turns = rb.blocked[p];
+        b.push_str(&row(
+            &[
+                placed(p, &who[p], place[p]),
+                if turns == 0 {
+                    NONE.to_string()
+                } else {
+                    turns.to_string()
+                },
+                if turns == 0 {
+                    NONE.to_string()
+                } else {
+                    format!("{:.0}%", 100.0 * f64::from(turns) / rb.turns as f64)
+                },
+                cost(study.production.decompose(p).robber_cost),
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+
+    // And where it actually sat, which is the sentence a player wants: the
+    // number, not the hex, because "the wheat 8" is a thing somebody remembers.
+    let spots: Vec<_> = rb.spots.iter().take(3).collect();
+    if spots.is_empty() {
+        return b;
+    }
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "turns",
+            "Turns the piece spent on this hex. One robber, so these count the \
+             same turns the table above splits between the seats it sat on.",
+        ),
+        ("share", "How much of the game it spent there."),
+    ]));
+    b.push_str("</thead><tbody>");
+    for spot in spots {
+        let name = match spot.resource {
+            Some(r) => format!(
+                "<span class=\"dot r{r}\"></span>{} {}",
+                RESOURCE_NAMES[r],
+                disc(spot.number)
+            ),
+            None => "the desert".to_string(),
+        };
+        b.push_str(&row(
+            &[
+                name,
+                spot.turns.to_string(),
+                format!("{:.0}%", 100.0 * f64::from(spot.turns) / rb.turns as f64),
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// One number, drawn as the board draws it.
+fn disc(n: u8) -> String {
+    if !(2..=12).contains(&n) {
+        return String::new();
+    }
+    format!(
+        "<span class=\"disc{}\" data-tip=\"{n} comes up on {ways} rolls in 36\">{n}</span>",
+        if n == 6 || n == 8 { " hot" } else { "" },
+        ways = 6 - (i32::from(n) - 7).abs(),
+    )
 }
 
 /// The score, turn by turn, under the table that reports the end of it.
@@ -2370,6 +2841,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     // Under the table, the same figures turn by turn: whether the game was ever
     // close is not in a final score, and it is the first thing anybody asks.
     b.push_str(&score_plot(study, &who, &place, seats));
+    // And what was happening while those lines moved, on the same turn axis.
+    b.push_str(&timeline(study, &who, seats));
     b.push_str("</section>");
 
     // ---- the turns ----------------------------------------------------------
@@ -2703,6 +3176,36 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         .collect::<Vec<_>>(),
         false,
     ));
+    // What made the discards possible, which is a different fact from what they
+    // cost: a seat that ended thirty turns holding eight cards was betting every
+    // one of them that the next seven belonged to somebody else.
+    if study.hands.turns > 0 {
+        b.push_str(&row(
+            &std::iter::once(format!(
+                "<span data-tip=\"{}\">turns over seven</span>",
+                esc(
+                    "Turns this seat ended holding more than seven cards, which \
+                     is the hand a seven takes half of (R-6.2). The discarded row \
+                     is what that cost; this is how long they were exposed to it. \
+                     Discarding nothing all game is careful play or a quiet \
+                     table, and only the two rows together say which."
+                )
+            ))
+            .chain((0..seats).map(|s| {
+                let over = study.hands.over[s];
+                if over == 0 {
+                    NONE.to_string()
+                } else {
+                    format!(
+                        "{over} <span class=\"worth\">({:.0}%)</span>",
+                        100.0 * f64::from(over) / study.hands.turns as f64
+                    )
+                }
+            }))
+            .collect::<Vec<_>>(),
+            false,
+        ));
+    }
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
 
@@ -2752,6 +3255,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     ));
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
+    b.push_str(&blockade(study, &who, &place, seats));
     b.push_str("</section>");
 
     // ---- the market ---------------------------------------------------------
@@ -2810,6 +3314,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         sum(&r.supply_trades),
     ]));
     b.push_str(T_CLOSE);
+    b.push_str(&flows(study, &who, &place, seats));
     b.push_str("</section>");
 
     // ---- development cards --------------------------------------------------
@@ -3483,6 +3988,34 @@ tbody tr.sub:hover { background: transparent; }
    and both of them want all of it. */
 .ring svg { display: block; width: 100%; height: auto; }
 .ring .frame { margin: 0 0 1rem; }
+/* ---- the timeline ----
+   A lane a seat and a mark a thing, on the same turn axis as the chart above it.
+   Events rather than quantities, so nothing is measured up the page and nothing
+   pretends to be: the marks differ in shape and size rather than in height. */
+.strip { position: relative; margin: 1rem 0 0; }
+.strip svg { display: block; width: 100%; height: auto; overflow: visible; }
+/* No inset: this drawing's turn axis has to sit under the chart above it, and a
+   margin here would put every mark a few turns off. */
+.lane { stroke: var(--border); stroke-width: 1; }
+/* Prefixed names throughout, because `mark` is the header's wordmark and `tile`
+   is the opening's hex, and an SVG rect takes CSS `width` and `height` over its
+   own attributes: reusing `tile` flattened every diamond here to nothing. */
+.beat-house, .beat-city { fill: currentColor; }
+.beat-card { fill: var(--card); stroke: currentColor; stroke-width: 1.5; }
+.beat-tile { fill: currentColor; stroke: var(--card); stroke-width: 1; }
+.strip .beat.f0 { color: var(--p0); } .strip .beat.f1 { color: var(--p1); }
+.strip .beat.f2 { color: var(--p2); } .strip .beat.f3 { color: var(--p3); }
+/* A key to the four shapes, drawn as the shapes themselves rather than named. */
+.key.shapes { color: var(--muted-foreground); }
+.legend { display: inline-flex; align-items: center; gap: .4em; }
+.legend .beat { display: inline-block; width: 9px; height: 9px; border-radius: 1.5px;
+                background: var(--muted-foreground); }
+.legend .beat-card { border-radius: 50%; background: var(--card);
+                     box-shadow: inset 0 0 0 1.5px var(--muted-foreground); }
+.legend .beat-house { width: 7px; height: 7px; }
+.legend .beat-city { width: 11px; height: 11px; }
+.legend .beat-tile { border-radius: 0; transform: rotate(45deg); }
+
 /* ---- the trail ----
    The two halves of an economy against each other, a point a quarter, joined so
    a seat is a path with a direction rather than a dot. */
@@ -3606,6 +4139,42 @@ mod tests {
         // And the thing §10.1 forbids is not on it.
         assert!(!html.contains("p-value ="), "no significance claim");
         assert!(html.contains("bits"), "an effect size instead");
+    }
+
+    #[test]
+    fn the_timeline_stands_under_the_score_it_explains() {
+        let g = played(4);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        // The strip is read against the chart above it, so the two turn axes have
+        // to be the same axis. Both drawings are laid out in the same coordinates
+        // and given the same box, so their tick positions come out identical, and
+        // this is what fails if either drifts.
+        let card = html
+            .split("</section>")
+            .next()
+            .expect("the result card is the first section");
+        let ticks = |from: &str| -> Vec<String> {
+            from.match_indices("class=\"axis mid\" x=\"")
+                .map(|(at, key)| {
+                    let rest = &from[at + key.len()..];
+                    rest[..rest.find('"').unwrap_or(0)].to_string()
+                })
+                .collect()
+        };
+        let (chart, strip) = card
+            .split_once("class=\"strip\"")
+            .expect("the card carries both drawings");
+        let (above, below) = (ticks(chart), ticks(strip));
+        assert!(above.len() >= 4, "the chart is labelled along its length");
+        assert_eq!(above, below, "the two axes are one axis");
+        // And the marks are prefixed, because the plain names belong to the
+        // header's wordmark and to the opening's hexes, and reusing either
+        // silently flattens every mark on the strip.
+        assert!(strip.contains("class=\"beat beat-"), "prefixed marks");
+        for taken in ["class=\"mark beat", "beat tile\""] {
+            assert!(!html.contains(taken), "{taken} collides with something");
+        }
     }
 
     #[test]

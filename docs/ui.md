@@ -1507,6 +1507,29 @@ is paired with an effect size.
   the finish line at ten while their visible line stops at eight, so the table was
   playing against a seat two points further along than it knew.
 
+  Under the chart, **what was happening while those lines moved**: a lane a seat,
+  a mark a thing, on the same turn axis. Every chart on this page provokes the
+  same question and none of them could answer it, since a line steps up around
+  turn ninety and nothing says why. Settlements, cities, cards bought, and the two
+  tiles arriving, which is everything that changes a score or an engine. Shapes
+  rather than colours for the four kinds, since the colour is already saying which
+  seat: a filled square is a settlement, a bigger one a city, a ring is a card
+  bought, and a diamond riding just above the lane is a tile changing hands,
+  lifted off the line because it lands on the same turn as a building often enough
+  that the two marks sat on top of each other.
+
+  No names on the lanes. They needed an inset to fit, the inset pushed the strip's
+  turn axis out of step with the chart above, and being read against that chart is
+  the whole reason the strip exists; the legend between the two already says which
+  colour is whom. A check measures both drawings and fails if their boxes are not
+  identical.
+
+  The class names there are prefixed `beat-`, which is not fussiness: `mark` is the
+  header's wordmark and `tile` is the opening card's hex, and an SVG rect takes
+  CSS `width` and `height` over its own attributes, so reusing `tile` flattened
+  every diamond on the strip to nothing at all. That is the second time a class
+  collision has silently eaten a drawing on this page.
+
   The **finish line** is drawn across at ten points, because "was it close" is
   read against the finish rather than against the top of the paper. Both this
   chart and the engine chart carry legends now, and the legends are also controls:
@@ -1519,6 +1542,20 @@ is paired with an effect size.
   same basis. Setup placements are left out: they come before anybody has a turn
   to take. Time and share appear only when the file has a clock in it, so a game
   saved before version 2 shows its turn counts and says nothing about time.
+  Beneath it, **where the clock went by kind of decision**: setup, rolling,
+  building, development cards, trading, the robber, discarding, ending a turn. The
+  file has stamped every move since format 2 and the page only ever added them up
+  per seat, which left "a hundred and fifty turns of twelve seconds" with no way
+  to ask what the twelve seconds were spent on. Time is charged to the move that
+  *ends* the wait rather than the one before it, since the gap between two stamps
+  is somebody deciding what to do next and the move that lands is what they
+  decided.
+
+  The decision counts carry the card on their own: two hundred and forty-nine
+  trading decisions against forty-five builds says what a game was made of. A
+  table of bots decides a whole game inside a few milliseconds, which is finer
+  than the clock records, so for those games the time columns are blank rather
+  than a column of noughts inviting somebody to read them as findings.
 - **Ratings**, which is the section this page exists for. Before, after, the
   change, and the total games each player has been rated on here, this one
   included. No totals row: before and after are positions rather than
@@ -1579,6 +1616,11 @@ is paired with an effect size.
   call it one card out and lose both figures. The §10.2 decomposition is not on
   this card: expected production is a counterfactual rather than a card that
   moved, and it belongs with the per-turn view rather than beside a ledger.
+  The ledger closes with two rows that are not card flows and belong to the same
+  hand: the biggest hand ever held, and **turns ended holding more than seven
+  cards**. The discarded row says what a seven cost; this says how long the seat
+  was exposed to it. Discarding nothing all game is careful play or a quiet table,
+  and only the two rows together say which.
 - **Production per turn**, as a chart. Solid is what the board paid, dotted in
   the same colour is what the pips through the buildings standing at each roll
   owed at fair odds, and both are running totals, so each line only climbs and
@@ -1646,6 +1688,17 @@ is paired with an effect size.
   above; this is who took them from whom, which a per-player column cannot say.
   With it, the robber's own counts: times moved, and robberies that found an
   empty hand.
+
+  Then **the robber as a blockade rather than as a thief**, which is its quieter
+  and often larger job: turns each seat ended with the piece sitting on a hex they
+  had built on, that as a share of the game, and what it cost in cards, taken from
+  the deviation card so the two cannot disagree about the same robber. A robber
+  parked on the wheat 8 for thirty turns decides a game without stealing a single
+  card, and the page had no way to say so. Under it, the hexes it sat on longest,
+  named the way a player names them: the resource and the number, because "the
+  wheat 8" is a thing somebody remembers and "hex 11" is not. In the demo game the
+  winner was blockaded for fifty-five percent of the turns, the most of anybody,
+  and won anyway.
 - **Trades**, as a chord: every party round a circle, each arc as long as their
   trades, and **one ribbon per trade** rather than one per pair, so a thick band
   is a run of deals you can count rather than a number you have to hover to
@@ -1661,6 +1714,18 @@ is paired with an effect size.
   three or two is a port. Beneath it, the counts, where a completed trade is
   counted for both sides so that column totals to twice the trades; the circle
   counts each one once.
+
+  And beneath that, **what the trading was worth** rather than how much of it
+  there was: cards given, cards taken, the difference, the price in cards handed
+  over for each card taken back, and net cards handed to the seat that won. The
+  counts above cannot say whether a seat came out of eleven trades ahead, what it
+  paid, or which seat it spent the game feeding. A deal is recorded once, from the
+  offering side, so every figure here is read from both sides or every
+  counterparty would look as though it had never traded. The given and taken
+  columns are *not* required to match, and the gap is the interesting part: a
+  trade between two people moves cards sideways, a trade with the supply takes
+  them out of the game, and the difference is what the table paid the bank and the
+  ports for the privilege.
 - **Board**, what this board dealt against what an average one deals. The discs
   are a fixed set laid on a fixed set of hexes, so the average is not a
   simulation: it is the mean pips of a disc times the hexes a resource has.
@@ -1799,7 +1864,9 @@ is paired with an effect size.
 Seat win rates were on this page and are not any more. They are a claim about
 many games, and a report on one game is the wrong place to make it; they belong
 on a page that reads the whole store, which is the cumulative statistics work
-still to come.
+still to come. That page's brief, and everything else the analytics do not answer
+yet, is written down in `analytics-backlog.md` rather than carried around in
+somebody's head.
 
 **Each seat is a rated player, not "the bot".** The three heuristics are the
 same player underneath, so their ratings should converge on each other, but a
