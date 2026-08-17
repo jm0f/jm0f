@@ -230,12 +230,41 @@ fn names(saved: &Saved, seats: usize) -> Vec<String> {
     (0..seats).map(|s| seat_name(s, &saved.name)).collect()
 }
 
-/// A name with where it finished, for places a badge cannot go.
+/// A name with where it finished, as plain text.
+///
+/// For tooltips and titles, which cannot hold markup. Anywhere the badge can
+/// go, [`placed`] puts it there instead.
 fn label(name: &str, place: Option<usize>) -> String {
     match place {
         Some(n) => format!("{name} {}", ordinal(n)),
         None => name.to_string(),
     }
+}
+
+/// A label inside a drawing, carrying the same markup a table row would.
+///
+/// A `foreignObject` rather than SVG text, so the name and its place badge are
+/// literally the page's own HTML: drawing the badge as a rect and a text would
+/// mean guessing at the width of a name to place it, and would drift from the
+/// tables the first time either changed.
+///
+/// `at` is where the label points from, and the box is hung off it accordingly,
+/// so a name to the left of a circle still ends at the rim.
+fn svg_label(x: f64, y: f64, at: &str, inner: &str) -> String {
+    const W: f64 = 132.0;
+    const H: f64 = 24.0;
+    let (left, align) = match at {
+        "end" => (x - W, "right"),
+        "mid" => (x - W / 2.0, "center"),
+        _ => (x, "left"),
+    };
+    format!(
+        "<foreignObject x=\"{left:.1}\" y=\"{top:.1}\" width=\"{W}\" height=\"{H}\">\
+         <div xmlns=\"http://www.w3.org/1999/xhtml\" class=\"svg-name\" \
+         style=\"text-align:{align}\"><span class=\"ink\">{inner}</span>\
+         </div></foreignObject>",
+        top = y - H / 2.0,
+    )
 }
 
 /// Who took from whom, drawn.
@@ -345,13 +374,16 @@ fn sankey(
                 b,
                 "<rect class=\"node n{s}\" x=\"{x}\" y=\"{y}\" width=\"{NODE}\" \
                  height=\"{h}\" rx=\"3\"/>\
-                 <text class=\"who end\" x=\"{tx}\" y=\"{ty}\">{name}</text>",
+                 {name}",
                 x = LEFT,
                 y = from[s].0,
                 h = from[s].1 - from[s].0,
-                tx = LEFT - 10.0,
-                ty = (from[s].0 + from[s].1) / 2.0 + 5.0,
-                name = esc(&label(&who[s], place[s])),
+                name = svg_label(
+                    LEFT - 10.0,
+                    (from[s].0 + from[s].1) / 2.0,
+                    "end",
+                    &placed(s, &who[s], place[s]),
+                ),
             );
         }
         if lost[s] > 0 {
@@ -359,13 +391,16 @@ fn sankey(
                 b,
                 "<rect class=\"node n{s}\" x=\"{x}\" y=\"{y}\" width=\"{NODE}\" \
                  height=\"{h}\" rx=\"3\"/>\
-                 <text class=\"who\" x=\"{tx}\" y=\"{ty}\">{name}</text>",
+                 {name}",
                 x = RIGHT - NODE,
                 y = to[s].0,
                 h = to[s].1 - to[s].0,
-                tx = RIGHT + 10.0,
-                ty = (to[s].0 + to[s].1) / 2.0 + 5.0,
-                name = esc(&label(&who[s], place[s])),
+                name = svg_label(
+                    RIGHT + 10.0,
+                    (to[s].0 + to[s].1) / 2.0,
+                    "start",
+                    &placed(s, &who[s], place[s]),
+                ),
             );
         }
     }
@@ -514,21 +549,17 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
         let name = match *party {
             w if w == Trades::BANK => "the bank".to_string(),
             w if w == Trades::PORT => "ports".to_string(),
-            w => label(&who[w], place[w]),
+            w => placed(w, &who[w], place[w]),
         };
-        let _ = write!(
-            b,
-            "<text class=\"who {anchor}\" x=\"{tx:.1}\" y=\"{ty:.1}\">{}</text>",
-            esc(&name),
-            // A name runs outwards from the rim, so which way it is anchored
-            // depends on where round the circle it sits. At the top and bottom
-            // neither end is outwards, and it is centred.
-            anchor = match centre.cos() {
-                c if c < -0.3 => "end",
-                c if c > 0.3 => "",
-                _ => "mid",
-            },
-        );
+        // A name runs outwards from the rim, so which way it is hung depends on
+        // where round the circle it sits. At the top and bottom neither end is
+        // outwards, and it is centred.
+        let at = match centre.cos() {
+            c if c < -0.3 => "end",
+            c if c > 0.3 => "start",
+            _ => "mid",
+        };
+        b.push_str(&svg_label(tx, ty, at, &name));
     }
     b.push_str("</svg></div>");
     b
@@ -610,7 +641,11 @@ fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
 struct Curve {
     /// The colour class, shared by the solid line and the dotted one.
     colour: String,
+    /// Plain, for the titles and the per-turn tooltip, which cannot hold
+    /// markup.
     name: String,
+    /// The same thing with its place badge, for the legend, which can.
+    badge: String,
     actual: Vec<f64>,
     owed: Vec<f64>,
 }
@@ -663,6 +698,7 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
         .map(|p| Curve {
             colour: format!("f{p}"),
             name: label(&who[p], place[p]),
+            badge: placed(p, &who[p], place[p]),
             actual: (0..s.turns())
                 .map(|i| f64::from(s.actual[i][p].iter().sum::<u32>()))
                 .collect(),
@@ -687,6 +723,7 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
             .map(|(res, name)| Curve {
                 colour: format!("r{res}"),
                 name: (*name).to_string(),
+                badge: (*name).to_string(),
                 actual: (0..s.turns())
                     .map(|i| f64::from(s.actual[i][p][res]))
                     .collect(),
@@ -963,7 +1000,8 @@ fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize, table: &str) 
             "<input type=\"checkbox\" id=\"k{view}-{k}\" checked>\
              <label for=\"k{view}-{k}\"><span class=\"swatch {colour}\"></span>{name}</label>",
             colour = c.colour,
-            name = esc(&c.name),
+            // Already markup: a name with its place badge, as a table writes it.
+            name = c.badge,
         );
     }
     b.push_str("</div>");
@@ -1756,9 +1794,15 @@ tbody tr.sub:hover { background: transparent; }
 .flow svg { display: block; width: 100%; height: auto; margin: 0 0 1rem; }
 .ribbon { opacity: .45; }
 .ribbon:hover { opacity: .8; }
-.who { font: 500 13px Figtree, system-ui, sans-serif; fill: var(--foreground); }
-.who.end { text-anchor: end; }
-.who.mid { text-anchor: middle; }
+/* A name inside a drawing, which is the page's own markup in a foreignObject
+   so it cannot drift from the same name in a table. */
+/* The box is a fixed width hung off the anchor, so the text is what has to sit
+   inside the drawing; `ink` is what a check can measure. */
+.svg-name { font: 500 13px/24px Figtree, system-ui, sans-serif;
+            color: var(--foreground); white-space: nowrap; }
+.svg-name .ink { display: inline-flex; align-items: center; gap: .4em; }
+/* The colour is already the node it labels; a dot beside it says it twice. */
+.svg-name .dot, .key .dot { display: none; }
 .ribbon.f0, .chord.f0 { fill: var(--p0); } .ribbon.f1, .chord.f1 { fill: var(--p1); }
 .ribbon.f2, .chord.f2 { fill: var(--p2); } .ribbon.f3, .chord.f3 { fill: var(--p3); }
 .node.n0, .rim.n0 { fill: var(--p0); } .node.n1, .rim.n1 { fill: var(--p1); }
