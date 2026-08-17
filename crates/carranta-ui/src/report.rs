@@ -336,17 +336,19 @@ fn label(name: &str, place: Option<usize>) -> String {
 /// so a name to the left of a circle still ends at the rim.
 fn svg_label(x: f64, y: f64, at: &str, inner: &str) -> String {
     const W: f64 = 132.0;
-    const H: f64 = 24.0;
+    // Tall enough for the place badge. A `foreignObject` clips whatever leaves
+    // it, and the first draft was a 24px box holding a pill that needed more,
+    // so every badge in every drawing lost its top and bottom edge.
+    const H: f64 = 38.0;
     let (left, align) = match at {
-        "end" => (x - W, "right"),
-        "mid" => (x - W / 2.0, "center"),
-        _ => (x, "left"),
+        "end" => (x - W, "to-end"),
+        "mid" => (x - W / 2.0, "to-mid"),
+        _ => (x, "to-start"),
     };
     format!(
         "<foreignObject x=\"{left:.1}\" y=\"{top:.1}\" width=\"{W}\" height=\"{H}\">\
-         <div xmlns=\"http://www.w3.org/1999/xhtml\" class=\"svg-name\" \
-         style=\"text-align:{align}\"><span class=\"ink\">{inner}</span>\
-         </div></foreignObject>",
+         <div xmlns=\"http://www.w3.org/1999/xhtml\" class=\"svg-name {align}\">\
+         <span class=\"ink\">{inner}</span></div></foreignObject>",
         top = y - H / 2.0,
     )
 }
@@ -882,20 +884,26 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
     b.push_str(T_OPEN);
     b.push_str("<thead>");
     let mut heads = vec![("", "")];
-    const QUARTERS: [(&str, &str); 4] = [
-        ("first quarter", "Turns 1 to a quarter of the way in."),
-        ("second", "The second quarter of the game's turns."),
-        ("third", "The third."),
-        ("last quarter", "The last quarter, up to the winning turn."),
-    ];
-    heads.extend(QUARTERS.iter().map(|(n, w)| (*n, *w)));
+    let cut = |k: usize| (s.turns() * k).div_ceil(4).min(s.turns()).saturating_sub(1);
+    // Named alike and carrying the turns they cover, since "the third quarter"
+    // of a hundred and fifty turns is not a span anybody holds in their head.
+    let spans: Vec<String> = (0..4)
+        .map(|k| {
+            let from = if k == 0 { 1 } else { cut(k) + 2 };
+            format!(
+                "{} quarter<span class=\"range\">turns {from} to {}</span>",
+                ordinal(k + 1),
+                cut(k + 1) + 1,
+            )
+        })
+        .collect();
+    heads.extend(spans.iter().map(|s| (s.as_str(), "")));
     heads.push((
         "whole game",
         "The four quarters together, which is the luck column above.",
     ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
-    let cut = |k: usize| (s.turns() * k).div_ceil(4).min(s.turns()).saturating_sub(1);
     for p in 0..seats {
         let mut cells = vec![placed(p, &who[p], place[p])];
         for k in 0..4 {
@@ -1811,12 +1819,16 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ));
     }
     b.push_str("</tbody>");
+    // Whole numbers across this row, because it is exact: every hex times the
+    // mean pips of a disc is every pip on the board, so the expectation is the
+    // total and the difference is nought. A decimal point here would suggest a
+    // rounding that is not happening.
     b.push_str(&totals(&[
         "the land".to_string(),
         bd.hexes.iter().sum::<u32>().to_string(),
         bd.pips.iter().sum::<u32>().to_string(),
-        format!("{:.1}", (0..5).map(|r| bd.expected(r)).sum::<f64>()),
-        format!("{:+.1}", 0.0),
+        format!("{:.0}", (0..5).map(|r| bd.expected(r)).sum::<f64>()),
+        "0".to_string(),
     ]));
     b.push_str(T_CLOSE);
 
@@ -1912,8 +1924,8 @@ pub fn page(saved: &Saved, study: &Study) -> String {
              cannot produce at all.",
         ),
         (
-            "a turn",
-            "The same pips as cards a turn at fair odds, which is the unit \
+            "per turn",
+            "The same pips as cards per turn at fair odds, which is the unit \
              somebody plays in. A pip is a thirty-sixth of a card.",
         ),
         (
@@ -2055,6 +2067,8 @@ th, td { text-align: right; padding: .7em .9em;
    line, and breaking them makes a row twice as tall for nothing. */
 th:first-child, td:first-child { text-align: left; white-space: nowrap; }
 thead th { font-weight: 500; color: var(--muted-foreground); white-space: nowrap; }
+/* Which turns a column covers, under its name. */
+.range { display: block; font-weight: 400; font-size: 11px; opacity: .75; }
 tbody tr { transition: background .12s ease; }
 tbody tr:hover { background: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
@@ -2096,10 +2110,13 @@ tfoot tr:hover { background: transparent; }
 .tile .on.r2 { fill: #8DBE4A; } .tile .on.r3 { fill: #E2A32B; }
 .tile .on.r4 { fill: #5C6B78; }
 .pips { display: inline-flex; flex-direction: column; gap: 2px; }
-.pip-row { display: flex; justify-content: flex-end; gap: 2px; min-height: 15px;
-           align-items: center; }
+/* One height for both columns, so a resource's hexes and its rate sit on the
+   same line. Left to themselves a row of tiles and a row of text are different
+   heights and the two columns drift apart down the cell. */
+.pip-row { display: flex; justify-content: flex-end; align-items: center;
+           gap: 2px; height: 18px; }
 .pips.rates .pip-row { font-variant-numeric: tabular-nums; font-size: 13px;
-                       color: var(--muted-foreground); }
+                       line-height: 18px; color: var(--muted-foreground); }
 /* Numbers and ports as the board draws them: a disc with the figure on it, and
    six and eight in the red everybody looks for. */
 .discs { display: inline-flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; }
@@ -2132,8 +2149,11 @@ tbody tr.sub:hover { background: transparent; }
    so it cannot drift from the same name in a table. */
 /* The box is a fixed width hung off the anchor, so the text is what has to sit
    inside the drawing; `ink` is what a check can measure. */
-.svg-name { font: 500 13px/24px Figtree, system-ui, sans-serif;
+.svg-name { display: flex; align-items: center; height: 100%;
+            font: 500 13px/1 Figtree, system-ui, sans-serif;
             color: var(--foreground); white-space: nowrap; }
+.svg-name.to-end { justify-content: flex-end; }
+.svg-name.to-mid { justify-content: center; }
 .svg-name .ink { display: inline-flex; align-items: center; gap: .4em; }
 /* The colour is already the node it labels; a dot beside it says it twice. */
 .svg-name .dot, .key .dot { display: none; }
