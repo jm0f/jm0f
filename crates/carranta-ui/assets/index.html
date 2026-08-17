@@ -963,6 +963,14 @@
      of them would be true. */
   .bigClock.quiet { color: var(--dim); }
 
+  /* A table waiting for people. The board is dealt and visible behind it, which
+     is the point: what you are waiting for is a game you can already see. */
+  .waitingRoom { grid-column: 2; grid-row: 2; display: flex; align-items: center;
+                 justify-content: center; gap: 1em; flex-wrap: wrap; }
+  .waitingRoom .said { color: var(--dim); }
+  body:not(.waiting) .waitingRoom { display: none; }
+  body.waiting .dockCell { display: none; }
+
   /* Watching, not playing. Everything private in the view is already nought,
      so nothing here is hiding information: this hides the controls for a seat
      the reader does not have, which would otherwise sit there refusing. */
@@ -1264,6 +1272,22 @@
   </div>
 </header>
 
+<!-- Sitting down at somebody else's table, docs/ui.md §16. Not a lobby: the
+     table is already dealt and the board is behind this. All it asks is the one
+     thing the table does not know, which is what to call you. -->
+<div class="lobby" id="sitDown" hidden>
+  <div class="lobbyCard panel" style="width: min(420px, 100%)">
+    <h1 class="lobbyTitle" id="sitTitle">Take a seat</h1>
+    <p class="lobbyLead" id="sitLead"></p>
+    <div class="field">
+      <span class="fieldLabel">Your name</span>
+      <input id="sitName" class="seed" type="text" maxlength="24" autocomplete="nickname">
+    </div>
+    <button id="sitGo" class="btn-primary btn-block" style="margin-top:1.2em">Sit down</button>
+    <button id="sitWatch" class="btn btn-block" style="margin-top:.6em">Just watch</button>
+  </div>
+</div>
+
 <!-- The lobby, docs/ui.md §8, served at `/lobby`. A screen before the game
      rather than a row of
      dropdowns above it: the settings get room to say what they do, and the
@@ -1473,6 +1497,9 @@
   <!-- Everything you do, in one place under the board, docs/ui.md §3. A card
        the width of the board, not a bar the width of the window: your hand and
        the actions belong to the game, and the frame should say so. -->
+  <!-- What sits where the dock does while the table is still filling up. -->
+  <div class="waitingRoom panel" id="waitingRoom" hidden></div>
+
   <div class="dockCell">
   <footer class="dock panel">
   <!-- The composer, docked to the dock: same width, same height, sitting
@@ -2261,6 +2288,12 @@ function render() {
   // view they were sent, so the only thing left to do is not offer them
   // controls for a seat they do not have.
   document.body.classList.toggle('watching', watching(v));
+  // A table still filling up is a different screen from one being played: no
+  // move can be made until the seats are settled, so the only thing on offer is
+  // the one that settles them.
+  document.body.classList.toggle('waiting', !v.started && v.seatsFree > 0);
+  offerASeat(v);
+  renderWaiting(v);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.title = `${turn} · Carranta`;
   document.getElementById('note').textContent = v.note || '';
@@ -2393,7 +2426,10 @@ const BOT_NAMES = ['Ada', 'Bram', 'Ines', 'Odd'];
 // else is the house bot, which does have a name.
 const seatName = (v, s) => {
   if (s === v.you) return v.youName || 'you';
-  if ((v.people || []).includes(s)) return `Player ${s + 1}`;
+  // What the seat is called, if anybody said. A seat with nobody in it has no
+  // name of its own and gets the house bot's, which is this page's to give.
+  const said = (v.names || [])[s];
+  if (said) return said;
   return BOT_NAMES[s];
 };
 // Whether anybody is at the keyboard for this page, or it is being watched.
@@ -3544,6 +3580,36 @@ function renderLobby() {
   start.textContent = short === 1
     ? 'Deal, and hold a seat'
     : short ? `Deal, and hold ${short} seats` : 'Deal the board';
+}
+
+// What a table waiting for people says, and the one thing its host can do.
+function renderWaiting(v) {
+  const box = document.getElementById('waitingRoom');
+  box.hidden = v.started || v.seatsFree === 0;
+  if (box.hidden) return;
+  box.textContent = '';
+  const said = document.createElement('span');
+  said.className = 'said';
+  said.textContent = v.seatsFree === 1
+    ? 'Waiting for one more player. Share this table\u2019s link.'
+    : `Waiting for ${v.seatsFree} more players. Share this table\u2019s link.`;
+  box.appendChild(said);
+  const copy = document.createElement('button');
+  copy.className = 'btn';
+  copy.textContent = 'Copy link';
+  copy.onclick = (e) => copyInto(e.target, location.origin + location.pathname);
+  box.appendChild(copy);
+  // Only the host's to press: everybody else at the table is waiting for the
+  // same person they are, and one of them deciding for all of them is a
+  // different rule than this one.
+  if (v.youDealt) {
+    const go = document.createElement('button');
+    go.className = 'btn-primary';
+    go.textContent = v.seatsFree === 1 ? 'Start with a bot' : 'Start with bots';
+    go.onclick = () => fetch(api('/api/start'), { method: 'POST' })
+      .then(() => load(api('/api/state')));
+    box.appendChild(go);
+  }
 }
 
 function openLobby() {
@@ -4732,6 +4798,40 @@ const LOBBY_ONLY = GAME === 'lobby';
       .forEach((n) => n.remove());
   }
 }
+
+// The table is short of people, and this reader is not in a seat. Ask them once
+// whether they want one, because the door closes on the first move: after that
+// the only way into a seat is to have been in it, and a page that quietly let
+// them watch would have spent their one chance for them.
+function offerASeat(v) {
+  const box = document.getElementById('sitDown');
+  const wanted = !v.started && v.you < 0 && v.seatsFree > 0 && v.winner === null;
+  if (!wanted || sitAsked) { if (!wanted) box.hidden = true; return; }
+  sitAsked = true;
+  document.getElementById('sitLead').textContent = v.seatsFree === 1
+    ? 'One seat at this table is still free. The game has not started yet.'
+    : `${v.seatsFree} seats at this table are still free. The game has not started yet.`;
+  const name = document.getElementById('sitName');
+  name.value = localStorage.getItem('carranta.name') || '';
+  box.hidden = false;
+  name.focus();
+}
+let sitAsked = false;
+
+document.getElementById('sitGo').onclick = async () => {
+  const name = (document.getElementById('sitName').value || '').trim();
+  if (name) localStorage.setItem('carranta.name', name);
+  await fetch(api('/api/sit'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ name }),
+  });
+  document.getElementById('sitDown').hidden = true;
+  load(api('/api/state'));
+};
+document.getElementById('sitWatch').onclick = () => {
+  document.getElementById('sitDown').hidden = true;
+};
 
 // Straight to the board. A fresh board used to open the lobby on top of itself,
 // because arriving at one meant the server had dealt it for you and nobody had

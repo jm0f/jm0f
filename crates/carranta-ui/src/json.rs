@@ -92,6 +92,22 @@ impl Json {
         self
     }
 
+    /// An array of strings, each escaped the way `str` escapes one.
+    pub fn strs<'a>(&mut self, k: &str, v: impl IntoIterator<Item = &'a str>) -> &mut Self {
+        self.key(k);
+        self.out.push('[');
+        let mut first = true;
+        for t in v {
+            if !first {
+                self.out.push(',');
+            }
+            first = false;
+            escape(&mut self.out, t);
+        }
+        self.out.push(']');
+        self
+    }
+
     /// An array whose elements are written by a closure, one call per element.
     pub fn array<T>(
         &mut self,

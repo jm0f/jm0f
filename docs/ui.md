@@ -2355,15 +2355,29 @@ seat with nothing being asked of it has no list at all.
 
 ### Joining
 
-**Opening a table with a chair free is joining it.** No button, no lobby to wait
-in, no ready-check, because there is nothing left to decide once you have arrived
-at a table with a seat going. The chair is yours from that moment and the bots
-stop playing it.
+**A table with an open chair has not started.** That is the whole reason the
+state exists. Joining a game already in progress means being handed whatever a
+bot built for you over forty turns, which is not joining a game; letting people
+in only before the first move is the difference between a table filling up and a
+table being walked into.
 
-**An open seat is played by the house bot until somebody takes it.** The rules
-need every seat to move, and a game that waits for a stranger before it starts is
-a game nobody plays. So a table with an open chair is a game in progress, and
-joining is sitting down at one, not starting one.
+So the first move is the door closing, and nothing can move until the seats are
+settled. A table waiting for people shows the board it was dealt, says how many
+it is short, and offers its link. The host, and only the host, can give up on the
+empty chairs and hand them to the house bot: everybody else at the table is
+waiting for the same person they are, and one of them deciding for all of them
+would be a different rule.
+
+**Sitting down is deliberate, and carries a name.** Opening the table is not
+joining it. A reader with no seat at a table still filling up is asked once
+whether they want one, because their one chance closes at the first move and a
+page that quietly let them watch would have spent it for them. What it asks is
+the only thing the table does not already know: what to call them.
+
+**Coming back is by key, and always allowed.** A seat you were in is yours
+whatever has happened since, including the server restarting. The rule is that
+you cannot take a *new* seat in a game under way; nothing stops you returning to
+your own.
 
 **A full table is somewhere to watch.** Somebody with no seat gets the
 spectator's fog, which is the public position and nobody's hand (P-6). It is
@@ -2373,8 +2387,10 @@ holding is a hand of nothing. The page marks itself as watching and puts the
 controls away, because they would be controls for a seat the reader does not
 have.
 
-**The seating is written down** (format 5, `chairs`): a person's key, `bot`, or
-`open`, in seat order. So a restart puts everybody back in the chair they were
+**The seating is written down** (format 6, a `chair` line per seat): a person's
+key and their name, or `bot`, or `open`, in seat order. One line each because a
+name is somebody else's text and has spaces and commas in it, so everything after
+the first word is the name and there is nothing to escape. So a restart puts everybody back in the chair they were
 in, and a game you were invited to is on *your* home page as well as the host's,
 because the chairs say you played it and the dealer's key alone never could.
 
@@ -2383,20 +2399,25 @@ page that is not quiet: it is the only thing there you can be too late for. The
 action reads **Sit down** for a chair going, **Back to it** for a table you are
 already at, and a quiet **Watch** for a full one.
 
+**Every seat has a name.** It used to be one name, the host's, because there was
+one person. A name belongs to a seat now: the host's comes from the lobby, a
+joiner's from the card that asks for it, and both are written down and come back
+with the table. A seat nobody is in has no name here at all, because the page
+names the house bot from its own list and a second opinion about it would be one
+too many. Somebody who gives no name gets *Player 2*, since a table has to be
+able to say whose turn it is.
+
 ### What is still missing
 
-- **Names.** A second person is *Player 2*, because the file records one name,
-  the host's. Calling them Bram because seat two is usually a bot would be a
-  small lie told every turn, so the seat says what is known about it.
 - **Leaving.** A chair, once taken, is taken: there is no standing up, and no
   timeout that gives a seat back to the table. A person who closes the tab
   freezes their seat until the turn clock forfeits it, which the clock will do
   move by move but not to the point of handing the seat back.
-- **Waiting to start.** A table starts the moment it is dealt, so somebody who
-  joins on turn forty joins a game already in progress, holding whatever the bot
-  built for them. That is the honest consequence of an open seat being played
-  meanwhile, and it is the right trade while a table is more likely to be waiting
-  for nobody than for somebody.
+- **A table waiting for nobody.** A host who deals a table with open chairs and
+  walks away leaves it holding a seat for a person who is not coming. Nothing
+  cleans that up: no timer fills the chairs, and only the host can. The table
+  falls off the end of the sixteen eventually, which is a way for it to stop
+  existing rather than a way for it to be resolved.
 
 ---
 

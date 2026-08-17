@@ -26,7 +26,7 @@ use carranta_core::action::Illegal;
 
 use crate::game::{Clock, DEFAULT_DISCARD_SECS, Pace, Refused, Session};
 use crate::json;
-use crate::store::{Saved, Setup, Store, game_id, is_game_id};
+use crate::store::{Chair as SavedChair, Saved, Setup, Store, game_id, is_game_id};
 use crate::view;
 
 const PAGE: &str = include_str!("../assets/index.html");
@@ -176,9 +176,9 @@ fn saved_of(t: &Table) -> Saved {
                 .chairs
                 .iter()
                 .map(|c| match c {
-                    Chair::Bot => "bot".to_string(),
-                    Chair::Open => "open".to_string(),
-                    Chair::Taken(key) => key.clone(),
+                    Chair::Bot => SavedChair::bot(),
+                    Chair::Open => SavedChair::open(),
+                    Chair::Taken { key, name } => SavedChair::person(key, name),
                 })
                 .collect(),
         },
@@ -192,13 +192,26 @@ fn saved_of(t: &Table) -> Saved {
 enum Chair {
     /// The house bot plays it.
     Bot,
-    /// Waiting for somebody. The table plays on without it, because the rules
-    /// need every seat to move, so an open seat is played by a bot until it is
-    /// taken and by the person the moment it is: what "open" means is that the
-    /// seat is *available*, not that the game stops.
+    /// Waiting for somebody, and holding the game up until they arrive or the
+    /// host gives up on them.
+    ///
+    /// A table with an open chair has not started. That is the whole reason the
+    /// state exists: joining a game already in progress means being handed
+    /// whatever a bot built for you, which is not joining a game, and letting
+    /// people in only before the first move is the difference between a table
+    /// filling up and a table being walked into.
     Open,
-    /// A person, by the key their browser was handed.
-    Taken(String),
+    /// A person, by the key their browser was handed and the name they gave.
+    Taken { key: String, name: String },
+}
+
+impl Chair {
+    fn key(&self) -> Option<&str> {
+        match self {
+            Chair::Taken { key, .. } => Some(key),
+            _ => None,
+        }
+    }
 }
 
 /// One game in memory, and the name it answers to.
@@ -215,13 +228,17 @@ struct Table {
 
 impl Table {
     /// Which seat this visitor is playing, if any.
+    ///
+    /// By key, so coming back to a game is the same operation as never having
+    /// left it: a person who was in a seat when the game started is in it still,
+    /// whatever the server has done in between.
     fn seat_of(&self, player: &str) -> Option<u8> {
         if player.is_empty() {
             return None;
         }
         self.chairs
             .iter()
-            .position(|c| *c == Chair::Taken(player.to_string()))
+            .position(|c| c.key() == Some(player))
             .map(|i| i as u8)
     }
 
@@ -243,12 +260,27 @@ impl Table {
     /// The session is the one that has to know, because it is what stops the
     /// bots and hands out the choices. Called after anybody sits down, and the
     /// only place the two representations are brought into line.
+    /// Tell the session what each seat is called.
+    ///
+    /// The other half of `seat_the_people`, and needed for the same reason: the
+    /// chairs are the server's record of who is at the table, and the session is
+    /// what the view is rendered from. A table taken up again had its people
+    /// back in their seats and everybody called nothing.
+    fn name_the_seats(&mut self) {
+        for (i, c) in self.chairs.iter().enumerate() {
+            if let Chair::Taken { name, .. } = c {
+                let (seat, name) = (i as u8, name.clone());
+                self.session.name_seat(seat, &name);
+            }
+        }
+    }
+
     fn seat_the_people(&mut self) {
         let people: Vec<u8> = self
             .chairs
             .iter()
             .enumerate()
-            .filter(|(_, c)| matches!(c, Chair::Taken(_)))
+            .filter(|(_, c)| matches!(c, Chair::Taken { .. }))
             .map(|(i, _)| i as u8)
             .collect();
         self.session.seat_people(&people);
@@ -346,7 +378,7 @@ impl Server {
             .filter(|g| {
                 !live.contains(&g.id)
                     && !player.is_empty()
-                    && (g.by == player || g.setup.chairs.iter().any(|c| c == player))
+                    && (g.by == player || g.setup.chairs.iter().any(|c| c.who == player))
             })
             .collect();
         crate::home::page(&open, &mine)
@@ -418,7 +450,7 @@ impl Server {
             session,
             dealt: now(),
             by: player.to_string(),
-            chairs: chairs_from(query, seats, player),
+            chairs: chairs_from(query, seats, player, &name),
         };
         table.seat_the_people();
         let id = self.add(table);
@@ -565,14 +597,18 @@ impl Server {
                 .setup
                 .chairs
                 .iter()
-                .map(|c| match c.as_str() {
+                .map(|c| match c.who.as_str() {
                     "open" => Chair::Open,
                     "bot" => Chair::Bot,
-                    key => Chair::Taken(key.to_string()),
+                    key => Chair::Taken {
+                        key: key.to_string(),
+                        name: c.name.clone(),
+                    },
                 })
                 .collect(),
         };
         table.seat_the_people();
+        table.name_the_seats();
         self.add(table);
         true
     }
@@ -589,24 +625,80 @@ impl Server {
     /// Returns which seat they are in, if any. Somebody who arrives at a full
     /// table gets nothing and watches, which is a real answer rather than a
     /// refusal: a game in progress is a thing you can look at (P-6).
-    fn sit(&self, id: &str, player: &str) -> Option<u8> {
+    fn seated(&self, id: &str, player: &str) -> Option<u8> {
+        let tables = self.tables.lock().unwrap();
+        tables.iter().find(|t| t.id == id)?.seat_of(player)
+    }
+
+    /// Take an open chair, under a name.
+    ///
+    /// Only before the game starts. A game already running has nothing to offer
+    /// somebody arriving: the seat has been played by a bot for forty turns and
+    /// what they would be handed is whatever it built, which is not joining a
+    /// game. So the first move closes the door, and after it the only way into a
+    /// seat is to have been in it, which `seated` answers by key.
+    ///
+    /// Returns the seat taken, or `None` when there is nothing to take: no such
+    /// table, no chair free, no key to hold it with, or a game already under way.
+    fn sit(&self, id: &str, player: &str, name: &str) -> Option<u8> {
         let mut tables = self.tables.lock().unwrap();
         let table = tables.iter_mut().find(|t| t.id == id)?;
         if let Some(seat) = table.seat_of(player) {
             return Some(seat);
         }
-        if player.is_empty() || table.session.winner().is_some() {
+        if player.is_empty() || table.session.started() || table.session.winner().is_some() {
             return None;
         }
         let seat = table.free_seat()?;
-        table.chairs[seat as usize] = Chair::Taken(player.to_string());
+        let name = called(name, seat);
+        table.chairs[seat as usize] = Chair::Taken {
+            key: player.to_string(),
+            name: name.clone(),
+        };
+        table.session.name_seat(seat, &name);
         table.seat_the_people();
-        let name = format!("Somebody sat down at seat {seat}");
-        table.session.note_to_table(name);
+        table.session.note_to_table(format!("{name} sat down"));
         let saved = saved_of(table);
         drop(tables);
         let _ = self.store.save(&saved);
         Some(seat)
+    }
+
+    /// Fill the open chairs with bots and let the game begin.
+    ///
+    /// The host's answer to nobody turning up. Without it a table dealt with a
+    /// seat open waits for a person who may never arrive, and there would be no
+    /// way out of it that was not "deal another table".
+    fn start(&self, id: &str, player: &str) -> bool {
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        // Whoever dealt it. Not any seat: the other people at the table are
+        // waiting for the same person the host is, and one of them deciding for
+        // everybody is a different rule than the one this is.
+        if table.by != player || player.is_empty() || table.session.started() {
+            return false;
+        }
+        let short = table.waiting();
+        if short == 0 {
+            return true;
+        }
+        for c in table.chairs.iter_mut() {
+            if *c == Chair::Open {
+                *c = Chair::Bot;
+            }
+        }
+        table.seat_the_people();
+        table.session.note_to_table(if short == 1 {
+            "The last seat went to the house bot".to_string()
+        } else {
+            format!("{short} seats went to the house bot")
+        });
+        let saved = saved_of(table);
+        drop(tables);
+        let _ = self.store.save(&saved);
+        true
     }
 
     /// A game as it stands, live or stored.
@@ -862,11 +954,11 @@ impl Server {
                 // An unfinished game off a table is put back on one first, so a
                 // tab left open across a restart carries on where it was.
                 self.seat(&id);
-                // And whoever is asking takes a chair if there is one going.
-                // Asking for the state is what opening the table is, so this is
-                // where joining happens: no button, because there is nothing to
-                // decide once you have opened somebody's table with a seat free.
-                let seat = self.sit(&id, &player);
+                // Which seat is theirs, if any. Looking at a table is not
+                // sitting down at it any more: a chair is taken deliberately,
+                // under a name, through `api/sit`, because with the door closing
+                // at the first move it matters that you meant to come in.
+                let seat = self.seated(&id, &player);
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     // What is left is a finished game, which is read rather than
@@ -884,10 +976,16 @@ impl Server {
                 t.session.tick();
                 t.session.enforce_clock();
                 // Their own seat's view, or a spectator's if they have none:
-                // nobody is ever sent another seat's hand.
+                // nobody is ever sent another seat's hand. Either way it carries
+                // how many chairs are still going, because that is the one thing
+                // about this table you can be too late for.
+                let room = view::Room {
+                    free: t.waiting(),
+                    host: !player.is_empty() && t.by == player,
+                };
                 let payload = match seat {
-                    Some(s) => view::render_for(&t.session, s),
-                    None => view::render_watching(&t.session),
+                    Some(s) => view::render_seated(&t.session, s, room),
+                    None => view::render_watching_room(&t.session, room),
                 };
                 drop(tables);
                 self.keep(&id);
@@ -896,13 +994,28 @@ impl Server {
             ("POST", "/api/act") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
-                let Some(seat) = self.sit(&id, &player) else {
+                let Some(seat) = self.seated(&id, &player) else {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 };
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
                 };
+                // A table with a chair nobody is in has not settled who is
+                // playing, and the first move is what shuts the door. Moving
+                // before that would leave those chairs open and unjoinable: the
+                // home page would go on advertising seats that could not be
+                // taken. The way past it is `api/start`, which is the host
+                // saying the bots may have them.
+                if t.waiting() > 0 {
+                    let payload = view::render_for_with_note(
+                        &t.session,
+                        seat,
+                        "the table is still waiting for people",
+                    );
+                    drop(tables);
+                    return respond(&mut stream, 200, "application/json", payload.as_bytes());
+                }
                 let session = &mut t.session;
                 let action = json::read_u64(&body, "action");
                 let version = json::read_u64(&body, "version");
@@ -924,7 +1037,7 @@ impl Server {
             ("POST", "/api/cancel") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
-                let Some(seat) = self.sit(&id, &player) else {
+                let Some(seat) = self.seated(&id, &player) else {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 };
                 let mut tables = self.tables.lock().unwrap();
@@ -944,7 +1057,7 @@ impl Server {
             ("POST", "/api/propose") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
-                let Some(seat) = self.sit(&id, &player) else {
+                let Some(seat) = self.seated(&id, &player) else {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 };
                 let mut tables = self.tables.lock().unwrap();
@@ -967,6 +1080,50 @@ impl Server {
                         }
                     }
                     _ => view::render_for_with_note(&session, seat, "malformed request"),
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
+            // Take a chair at this table, under a name.
+            //
+            // Its own request rather than a side effect of opening the page,
+            // because the door closes at the first move: walking past a table
+            // should not seat you at it, and a seat you took should have your
+            // name on it.
+            ("POST", "/api/sit") => {
+                let id = game.clone().unwrap_or_default();
+                self.seat(&id);
+                let name = decode(&param(&body, "name").unwrap_or_default());
+                let taken = self.sit(&id, &player, &name);
+                let set = if issue {
+                    cookie_header(&player)
+                } else {
+                    String::new()
+                };
+                let payload = format!("{{\"seat\":{}}}", taken.map_or(-1, i64::from));
+                respond_with(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    payload.as_bytes(),
+                    &set,
+                )
+            }
+            // The host giving up on the seats nobody took.
+            ("POST", "/api/start") => {
+                let id = game.clone().unwrap_or_default();
+                self.seat(&id);
+                if !self.start(&id, &player) {
+                    return respond(&mut stream, 403, "text/plain", b"not yours to start");
+                }
+                let payload = match self.seated(&id, &player) {
+                    Some(seat) => {
+                        let tables = self.tables.lock().unwrap();
+                        match tables.iter().find(|t| t.id == id) {
+                            Some(t) => view::render_for(&t.session, seat),
+                            None => String::from("{}"),
+                        }
+                    }
+                    None => String::from("{}"),
                 };
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
@@ -1126,6 +1283,21 @@ fn cookie_header(key: &str) -> String {
     )
 }
 
+/// A name for a seat, given one somebody typed.
+///
+/// Trimmed, bounded, and never empty: a seat at a table has to be callable
+/// something, and "Player 2" is a better answer than a blank where a name goes.
+/// The engine keeps its own bound too, so this is about what the table shows
+/// rather than about what it can hold.
+fn called(name: &str, seat: u8) -> String {
+    let name: String = name.trim().chars().take(24).collect();
+    if name.is_empty() {
+        format!("Player {}", seat + 1)
+    } else {
+        name
+    }
+}
+
 /// Who sits in each seat, as the lobby says it.
 ///
 /// `roles=you,open,bot,bot`: the same three words the lobby's own seat list
@@ -1136,7 +1308,7 @@ fn cookie_header(key: &str) -> String {
 /// A missing or malformed list gives a table of bots behind the dealer, which is
 /// the game this was before anybody could join one, and is the right answer for
 /// a link somebody truncated.
-fn chairs_from(query: &str, seats: u8, player: &str) -> Vec<Chair> {
+fn chairs_from(query: &str, seats: u8, player: &str, name: &str) -> Vec<Chair> {
     // Decoded first: the page sends this through `URLSearchParams`, which
     // percent-encodes the commas, so splitting the raw value found one word
     // where there were four and put a bot in every seat.
@@ -1146,7 +1318,10 @@ fn chairs_from(query: &str, seats: u8, player: &str) -> Vec<Chair> {
         .map(|i| {
             let word = said.next().unwrap_or("");
             if i == 0 {
-                Chair::Taken(player.to_string())
+                Chair::Taken {
+                    key: player.to_string(),
+                    name: called(name, 0),
+                }
             } else if word == "open" {
                 Chair::Open
             } else {
@@ -1389,7 +1564,10 @@ mod tests {
             // One person at seat nought and bots behind them, which is what a
             // table was before there was a second chair to sit in.
             chairs: vec![
-                Chair::Taken("keytest0000000000".to_string()),
+                Chair::Taken {
+                    key: "keytest0000000000".to_string(),
+                    name: "Egon".to_string(),
+                },
                 Chair::Bot,
                 Chair::Bot,
                 Chair::Bot,
@@ -1443,7 +1621,10 @@ mod tests {
             // One person at seat nought and bots behind them, which is what a
             // table was before there was a second chair to sit in.
             chairs: vec![
-                Chair::Taken("keytest0000000000".to_string()),
+                Chair::Taken {
+                    key: "keytest0000000000".to_string(),
+                    name: "Egon".to_string(),
+                },
                 Chair::Bot,
                 Chair::Bot,
                 Chair::Bot,
@@ -1518,7 +1699,10 @@ mod tests {
             // One person at seat nought and bots behind them, which is what a
             // table was before there was a second chair to sit in.
             chairs: vec![
-                Chair::Taken("keytest0000000000".to_string()),
+                Chair::Taken {
+                    key: "keytest0000000000".to_string(),
+                    name: "Egon".to_string(),
+                },
                 Chair::Bot,
                 Chair::Bot,
                 Chair::Bot,
@@ -1702,15 +1886,28 @@ mod tests {
         assert!(mine.contains("\"you\":0"), "the host sits at nought");
         assert!(mine.contains("\"people\":[0]"), "and alone");
 
-        // A second person opens the table. Opening it is joining it: there is
-        // nothing to decide once you have arrived at a table with a chair free.
+        // A second person opens the table. Looking is not sitting: they are told
+        // there is a chair going and are still in no seat.
         let guest = "guestkey00000000";
-        let theirs = get(port, &format!("/{id}/api/state"), guest);
+        let looking = get(port, &format!("/{id}/api/state"), guest);
+        assert!(looking.contains("\"you\":-1"), "looking is not sitting");
         assert!(
-            theirs.contains("\"you\":1"),
-            "the guest takes the open chair"
+            looking.contains("\"seatsFree\":1"),
+            "but the chair is offered"
         );
+        assert!(
+            looking.contains("\"started\":false"),
+            "and the door is open"
+        );
+
+        // Taking it is its own act, and it carries a name.
+        let sat = post(port, &format!("/{id}/api/sit"), guest, "name=Vidal");
+        assert!(sat.contains("\"seat\":1"), "{sat:.60}");
+        let theirs = get(port, &format!("/{id}/api/state"), guest);
+        assert!(theirs.contains("\"you\":1"), "the guest is in the chair");
         assert!(theirs.contains("\"people\":[0,1]"), "and the table knows");
+        assert!(theirs.contains("Vidal"), "under the name they gave");
+        assert!(theirs.contains("\"seatsFree\":0"), "and the table is full");
 
         // A third finds it full and watches: a seat of nobody's, an empty hand,
         // and nothing to press.
@@ -1718,6 +1915,8 @@ mod tests {
         let looking = get(port, &format!("/{id}/api/state"), watcher);
         assert!(looking.contains("\"you\":-1"), "no seat");
         assert!(looking.contains("\"choices\":[]"), "and nothing to do");
+        let refused = post(port, &format!("/{id}/api/sit"), watcher, "name=Late");
+        assert!(refused.contains("\"seat\":-1"), "and no chair to take");
 
         {
             let tables = server.tables.lock().unwrap();
@@ -1770,7 +1969,15 @@ mod tests {
         // The seating is written down, so it survives the table being put away.
         server.keep(&id);
         let saved = server.store().load(&id).expect("written");
-        assert_eq!(saved.setup.chairs, vec![host, guest, "bot", "bot"]);
+        assert_eq!(
+            saved
+                .setup
+                .chairs
+                .iter()
+                .map(|c| c.who.as_str())
+                .collect::<Vec<_>>(),
+            vec![host, guest, "bot", "bot"]
+        );
         server.tables.lock().unwrap().clear();
         assert!(server.seat(&id), "taken up again");
         {
@@ -1784,21 +1991,152 @@ mod tests {
     }
 
     #[test]
+    fn the_door_closes_on_the_first_move_and_only_rejoining_gets_you_back() {
+        let dir = std::env::temp_dir().join(format!("carranta-door-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 33, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let host = "hostkey000000000";
+        let dealt = get(
+            port,
+            "/join?seats=4&roles=you,open,open,bot&name=Marta&pace=instant",
+            host,
+        );
+        let went = dealt
+            .lines()
+            .find_map(|l| l.strip_prefix("Location: "))
+            .expect("somewhere to go")
+            .trim()
+            .to_string();
+        let id = went.trim_matches('/').to_string();
+
+        // Two chairs going, and the host's own name on theirs.
+        let mine = get(port, &format!("/{id}/api/state"), host);
+        assert!(mine.contains("\"seatsFree\":2"));
+        assert!(mine.contains("\"youDealt\":true"));
+        assert!(mine.contains("Marta"));
+
+        // And nobody can move while a chair is empty: the first move shuts the
+        // door, so making one now would leave those chairs open and unjoinable.
+        let held = {
+            let v = get(port, &format!("/{id}/api/state"), host);
+            let v: u64 = v
+                .rsplit("\"version\":")
+                .next()
+                .and_then(|t| t.split(&[',', '}'][..]).next())
+                .and_then(|t| t.trim().parse().ok())
+                .unwrap_or_default();
+            let body = format!("{{\"action\":0,\"version\":{v}}}");
+            ask(
+                port,
+                &format!(
+                    "POST /{id}/api/act HTTP/1.1\r\nHost: localhost\r\n\
+                     Cookie: {PLAYER_COOKIE}={host}\r\n\
+                     Content-Length: {}\r\n\r\n{body}",
+                    body.len()
+                ),
+            )
+        };
+        assert!(held.contains("still waiting for people"), "{held:.80}");
+
+        // One person takes a chair before the game starts.
+        let early = "earlykey00000000";
+        assert!(
+            post(port, &format!("/{id}/api/sit"), early, "name=Vidal").contains("\"seat\":1"),
+            "a chair going is a chair you may take"
+        );
+
+        // The host gives up on the last one, which is what starts the game.
+        assert!(
+            post(port, &format!("/{id}/api/start"), early, "").starts_with("HTTP/1.1 403"),
+            "and it is not the other players' call"
+        );
+        assert!(post(port, &format!("/{id}/api/start"), host, "").starts_with("HTTP/1.1 200"));
+        let after = get(port, &format!("/{id}/api/state"), host);
+        assert!(after.contains("\"seatsFree\":0"), "the chair went to a bot");
+
+        // Now the door is shut. Somebody arriving is a watcher, whatever they
+        // ask for and however many bots are sitting where they might have been.
+        let late = "latekey000000000";
+        let turned_away = post(port, &format!("/{id}/api/sit"), late, "name=Late");
+        assert!(turned_away.contains("\"seat\":-1"), "{turned_away:.60}");
+        assert!(get(port, &format!("/{id}/api/state"), late).contains("\"you\":-1"));
+
+        // And the two who were in seats are still in them, across a restart.
+        server.keep(&id);
+        server.tables.lock().unwrap().clear();
+        assert!(server.seat(&id));
+        assert_eq!(server.seated(&id, host), Some(0), "rejoining is by key");
+        assert_eq!(server.seated(&id, early), Some(1));
+        assert_eq!(server.seated(&id, late), None, "and was never a way in");
+        let back = get(port, &format!("/{id}/api/state"), early);
+        assert!(back.contains("Vidal"), "still under their own name");
+
+        // Filling the chairs is not the same as beginning: nothing has happened
+        // yet, so a chair that came free here would still be takeable. What
+        // shuts the door is the first move.
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            assert!(!t.session.started(), "dealt, filled, and not yet played");
+            let v = t.session.version();
+            t.session.act_as(0, 0, v).expect("the opening is playable");
+            assert!(t.session.started(), "and now it is under way");
+            // Free a chair, which cannot now be sat in by somebody new: the rule
+            // is about the game having begun and not about the seat being taken.
+            t.chairs[3] = Chair::Open;
+        }
+        let too_late = post(port, &format!("/{id}/api/sit"), late, "name=Late");
+        assert!(
+            too_late.contains("\"seat\":-1"),
+            "the door is shut, not the seat"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_seat_is_always_called_something() {
+        // A blank is not a name, and a table has to be able to say whose turn it
+        // is. Trimmed and bounded, because it is somebody else's text.
+        assert_eq!(called("Vidal", 1), "Vidal");
+        assert_eq!(called("  Vidal  ", 1), "Vidal");
+        assert_eq!(called("", 1), "Player 2");
+        assert_eq!(called("   ", 3), "Player 4");
+        assert_eq!(called(&"x".repeat(80), 0).chars().count(), 24);
+    }
+
+    #[test]
     fn a_table_of_bots_is_dealt_when_the_roles_are_missing_or_broken() {
         // A link somebody truncated, or a page from an older build. Bots behind
         // the dealer is the table this was before there was a second chair, and
         // is the one answer that cannot leave a seat waiting for nobody.
         for query in ["", "roles=", "roles=nonsense", "roles=you"] {
-            let chairs = chairs_from(query, 4, "keytest0000000000");
-            assert_eq!(chairs[0], Chair::Taken("keytest0000000000".to_string()));
+            let chairs = chairs_from(query, 4, "keytest0000000000", "Egon");
+            assert_eq!(
+                chairs[0],
+                Chair::Taken {
+                    key: "keytest0000000000".to_string(),
+                    name: "Egon".to_string()
+                }
+            );
             assert!(
                 chairs[1..].iter().all(|c| *c == Chair::Bot),
                 "{query:?} left a chair open"
             );
         }
         // Seat nought is the dealer whatever the query says about it.
-        let chairs = chairs_from("roles=open,open,bot,bot", 4, "keytest0000000000");
-        assert_eq!(chairs[0], Chair::Taken("keytest0000000000".to_string()));
+        let chairs = chairs_from("roles=open,open,bot,bot", 4, "keytest0000000000", "Egon");
+        assert_eq!(
+            chairs[0],
+            Chair::Taken {
+                key: "keytest0000000000".to_string(),
+                name: "Egon".to_string()
+            }
+        );
         assert_eq!(chairs[1], Chair::Open);
         assert_eq!(chairs[2], Chair::Bot);
     }
@@ -1918,6 +2256,20 @@ mod tests {
         let mut out = Vec::new();
         s.read_to_end(&mut out).expect("answered");
         String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// A form post, which is how the page asks for a seat.
+    fn post(port: u16, path: &str, cookie: &str, form: &str) -> String {
+        ask(
+            port,
+            &format!(
+                "POST {path} HTTP/1.1\r\nHost: localhost\r\n\
+                 Cookie: {PLAYER_COOKIE}={cookie}\r\n\
+                 Content-Type: application/x-www-form-urlencoded\r\n\
+                 Content-Length: {}\r\n\r\n{form}",
+                form.len()
+            ),
+        )
     }
 
     fn get(port: u16, path: &str, cookie: &str) -> String {

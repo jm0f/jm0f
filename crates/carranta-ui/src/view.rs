@@ -48,6 +48,21 @@ pub fn render_with_note(session: &Session, note: &str) -> String {
     render_inner(session, HUMAN, Some(note))
 }
 
+/// What the table knows about itself that the session does not.
+///
+/// Who is waiting for whom is the server's business: the session knows which
+/// seats have people in them and nothing about chairs held open for somebody who
+/// has not arrived. Passed in rather than guessed, and defaulted for every path
+/// that has no table behind it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Room {
+    /// Chairs nobody has taken, which is what stops the game starting.
+    pub free: usize,
+    /// Whether the seat being rendered for is the one that dealt the table, and
+    /// therefore the one that may give up on the empty chairs.
+    pub host: bool,
+}
+
 /// The table as one seat sees it.
 ///
 /// Everything private is keyed to this seat: the hand, the development cards,
@@ -57,6 +72,11 @@ pub fn render_with_note(session: &Session, note: &str) -> String {
 /// other's buttons, because neither is ever sent them.
 pub fn render_for(session: &Session, seat: u8) -> String {
     render_inner(session, seat, None)
+}
+
+/// The same, for a seat at a table that may still be filling up.
+pub fn render_seated(session: &Session, seat: u8, room: Room) -> String {
+    render_room(session, seat, room, None)
 }
 
 /// The same, with something to tell that seat.
@@ -75,6 +95,12 @@ pub fn render_watching(session: &Session) -> String {
     render_inner(session, NOBODY, None)
 }
 
+/// The same, for somebody looking at a table that may still be filling up: they
+/// are the ones who most need to know there is a chair going.
+pub fn render_watching_room(session: &Session, room: Room) -> String {
+    render_room(session, NOBODY, room, None)
+}
+
 /// A seat number no table has, for somebody who is not sitting at one.
 const NOBODY: u8 = u8::MAX;
 
@@ -91,6 +117,10 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn render_inner(session: &Session, seat: u8, note: Option<&str>) -> String {
+    render_room(session, seat, Room::default(), note)
+}
+
+fn render_room(session: &Session, seat: u8, room: Room, note: Option<&str>) -> String {
     let v = if seat == NOBODY {
         session.view_watching()
     } else {
@@ -223,6 +253,17 @@ fn render_inner(session: &Session, seat: u8, note: Option<&str>) -> String {
     // not yours and not a bot is somebody, and calling them Bram because seat two
     // is usually a bot would be the page telling a small lie every turn.
     j.ints("people", session.people().iter().map(|&s| s as i64));
+    // What every seat is called, in seat order. Empty where nobody has said, and
+    // the page fills those in from its own list of bot names: a name invented
+    // here would be a second opinion about whose seat it is.
+    j.strs("names", session.names().iter().map(String::as_str));
+    // Whether the door is still open. A table waiting for people is a different
+    // screen from a table being played, and the difference is one move.
+    j.bool("started", session.started());
+    // Chairs nobody is in, and whether this reader is the one who may fill them
+    // with bots and get on with it.
+    j.int("seatsFree", room.free as i64);
+    j.bool("youDealt", room.host);
     j.bool("canPropose", session.can_propose_for(seat));
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);

@@ -299,6 +299,9 @@ pub struct Session {
     /// Seat nought alone by default, so a table nobody has joined is the game
     /// this was before anybody could join one.
     people: [bool; SEATS],
+    /// What each seat is called, empty where nobody has said. A seat's name is
+    /// the seat's, not the table's: two people means two answers.
+    names: [String; SEATS],
     bots: Vec<Heuristic>,
     /// Bumped on every applied action, so a click made against a stale board is
     /// refused rather than applied to a different position.
@@ -406,6 +409,7 @@ impl Session {
                 who[HUMAN as usize] = true;
                 who
             },
+            names: Default::default(),
             bots: (0..seats)
                 .map(|s| Heuristic::new(seed.wrapping_mul(31).wrapping_add(s as u64 + 1)))
                 .collect(),
@@ -537,11 +541,38 @@ impl Session {
         if !name.is_empty() {
             self.name = name.chars().take(24).collect();
         }
+        self.names[HUMAN as usize] = self.name.clone();
         self
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// What one seat is called, or empty if nobody has said.
+    ///
+    /// Every seat rather than the one at the keyboard, because with two people
+    /// at a table there is no such thing as "the" name. A seat with nobody in it
+    /// has none: the page names the house bot itself, from a list it owns, and a
+    /// name invented here would be a second opinion about it.
+    pub fn name_of(&self, seat: u8) -> &str {
+        self.names.get(seat as usize).map_or("", String::as_str)
+    }
+
+    /// Name a seat, which is what sitting down in one does.
+    pub fn name_seat(&mut self, seat: u8, name: &str) {
+        let name = name.trim();
+        if (seat as usize) < SEATS {
+            self.names[seat as usize] = name.chars().take(24).collect();
+        }
+        if seat == HUMAN && !name.is_empty() {
+            self.name = self.names[HUMAN as usize].clone();
+        }
+    }
+
+    /// Every seat's name, in seat order, for writing down and for the view.
+    pub fn names(&self) -> &[String] {
+        &self.names
     }
 
     /// Play with the record hidden, so the table has to remember.
@@ -612,6 +643,16 @@ impl Session {
     /// The seats people are sitting in, in seat order.
     pub fn people(&self) -> Vec<u8> {
         (0..self.seats).filter(|&s| self.is_person(s)).collect()
+    }
+
+    /// Whether the game has begun.
+    ///
+    /// The first move is the door closing: before it the table is still being
+    /// filled and anybody may take a chair, after it the seating is what it is.
+    /// The moves are the record, so this asks the record rather than keeping a
+    /// flag that could disagree with it.
+    pub fn started(&self) -> bool {
+        !self.moves.is_empty()
     }
 
     /// Whether anything is being asked of any person at the table.

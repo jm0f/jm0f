@@ -46,17 +46,48 @@ pub struct Setup {
     pub bank_exact: bool,
     /// Whether the table keeps a log.
     pub log: bool,
-    /// Who is in each seat, in seat order: `bot`, `open`, or a person's key.
-    ///
-    /// Strings rather than a type of their own, because the store's job is to
-    /// write down what it was told and the server owns what the words mean. It
-    /// also keeps the format readable, which is the whole argument for it: a
-    /// line of `chairs` says who was at the table in words you can check.
+    /// Who is in each seat, in seat order.
     ///
     /// Empty for a game written before there were chairs, and for one nobody
     /// was sitting at. The server reads that as the table it used to be: the
     /// dealer at seat nought and bots behind them.
-    pub chairs: Vec<String>,
+    pub chairs: Vec<Chair>,
+}
+
+/// One seat, written down.
+///
+/// `who` is `bot`, `open`, or a person's key; `name` is what they called
+/// themselves, and is empty for anything that is not a person. Strings rather
+/// than a type of their own, because the store's job is to write down what it
+/// was told: the server owns what the words mean, and the file stays a thing you
+/// can open and read, which is the whole argument for this format.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Chair {
+    pub who: String,
+    pub name: String,
+}
+
+impl Chair {
+    pub fn bot() -> Self {
+        Chair {
+            who: "bot".to_string(),
+            name: String::new(),
+        }
+    }
+
+    pub fn open() -> Self {
+        Chair {
+            who: "open".to_string(),
+            name: String::new(),
+        }
+    }
+
+    pub fn person(key: &str, name: &str) -> Self {
+        Chair {
+            who: key.to_string(),
+            name: name.to_string(),
+        }
+    }
 }
 
 impl Default for Setup {
@@ -176,7 +207,9 @@ pub fn is_game_id(s: &str) -> bool {
 /// rather than inside them, so an older game is not an unreadable game, one
 /// written before version 4 comes back on a table set up the way a fresh one is,
 /// and one written before version 5 comes back with its dealer alone at it.
-const VERSION: u32 = 5;
+/// Version 6 gave each seat a line of its own so it could carry a name, and
+/// still reads version 5's single `chairs` line as seats nobody named.
+const VERSION: u32 = 6;
 
 /// Times per `at` line. Forty numbers is a line you can still read.
 const TIMES_PER_LINE: usize = 40;
@@ -390,11 +423,17 @@ pub fn encode(g: &Saved) -> String {
     let _ = writeln!(out, "discard {}", s.discard_secs);
     let _ = writeln!(out, "bank {}", if s.bank_exact { "exact" } else { "rough" });
     let _ = writeln!(out, "log {}", yes_no(s.log));
+    // One line a seat, in seat order, because a name is somebody else's text and
+    // has spaces and commas in it: everything after the first word is the name,
+    // so there is nothing to escape and nothing to get wrong.
+    //
     // Only when somebody is at the table. A game the server played itself has
-    // nobody in any seat, and a line of four `bot`s says the same thing as no
-    // line at all in more words.
-    if !s.chairs.is_empty() {
-        let _ = writeln!(out, "chairs {}", s.chairs.join(","));
+    // nobody in any seat, and four lines of `bot` say the same thing as no lines
+    // at all in more words.
+    if s.chairs.iter().any(|c| c.who != "bot") {
+        for c in &s.chairs {
+            let _ = writeln!(out, "chair {} {}", c.who, c.name);
+        }
     }
     for step in &g.moves {
         let _ = writeln!(out, "{}", step_line(step));
@@ -464,7 +503,25 @@ pub fn decode(text: &str) -> Option<Saved> {
             "discard" => g.setup.discard_secs = rest.parse().ok()?,
             "bank" => g.setup.bank_exact = rest != "rough",
             "log" => g.setup.log = is_yes(rest),
-            "chairs" => g.setup.chairs = rest.split(',').map(str::to_string).collect(),
+            // Version 5 wrote them on one line and had no names in them. Read
+            // rather than dropped: a table somebody is sitting at is exactly the
+            // thing that must not be lost to a format change.
+            "chairs" => {
+                g.setup.chairs = rest
+                    .split(',')
+                    .map(|w| Chair {
+                        who: w.to_string(),
+                        name: String::new(),
+                    })
+                    .collect();
+            }
+            "chair" => {
+                let (who, name) = rest.split_once(' ').unwrap_or((rest, ""));
+                g.setup.chairs.push(Chair {
+                    who: who.to_string(),
+                    name: name.to_string(),
+                });
+            }
             "at" => {
                 for n in rest.split(',') {
                     g.times.push(n.parse().ok()?);
@@ -655,9 +712,9 @@ mod tests {
                 bank_exact: false,
                 log: false,
                 chairs: vec![
-                    "keytest0000000000".to_string(),
-                    "bot".to_string(),
-                    "open".to_string(),
+                    Chair::person("keytest0000000000", "Egon of the Long Name, and a comma"),
+                    Chair::bot(),
+                    Chair::open(),
                 ],
             },
             moves: vec![Step::Move(Action::Roll)],
