@@ -477,31 +477,64 @@ fn series_of(saved: &Saved) -> Series {
     out
 }
 
-/// Who traded with whom, and at what counter.
+/// One trade, as the two parties to it and what crossed between them.
 ///
-/// The market's counts say how many trades each seat was party to; this says
-/// who the other party was, which is the thing a per-seat column cannot hold.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Every trade in the game is one of these. Counts can be added up from them;
+/// they cannot be got back out of counts, which is why the list is what is
+/// kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Deal {
+    /// The seat that gave `gave`.
+    pub seat: usize,
+    /// Who took it: a seat, or [`Trades::BANK`] or [`Trades::PORT`].
+    pub with: usize,
+    /// Which turn it landed in, counting the way the turns table counts.
+    pub turn: u32,
+    pub gave: [u8; 5],
+    pub took: [u8; 5],
+}
+
+/// Every trade in the game, in the order they happened.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Trades {
-    /// Trades between two seats, counted once, in both cells.
-    pub between: [[u32; MAX_PLAYERS]; MAX_PLAYERS],
-    /// Trades against a port, four to one being the bank rather than a port.
-    pub port: [u32; MAX_PLAYERS],
-    /// Trades against the bank at four to one.
-    pub bank: [u32; MAX_PLAYERS],
+    pub deals: Vec<Deal>,
 }
 
 impl Trades {
-    /// Everything this seat traded, however and with whomever.
-    pub fn total(&self, seat: usize) -> u32 {
-        self.between[seat].iter().sum::<u32>() + self.port[seat] + self.bank[seat]
+    /// The two counters, as party numbers past the last seat.
+    pub const BANK: usize = MAX_PLAYERS;
+    pub const PORT: usize = MAX_PLAYERS + 1;
+
+    /// Trades this party was one end of.
+    pub fn ends(&self, party: usize) -> usize {
+        self.deals
+            .iter()
+            .filter(|d| d.seat == party || d.with == party)
+            .count()
+    }
+
+    /// Trades between two seats, counted once.
+    pub fn between(&self, a: usize, b: usize) -> u32 {
+        self.deals
+            .iter()
+            .filter(|d| (d.seat == a && d.with == b) || (d.seat == b && d.with == a))
+            .count() as u32
+    }
+
+    /// Trades this seat made against a given counter.
+    pub fn against(&self, seat: usize, counter: usize) -> u32 {
+        self.deals
+            .iter()
+            .filter(|d| d.seat == seat && d.with == counter)
+            .count() as u32
     }
 }
 
 /// Follow every trade to its counterparty.
 ///
 /// A player trade names both sides: the accepter is in the action and the
-/// proposer is on the offer it accepts, read before the offer is cleared away.
+/// proposer is on the offer it accepts, read before applying clears the offer
+/// away.
 ///
 /// A supply trade names only one, so the counter is worked out from the price.
 /// Four cards for one is the bank; three or two is a port, and which port is a
@@ -510,13 +543,15 @@ impl Trades {
 /// actually moved.
 fn trades_of(saved: &Saved) -> Trades {
     use carranta_core::action::Action;
+    use carranta_core::state::Phase;
 
     let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
     let seats = state.players as usize;
     let mut out = Trades::default();
+    let mut turn = 0u32;
+    let mut playing = false;
     for step in &saved.moves {
         let Step::Move(action) = *step else { continue };
-        // Who proposed, before applying clears the offer away.
         let proposer = match action {
             Action::AcceptTrade { offer, .. } => state
                 .offers
@@ -530,6 +565,12 @@ fn trades_of(saved: &Saved) -> Trades {
         if state.apply(action).is_err() {
             break;
         }
+        // What one seat gave and took, read off their hand either side.
+        let moved = |p: usize| {
+            let gave = core::array::from_fn(|r| before[p][r].saturating_sub(state.hand[p][r]));
+            let took = core::array::from_fn(|r| state.hand[p][r].saturating_sub(before[p][r]));
+            (gave, took)
+        };
         match action {
             Action::AcceptTrade { by, .. } => {
                 let by = by as usize;
@@ -537,28 +578,63 @@ fn trades_of(saved: &Saved) -> Trades {
                     && by < seats
                     && by != from
                 {
-                    out.between[from][by] += 1;
-                    out.between[by][from] += 1;
+                    let (gave, took) = moved(from);
+                    out.deals.push(Deal {
+                        seat: from,
+                        with: by,
+                        turn: turn + 1,
+                        gave,
+                        took,
+                    });
                 }
             }
-            Action::Trade { .. } => {
-                if actor >= seats {
-                    continue;
-                }
-                let paid: u32 = (0..5)
-                    .map(|r| u32::from(before[actor][r].saturating_sub(state.hand[actor][r])))
-                    .sum();
-                // Four for one is the only rate the bank offers anybody.
-                if paid >= 4 {
-                    out.bank[actor] += 1;
-                } else {
-                    out.port[actor] += 1;
-                }
+            Action::Trade { .. } if actor < seats => {
+                let (gave, took) = moved(actor);
+                let paid: u32 = gave.iter().map(|n| u32::from(*n)).sum();
+                out.deals.push(Deal {
+                    seat: actor,
+                    // Four for one is the only rate the bank offers anybody.
+                    with: if paid >= 4 {
+                        Trades::BANK
+                    } else {
+                        Trades::PORT
+                    },
+                    turn: turn + 1,
+                    gave,
+                    took,
+                });
             }
+            Action::EndTurn if playing => turn += 1,
             _ => {}
         }
+        playing |= matches!(state.phase, Phase::PreRoll);
     }
     out
+}
+
+/// Which resources each seat's opening touches at all.
+///
+/// Read at the moment the setup ends, which is the only moment the question is
+/// about the opening rather than about the game. A resource is touched when the
+/// board owes that seat any of it, which `expectation` already answers exactly:
+/// a placement that touches no wheat is owed no wheat.
+fn touches_of(saved: &Saved) -> [[bool; 5]; MAX_PLAYERS] {
+    use carranta_core::state::Phase;
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        if state.apply(action).is_err() {
+            break;
+        }
+        // Setup ends the first time play reaches a pre-roll phase, which is the
+        // line every other reading of this game draws too.
+        if matches!(state.phase, Phase::PreRoll) {
+            break;
+        }
+    }
+    let owed = production::expectation(&state);
+    core::array::from_fn(|p| core::array::from_fn(|r| owed[p][r] > 0.0))
 }
 
 /// One turn of the game.
@@ -662,6 +738,12 @@ pub struct Study {
     pub series: Series,
     /// Who traded with whom, and at what counter.
     pub trades: Trades,
+    /// Development cards still in each hand at the end, by kind. With what was
+    /// played, this is what was drawn: a card is drawn once and then either
+    /// played or held, and a played card never goes back (R-8.10).
+    pub dev_held: [[u32; 5]; MAX_PLAYERS],
+    /// Which resources each seat's opening settlements touch at all.
+    pub opening_touches: [[bool; 5]; MAX_PLAYERS],
     /// Whether this game was saved with a clock in it. Games written before
     /// there was one still read, and say nothing about time rather than saying
     /// nought.
@@ -695,7 +777,11 @@ const SIMS: u32 = 10_000;
 pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let log = to_log(saved)?;
     let report = game::analyse(&log).ok()?;
-    let points = points_of(&log.replay().ok()?, report.players as usize);
+    let end = log.replay().ok()?;
+    let points = points_of(&end, report.players as usize);
+    let dev_held =
+        core::array::from_fn(|p| core::array::from_fn(|c| u32::from(end.dev_held[p][c])));
+    let opening_touches = touches_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
     let series = series_of(saved);
@@ -773,6 +859,8 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         ledger,
         series,
         trades,
+        dev_held,
+        opening_touches,
         timed,
         production,
         dice: this,
@@ -1051,28 +1139,81 @@ mod tests {
             let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
             let seats = s.report.players as usize;
             let tr = &s.trades;
+            for d in &tr.deals {
+                // Every deal names a seat and somebody else, and moves cards
+                // both ways: a trade that only took would not be one.
+                assert!(d.seat < seats, "seed {seed}");
+                assert_ne!(d.seat, d.with, "seed {seed}: nobody trades with themselves");
+                assert!(d.gave.iter().any(|n| *n > 0), "seed {seed}");
+                assert!(d.took.iter().any(|n| *n > 0), "seed {seed}");
+                assert!(d.turn > 0, "seed {seed}");
+            }
             for a in 0..seats {
-                // Nobody trades with themselves, and a trade between two seats
-                // is the same trade read from either end.
-                assert_eq!(tr.between[a][a], 0, "seed {seed}");
+                assert_eq!(tr.between(a, a), 0, "seed {seed}");
                 for c in 0..seats {
-                    assert_eq!(tr.between[a][c], tr.between[c][a], "seed {seed}");
+                    assert_eq!(tr.between(a, c), tr.between(c, a), "seed {seed}");
                 }
                 // The counter is either the bank or a port and never both, and
                 // together they are what the market table calls supply trades.
                 assert_eq!(
-                    tr.bank[a] + tr.port[a],
+                    tr.against(a, Trades::BANK) + tr.against(a, Trades::PORT),
                     s.report.supply_trades[a],
                     "seed {seed}, seat {a}: the counters do not add up"
                 );
             }
-            // And a player trade is counted for both sides in the report, so
-            // the pairs here are exactly half of that column.
+            // A player trade is counted for both sides in the report, so the
+            // pairs here are exactly half of that column.
             let pairs: u32 = (0..seats)
-                .map(|a| tr.between[a][..seats].iter().sum::<u32>())
+                .flat_map(|a| (0..seats).map(move |c| (a, c)))
+                .map(|(a, c)| tr.between(a, c))
                 .sum();
             let counted: u32 = s.report.trades_completed[..seats].iter().sum();
             assert_eq!(pairs, counted, "seed {seed}");
+            // And the ends add to twice the deals, since each has two.
+            let ends: usize = (0..seats)
+                .chain([Trades::BANK, Trades::PORT])
+                .map(|p| tr.ends(p))
+                .sum();
+            assert_eq!(ends, tr.deals.len() * 2, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn a_card_drawn_was_played_or_is_still_held() {
+        // What the development table claims: bought is played plus held, per
+        // kind, because a played card never goes back to the deck (R-8.10).
+        for seed in 0..8u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            for seat in 0..s.report.players as usize {
+                let drawn: u32 = (0..5)
+                    .map(|c| s.report.dev_played[seat][c] + s.dev_held[seat][c])
+                    .sum();
+                assert_eq!(
+                    drawn, s.report.dev_bought[seat],
+                    "seed {seed}, seat {seat}: cards leaked"
+                );
+                // A victory point card is never played, so all of them are held.
+                assert_eq!(s.report.dev_played[seat][1], 0, "seed {seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_opening_touches_what_the_board_owes_it() {
+        for seed in 0..6u64 {
+            let g = played(seed);
+            let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+            for seat in 0..s.report.players as usize {
+                let touched = s.opening_touches[seat].iter().filter(|t| **t).count();
+                // The same figure the opening table used to print as a
+                // fraction, now drawn as which rather than how many.
+                assert_eq!(
+                    touched as u32, s.report.opening[seat].diversity,
+                    "seed {seed}, seat {seat}"
+                );
+                assert!(touched > 0, "two settlements touch something");
+            }
         }
     }
 

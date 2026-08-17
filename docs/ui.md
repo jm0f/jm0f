@@ -1505,8 +1505,12 @@ is paired with an effect size.
   With it, the robber's own counts: times moved, and robberies that found an
   empty hand.
 - **Trades**, as a chord: every party round a circle, each arc as long as their
-  trades, a ribbon across the middle for each pair as thick as the trades
-  between them. The bank and the ports are parties too, since a trade with the
+  trades, and **one ribbon per trade** rather than one per pair, so a thick band
+  is a run of deals you can count rather than a number you have to hover to
+  read. Each ribbon carries the trade it is: which turn, who gave what and took
+  what, and against which counter. The circle and its table sit side by side
+  while there is width for them, so the card is not a drawing floating in a
+  field of nothing. The bank and the ports are parties too, since a trade with the
   supply is still a trade and leaving it out would draw a market smaller than
   the one played. A chord rather than a sankey because trading is symmetric:
   there is no side a trade goes from, and drawing one would invent a direction
@@ -1515,9 +1519,19 @@ is paired with an effect size.
   three or two is a port. Beneath it, the counts, where a completed trade is
   counted for both sides so that column totals to twice the trades; the circle
   counts each one once.
-- **Development cards and the opening**, as counts.
-- **Across every game here**, seat win rates, with the note that at a handful of
-  games the spread is noise.
+- **Development cards**, each column how many of that card were drawn with how
+  many were played in brackets. The two differ by what was still in hand at the
+  end: a card is drawn once and then either played or held, and a played card
+  never goes back to the deck (R-8.10). The foot row is therefore the deck's own
+  composition, which is a standing check on the whole table.
+- **Opening**, with the resources drawn as board tiles rather than counted as a
+  fraction. "5 of 5" says how many without saying which, and which is the
+  question: a placement short of ore plays differently from one short of brick.
+  Touched tiles are filled in their terrain's colour; missed ones are hollow.
+Seat win rates were on this page and are not any more. They are a claim about
+many games, and a report on one game is the wrong place to make it; they belong
+on a page that reads the whole store, which is the cumulative statistics work
+still to come.
 
 **Each seat is a rated player, not "the bot".** The three heuristics are the
 same player underneath, so their ratings should converge on each other, but a

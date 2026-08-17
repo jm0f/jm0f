@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 
 use carranta_core::state::MAX_PLAYERS;
 
-use crate::analysis::{Study, seat_name};
+use crate::analysis::{Study, Trades, seat_name};
 use crate::store::Saved;
 
 const RESOURCE_NAMES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
@@ -80,16 +80,10 @@ fn card_head(title: &str, why: &str) -> String {
     )
 }
 
-/// A seat, named, behind the colour it played in.
+/// A seat, named, behind the colour it played in and before where it finished.
 ///
-/// The same mark the board uses, in the same place in every table here, so a
-/// row can be found by colour rather than by reading down the names.
-fn seat_cell(seat: usize, name: &str) -> String {
-    placed(seat, name, None)
-}
-
-/// The same, with where they finished.
-///
+/// The colour is the mark the board plays in, always immediately left of the
+/// name, so a row can be found by colour rather than by reading down the names.
 /// Every table names the same four people, and the thing a reader wants beside
 /// a name is where it came. A badge on the winner alone answered that for one
 /// of them and left the other three to be worked out from a column of points.
@@ -180,6 +174,43 @@ fn head_row(cells: &[(&str, &str)]) -> String {
     }
     out.push_str("</tr>");
     out
+}
+
+/// The five resources as board tiles, the missing ones left hollow.
+///
+/// A hex apiece, in the colour its terrain wears on the board, because "5 of 5"
+/// says how many without saying which, and which is the question: a placement
+/// short of ore plays differently from one short of brick.
+fn tiles(touched: &[bool; 5]) -> String {
+    // A flat-top hex, the shape the board is made of, at a size that sits on a
+    // line of text.
+    const HEX: &str = "M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z";
+    let mut out = String::from("<span class=\"tiles\">");
+    for (r, on) in touched.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<svg viewBox=\"-1 -1 20 22.8\" class=\"tile\" role=\"img\" \
+             aria-label=\"{name}{miss}\"><title>{name}{miss}</title>\
+             <path class=\"{state} r{r}\" d=\"{HEX}\"/></svg>",
+            name = RESOURCE_NAMES[r],
+            miss = if *on { "" } else { ", not touched" },
+            state = if *on { "on" } else { "off" },
+        );
+    }
+    out.push_str("</span>");
+    out
+}
+
+/// A count with a second, smaller count in brackets after it.
+///
+/// The same shape the result table uses for points: two figures that belong
+/// together, the one being read off the other.
+fn bracketed(all: u32, some: u32) -> String {
+    if all == 0 {
+        NONE.to_string()
+    } else {
+        format!("{all} <span class=\"worth\">({some})</span>")
+    }
 }
 
 /// One scoring column: how many, and what they were worth.
@@ -508,145 +539,148 @@ fn plot(
     b
 }
 
+/// A hand of cards, named. `4 wheat`, `2 wood and 1 ore`.
+fn hand_text(cards: &[u8; 5]) -> String {
+    let parts: Vec<String> = cards
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| **n > 0)
+        .map(|(r, n)| format!("{n} {}", RESOURCE_NAMES[r]))
+        .collect();
+    match parts.len() {
+        0 => "nothing".to_string(),
+        1 => parts[0].clone(),
+        _ => format!(
+            "{} and {}",
+            parts[..parts.len() - 1].join(", "),
+            parts[parts.len() - 1]
+        ),
+    }
+}
+
 /// Every trade in the game as a circle of who dealt with whom.
 ///
-/// Nodes round the rim, each arc as long as that party's trades; a ribbon
-/// across the middle for each pair, as thick as the trades between them. The
-/// bank and the ports are parties too, since a trade with the supply is still a
-/// trade and leaving it out would draw a market smaller than the one played.
+/// Nodes round the rim, each arc as long as that party's trades; one ribbon
+/// across the middle **per trade**, not per pair, so a thick band is a run of
+/// deals rather than a number you have to hover to read. The bank and the ports
+/// are parties too, since a trade with the supply is still a trade and leaving
+/// it out would draw a market smaller than the one played.
 ///
 /// A chord rather than a sankey because trading is symmetric: there is no side
 /// a trade goes from and no side it goes to, and drawing one would invent a
 /// direction the game does not have.
 fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
-    // The box has to hold the names as well as the circle, and a name at the
-    // rim runs outwards: the first draft clipped "Ines 4th" against the edge.
-    const SIZE: f64 = 560.0;
+    // Wider than tall: the circle is round but the names beside it are not, so
+    // a square box spends its height on nothing.
+    const W: f64 = 560.0;
+    const H: f64 = 400.0;
     const R: f64 = 150.0;
     const BAND: f64 = 12.0;
-    const GAP: f64 = 0.055;
+    const GAP: f64 = 0.05;
 
     let tr = &study.trades;
-    // The parties: everyone who sat down, then the two counters.
-    let bank = seats;
-    let port = seats + 1;
-    let n = seats + 2;
-    let mut weight = vec![0u32; n];
-    for p in 0..seats {
-        weight[p] = tr.total(p);
-        weight[bank] += tr.bank[p];
-        weight[port] += tr.port[p];
-    }
-    let total: u32 = weight.iter().sum();
-    if total == 0 {
+    if tr.deals.is_empty() {
         return String::new();
     }
 
-    // Arcs round the rim, sized by what each party traded, with a gap between.
-    let shown: Vec<usize> = (0..n).filter(|i| weight[*i] > 0).collect();
-    let span = std::f64::consts::TAU - GAP * shown.len() as f64;
+    // The parties, in the order they go round: the seats, then the counters.
+    let parties: Vec<usize> = (0..seats)
+        .chain([Trades::BANK, Trades::PORT])
+        .filter(|p| tr.ends(*p) > 0)
+        .collect();
+    let seat_of = |party: usize| parties.iter().position(|p| *p == party);
+    // One unit of arc per end of one trade, and every trade has two.
+    let units = (tr.deals.len() * 2) as f64;
+    let span = std::f64::consts::TAU - GAP * parties.len() as f64;
+    let unit = span / units;
+
+    let mut arc = vec![(0.0, 0.0); parties.len()];
     let mut at = -std::f64::consts::FRAC_PI_2;
-    let mut arc = vec![(0.0, 0.0); n];
-    for &i in &shown {
-        let width = span * f64::from(weight[i]) / f64::from(total);
+    for (i, party) in parties.iter().enumerate() {
+        let width = unit * tr.ends(*party) as f64;
         arc[i] = (at, at + width);
         at += width + GAP;
     }
 
-    let mid = SIZE / 2.0;
-    let point = |angle: f64, radius: f64| (mid + radius * angle.cos(), mid + radius * angle.sin());
+    let (mx, my) = (W / 2.0, H / 2.0);
+    let point = |angle: f64, radius: f64| (mx + radius * angle.cos(), my + radius * angle.sin());
     let mut b = format!(
-        "<div class=\"ring\"><svg viewBox=\"0 0 {SIZE} {SIZE}\" role=\"img\" \
+        "<div class=\"ring\"><svg viewBox=\"0 0 {W} {H}\" role=\"img\" \
          aria-label=\"Who traded with whom\">"
     );
 
-    // The ribbons first, under the rim.
+    // Grouped by pair so the ribbons of one pair lie together rather than
+    // crossing each other on their way to the same arc.
+    let mut order: Vec<(usize, usize, usize)> = tr
+        .deals
+        .iter()
+        .enumerate()
+        .filter_map(|(i, d)| {
+            let (a, c) = (seat_of(d.seat)?, seat_of(d.with)?);
+            Some((a.min(c), a.max(c), i))
+        })
+        .collect();
+    order.sort_unstable();
+
     let mut cursor: Vec<f64> = arc.iter().map(|(a, _)| *a).collect();
-    let step = |w: u32| span * f64::from(w) / f64::from(total);
-    let mut ribbon = |b: &mut String,
-                      from: usize,
-                      to: usize,
-                      count: u32,
-                      class: &str,
-                      title: String| {
-        if count == 0 {
-            return;
-        }
-        let (a0, a1) = (cursor[from], cursor[from] + step(count));
-        let (c0, c1) = (cursor[to], cursor[to] + step(count));
-        cursor[from] = a1;
-        cursor[to] = c1;
+    for (a, c, i) in order {
+        let d = &tr.deals[i];
+        let (a0, a1) = (cursor[a], cursor[a] + unit);
+        let (c0, c1) = (cursor[c], cursor[c] + unit);
+        cursor[a] = a1;
+        cursor[c] = c1;
         let (x0, y0) = point(a0, R);
         let (x1, y1) = point(a1, R);
         let (u0, v0) = point(c0, R);
         let (u1, v1) = point(c1, R);
+        let counter = match d.with {
+            w if w == Trades::BANK => "with the bank".to_string(),
+            w if w == Trades::PORT => "at a port".to_string(),
+            w => format!("with {}", who[w]),
+        };
         // Through the centre, which is what makes a chord read as one link
-        // rather than as two lines that happen to meet.
+        // rather than two lines that happen to meet.
         let _ = write!(
             b,
-            "<path class=\"chord {class}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
-             Q{mid} {mid} {u1:.1} {v1:.1} A{R} {R} 0 0 1 {u0:.1} {v0:.1} Q{mid} {mid} {x0:.1} {y0:.1} Z\">\
+            "<path class=\"chord f{seat}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
+             Q{mx} {my} {u1:.1} {v1:.1} A{R} {R} 0 0 1 {u0:.1} {v0:.1} Q{mx} {my} {x0:.1} {y0:.1} Z\">\
              <title>{}</title></path>",
-            esc(&title),
-        );
-    };
-
-    for a in 0..seats {
-        for c in (a + 1)..seats {
-            let count = tr.between[a][c];
-            ribbon(
-                &mut b,
-                a,
-                c,
-                count,
-                &format!("f{a}"),
-                format!("{} and {}: {count} traded", who[a], who[c]),
-            );
-        }
-    }
-    for a in 0..seats {
-        ribbon(
-            &mut b,
-            a,
-            bank,
-            tr.bank[a],
-            &format!("f{a}"),
-            format!("{}: {} with the bank", who[a], tr.bank[a]),
-        );
-        ribbon(
-            &mut b,
-            a,
-            port,
-            tr.port[a],
-            &format!("f{a}"),
-            format!("{}: {} at a port", who[a], tr.port[a]),
+            esc(&format!(
+                "Turn {}: {} gave {}, took {}, {counter}",
+                d.turn,
+                who[d.seat],
+                hand_text(&d.gave),
+                hand_text(&d.took),
+            )),
+            seat = d.seat.min(MAX_PLAYERS - 1),
         );
     }
 
     // The rim, and a name outside each arc.
-    for &i in &shown {
+    for (i, party) in parties.iter().enumerate() {
         let (a0, a1) = arc[i];
         let (x0, y0) = point(a0, R);
         let (x1, y1) = point(a1, R);
         let (x2, y2) = point(a1, R + BAND);
         let (x3, y3) = point(a0, R + BAND);
-        let class = if i < seats {
-            format!("n{i}")
+        let class = if *party < seats {
+            format!("n{party}")
         } else {
             "supply".to_string()
         };
         let _ = write!(
             b,
             "<path class=\"rim {class}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
-             L{x2:.1} {y2:.1} A{r2} {r2} 0 0 0 {x3:.1} {y3:.1} Z\"/>",
+             L{x2:.1} {y2:.1} A{r2} {r2} 0 0 0 {x3:.1} {y3:.1} Z\"><title>{}</title></path>",
+            esc(&format!("{} trades", tr.ends(*party))),
             r2 = R + BAND,
         );
         let centre = (a0 + a1) / 2.0;
         let (tx, ty) = point(centre, R + BAND + 14.0);
-        let name = match i {
-            _ if i < seats => label(&who[i], place[i]),
-            _ if i == bank => "the bank".to_string(),
-            _ => "ports".to_string(),
+        let name = match *party {
+            w if w == Trades::BANK => "the bank".to_string(),
+            w if w == Trades::PORT => "ports".to_string(),
+            w => label(&who[w], place[w]),
         };
         let _ = write!(
             b,
@@ -1216,6 +1250,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
          circle above counts each trade once, and takes the bank and the ports \
          as parties, since a trade with the supply is still a trade.",
     ));
+    b.push_str("<div class=\"market\">");
     b.push_str(&chord(study, &who, &place, seats));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -1262,15 +1297,18 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         sum(&r.supply_trades),
     ]));
     b.push_str(T_CLOSE);
-    b.push_str("</section>");
+    b.push_str("</div></section>");
 
     // ---- development cards --------------------------------------------------
     b.push_str("<section>");
     b.push_str(&card_head(
         "Development cards",
-        "Played, not held. A victory point card is never played (R-9.11), so \
-         that column is always empty, and it is kept so the five read in the \
-         order the cards do.",
+        "Each column is how many of that card were drawn, with how many were \
+         played in brackets. The two differ by what was still in hand at the \
+         end: a card is drawn once and then either played or held, and a played \
+         card never goes back to the deck (R-8.10). A victory point card is \
+         never played at all (R-9.11), so its brackets are always empty and the \
+         column is kept so the five read in the order the cards do.",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -1281,12 +1319,19 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     heads.extend(DEV_NAMES.iter().map(|n| (*n, "")));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
+    let mut drawn = [0u32; 5];
     let mut played = [0u32; 5];
     for s in 0..seats {
         let mut cells = vec![placed(s, &who[s], place[s]), r.dev_bought[s].to_string()];
-        cells.extend(r.dev_played[s].iter().map(u32::to_string));
-        for (slot, n) in played.iter_mut().zip(r.dev_played[s]) {
-            *slot += n;
+        for card in 0..5 {
+            // Bought is played plus still held: a card is drawn once and then
+            // either played or in the hand at the end, and nothing else can
+            // happen to it (R-8.10).
+            let held = study.dev_held[s][card];
+            let out = r.dev_played[s][card];
+            drawn[card] += out + held;
+            played[card] += out;
+            cells.push(bracketed(out + held, out));
         }
         b.push_str(&row(&cells, false));
     }
@@ -1295,7 +1340,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         "the deck".to_string(),
         r.dev_bought[..seats].iter().sum::<u32>().to_string(),
     ];
-    foot.extend(played.iter().map(u32::to_string));
+    foot.extend((0..5).map(|c| bracketed(drawn[c], played[c])));
     b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
     b.push_str("</section>");
@@ -1303,7 +1348,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     // ---- the opening --------------------------------------------------------
     b.push_str("<section>");
     b.push_str(&card_head(
-        "The opening",
+        "Opening",
         "What the first two settlements bought, before anybody had a turn, and \
          what the game turned it into.",
     ));
@@ -1318,9 +1363,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ),
         (
             "resources",
-            "How many of the five the opening touches at all. A placement can \
-             be rich and still be missing something it will need. A count per \
-             placement, so it has no total.",
+            "Which of the five the opening touches at all, in the colours their \
+             terrain wears on the board, with the ones it misses left hollow. A \
+             placement can be rich in pips and still be missing something it \
+             will need. Per placement, so it has no total.",
         ),
         ("ports", "Ports the starting settlements sit on."),
         (
@@ -1337,7 +1383,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             &[
                 placed(s, &who[s], place[s]),
                 r.opening[s].pips.to_string(),
-                format!("{} of {}", r.opening[s].diversity, RESOURCE_NAMES.len()),
+                tiles(&study.opening_touches[s]),
                 r.opening[s].ports.to_string(),
                 r.peak_hand[s].to_string(),
             ],
@@ -1364,65 +1410,10 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(T_CLOSE);
     b.push_str("</section>");
 
-    // ---- the corpus ---------------------------------------------------------
-    if let Some(wins) = study.seat_wins {
-        b.push_str("<section>");
-        b.push_str(&card_head(
-            "Across every game here",
-            "Seat, not player, because this is asking whether going first is \
-             worth anything. It needs hundreds of games before it means much: at \
-             this count the spread is noise. A game nobody won is left out, \
-             since it has no finishing order and can only enlarge the \
-             denominator.",
-        ));
-        b.push_str(T_OPEN);
-        b.push_str("<thead>");
-        b.push_str(&head_row(&[
-            ("seat", ""),
-            (
-                "games",
-                "Other finished games at this table's settings. Every seat \
-                 played in all of them, so this is the denominator below.",
-            ),
-            ("won", "Games this seat won, of those."),
-            (
-                "win rate",
-                "Games won from this seat, over games played from it.",
-            ),
-        ]));
-        b.push_str("</thead><tbody>");
-        let played = study.corpus_games;
-        for s in 0..seats.min(MAX_PLAYERS) {
-            b.push_str(&row(
-                &[
-                    seat_cell(s, &format!("seat {s}")),
-                    played.to_string(),
-                    // Back out of the rate, which is what the corpus reports.
-                    // Rounded because it was a whole number before it was a
-                    // rate and is one again after it.
-                    (wins[s] * played as f64).round().to_string(),
-                    format!("{:.0}%", wins[s] * 100.0),
-                ],
-                false,
-            ));
-        }
-        b.push_str("</tbody>");
-        b.push_str(&totals(&[
-            "every seat".to_string(),
-            played.to_string(),
-            wins[..seats.min(MAX_PLAYERS)]
-                .iter()
-                .map(|w| (w * played as f64).round() as u32)
-                .sum::<u32>()
-                .to_string(),
-            format!(
-                "{:.0}%",
-                wins[..seats.min(MAX_PLAYERS)].iter().sum::<f64>() * 100.0
-            ),
-        ]));
-        b.push_str(T_CLOSE);
-        b.push_str("</section>");
-    }
+    // The corpus card lived here and does not any more: seat win rates are a
+    // claim about many games, and a report on one game is the wrong place to
+    // make it. It belongs on a page that reads the whole store, which is the
+    // cumulative statistics work still to come.
 
     b.push_str("</main></body></html>");
     b
@@ -1515,7 +1506,9 @@ table { width: 100%; border-collapse: collapse; font-size: 14px;
         font-variant-numeric: tabular-nums; }
 th, td { text-align: right; padding: .7em .9em;
          border-bottom: 1px solid var(--border); }
-th:first-child, td:first-child { text-align: left; }
+/* The label column never wraps: a name and its place badge belong on one
+   line, and breaking them makes a row twice as tall for nothing. */
+th:first-child, td:first-child { text-align: left; white-space: nowrap; }
 thead th { font-weight: 500; color: var(--muted-foreground); white-space: nowrap; }
 tbody tr { transition: background .12s ease; }
 tbody tr:hover { background: var(--muted); }
@@ -1544,6 +1537,13 @@ tbody tr:last-child td { border-bottom: 0; }
 tfoot tr:hover { background: transparent; }
 /* What a thing was worth, beside how many of it there were. */
 .worth { color: var(--muted-foreground); }
+/* The five resources as tiles: touched ones filled, missed ones hollow. */
+.tiles { display: inline-flex; gap: 3px; vertical-align: -3px; }
+.tile { width: 15px; height: auto; overflow: visible; }
+.tile .off { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.tile .on.r0 { fill: #C0563B; } .tile .on.r1 { fill: #1F5E3A; }
+.tile .on.r2 { fill: #8DBE4A; } .tile .on.r3 { fill: #E2A32B; }
+.tile .on.r4 { fill: #5C6B78; }
 
 /* A subtotal inside the body, ruled off from what it adds up. */
 tbody tr.sub td { font-weight: 600; color: var(--foreground);
@@ -1615,8 +1615,15 @@ tbody tr.sub:hover { background: transparent; }
 /* ---- the trade ring ----
    A chord, because trading is symmetric: there is no side a trade goes from,
    and a sankey would invent a direction the game does not have. */
-.ring svg { display: block; width: 100%; max-width: 520px; height: auto;
-            margin: 0 auto 1rem; }
+/* The circle and its table side by side while there is width for it, so the
+   card is not a drawing floating in a field of nothing. */
+.market { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: center; }
+/* The table needs its columns; the circle only needs to be legible. So the
+   circle takes a fixed slice and the table takes the rest, and they wrap onto
+   two rows before either is squeezed. */
+.market > .ring { flex: 0 1 290px; min-width: 0; }
+.market > .tw { flex: 1 1 470px; min-width: 0; }
+.ring svg { display: block; width: 100%; height: auto; }
 .chord { opacity: .4; }
 .chord:hover { opacity: .75; }
 .rim.supply { fill: var(--muted-foreground); }
@@ -1714,7 +1721,7 @@ mod tests {
             "Militia",
             "Trades",
             "Development cards",
-            "The opening",
+            "Opening",
         ] {
             assert!(html.contains(heading), "{heading} is a section");
         }
@@ -1784,8 +1791,8 @@ mod tests {
         // before the name rather than after it.
         let seats = s.report.players as usize;
         assert!(
-            html.matches("class=\"dot s").count() >= seats * 8,
-            "eight tables' worth of seats are marked"
+            html.matches("class=\"dot s").count() >= seats * 6,
+            "six tables' worth of seats are marked"
         );
         for (seat, name) in names(&history[1], seats).iter().enumerate() {
             assert!(
@@ -1793,9 +1800,6 @@ mod tests {
                 "{name} wears seat {seat}'s colour, on the left"
             );
         }
-        // Including the corpus card, where the rows are seats rather than
-        // people, and they are the same seats.
-        assert!(html.contains("<span class=\"dot s0\"></span>seat 0"));
     }
 
     #[test]
@@ -1871,19 +1875,21 @@ mod tests {
 
     #[test]
     fn every_long_explanation_is_a_tooltip_now() {
-        // Two games, so the corpus card is on the page to be checked too.
+        // Two games, so the dice card has something to compare against.
         let history: Vec<Saved> = (7..9u64).map(played).collect();
         let s = study(&history[1], &history).expect("it studies");
         let html = page(&history[1], &s);
-        assert!(html.contains("Across every game here"), "the corpus card");
+        // Seat win rates are a claim about many games, so they are not on a
+        // report about one, whatever the corpus behind it.
+        assert!(!html.contains("Across every game here"), "not on this page");
+        assert!(!html.contains("win rate"));
         // The paragraphs that used to sit under the tables are gone, and what
         // they said is on the card or the column it was about.
         for gone in [
             "dots on every number",
-            "Played, not held",
+            "never goes back to the deck",
             "Counted for both sides",
             "No p-value, deliberately",
-            "Seat, not player",
         ] {
             assert!(!html.contains(&format!(">{gone}")), "{gone} is not prose");
             assert!(html.contains(gone), "{gone} is still said, in a tooltip");
