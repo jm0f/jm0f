@@ -14,10 +14,16 @@ use std::fmt::Write as _;
 
 use carranta_core::state::MAX_PLAYERS;
 
+use carranta_core::state::PORT_KINDS;
+
 use crate::analysis::{Study, Trades, seat_name};
 use crate::store::Saved;
 
 const RESOURCE_NAMES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
+/// Where the victory point card sits in `DEV_NAMES` and in every per-card
+/// array the analytics keep.
+const VICTORY_POINT: usize = 1;
+
 const DEV_NAMES: [&str; 5] = [
     "militia",
     "victory point",
@@ -835,6 +841,12 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
          them to expect. The gap is the robber and the dice together, which the \
          ledger above splits apart.",
     ));
+    heads.push((
+        "luck",
+        "How far the total ran over or under what was expected, as a share of \
+         it. Minus a fifth means this seat collected four cards for every five \
+         the board owed them.",
+    ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
     let (mut got, mut owed) = ([0u32; 5], [0.0f64; 5]);
@@ -845,19 +857,76 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
             owed[res] += s.expected[last][p][res];
             cells.push(against(s.actual[last][p][res], s.expected[last][p][res]));
         }
-        cells.push(against(
-            s.actual[last][p].iter().sum(),
-            s.expected[last][p].iter().sum(),
-        ));
+        let (a, e) = (
+            f64::from(s.actual[last][p].iter().sum::<u32>()),
+            s.expected[last][p].iter().sum::<f64>(),
+        );
+        cells.push(against(s.actual[last][p].iter().sum(), e));
+        cells.push(share(a, e));
         b.push_str(&row(&cells, false));
     }
     b.push_str("</tbody>");
     let mut foot = vec!["the board".to_string()];
     foot.extend((0..5).map(|res| against(got[res], owed[res])));
     foot.push(against(got.iter().sum(), owed.iter().sum()));
+    foot.push(share(
+        f64::from(got.iter().sum::<u32>()),
+        owed.iter().sum::<f64>(),
+    ));
     b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
+
+    // The same question asked four times across the game, because when a seat
+    // was starved matters: cards missing early delay everything they would
+    // have bought, and the same shortfall at the end costs one purchase.
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![("", "")];
+    const QUARTERS: [(&str, &str); 4] = [
+        ("first quarter", "Turns 1 to a quarter of the way in."),
+        ("second", "The second quarter of the game's turns."),
+        ("third", "The third."),
+        ("last quarter", "The last quarter, up to the winning turn."),
+    ];
+    heads.extend(QUARTERS.iter().map(|(n, w)| (*n, *w)));
+    heads.push((
+        "whole game",
+        "The four quarters together, which is the luck column above.",
+    ));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    let cut = |k: usize| (s.turns() * k).div_ceil(4).min(s.turns()).saturating_sub(1);
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for k in 0..4 {
+            // A quarter is what the running totals grew by across it.
+            let (from, to) = (if k == 0 { None } else { Some(cut(k)) }, cut(k + 1));
+            let grew = |take: &dyn Fn(usize) -> f64| take(to) - from.map_or(0.0, |i| take(i));
+            let a = grew(&|i| f64::from(s.actual[i][p].iter().sum::<u32>()));
+            let e = grew(&|i| s.expected[i][p].iter().sum::<f64>());
+            cells.push(share(a, e));
+        }
+        cells.push(share(
+            f64::from(s.actual[last][p].iter().sum::<u32>()),
+            s.expected[last][p].iter().sum::<f64>(),
+        ));
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
     b
+}
+
+/// How far a figure ran over or under what was expected, as a share of it.
+fn share(got: f64, owed: f64) -> String {
+    if owed < 0.05 {
+        return NONE.to_string();
+    }
+    let d = (got - owed) / owed * 100.0;
+    format!(
+        "<span class=\"{}\">{d:+.0}%</span>",
+        if d >= 0.0 { "up" } else { "down" }
+    )
 }
 
 /// One seat, a resource a row: what arrived, what was expected, the gap between
@@ -1634,9 +1703,9 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         "Each column is how many of that card were drawn, with how many were \
          played in brackets. The two differ by what was still in hand at the \
          end: a card is drawn once and then either played or held, and a played \
-         card never goes back to the deck (R-8.10). A victory point card is \
-         never played at all (R-9.11), so its brackets are always empty and the \
-         column is kept so the five read in the order the cards do.",
+         card never goes back to the deck (R-8.10). The victory point column \
+         has no brackets, because a victory point card is never played: it \
+         counts from the moment it is drawn (R-9.11).",
     ));
     b.push_str(T_OPEN);
     b.push_str("<thead>");
@@ -1659,7 +1728,18 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             let out = r.dev_played[s][card];
             drawn[card] += out + held;
             played[card] += out;
-            cells.push(bracketed(out + held, out));
+            // A victory point card is never played: it counts the moment it is
+            // drawn (R-9.11). Brackets saying "nought played" on every one of
+            // them is a column of noughts that answers nothing.
+            cells.push(if card == VICTORY_POINT {
+                if out + held == 0 {
+                    NONE.to_string()
+                } else {
+                    (out + held).to_string()
+                }
+            } else {
+                bracketed(out + held, out)
+            });
         }
         b.push_str(&row(&cells, false));
     }
@@ -1668,8 +1748,147 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         "the deck".to_string(),
         r.dev_bought[..seats].iter().sum::<u32>().to_string(),
     ];
-    foot.extend((0..5).map(|c| bracketed(drawn[c], played[c])));
+    foot.extend((0..5).map(|c| {
+        if c == VICTORY_POINT {
+            drawn[c].to_string()
+        } else {
+            bracketed(drawn[c], played[c])
+        }
+    }));
     b.push_str(&totals(&foot));
+    b.push_str(T_CLOSE);
+    b.push_str("</section>");
+
+    // ---- the board ----------------------------------------------------------
+    b.push_str("<section>");
+    b.push_str(&card_head(
+        "Board",
+        "What this board dealt, against what an average one deals. The discs \
+         are a fixed set laid on a fixed set of hexes, so the average is not a \
+         simulation: it is the mean pips of a disc times the hexes a resource \
+         has. Every disc lands somewhere, so the pips always add to the same \
+         total and the difference column always cancels. What it says is which \
+         resource the deal favoured, before anybody placed anything.",
+    ));
+    let bd = &study.board;
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "hexes",
+            "How many hexes produce this, which the tile set fixes.",
+        ),
+        ("pips", "Dots actually laid on them."),
+        (
+            "average board",
+            "Those hexes times the mean pips of a disc, which is what a random \
+             deal gives them over an unbounded number of boards.",
+        ),
+        (
+            "difference",
+            "How far this deal fell from that. It cancels across the column, \
+             because a pip given to one resource was taken from another.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for res in 0..5 {
+        let owed = bd.expected(res);
+        let d = f64::from(bd.pips[res]) - owed;
+        b.push_str(&row(
+            &[
+                format!("<span class=\"dot r{res}\"></span>{}", RESOURCE_NAMES[res]),
+                bd.hexes[res].to_string(),
+                bd.pips[res].to_string(),
+                format!("{owed:.1}"),
+                format!(
+                    "<span class=\"{}\">{:+.1}</span>",
+                    if d >= 0.0 { "up" } else { "down" },
+                    d
+                ),
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(&totals(&[
+        "the land".to_string(),
+        bd.hexes.iter().sum::<u32>().to_string(),
+        bd.pips.iter().sum::<u32>().to_string(),
+        format!("{:.1}", (0..5).map(|r| bd.expected(r)).sum::<f64>()),
+        format!("{:+.1}", 0.0),
+    ]));
+    b.push_str(T_CLOSE);
+
+    // And the same question asked of the coast: was a port worth building on?
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        ("spots", "Intersections carrying this port."),
+        (
+            "hexes",
+            "Producing hexes those intersections touch, counted once per touch: \
+             a hex two of them share is two, because either spot could take it.",
+        ),
+        ("pips", "Dots on those hexes, counted the same way."),
+        (
+            "average board",
+            "Those hexes times the mean pips of a disc. A port above this line \
+             sat on good land and was worth going to; one below it asked a \
+             player to give up production for a rate.",
+        ),
+        ("difference", "How far this deal fell from that."),
+    ]));
+    b.push_str("</thead><tbody>");
+    let (mut spots, mut touching, mut pips, mut owed_all) = (0, 0, 0, 0.0);
+    for kind in 0..PORT_KINDS {
+        let land = bd.ports[kind];
+        if land.spots == 0 {
+            continue;
+        }
+        let owed = bd.port_expected(kind);
+        let d = f64::from(land.pips) - owed;
+        spots += land.spots;
+        touching += land.touching;
+        pips += land.pips;
+        owed_all += owed;
+        b.push_str(&row(
+            &[
+                match kind.checked_sub(1) {
+                    None => "<span class=\"port any\">3:1</span>".to_string(),
+                    Some(res) => format!(
+                        "<span class=\"port r{res}\">2:1</span> {}",
+                        RESOURCE_NAMES[res]
+                    ),
+                },
+                land.spots.to_string(),
+                land.touching.to_string(),
+                land.pips.to_string(),
+                format!("{owed:.1}"),
+                format!(
+                    "<span class=\"{}\">{:+.1}</span>",
+                    if d >= 0.0 { "up" } else { "down" },
+                    d
+                ),
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    let d = f64::from(pips) - owed_all;
+    b.push_str(&totals(&[
+        "the coast".to_string(),
+        spots.to_string(),
+        touching.to_string(),
+        pips.to_string(),
+        format!("{owed_all:.1}"),
+        format!(
+            "<span class=\"{}\">{:+.1}</span>",
+            if d >= 0.0 { "up" } else { "down" },
+            d
+        ),
+    ]));
     b.push_str(T_CLOSE);
     b.push_str("</section>");
 

@@ -621,6 +621,87 @@ fn trades_of(saved: &Saved) -> Trades {
     out
 }
 
+/// What the board itself dealt, against what an average board deals.
+///
+/// The discs are a fixed set (`DISCS`) laid on a fixed set of hexes, so "an
+/// average board" is not a simulation: it is the mean pips of a disc times the
+/// hexes a resource has. Every disc lands somewhere, so the pips across the
+/// five resources always add to the same total and the card is a pure
+/// redistribution. The question it answers is which resource got the good
+/// numbers this time.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Board {
+    /// Hexes of each resource, which is fixed by the tile set.
+    pub hexes: [u32; 5],
+    /// Pips actually laid on them.
+    pub pips: [u32; 5],
+    /// Mean pips on a disc, over the whole set. The expectation per hex.
+    pub mean: f64,
+    /// Per port kind: index 0 is the generic three to one, the rest are the two
+    /// to ones in resource order.
+    pub ports: [PortLand; PORT_KINDS],
+}
+
+/// The land a port kind can be built on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PortLand {
+    /// Intersections carrying this port.
+    pub spots: u32,
+    /// Producing hexes those intersections touch, counted once per touch: a
+    /// hex two of them share is two, because either could take it.
+    pub touching: u32,
+    /// Pips on those hexes, counted the same way.
+    pub pips: u32,
+}
+
+impl Board {
+    /// What a random deal would have put on this resource's hexes.
+    pub fn expected(&self, res: usize) -> f64 {
+        f64::from(self.hexes[res]) * self.mean
+    }
+
+    /// And on the land a port kind sits on.
+    pub fn port_expected(&self, kind: usize) -> f64 {
+        f64::from(self.ports[kind].touching) * self.mean
+    }
+}
+
+use carranta_core::state::PORT_KINDS;
+
+/// Read the board off the opening position, before anything is built on it.
+fn board_of(saved: &Saved) -> Board {
+    use carranta_core::state::DISCS;
+    use carranta_core::topology::{HEX_COUNT, hex_vertices};
+
+    let state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let mut b = Board {
+        mean: DISCS.iter().map(|n| f64::from(ways(*n))).sum::<f64>() / DISCS.len() as f64,
+        ..Board::default()
+    };
+    for h in 0..HEX_COUNT {
+        let Some(res) = state.terrain[h].yields() else {
+            continue; // the desert carries no disc and produces nothing
+        };
+        b.hexes[res as usize] += 1;
+        b.pips[res as usize] += ways(state.number[h]);
+    }
+    for (kind, land) in b.ports.iter_mut().enumerate() {
+        let spots = state.ports[kind];
+        land.spots = spots.count_ones();
+        for h in 0..HEX_COUNT {
+            if state.terrain[h].yields().is_none() {
+                continue;
+            }
+            // Once per intersection that touches it: a hex two port spots share
+            // is worth counting twice, since either could have taken it.
+            let on = (spots & hex_vertices(h as u8)).count_ones();
+            land.touching += on;
+            land.pips += on * ways(state.number[h]);
+        }
+    }
+    b
+}
+
 /// What an opening placement bought, before anybody had a turn.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Opening {
@@ -817,6 +898,8 @@ pub struct Study {
     pub dev_held: [[u32; 5]; MAX_PLAYERS],
     /// What each seat's opening placement bought.
     pub opening: [Opening; MAX_PLAYERS],
+    /// The board itself, against an average one.
+    pub board: Board,
     /// Whether this game was saved with a clock in it. Games written before
     /// there was one still read, and say nothing about time rather than saying
     /// nought.
@@ -855,6 +938,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let dev_held =
         core::array::from_fn(|p| core::array::from_fn(|c| u32::from(end.dev_held[p][c])));
     let opening = openings_of(saved);
+    let board = board_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
     let series = series_of(saved);
@@ -934,6 +1018,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         trades,
         dev_held,
         opening,
+        board,
         timed,
         production,
         dice: this,

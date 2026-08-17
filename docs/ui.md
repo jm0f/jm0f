@@ -1512,6 +1512,13 @@ is paired with an effect size.
   exactly what it paid. Counting it on one line only offset every seat by a few
   cards for the whole game.
 
+  The everybody table carries a **luck** column, how far a seat's total ran over
+  or under what was expected as a share of it, and under it the same question
+  asked four times across the game. When a seat was starved matters: cards
+  missing early delay everything they would have bought, and the same shortfall
+  at the end costs one purchase. A quarter is what the running totals grew by
+  across it.
+
   Under each chart, its own table, so the figures change with the view. Every
   seat has one: production per resource with the expectation in brackets, and a
   foot row for the board. One seat has another shape, a resource a row:
@@ -1544,8 +1551,19 @@ is paired with an effect size.
   three or two is a port. Beneath it, the counts, where a completed trade is
   counted for both sides so that column totals to twice the trades; the circle
   counts each one once.
+- **Board**, what this board dealt against what an average one deals. The discs
+  are a fixed set laid on a fixed set of hexes, so the average is not a
+  simulation: it is the mean pips of a disc times the hexes a resource has.
+  Every disc lands somewhere, so the pips always add to the same total and the
+  difference column cancels exactly, which makes the card a pure redistribution
+  and the question it answers "which resource did the deal favour". The same
+  question is then asked of the coast, over the intersections each port kind can
+  be built on: a port above the line sat on good land and was worth going to;
+  one below it asked a player to give up production for a rate.
 - **Development cards**, each column how many of that card were drawn with how
-  many were played in brackets. The two differ by what was still in hand at the
+  many were played in brackets. The victory point column has no brackets: a
+  victory point card is never played, it counts from the moment it is drawn
+  (R-9.11), so a bracketed nought on every one of them answered nothing. The two differ by what was still in hand at the
   end: a card is drawn once and then either played or held, and a played card
   never goes back to the deck (R-8.10). The foot row is therefore the deck's own
   composition, which is a standing check on the whole table.
