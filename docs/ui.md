@@ -1558,8 +1558,15 @@ is paired with an effect size.
   difference column cancels exactly, which makes the card a pure redistribution
   and the question it answers "which resource did the deal favour". The same
   question is then asked of the coast, over the intersections each port kind can
-  be built on: a port above the line sat on good land and was worth going to;
-  one below it asked a player to give up production for a rate.
+  be built on.
+
+  The coast table's expectation is **not** the same for every port, and that is
+  geometry rather than chance: a port spot touches one or two land hexes
+  depending on where it sits, so a port whose two spots reach three hexes is
+  expected more pips than one reaching two. The layout is the same on every
+  board, so only the difference column is luck. The **a hex** column divides
+  that out and is the figure to compare ports on, against the board's mean of
+  3.2 pips a hex.
 - **Development cards**, each column how many of that card were drawn with how
   many were played in brackets. The victory point column has no brackets: a
   victory point card is never played, it counts from the moment it is drawn

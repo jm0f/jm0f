@@ -1845,12 +1845,24 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         ),
         ("pips", "Dots on those hexes, counted the same way."),
         (
-            "average board",
-            "Those hexes times the mean pips of a disc. A port above this line \
-             sat on good land and was worth going to; one below it asked a \
-             player to give up production for a rate.",
+            "a hex",
+            "Pips over hexes, which is the figure to compare ports on. The \
+             board's mean is 3.2, so a port above that sat on better land than \
+             a random hex and one below it sat on worse.",
         ),
-        ("difference", "How far this deal fell from that."),
+        (
+            "average board",
+            "Those hexes times the mean pips of a disc. It differs between \
+             ports because their spots touch different numbers of hexes, which \
+             is where the port sits on the coast rather than anything the dice \
+             did: a port spot touches one or two land hexes depending on the \
+             layout, and the layout is the same on every board.",
+        ),
+        (
+            "difference",
+            "How far this deal fell from that. Only this column is chance; the \
+             expectation beside it is fixed by the geometry.",
+        ),
     ]));
     b.push_str("</thead><tbody>");
     let (mut spots, mut touching, mut pips, mut owed_all) = (0, 0, 0, 0.0);
@@ -1877,6 +1889,11 @@ pub fn page(saved: &Saved, study: &Study) -> String {
                 land.spots.to_string(),
                 land.touching.to_string(),
                 land.pips.to_string(),
+                if land.touching == 0 {
+                    NONE.to_string()
+                } else {
+                    format!("{:.1}", f64::from(land.pips) / f64::from(land.touching))
+                },
                 format!("{owed:.1}"),
                 format!(
                     "<span class=\"{}\">{:+.1}</span>",
@@ -1894,6 +1911,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         spots.to_string(),
         touching.to_string(),
         pips.to_string(),
+        format!("{:.1}", f64::from(pips) / f64::from(touching)),
         format!("{owed_all:.1}"),
         format!(
             "<span class=\"{}\">{:+.1}</span>",
