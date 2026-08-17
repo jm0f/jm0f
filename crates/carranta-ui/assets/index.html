@@ -3080,9 +3080,10 @@ const CLOCK_NOTE = {
 // is a landing page for a public table to appear on, since an option that
 // promises a listing nobody can read would be a lie about where the game went.
 const VISIBILITY_NOTE = {
-  private: 'Reachable by the invite link alone.',
-  public: 'Listed on the landing page for anyone to join. Not yet: there is no '
-        + 'landing page to be listed on.',
+  private: 'Reachable by the invite link alone, and on the home page of the '
+         + 'browser that dealt it.',
+  public: 'Listed on the home page for anyone who can reach this server. '
+        + 'Publishing is the answer that cannot be taken back.',
 };
 
 // What each speed is like to sit across from. Each is a range rather than a
@@ -3111,7 +3112,13 @@ const CHAT_NOTE = {
 const lobby = {
   seats: 4,
   game: '',
-  roles: ['you', 'open', 'open', 'open'],
+  // Bots, because that is who the server can actually seat. Seats waited for
+  // people by default for as long as the lobby was a side door reached from a
+  // board; it is the front door now, and a front door whose one button refuses
+  // until you have pressed three others is the wrong first screen. Waiting for
+  // somebody is still a click a seat, and it still refuses to deal until the
+  // seat is answered, so nothing became a decision made by mis-click.
+  roles: ['you', 'bot', 'bot', 'bot'],
   visibility: 'private',
   pace: 'fast',
   chat: 'none',
@@ -3251,7 +3258,9 @@ function renderLobby() {
      [3, '3 players', { tip: MODE_NOTE[3] }]], lobby.seats, v => {
       lobby.seats = v;
       lobby.roles = lobby.roles.slice(0, v);
-      while (lobby.roles.length < v) lobby.roles.push('open');
+      // A seat added by going from three players to four gets the same answer
+      // the others start with, so widening the table does not disable dealing.
+      while (lobby.roles.length < v) lobby.roles.push('bot');
     });
 
   const slots = document.getElementById('lobbySlots');
@@ -3342,7 +3351,8 @@ function renderLobby() {
 
   tabs(document.getElementById('lobbyVisibility'),
     [['private', 'private', { tip: VISIBILITY_NOTE.private }],
-     ['public', 'public', { disabled: true, tip: VISIBILITY_NOTE.public }]],
+     // Selectable now that there is a page for a listed table to appear on.
+     ['public', 'public', { tip: VISIBILITY_NOTE.public }]],
     lobby.visibility, v => { lobby.visibility = v; });
 
   tabs(document.getElementById('lobbyClockKind'),
@@ -3416,7 +3426,11 @@ function openLobby() {
 
 document.getElementById('another').onclick = openLobby;
 
+// Somewhere to go if you change your mind, and where that is depends on what is
+// behind the lobby. Over a game, the game; on `/lobby`, nothing, so the way back
+// is the page you came from, which is home.
 document.getElementById('lobbyBack').onclick = () => {
+  if (LOBBY_ONLY) { location.assign('/'); return; }
   document.getElementById('lobby').hidden = true;
 };
 
@@ -4577,11 +4591,26 @@ function act(i) {
 // being played now.
 const GAME = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] || '';
 const api = (path) => `/${GAME}${path}`;
+// `/lobby` is this page with no game behind it: the home page's New game button
+// leads here, and the lobby is a screen of this application rather than a second
+// form somewhere else to drift out of step with this one. There is no board to
+// draw, nothing to poll and no report to link to, so none of that runs.
+const LOBBY_ONLY = GAME === 'lobby';
+
 // The header's way through to this game's report. Written once, because the
 // address does not change while the game is being played.
 {
   const a = document.getElementById('analytics');
-  if (a) a.href = api('/analytics');
+  if (a) {
+    if (LOBBY_ONLY) a.remove();
+    else a.href = api('/analytics');
+  }
+  // Nor is there a game to want a different one from, and the way out of the
+  // lobby leads home rather than to a board that was never dealt.
+  if (LOBBY_ONLY) {
+    document.getElementById('another').remove();
+    document.getElementById('lobbyBack').textContent = 'Back to the home page';
+  }
 }
 
 // Straight to the board. A fresh board used to open the lobby on top of itself,
@@ -4590,7 +4619,8 @@ const api = (path) => `/${GAME}${path}`;
 // from it was asked for: opening the lobby over it would ask the same questions
 // a second time. The lobby is still a click away from the header and from the
 // end of a game, which is where wanting a different game actually happens.
-loadArt().then(() => load(api('/api/state')));
+if (LOBBY_ONLY) openLobby();
+else loadArt().then(() => load(api('/api/state')));
 
 // The server is restarted whenever a change is pulled, and a page served by
 // the old one cannot re-render its way up to date. Watch the build stamp and
@@ -4604,6 +4634,9 @@ loadArt().then(() => load(api('/api/state')));
 // because a fast poll against a board nobody is touching is just traffic.
 const POLL_IDLE = 3000, POLL_MOVING = 150;
 (async function poll() {
+  // Nothing to watch: a lobby has no board to bring up to date, and asking about
+  // a game that does not exist is a 404 every three seconds.
+  if (LOBBY_ONLY) return;
   try {
     const next = await (await fetch(api('/api/state'), { cache: 'no-store' })).json();
     if (view && next.build !== view.build) { location.reload(); return; }

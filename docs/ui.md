@@ -962,23 +962,28 @@ because a listing is read from the table and not from whoever is looking at it.
 The home page reads it off the session, which is why that was the right place to
 put it before anything read it at all.
 
-**The lobby no longer opens itself.** It used to appear over any board with no
-moves in it, because arriving at one meant the server had dealt it and nobody
-had said what they wanted. The home page's form is that conversation now, and a
-table reached from it was asked for, so opening the lobby on top of it would ask
-the same questions twice. It is a **New game** link in the header instead, next
-to the report, and it has a way out: **Back to the board**, which the auto-opening
-version never needed because the only exit was to deal.
+**The lobby has an address of its own: `/lobby`.** It is this page served with
+no game behind it, which is what the home page's one button leads to. There is no
+board to draw, nothing to poll and no report to link to, so none of that runs;
+what is left is the lobby, which is a screen of this application rather than a
+second form somewhere else to drift out of step with this one.
 
-Two ways to deal a table is deliberate. The form on the home page asks the four
-things that decide what game it is; the lobby asks the other nine, and a seed.
-The server reads the same field names out of a form post that it reads out of the
-lobby's query, so the two cannot mean different things by `visibility` or `pace`.
+**The lobby no longer opens itself over a board.** It used to appear over any
+board with no moves in it, because arriving at one meant the server had dealt it
+and nobody had said what they wanted. A table is asked for now, so opening the
+lobby on top of it would ask the same questions twice. It is a **New game** link
+in the header instead, next to the report, and it has a way out: **Back to the
+board**, which the auto-opening version never needed because the only exit was to
+deal. On `/lobby` that button leads home, because there is no board behind it.
 
-**Seats wait for people by default.** A seat can be set to a bot, but the
-default is open, because the reason a lobby exists is that someone else is
-coming. The server cannot seat a person yet, so an open seat is played by a bot
-until it can, said plainly on the screen rather than implied.
+**Seats hold bots by default, and used to wait for people.** Waiting was right
+while the lobby was a side door reached from a board somebody was already sitting
+at. It is the front door now, reached from the home page, and a front door whose
+one button refuses until you have pressed three others is the wrong first screen.
+A seat can still be set to wait, it still says so plainly on the screen, and
+dealing still refuses while any seat is waiting, so nothing became a decision made
+by a mis-click. The default is simply the answer the server can actually carry out
+today.
 
 **Your name is editable because nobody is signed in.** It is kept in the
 browser between games, which is the closest thing to being remembered without
@@ -2051,18 +2056,18 @@ rendered, and with **no script at all**. Nothing on it changes without a request
 so there is nothing for a script to do, and the same rule that makes the report
 honest makes this page work before anything has loaded.
 
-- **New game** is a `<form>` posting to `/new`, which is what a page with no
-  script has to use and is also the better answer: the browser remembers what you
-  typed, and every field has a default that plays an ordinary game, so the button
-  on its own is a whole reply. Four fields, because those are the ones that decide
-  what game it is: your name, a name for the table, three seats or four, listed or
-  not, and how fast the bots move. The answer to a form post is **a place to go**
-  rather than a payload to draw, so it is a 303 to the table's own address.
+- **New game** is one button, and it deals nothing: it leads to the lobby (§8),
+  where the settings already live. It began as a form of its own with the four
+  fields that decide what game it is, which was two forms asking overlapping
+  halves of one question, and the half here was the smaller one. A page with no
+  script can still start a game, because starting one is a link.
 - **Tables** is somewhere to sit: every game in memory that has not been won.
   Your own are there whether or not you listed them, because you have to be able
   to get back to a game you dealt; other people's are there only if their host
   published them. A row says which turn it is on rather than how many turns are
-  done, since that is what a live table has.
+  done, since that is what a live table has, and it is tagged **yours**, **listed**
+  or both: the two answer different questions, and being listed is the one that
+  cannot be taken back, so it is said out loud rather than implied.
 - **Your games**, and beneath it **Also on this server**. A game arrives in the
   history when it ends, and leaves the tables list at the same moment: one of the
   two lists has to give a game up or it appears twice, and the line between them
@@ -2102,9 +2107,15 @@ not showing. A page read at a glance does not have a hundredth row, and nothing
 is lost: every game keeps its address. "Across all of them" is a different page,
 and it is specified in `analytics-backlog.md`.
 
+**One logo, and it is set as a logo.** The page carried two: a small wordmark in
+a header, linking to the page it was already on, above a large heading saying the
+same word in the report's serif. The report's `h1` is right for a report, because
+there it is a document title; here the heading *is* the name of the thing, so it
+wears the wordmark's face and the wordmark's colour, and the header went away.
+
 The page borrows the report's stylesheet whole, so the tokens, the card, the
 table and the tooltip are one design rather than two that resemble each other.
-What it adds is a form and a button, because the report has neither.
+What it adds is a button, which the report has none of, and that wordmark.
 
 ---
 
@@ -2122,6 +2133,13 @@ What it adds is a form and a button, because the report has neither.
   you at the same seat as them, because the server seats one person and plays the
   rest. The list is what seats will be reached from, so the page is right and the
   server is not there yet.
+- **The lobby's invite link goes nowhere.** It reads
+  `/join?table=<seed>&seats=N`, and the server has no `/join`, so the one control
+  on that screen that promises to bring somebody else in returns a 404. It was
+  harmless while the lobby was reached from a board and is not now that it is the
+  front door. What it can honestly do before seats exist is reproduce the *board*
+  from its seed at a table of your own, which is not joining, so what the link
+  should say is a decision rather than a fix.
 - **Accounts.** The home page answers "show me my games" from a key in a cookie,
   which follows a browser rather than a person. The key is written into every game
   file, so an account can claim one browser's games later without touching a

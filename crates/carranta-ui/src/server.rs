@@ -266,46 +266,7 @@ impl Server {
                 others.push(g);
             }
         }
-        // A name to put in the form, taken from the last table they dealt, so a
-        // second game does not ask again for something already answered. Tables
-        // before stored games: a table dealt and not yet played in is the most
-        // recent thing they said their name was, and it is the case that matters,
-        // since a game with no moves in it has no file to read the name out of.
-        let name = open
-            .iter()
-            .filter(|t| t.mine)
-            .map(|t| t.host.clone())
-            .chain(mine.iter().map(|g| g.name.clone()))
-            .find(|n| !n.is_empty())
-            .unwrap_or_default();
-        crate::home::page(&open, &mine, &others, &name)
-    }
-
-    /// Deal a table from the home page's form.
-    ///
-    /// The form's fields are the lobby's, so the two ways of dealing a table
-    /// cannot drift apart: this reads the same names out of the body that
-    /// `api/new` reads out of a query.
-    fn deal(&self, form: &str, player: &str) -> String {
-        let seats = param(form, "seats")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4);
-        let name = decode(&param(form, "name").unwrap_or_default());
-        let named = decode(&param(form, "game").unwrap_or_default());
-        let pace = Pace::parse(param(form, "pace").as_deref());
-        let session = Session::new(seats, self.next_seed(), TradeMode::Full)
-            .with_public(wants_public(form))
-            .with_game(&named)
-            .with_pace(pace)
-            .with_name(&name);
-        // Nothing is written here: a table nobody has moved on is not a game
-        // (see `keep`), and it is on the home page's list from memory either way.
-        self.add(Table {
-            id: mint_id(),
-            session,
-            dealt: now(),
-            by: player.to_string(),
-        })
+        crate::home::page(&open, &mine, &others)
     }
 
     /// A seed for the next table, and the cursor moved on past it.
@@ -534,22 +495,24 @@ impl Server {
                     &set,
                 )
             }
-            // Deal a table from the home page's form, and go and sit at it.
-            //
-            // A form post rather than the board page's `api/new`, because a page
-            // with no script has to be able to say "make me one" in the one way
-            // HTML has always had, and because the answer to a form is a place
-            // to go rather than a payload to draw.
-            ("POST", "/new") => {
-                let form = if body.is_empty() { query } else { &body };
-                let id = self.deal(form, &player);
-                let set = if issue {
+            // The lobby, which is where the home page's one button leads. The
+            // board page served with no game behind it: the lobby is a screen of
+            // that application and always was, and serving it from here means the
+            // settings live in one place rather than in two forms that would
+            // drift. The key is handed out here as well, because dealing from the
+            // lobby is the first thing many visitors do and the table has to know
+            // whose it is.
+            ("GET", "/lobby") => respond_with(
+                &mut stream,
+                200,
+                "text/html; charset=utf-8",
+                PAGE.as_bytes(),
+                &if issue {
                     cookie_header(&player)
                 } else {
                     String::new()
-                };
-                redirect_with(&mut stream, &format!("/{id}/"), &set)
-            }
+                },
+            ),
             ("GET", "/") => {
                 let id = game.unwrap_or_default();
                 // On a table, or on disk, or neither. A game nobody has heard of
@@ -808,23 +771,6 @@ fn split_game(path: &str) -> (Option<String>, &str) {
             &path[head.len() + 1..]
         },
     )
-}
-
-/// Somewhere else to go, with one extra header line if there is one.
-///
-/// Always a 303: the answer to a form post is a page to look at rather than the
-/// post repeated, which is what a browser does with a 307 on a reload.
-fn redirect_with(stream: &mut TcpStream, to: &str, extra: &str) -> std::io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 303 See Other\r\n\
-         Location: {to}\r\n\
-         Content-Length: 0\r\n\
-         Cache-Control: no-store\r\n\
-         {extra}\
-         Connection: close\r\n\r\n"
-    );
-    stream.write_all(head.as_bytes())?;
-    stream.flush()
 }
 
 /// Unix milliseconds, or zero if the clock is behind 1970.
@@ -1124,8 +1070,8 @@ mod tests {
 
     #[test]
     fn a_game_nobody_moved_in_is_not_written_down() {
-        // Every visit to `/` deals a table. Writing one at that point put a
-        // game on disk for every time the page was opened, each a seed and
+        // Every visit to `/` used to deal a table, and writing one at that point
+        // put a game on disk for every time the page was opened: a seed and
         // nothing else, and every figure computed across the store was then
         // divided by them.
         let dir = std::env::temp_dir().join(format!("carranta-empty-{}", std::process::id()));
@@ -1135,8 +1081,13 @@ mod tests {
             server.store().all().is_empty(),
             "a fresh server has no games"
         );
-        // Nor does dealing again, which is what the home page's form does.
-        let id = server.deal("name=Egon", "keytest0000000000");
+        // Nor does dealing one, which is what the lobby does.
+        let id = server.add(Table {
+            id: mint_id(),
+            session: Session::new(4, 7, TradeMode::Full).with_name("Egon"),
+            dealt: now(),
+            by: "keytest0000000000".to_string(),
+        });
         server.keep(&id);
         assert!(server.store().all().is_empty(), "still nothing played");
         // The first move writes the file, and writes down whose it is.
@@ -1284,7 +1235,7 @@ mod tests {
     }
 
     #[test]
-    fn the_home_page_deals_a_table_and_remembers_whose_it_is() {
+    fn the_home_page_hands_out_a_key_and_lists_what_it_should() {
         let dir = std::env::temp_dir().join(format!("carranta-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
@@ -1297,7 +1248,7 @@ mod tests {
         // A first visit is met with a page and a key.
         let first = get(port, "/", "");
         assert!(first.starts_with("HTTP/1.1 200 OK"), "{first:.40}");
-        assert!(first.contains("Deal a table"));
+        assert!(first.contains("href=\"/lobby\""), "somewhere to start one");
         assert!(first.contains("No tables."), "nothing dealt yet");
         let key = first
             .lines()
@@ -1314,39 +1265,38 @@ mod tests {
         let again = get(port, "/", &key);
         assert!(!again.contains("Set-Cookie"), "one key per browser");
 
-        // The form deals a table and says where to go and sit at it.
-        let form = "name=Egon&game=Test&seats=3&visibility=public&pace=instant";
+        // The lobby is the board page with no game behind it, and it hands out a
+        // key too, because dealing from it is the first thing many visitors do.
+        let lobby = get(port, "/lobby", "");
+        assert!(lobby.starts_with("HTTP/1.1 200 OK"), "{lobby:.40}");
+        assert!(lobby.contains("id=\"lobby\""), "it is the lobby screen");
+        assert!(lobby.contains("Set-Cookie: carranta="));
+
+        // Deal one the way the lobby does, and it is listed as this visitor's.
         let dealt = ask(
             port,
             &format!(
-                "POST /new HTTP/1.1\r\nHost: localhost\r\n\
-                 Cookie: {PLAYER_COOKIE}={key}\r\n\
-                 Content-Length: {}\r\n\r\n{form}",
-                form.len()
+                "POST /api/new?seats=3&name=Egon&game=Test&visibility=public                  HTTP/1.1\r\nHost: localhost\r\n\
+                 Cookie: {PLAYER_COOKIE}={key}\r\n\r\n"
             ),
         );
-        assert!(dealt.starts_with("HTTP/1.1 303 See Other"), "{dealt:.40}");
+        assert!(dealt.starts_with("HTTP/1.1 200 OK"), "{dealt:.40}");
         let went = dealt
-            .lines()
-            .find_map(|l| l.strip_prefix("Location: "))
+            .rsplit("\"went\":\"")
+            .next()
+            .and_then(|t| t.split('"').next())
             .expect("somewhere to go")
-            .trim()
             .to_string();
         let id = went.trim_matches('/').to_string();
         assert!(is_game_id(&id), "{went} is a game's address");
         assert!(get(port, &went, &key).starts_with("HTTP/1.1 200 OK"));
 
-        // And it is on the home page as this visitor's, with what was asked for.
         let listed = get(port, "/", &key);
         assert!(listed.contains(&id), "the table is listed");
         assert!(listed.contains("Test"), "under the name it was given");
         assert!(listed.contains("yours"));
         assert!(listed.contains("Sit down"));
         assert!(listed.contains("<td>3</td>"), "three seats, as asked");
-        // And the form does not ask for a name it has already been told, which
-        // has to come off the table rather than the store: nothing is written
-        // down until somebody moves.
-        assert!(listed.contains("value=\"Egon\""));
 
         // Somebody else sees it too, because it was dealt as a listed table, but
         // not as theirs.

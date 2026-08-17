@@ -7,9 +7,11 @@
 //! comment: it opened the lobby because there was no home to go to.
 //!
 //! Three sections, in the order somebody wants them: start one, join one, or
-//! look at one you played. Server-rendered with a form and links, and **no
-//! script at all**, like the analytics page and for the same reason: nothing
-//! here changes without a request, so there is nothing for a script to do.
+//! look at one you played. Links only, and **no script at all**, like the
+//! analytics page and for the same reason: nothing here changes without a
+//! request, so there is nothing for a script to do. Starting one is a link to
+//! the lobby rather than a form of its own, because the lobby already asks
+//! everything a table needs and two half-forms would drift apart.
 //!
 //! Whose games are whose comes from a cookie, which is honest about what it is:
 //! a key handed to a browser, not a login. It is enough to answer "show me
@@ -51,60 +53,42 @@ pub struct Open {
 ///
 /// `open` is every table in memory, newest first; `mine` and `others` are what
 /// the store has, already split by whose they are.
-pub fn page(open: &[Open], mine: &[Saved], others: &[Saved], name: &str) -> String {
+pub fn page(open: &[Open], mine: &[Saved], others: &[Saved]) -> String {
     let mut b = String::new();
     let _ = write!(
         b,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Carranta</title><style>{CSS}{EXTRA}</style></head><body>\
-         <header><a class=\"mark\" href=\"/\">Carranta</a></header><main>\
-         <h1>Carranta</h1>\
+         <title>Carranta</title><style>{CSS}{EXTRA}</style></head><body><main>\
+         <h1 class=\"logo\">Carranta</h1>\
          <p class=\"lede\">Settle an island, trade for what the dice would not \
          give you, and be first to ten points.</p>"
     );
 
-    b.push_str(&deal(name));
+    b.push_str(&deal());
     b.push_str(&joining(open));
     b.push_str(&played(mine, others));
     b.push_str("</main></body></html>");
     b
 }
 
-/// The card that deals a table.
+/// The card that starts a game.
 ///
-/// A form rather than a script, so it works before anything has loaded and the
-/// browser remembers what you typed. Every field has a default that plays a
-/// normal game, so the button on its own is a whole answer.
-fn deal(name: &str) -> String {
+/// One button, and it does not deal anything: it leads to the lobby, which is
+/// where the settings live and always did. Two forms asking overlapping halves
+/// of the same question is one too many, and the half here was the smaller one.
+fn deal() -> String {
     let mut b = String::from("<section>");
     b.push_str(&head(
         "New game",
-        "You take a seat and the rest of the table is played by the house bot. \
-         Four seats is the game most people mean; three is faster and a little \
-         sharper, since the same board is shared between fewer players.",
+        "The lobby is where a table is set up: your name, how many seats, who \
+         holds each one, the clock, the board's seed, and whether the table is \
+         listed here for other people to find.",
     ));
-    let _ = write!(
-        b,
-        "<form class=\"deal\" method=\"post\" action=\"/new\">\
-         <label class=\"field\"><span>your name</span>\
-         <input name=\"name\" value=\"{}\" maxlength=\"24\" placeholder=\"you\"></label>\
-         <label class=\"field\"><span>table name</span>\
-         <input name=\"game\" maxlength=\"32\" placeholder=\"optional\"></label>\
-         <label class=\"field\"><span>seats</span>\
-         <select name=\"seats\"><option value=\"4\">4</option>\
-         <option value=\"3\">3</option></select></label>\
-         <label class=\"field\"><span>listing</span>\
-         <select name=\"visibility\">\
-         <option value=\"private\">just me</option>\
-         <option value=\"public\">listed below</option></select></label>\
-         <label class=\"field\"><span>bots move</span>\
-         <select name=\"pace\">\
-         <option value=\"lively\">at a lively pace</option>\
-         <option value=\"calm\">calmly</option>\
-         <option value=\"instant\">at once</option></select></label>\
-         <button class=\"go\" type=\"submit\">Deal a table</button></form>",
-        esc(name)
+    b.push_str(
+        "<p class=\"note\">You take a seat and the rest of the table is played \
+         by the house bot.</p>\
+         <a class=\"go\" href=\"/lobby\">Set up a game</a>",
     );
     b.push_str("</section>");
     b
@@ -132,7 +116,7 @@ fn joining(open: &[Open]) -> String {
         .collect();
     if live.is_empty() {
         b.push_str(
-            "<p class=\"note\">No tables. Deal one above and it will be here \
+            "<p class=\"note\">No tables. Set one up above and it will be here \
              until somebody wins it.</p>",
         );
         b.push_str("</section>");
@@ -151,16 +135,24 @@ fn joining(open: &[Open]) -> String {
         } else {
             "not started".to_string()
         };
+        // Both when both, because they answer different questions and one does
+        // not imply the other. Yours says why it is on your list; listed says it
+        // is on everybody's, which is the answer that cannot be taken back and
+        // therefore the one worth saying out loud.
+        let mut tags = String::new();
+        if t.mine {
+            tags.push_str("<span class=\"tag quiet\">yours</span> ");
+        }
+        if t.public {
+            tags.push_str("<span class=\"tag quiet\">listed</span> ");
+        }
         let _ = write!(
             b,
-            "<tr><td>{name} <span class=\"tag quiet\">{tag}</span></td>\
+            "<tr><td>{name} {tags}</td>\
              <td>{seats}</td><td>{mode}</td><td>{played}</td><td>{age}</td>\
              <td class=\"act\">\
              <a class=\"go small\" href=\"/{id}/\">Sit down</a></td></tr>",
             name = table_name(t),
-            // Yours before listed: a table of your own is on this list whether
-            // you published it or not, so that is the more useful of the two.
-            tag = if t.mine { "yours" } else { "listed" },
             seats = t.seats,
             mode = market(t.mode),
             age = ago(t.age),
@@ -343,22 +335,21 @@ const TABLE_CLOSE: &str = "</table></div>";
 /// What this page needs on top of the report's stylesheet.
 ///
 /// The tokens, the card, the table and the tooltip are all already there and are
-/// the same design; a form and a button are not, because the report has neither.
+/// the same design. What is not: a button, which the report has none of, and a
+/// wordmark set at display size, because the report's `h1` is a document title
+/// and this one is the name of the thing.
 const EXTRA: &str = "
-main { padding-top: 1rem; }
-h1 { margin-top: .2em; }
-/* The form: a row of fields that wraps, and a button that never wraps away from
-   them. Labels above their inputs, because a label beside a field on a narrow
-   screen is a field two characters wide. */
-.deal { display: flex; flex-wrap: wrap; gap: .75rem 1rem; align-items: flex-end; }
-.field { display: flex; flex-direction: column; gap: .3rem; font-size: 13px;
-         color: var(--muted-foreground); }
-.field input, .field select {
-  font: 400 15px Figtree, system-ui, sans-serif; color: var(--foreground);
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--radius-md); padding: .45em .6em; min-width: 9rem; }
-.field input:focus-visible, .field select:focus-visible {
-  outline: 2px solid var(--primary); outline-offset: 1px; }
+main { padding-top: clamp(2rem, 7vh, 5rem); }
+/* The name of the thing, set as the name of the thing. The report's h1 is a
+   document title and belongs in the serif; this one is the wordmark, so it wears
+   the wordmark's face and its colour, and it is the only one on the page: a small
+   mark in a header above a large one saying the same word is the logo twice, and
+   the header's copy is a link to the page it is already on. */
+.logo { font: 400 clamp(30px, 5.5vw, 54px)/1 Audiowide, system-ui, sans-serif;
+        color: var(--primary); letter-spacing: 0; margin: 0 0 .5rem; }
+/* A note above the button it explains, rather than a footnote below it: there is
+   nothing above it here to be ruled off. */
+.card-head + .note + .go { margin-top: 1.25rem; }
 /* The one button on the page that starts something, in the colour the win is
    written in, and the same shape as a place badge so the family holds. */
 .go { display: inline-block; text-decoration: none; cursor: pointer;
@@ -422,11 +413,11 @@ mod tests {
 
     #[test]
     fn the_page_offers_the_three_things_it_is_for() {
-        let html = page(&[], &[], &[], "");
-        // Deal one, and by a form, because there is no script here to post for
-        // it: a button that needs one is a button that does nothing.
-        assert!(html.contains("method=\"post\" action=\"/new\""));
-        assert!(html.contains("Deal a table"));
+        let html = page(&[], &[], &[]);
+        // One button, and it leads to the lobby rather than dealing anything: the
+        // settings live there, and a second form here would be half of them.
+        assert!(html.contains("href=\"/lobby\""));
+        assert!(!html.contains("<form"), "the settings are the lobby's");
         assert!(html.contains(">Tables</h2>"));
         assert!(html.contains(">Your games</h2>"));
         // The rule of this page and of the report: no script at all.
@@ -436,7 +427,7 @@ mod tests {
 
     #[test]
     fn an_empty_server_says_so_rather_than_showing_nothing() {
-        let html = page(&[], &[], &[], "");
+        let html = page(&[], &[], &[]);
         assert!(html.contains("No tables."));
         assert!(html.contains("None yet."));
         // And there is nothing to say about other people's games when there are
@@ -449,13 +440,23 @@ mod tests {
         let mine = table("aaaa-aaaa-aaaa", false, true, None);
         let theirs = table("bbbb-bbbb-bbbb", false, false, None);
         let listed = table("cccc-cccc-cccc", true, false, None);
-        let html = page(&[mine, theirs, listed], &[], &[], "");
+        let html = page(&[mine, theirs, listed], &[], &[]);
         assert!(html.contains("aaaa-aaaa-aaaa"), "my own unlisted table");
         assert!(
             !html.contains("bbbb-bbbb-bbbb"),
             "somebody else's unlisted table is not mine to see"
         );
         assert!(html.contains("cccc-cccc-cccc"), "a listed table");
+        // Mine and published says both: one says why it is on my list, the other
+        // says it is on everybody's, and that is the half that cannot be undone.
+        let both = table("eeee-eeee-eeee", true, true, None);
+        let row = page(&[both], &[], &[]);
+        let row = row
+            .split("eeee-eeee-eeee")
+            .next()
+            .expect("a row before the link");
+        assert!(row.contains(">yours</span>"));
+        assert!(row.contains(">listed</span>"));
     }
 
     #[test]
@@ -465,7 +466,7 @@ mod tests {
         // history card, which reads it off the store rather than out of memory.
         for mine in [true, false] {
             let over = table("dddd-dddd-dddd", true, mine, Some(1));
-            let html = page(&[over], &[], &[], "");
+            let html = page(&[over], &[], &[]);
             assert!(!html.contains("dddd-dddd-dddd"), "mine: {mine}");
             assert!(html.contains("No tables."));
         }
@@ -474,7 +475,7 @@ mod tests {
     #[test]
     fn a_played_game_offers_its_board_and_its_report() {
         let g = game("ffff-ffff-ffff", "Egon", Some(0));
-        let html = page(&[], std::slice::from_ref(&g), &[], "Egon");
+        let html = page(&[], std::slice::from_ref(&g), &[]);
         assert!(html.contains("href=\"/ffff-ffff-ffff/\""));
         assert!(html.contains("href=\"/ffff-ffff-ffff/analytics\""));
         // Turns, counted the way the report counts them, not moves.
@@ -482,15 +483,12 @@ mod tests {
         assert!(html.contains("<td>2</td>"));
         // Seat nought is whoever was at the keyboard, so their win is a win.
         assert!(html.contains(">won</span>"));
-        // And the name already given is in the form, so a second game does not
-        // ask for it again.
-        assert!(html.contains("value=\"Egon\""));
     }
 
     #[test]
     fn other_peoples_games_get_their_own_card() {
         let theirs = [game("1111-1111-1111", "", None)];
-        let html = page(&[], &[], &theirs, "");
+        let html = page(&[], &[], &theirs);
         assert!(html.contains("Also on this server"));
         assert!(html.contains("1111-1111-1111"));
         assert!(html.contains(">unfinished</span>"));
@@ -501,7 +499,7 @@ mod tests {
         let games: Vec<Saved> = (0..SHOWN + 3)
             .map(|i| game(&format!("{:04}-0000-0000", i + 1000), "Egon", Some(0)))
             .collect();
-        let html = page(&[], &games, &[], "Egon");
+        let html = page(&[], &games, &[]);
         assert!(html.contains("1000-0000-0000"), "the newest is shown");
         let last = format!("{:04}-0000-0000", SHOWN + 1002);
         assert!(!html.contains(&last), "the oldest is not");
@@ -510,19 +508,27 @@ mod tests {
 
     #[test]
     fn a_name_from_a_player_cannot_write_html() {
-        // The one field on this page that a person fills in, and it is echoed
-        // back into the form. A table name goes the same way.
-        let html = page(&[], &[], &[], "<script>alert(1)</script>");
-        assert!(!html.contains("<script"));
-        assert!(html.contains("&lt;script&gt;"));
+        // Names and table names reach this page from a text field somebody else
+        // typed into, and they are written into markup and into attributes.
         let sneaky = table("2222-2222-2222", true, false, None);
         let sneaky = Open {
             host: "\" onfocus=\"x".to_string(),
+            game: "<script>alert(1)</script>".to_string(),
             ..sneaky
         };
-        let html = page(&[sneaky], &[], &[], "");
+        let html = page(&[sneaky], &[], &[]);
+        assert!(!html.contains("<script"), "no script on the home page");
+        assert!(html.contains("&lt;script&gt;"));
         assert!(!html.contains("onfocus=\"x"));
         assert!(html.contains("&quot; onfocus=&quot;x"));
+        // And through the history, where the name of a game goes the same way.
+        let g = Saved {
+            name: "<b>bold</b>".to_string(),
+            ..game("3333-3333-3333", "", Some(0))
+        };
+        let html = page(&[], &[g], &[]);
+        assert!(!html.contains("<b>bold</b>"));
+        assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
     }
 
     #[test]
