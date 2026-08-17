@@ -606,7 +606,7 @@ fn turn_bar(study: &Study, who: &[String], place: &[Option<usize>], seats: usize
     b
 }
 
-/// One thing drawn: what arrived, and what was owed.
+/// One thing drawn: what arrived, and what was expected.
 struct Curve {
     /// The colour class, shared by the solid line and the dotted one.
     colour: String,
@@ -618,7 +618,7 @@ struct Curve {
 /// Production against expectation, turn by turn, with a switch above it.
 ///
 /// The default is every seat at once: a solid line for what each collected and
-/// a dotted one, in the same colour, for what the pips owed them. Pick a seat
+/// a dotted one, in the same colour, for what the pips led them to expect. Pick a seat
 /// and the same chart is drawn a resource at a time, which is the only way to
 /// see *which* card a placement was short of.
 ///
@@ -634,7 +634,8 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
     b.push_str(&card_head(
         "Production per turn",
         "Solid is what the board actually paid; dotted is what the pips through \
-         the buildings standing at each roll owed at fair odds. Both running \
+         the buildings standing at each roll should have paid at fair odds. \
+         Both running \
          totals, so each line only climbs and the gap between a pair is \
          everything that has happened to that seat so far. The robber is \
          ignored in the expectation, so a seat under blockade watches its solid \
@@ -670,7 +671,13 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
                 .collect(),
         })
         .collect();
-    b.push_str(&plot(0, &all, s.ceiling(seats), s.turns()));
+    b.push_str(&plot(
+        0,
+        &all,
+        s.ceiling(seats),
+        s.turns(),
+        &table_all(study, who, place, seats),
+    ));
 
     // And one view a seat, drawn a resource at a time.
     for p in 0..seats {
@@ -686,22 +693,32 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
                 owed: (0..s.turns()).map(|i| s.expected[i][p][res]).collect(),
             })
             .collect();
-        b.push_str(&plot(p + 1, &each, s.ceiling_of(p), s.turns()));
+        b.push_str(&plot(
+            p + 1,
+            &each,
+            s.ceiling_of(p),
+            s.turns(),
+            &table_one(study, p),
+        ));
     }
-    b.push_str("</div>");
+    b.push_str("</div></section>");
+    b
+}
 
-    // And the same thing as a table, since a line says the shape of a game and
-    // a figure says how much: what arrived, with what was owed in brackets.
+/// Every seat against every resource: what the board paid, with what the pips
+/// led them to expect in brackets.
+fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let s = &study.series;
     let last = s.turns() - 1;
-    b.push_str(T_OPEN);
+    let mut b = String::from(T_OPEN);
     b.push_str("<thead>");
     let mut heads = vec![("", "")];
     heads.extend(RESOURCE_NAMES.iter().map(|n| (*n, "")));
     heads.push((
         "total",
-        "Every card the board paid this seat, against everything the pips owed \
-         them. The gap is the robber and the dice together, which the ledger \
-         above splits apart.",
+        "Every card the board paid this seat, against everything the pips led \
+         them to expect. The gap is the robber and the dice together, which the \
+         ledger above splits apart.",
     ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
@@ -725,11 +742,90 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
     foot.push(against(got.iter().sum(), owed.iter().sum()));
     b.push_str(&totals(&foot));
     b.push_str(T_CLOSE);
-    b.push_str("</section>");
     b
 }
 
-/// What arrived, with what was owed in brackets.
+/// One seat, a resource a row: what arrived, what was expected, the gap between
+/// them, and how much of their production each resource was.
+///
+/// A row per resource rather than a column, because this table answers a
+/// different question from the one above it. That one asks who did better; this
+/// one asks what this seat was living on, and what it was short of.
+fn table_one(study: &Study, seat: usize) -> String {
+    let s = &study.series;
+    let last = s.turns() - 1;
+    let total: u32 = s.actual[last][seat].iter().sum();
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        ("production", "Cards of this kind the board paid them."),
+        (
+            "expected",
+            "What the pips through their buildings led them to expect at fair \
+             odds, the robber ignored.",
+        ),
+        (
+            "difference",
+            "What arrived less what was expected. Negative is the robber and \
+             the dice together; over a whole game they rarely cancel.",
+        ),
+        (
+            "share",
+            "How much of everything this seat collected was this resource. A \
+             hand is what the board gave it, and this is the shape of that.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for res in 0..5 {
+        let got = s.actual[last][seat][res];
+        let owed = s.expected[last][seat][res];
+        let d = f64::from(got) - owed;
+        b.push_str(&row(
+            &[
+                format!("<span class=\"dot r{res}\"></span>{}", RESOURCE_NAMES[res]),
+                got.to_string(),
+                format!("{owed:.1}"),
+                format!(
+                    "<span class=\"{}\">{:+.1}</span>",
+                    if d >= 0.0 { "up" } else { "down" },
+                    d
+                ),
+                if total == 0 {
+                    NONE.to_string()
+                } else {
+                    format!("{:.0}%", 100.0 * f64::from(got) / f64::from(total))
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    let owed: f64 = s.expected[last][seat].iter().sum();
+    b.push_str(&totals(&[
+        "all of it".to_string(),
+        total.to_string(),
+        format!("{owed:.1}"),
+        format!(
+            "<span class=\"{}\">{:+.1}</span>",
+            if f64::from(total) >= owed {
+                "up"
+            } else {
+                "down"
+            },
+            f64::from(total) - owed
+        ),
+        if total == 0 {
+            NONE.to_string()
+        } else {
+            "100%".to_string()
+        },
+    ]));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// What arrived, with what was expected in brackets.
 ///
 /// The same shape the result table uses for points and the development table
 /// for cards: two figures that belong together, read off one another.
@@ -756,7 +852,7 @@ fn nice_step(turns: usize) -> usize {
 ///
 /// Every curve shares the ceiling, or the gap between a solid line and its
 /// dotted one would be a picture of two scales rather than of a difference.
-fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize) -> String {
+fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize, table: &str) -> String {
     const W: f64 = 720.0;
     const H: f64 = 280.0;
     const PAD: f64 = 36.0;
@@ -841,7 +937,7 @@ fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize) -> String {
         for c in curves {
             let _ = write!(
                 said,
-                "\n{}: {:.0}, owed {:.1}",
+                "\n{}: {:.0}, expected {:.1}",
                 c.name, c.actual[i], c.owed[i]
             );
         }
@@ -870,7 +966,9 @@ fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize) -> String {
             name = esc(&c.name),
         );
     }
-    b.push_str("</div></div>");
+    b.push_str("</div>");
+    b.push_str(table);
+    b.push_str("</div>");
     b
 }
 
@@ -1732,12 +1830,14 @@ tbody tr.sub:hover { background: transparent; }
 .f1, .swatch.f1 { stroke: var(--p1); background: var(--p1); }
 .f2, .swatch.f2 { stroke: var(--p2); background: var(--p2); }
 .f3, .swatch.f3 { stroke: var(--p3); background: var(--p3); }
-/* The five resources, in the colours their terrain wears on the board. */
-.r0, .swatch.r0 { stroke: #C0563B; background: #C0563B; }
-.r1, .swatch.r1 { stroke: #1F5E3A; background: #1F5E3A; }
-.r2, .swatch.r2 { stroke: #8DBE4A; background: #8DBE4A; }
-.r3, .swatch.r3 { stroke: #E2A32B; background: #E2A32B; }
-.r4, .swatch.r4 { stroke: #5C6B78; background: #5C6B78; }
+/* The five resources, in the colours their terrain wears on the board. The
+   compound selectors are for the row marks, which carry `.dot` as well and
+   would otherwise take its colour on equal specificity. */
+.r0, .swatch.r0, .dot.r0 { stroke: #C0563B; background: #C0563B; }
+.r1, .swatch.r1, .dot.r1 { stroke: #1F5E3A; background: #1F5E3A; }
+.r2, .swatch.r2, .dot.r2 { stroke: #8DBE4A; background: #8DBE4A; }
+.r3, .swatch.r3, .dot.r3 { stroke: #E2A32B; background: #E2A32B; }
+.r4, .swatch.r4, .dot.r4 { stroke: #5C6B78; background: #5C6B78; }
 
 /* ---- the trade ring ----
    A chord, because trading is symmetric: there is no side a trade goes from,
@@ -1916,8 +2016,8 @@ mod tests {
         );
         assert!(html.contains(&format!("Turn {turns}")));
         assert!(
-            html.contains(", owed "),
-            "a slot says what was owed as well"
+            html.contains(", expected "),
+            "a slot says the expectation too"
         );
         // A checkbox per curve, checked, so every line starts on the chart.
         let boxes = html.matches("type=\"checkbox\"").count();
@@ -1931,6 +2031,29 @@ mod tests {
         }
         // The turn axis is labelled along its length, not just at its ends.
         assert!(html.matches("class=\"tick\"").count() >= 4 * (1 + s.report.players as usize));
+    }
+
+    #[test]
+    fn each_view_carries_its_own_table() {
+        let g = played(5);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        let seats = s.report.players as usize;
+        // One table a view, inside the view, so it switches with the chart.
+        let views = &html[html.find("class=\"views\"").expect("the views")..];
+        let views = &views[..views.find("</section>").unwrap()];
+        assert_eq!(views.matches("<tfoot>").count(), 1 + seats);
+        // The first is every seat against every resource; the rest are one
+        // seat's own, a resource a row.
+        assert!(views.contains("the board"), "the seats against each other");
+        assert_eq!(views.matches("all of it").count(), seats);
+        assert!(views.contains(">difference<") && views.contains(">share<"));
+        // A seat's rows add across to their total in both.
+        let last = s.series.turns() - 1;
+        for seat in 0..seats {
+            let total: u32 = s.series.actual[last][seat].iter().sum();
+            assert!(views.contains(&format!("<td>{total}</td>")), "seat {seat}");
+        }
     }
 
     #[test]

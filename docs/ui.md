@@ -1512,9 +1512,16 @@ is paired with an effect size.
   exactly what it paid. Counting it on one line only offset every seat by a few
   cards for the whole game.
 
-  Under the chart, the same thing as a table: production per resource per seat
-  with what the pips owed in brackets, and a foot row for the board. A line says
-  the shape of a game and a figure says how much.
+  Under each chart, its own table, so the figures change with the view. Every
+  seat has one: production per resource with the expectation in brackets, and a
+  foot row for the board. One seat has another shape, a resource a row:
+  production, expected, the difference between them, and what share of
+  everything they collected each resource was. The two answer different
+  questions, which is why they are not the same table transposed: the first asks
+  who did better, the second asks what this seat was living on and what it was
+  short of.
+
+  The bracketed figure is called **expected**, not owed, everywhere it is shown.
 - **Militia**, as a sankey: thieves down the left, victims down the right, a
   ribbon between each pair as thick as the cards that moved along it. Laid out
   on the server like everything else here, since every position is a fraction of
