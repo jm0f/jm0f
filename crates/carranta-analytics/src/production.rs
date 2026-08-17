@@ -215,6 +215,24 @@ pub fn coverage(state: &State, respect_robber: bool) -> [f64; MAX_PLAYERS] {
     })
 }
 
+/// The same, resource by resource: how often a roll pays a seat *this* card.
+///
+/// Coverage answers "does a roll pay me anything", which is the question a
+/// trader asks. A builder asks a sharper one: a settlement wants a brick and a
+/// wood, and a seat covered on four numbers that all make wool is not covered
+/// for anything it wants to build. Same arithmetic, one resource at a time.
+pub fn coverage_by_resource(state: &State, respect_robber: bool) -> [[f64; 5]; MAX_PLAYERS] {
+    let table = yields(state, respect_robber);
+    core::array::from_fn(|p| {
+        core::array::from_fn(|res| {
+            (0..OUTCOMES)
+                .filter(|n| table[*n][p][res] > 0)
+                .map(|n| REFERENCE[n])
+                .sum()
+        })
+    })
+}
+
 pub fn analyse(log: &Log) -> Result<Report, ReplayError> {
     let mut state = *log.created.opening;
     let mut r = Report {
@@ -377,6 +395,26 @@ mod tests {
             (total_actual - total_expected).abs() < total_expected * 0.35,
             "expected {total_expected:.0}, actual {total_actual:.0}"
         );
+    }
+
+    #[test]
+    fn coverage_by_resource_never_exceeds_coverage_itself() {
+        let log = self_play(4, TradeMode::Disabled);
+        let state = *log.created.opening;
+        for p in 0..state.players as usize {
+            let all = coverage(&state, true)[p];
+            let each = coverage_by_resource(&state, true)[p];
+            for (res, share) in each.iter().enumerate() {
+                // A roll that pays this resource is a roll that pays something,
+                // so no resource can be covered more often than the seat is.
+                assert!(*share <= all + 1e-12, "seat {p}, resource {res}");
+            }
+            // And the resources cannot each be rare while the seat is well
+            // covered: the widest of them is at least an eleventh of the whole,
+            // since eleven outcomes is all there are.
+            let widest = each.iter().copied().fold(0.0, f64::max);
+            assert!(widest >= all / 11.0 - 1e-12 || all == 0.0);
+        }
     }
 
     #[test]

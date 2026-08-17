@@ -7,7 +7,7 @@ kinds of thing live here:
   many, so anything that needs a corpus waits for the page that reads the whole
   store. Most of this file is that page's brief.
 - **Per game, not yet built.** The gaps a review of the per-game page turned up
-  that have not been closed.
+  that have not been closed. Six were, and the section says which.
 
 Nothing here is a promise about order. The rule from §10.1 governs all of it:
 **small n makes p-values invalid, large n makes them uninformative**, so
@@ -53,8 +53,8 @@ promised is not duplicated here. Every one is a corpus question.
    placement took, aggregated over boards by pip count and adjacency class rather
    than by absolute position, since no two boards share coordinates.
 6. **Development cards against buildings.** Win rate by the share of a seat's
-   spending that went on cards. Needs the ledger's built column split by what it
-   bought, which the ledger does not currently break out.
+   spending that went on cards, which the per-game building card now splits out
+   four ways.
 7. **When to buy the first city.** Win rate by the turn a seat's first city went
    up, normalised by game length. The timeline strip records the turn already.
 8. **Longest road: worth chasing?** Win rate for seats that held it at the end
@@ -95,21 +95,51 @@ behind Benjamini-Hochberg (`stats::benjamini_hochberg` exists for exactly this).
   they are the same player. If they do not, the rating model or the seat
   advantage is wrong, and the two are distinguishable.
 
+## What the analytics have already found
+
+Not a backlog item, but the reason the backlog is worth working: two findings that
+came out of building the cards, both of which are about the *engine* rather than
+about the analytics.
+
+- **The bots never trade with each other, and the offers table says why.** Across
+  a hundred and fifty-four offers in one demo game, not one was accepted. Every
+  seat asks about 2.4 cards for 1.3 put up, an ask of 1.86 to one, and no seat will
+  take that from another seat pricing the same way. Every trade in these games is
+  with the bank or a port. That is a heuristic-tuning ticket, and it also means
+  every corpus figure about player-to-player trading is measuring an empty set
+  until it is fixed.
+- **A quarter of some seats' turns end unable to spend.** The building card's stuck
+  column runs to a fifth of the game for the winner in the demo: cards in hand, the
+  price of a settlement covered, and nowhere legal to put one. Whether that is the
+  board, the road network or the bot not planning towards spots is worth knowing,
+  and the figure exists now to tell.
+
 ## Per game: still missing
 
-- **What the built column bought.** The ledger reports cards spent as one
-  number. Roads, settlements, cities and development cards are four different
-  decisions and the split is recorded in the moves.
-- **Offers nobody took.** The trades card counts offers made and withdrawn. What
-  was *in* them, and how they differed from the trades that were accepted, is the
-  difference between a seat nobody would deal with and a seat asking for too much.
-- **Roads.** Length over time, and whether a road was built towards anything.
-  Nothing on the page mentions roads except as a cost.
-- **Blocked builds.** Turns a seat could afford a settlement and had nowhere
-  legal to put it, which is a real and invisible way to lose.
-- **The endgame as a race.** Turns from first seat reaching eight points to the
-  win, and who could have been stopped. The score chart shows the shape; nothing
-  quantifies the last stretch.
-- **Per-resource coverage.** Coverage answers "does a roll pay me anything". The
-  sharper question for a builder is "does a roll pay me *ore*", which is the same
-  arithmetic per resource.
+Six gaps from the first review have been closed: the built column is split by what
+it bought, the offers carry their ask, roads have a length, blocked builds are
+counted, the endgame is measured as a race, and coverage is reported per resource.
+What is left:
+
+- **What a road was built *towards*.** The building card gives a road network's
+  length. It does not say whether a road opened a new settlement spot, chased the
+  tile, or went nowhere, which is the difference between a plan and a habit. Needs
+  the spots reachable before and after each road, which `settlement_spots` can
+  answer at every step.
+- **Blocked cities and roads.** Stuck counts settlements only. A seat holding a
+  city's price with no settlement of its own to upgrade is in the same position,
+  and so is a seat out of road pieces.
+- **Offers by counterparty.** The ask is a per-seat average. Who each seat aimed
+  its offers at, and whether the ask changed with the target, is the difference
+  between a bad price and a grudge.
+- **Development cards in time.** The timeline marks a card bought. When each kind
+  was *played*, and how long it sat in hand first, is recorded in the moves and
+  unshown: a militia held for forty turns is a different decision from one played
+  on draw.
+- **Discard composition.** The ledger counts cards discarded and the exposure
+  behind them. Which cards a seat chose to throw away is a decision, and it is in
+  the moves.
+- **The board's own difficulty.** The board card compares this deal to an average
+  one for pips. Whether the *numbers* clustered, whether the resources clumped, and
+  whether any intersection was worth more than any other on this deal, is a
+  board-quality question the card only half answers.

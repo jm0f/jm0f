@@ -1530,6 +1530,17 @@ is paired with an effect size.
   every diamond on the strip to nothing at all. That is the second time a class
   collision has silently eaten a drawing on this page.
 
+  Under both, **the game as a race**, which is what the chart asks to be read for
+  and cannot state: the turn each seat reached half the target, the turn they came
+  within two points of it, how many turns they led outright, and the last turn
+  they led. A tie is nobody's lead, since two seats level are both ahead of the
+  others and neither is ahead of the other, so the foot carries how many turns had
+  a tie at the top. The foot also carries the length of the endgame: the first seat
+  to come within two points, and how many turns the rest of the table then had to
+  stop them. In the demo game the winner led for forty-seven percent of the turns
+  and came in reach with twenty to go, and the seat that finished third last led on
+  turn thirty-seven.
+
   The **finish line** is drawn across at ten points, because "was it close" is
   read against the finish rather than against the top of the paper. Both this
   chart and the engine chart carry legends now, and the legends are also controls:
@@ -1726,6 +1737,17 @@ is paired with an effect size.
   trade between two people moves cards sideways, a trade with the supply takes
   them out of the game, and the difference is what the table paid the bank and the
   ports for the privilege.
+
+  Last, **what was in the offers** rather than how many there were. Three counts,
+  offered and withdrawn and turned down, cannot tell a seat nobody would deal with
+  from a seat asking two cards for one: different problems, different answers, same
+  three counts. So the ask: cards wanted across every offer, cards put up for them,
+  the ratio, and how many of those offers anybody took. The demo games answer their
+  own question here. Every seat asks about 2.4 cards for 1.3, an ask of 1.86 to
+  one, and **not one offer between players was ever accepted** in a hundred and
+  fifty-four of them. The market on this page is dead because the bots all price
+  like that, which is a finding about the bot rather than about the market, and it
+  is written down in `analytics-backlog.md` where the bot work can find it.
 - **Board**, what this board dealt against what an average one deals. The discs
   are a fixed set laid on a fixed set of hexes, so the average is not a
   simulation: it is the mean pips of a disc times the hexes a resource has.
@@ -1751,6 +1773,28 @@ is paired with an effect size.
   end: a card is drawn once and then either played or held, and a played card
   never goes back to the deck (R-8.10). The foot row is therefore the deck's own
   composition, which is a standing check on the whole table.
+- **Building**, where each seat's cards went and what stopped them spending more.
+  The ledger says a seat spent forty-six cards on building; roads, settlements,
+  cities and development cards are four different decisions, and one number for
+  all four says nothing about which game the seat was playing. Counts with the
+  cards they cost in brackets, and the spent column is the ledger's built row
+  reached by a second route, so if the two ever disagree one of them is wrong.
+
+  Prices are read off the hand rather than from the rules table, so a road from a
+  Road Building card costs what it really cost, which is nothing. The opening's two
+  settlements are not counted here at all: they were placed rather than paid for,
+  so a blank in the settlements column means a seat that never built beyond its
+  opening, which is a strategy and not a gap.
+
+  Two columns are not spending. **Longest chain** is the road network each seat
+  finished with, which is what the road tile is contested on and the only thing a
+  seat builds that nothing else on the page shows unless they won it; it can fall
+  as well as rise, since a settlement built through the middle of a road cuts it in
+  two. **Stuck** is turns that ended with the seat able to afford a settlement and
+  nowhere legal to put one, which is not thrift: those cards cannot be spent and
+  sit in the hand waiting for a seven to take half of them. It is a real way to
+  lose a game and an invisible one, since nothing in a result or a ledger leaves a
+  mark where a player wanted to build and could not.
 - **Opening**. The pips and resources columns are one: a row per resource, a
   hex per dot, so the cell says how much production the placement bought *and*
   what it bought, and a resource nobody can produce reads as the gap it is.
@@ -1849,6 +1893,14 @@ is paired with an effect size.
   divided by the coverage: cards on a roll that pays. Two seats can be owed the
   same cards a turn and collect them in halves or in threes, and that column is
   which of the two they were doing.
+
+  Beneath the table, **coverage a resource at a time**, which is the builder's
+  version of the question. The column above answers "does a roll pay me anything",
+  which is what a trader wants to know; a settlement costs a brick, a wood, a wool
+  and a wheat, and a seat covered on four numbers that all make wool is not covered
+  for anything it is trying to build. The five do not add to the coverage above and
+  are not meant to: one roll can pay two resources and is counted under both. A
+  blank is a resource this seat could only ever get by trading for it.
 
   Below it, the two halves of an economy plotted against each other: how often
   it pays across, how much a roll is worth up, a point a quarter, joined so a

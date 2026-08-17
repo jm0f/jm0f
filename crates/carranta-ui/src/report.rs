@@ -967,6 +967,257 @@ fn cost(v: f64) -> String {
     }
 }
 
+/// The game as a race: who led, for how long, and how long the last stretch took.
+///
+/// A final score says who won and by how much. It cannot say who was in front for
+/// most of the game and lost it, or whether the winner was clear from turn forty,
+/// or how many turns the table had to stop them once they were within two points.
+/// The chart above shows all of that and asks to be read; this says it.
+///
+/// The true score throughout, hidden cards and all, because that is what actually
+/// decided the game. The table could not see it, which is what the dotted lines
+/// on the chart are for.
+fn race(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let rows = &study.score;
+    let turns = rows.len();
+    if turns < 2 || seats == 0 {
+        return String::new();
+    }
+    // Two points short of the target: the point at which a seat can win inside
+    // one turn, and so the point from which the rest of the table is out of time.
+    let near = carranta_core::state::WINNING_VP.saturating_sub(2);
+    // The first turn a seat's score reached a mark, counting from one.
+    let reached = |p: usize, mark: u32| {
+        (0..turns)
+            .find(|i| rows[*i][p] >= mark)
+            .map(|i| i as u32 + 1)
+    };
+    // Turns this seat held the lead outright. A tie is nobody's lead: two seats
+    // level on eight are both in front of the other two and neither is ahead.
+    let led = |p: usize| {
+        (0..turns)
+            .filter(|i| {
+                let mine = rows[*i][p];
+                mine > 0 && (0..seats).all(|q| q == p || rows[*i][q] < mine)
+            })
+            .count() as u32
+    };
+
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "halfway",
+            "The turn this seat first reached half the target. Early here is a \
+             fast start and nothing more: the opening pays from the first roll and \
+             the first few points are the cheap ones.",
+        ),
+        (
+            "in reach",
+            "The turn they first came within two points of the target, which is \
+             the point from which they can win inside a single turn. Blank for a \
+             seat that never got that close. The foot carries the first seat to \
+             get there and how many turns the rest of the table then had to stop \
+             them, which is the length of the endgame.",
+        ),
+        (
+            "in front",
+            "Turns they held the lead outright, with their share of the game in \
+             brackets. A tie is nobody's lead: two seats level are both ahead of \
+             the others and neither is ahead of the other.",
+        ),
+        (
+            "last in front",
+            "The last turn they led. For everybody but the winner this is the \
+             turn the game got away from them.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let front = led(p);
+        let last = (0..turns).rev().find(|i| {
+            let mine = rows[*i][p];
+            mine > 0 && (0..seats).all(|q| q == p || rows[*i][q] < mine)
+        });
+        b.push_str(&row(
+            &[
+                placed(p, &who[p], place[p]),
+                match reached(p, carranta_core::state::WINNING_VP / 2) {
+                    Some(t) => t.to_string(),
+                    None => NONE.to_string(),
+                },
+                match reached(p, near) {
+                    Some(t) => t.to_string(),
+                    None => NONE.to_string(),
+                },
+                if front == 0 {
+                    NONE.to_string()
+                } else {
+                    format!(
+                        "{front} <span class=\"worth\">({:.0}%)</span>",
+                        100.0 * f64::from(front) / turns as f64
+                    )
+                },
+                match last {
+                    Some(i) => (i as u32 + 1).to_string(),
+                    None => NONE.to_string(),
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    // How long the endgame lasted: from the first seat coming within two points
+    // to the win. A long last stretch is a table that saw it coming and could not
+    // stop it; a short one is a game decided in a single turn.
+    let first_near = (0..seats).filter_map(|p| reached(p, near)).min();
+    let ties = (0..turns)
+        .filter(|i| {
+            let top = (0..seats).map(|q| rows[*i][q]).max().unwrap_or(0);
+            top > 0 && (0..seats).filter(|q| rows[*i][*q] == top).count() > 1
+        })
+        .count() as u32;
+    b.push_str(&totals(&[
+        "the game".to_string(),
+        NONE.to_string(),
+        // How long the last stretch lasted, which is the figure the card exists
+        // for: a long one is a table that saw it coming and could not stop it, a
+        // short one is a game decided inside a single turn.
+        match first_near {
+            Some(t) => format!(
+                "{t} <span class=\"worth\">({} turns left)</span>",
+                turns as u32 - t
+            ),
+            None => NONE.to_string(),
+        },
+        if ties == 0 {
+            NONE.to_string()
+        } else {
+            format!("<span class=\"worth\">{ties} level</span>")
+        },
+        turns.to_string(),
+    ]));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// What each seat built, what it cost them, and what stopped them.
+///
+/// The ledger's built row is one number for four different decisions. A seat that
+/// spent forty cards on roads and a seat that spent forty on cities were playing
+/// different games, and until now the page could not tell them apart.
+///
+/// The last two columns are not spending. A road network's length is the thing
+/// the longest road tile is contested on, and it is the only thing a seat builds
+/// that no table on this page shows unless they win it. And a seat holding the
+/// price of a settlement with nowhere legal to put it was not saving up, it was
+/// stuck: a real way to lose a game and an invisible one, since nothing in a
+/// result or a ledger leaves a mark when a player wanted to build and could not.
+fn building(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let bt = &study.built;
+    if seats == 0 || bt.turns == 0 {
+        return String::new();
+    }
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "Building",
+        "Where each seat's cards went, and what stopped them spending more. The \
+         ledger above says how many cards were spent on building; this says on \
+         what. Prices are read off the hand rather than from the rules, so a road \
+         from a Road Building card costs what it really cost, which is nothing.",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "roads",
+            "Roads bought, with the cards they cost in brackets. Free roads from a \
+             Road Building card are counted and cost nothing, which is why the \
+             brackets can fall short of two a road.",
+        ),
+        (
+            "settlements",
+            "Settlements bought. The opening's two are not here: they were placed \
+             rather than paid for, and the opening card is where they belong. So a \
+             blank means a seat that never built beyond its opening, which is a \
+             strategy and not a gap.",
+        ),
+        (
+            "cities",
+            "Upgrades from a settlement to a city, and their cost.",
+        ),
+        (
+            "cards",
+            "Development cards bought, and what they cost. The same count as the \
+             bought column on the cards table, arrived at from the spending side.",
+        ),
+        (
+            "spent",
+            "Every card spent on building, which is the ledger's built row \
+             reached by another route. If the two ever disagree, one of them is \
+             wrong.",
+        ),
+        (
+            "longest chain",
+            "The longest continuous road this seat finished with (R-10.3). What \
+             the road tile is contested on, and the one thing a seat builds that \
+             nothing else here shows unless they won it. It can fall as well as \
+             rise: a settlement built through the middle of a road cuts it in \
+             two.",
+        ),
+        (
+            "stuck",
+            "Turns that ended with this seat able to afford a settlement and \
+             nowhere legal to put one. Not thrift: a seat in this position cannot \
+             spend, and the cards sit in the hand waiting for a seven to take \
+             half of them.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    let mut foot = [0u32; 4];
+    let mut all_spent = 0u32;
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for kind in 0..4 {
+            foot[kind] += bt.pieces[p][kind];
+            cells.push(bracketed(bt.pieces[p][kind], bt.spent[p][kind]));
+        }
+        all_spent += bt.spent_all(p);
+        cells.push(bt.spent_all(p).to_string());
+        cells.push(if bt.chain[p] == 0 {
+            NONE.to_string()
+        } else {
+            bt.chain[p].to_string()
+        });
+        cells.push(if bt.stuck[p] == 0 {
+            NONE.to_string()
+        } else {
+            format!(
+                "{} <span class=\"worth\">({:.0}%)</span>",
+                bt.stuck[p],
+                100.0 * f64::from(bt.stuck[p]) / bt.turns as f64
+            )
+        });
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    let mut cells = vec!["the table".to_string()];
+    for kind in 0..4 {
+        cells.push(foot[kind].to_string());
+    }
+    cells.push(all_spent.to_string());
+    // A longest chain and a count of stuck turns belong to a seat and add to
+    // nothing, so those two columns have no total.
+    cells.push(NONE.to_string());
+    cells.push(NONE.to_string());
+    b.push_str(&totals(&cells));
+    b.push_str(T_CLOSE);
+    b.push_str("</section>");
+    b
+}
+
 /// What happened and when: a lane a seat, a mark a thing.
 ///
 /// Every chart on this page provokes the same question and none of them can
@@ -1219,6 +1470,97 @@ fn cards(v: f64) -> String {
     format!(
         "<span class=\"{}\">{v:+.0}</span>",
         if v > 0.0 { "up" } else { "down" }
+    )
+}
+
+/// What was in the offers, rather than how many there were.
+///
+/// Three counts, offered and withdrawn and turned down, cannot tell a seat
+/// nobody would deal with from a seat asking two cards for one. Those are
+/// different problems with different answers and they wear the same counts, so
+/// the ask itself is what this says.
+fn offers(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let asks = &study.asks;
+    if seats == 0 || asks.offers[..seats].iter().sum::<u32>() == 0 {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "wanted",
+            "Cards asked for across every offer this seat put on the table, and \
+             what they asked for on average in brackets.",
+        ),
+        (
+            "put up",
+            "Cards they offered in exchange, the same way. Offers, not trades: \
+             most of these were never taken.",
+        ),
+        (
+            "the ask",
+            "Cards wanted for each card put up. One is an even swap. Above one is \
+             a seat asking to come out ahead, which is anybody's right and also \
+             the likeliest reason nobody took it.",
+        ),
+        (
+            "taken up",
+            "Offers of theirs that somebody accepted. Nought against a hundred \
+             offers is the table's answer to the column beside it.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let n = asks.offers[p];
+        b.push_str(&row(
+            &[
+                placed(p, &who[p], place[p]),
+                mean_of(asks.wanted[p], n),
+                mean_of(asks.given[p], n),
+                match asks.ask(p) {
+                    Some(r) => format!("{r:.2}"),
+                    None => NONE.to_string(),
+                },
+                if asks.taken[p] == 0 {
+                    NONE.to_string()
+                } else {
+                    asks.taken[p].to_string()
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    let sum = |v: &[u32; MAX_PLAYERS]| v[..seats].iter().sum::<u32>();
+    let (wanted, given, made) = (sum(&asks.wanted), sum(&asks.given), sum(&asks.offers));
+    b.push_str(&totals(&[
+        "the table".to_string(),
+        mean_of(wanted, made),
+        mean_of(given, made),
+        if given == 0 {
+            NONE.to_string()
+        } else {
+            format!("{:.2}", f64::from(wanted) / f64::from(given))
+        },
+        if sum(&asks.taken) == 0 {
+            NONE.to_string()
+        } else {
+            sum(&asks.taken).to_string()
+        },
+    ]));
+    b.push_str(T_CLOSE);
+    b
+}
+
+/// A count, with what it averages out to in brackets.
+fn mean_of(total: u32, over: u32) -> String {
+    if over == 0 {
+        return NONE.to_string();
+    }
+    format!(
+        "{total} <span class=\"worth\">({:.1})</span>",
+        f64::from(total) / f64::from(over)
     )
 }
 
@@ -2026,6 +2368,7 @@ fn reach(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
     }
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
+    b.push_str(&per_resource(study, who, place, seats));
     b.push_str(&trail(study, who, seats));
     b.push_str("</section>");
     b
@@ -2037,6 +2380,47 @@ fn mean_engine(study: &Study, seat: usize) -> f64 {
         return 0.0;
     }
     study.engine.iter().map(|row| row[seat]).sum::<f64>() / study.engine.len() as f64
+}
+
+/// Coverage a resource at a time, which is the builder's version of the question.
+///
+/// The column above answers "does a roll pay me anything", which is what a trader
+/// wants to know. A builder wants something sharper: a settlement costs a brick,
+/// a wood, a wool and a wheat, and a seat covered on four numbers that all make
+/// wool is not covered for anything it is trying to build. A blank here is a
+/// resource this seat could only ever get by trading for it.
+fn per_resource(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let c = &study.cover;
+    if c.each.is_empty() || seats == 0 {
+        return String::new();
+    }
+    let mut b = String::from(T_OPEN);
+    b.push_str("<thead>");
+    let mut heads = vec![(
+        "",
+        "The chance a roll pays this seat this resource, averaged over the game, \
+         robber and all. Not a share of anything: the five do not add to the \
+         coverage above, because one roll can pay two resources at once and is \
+         counted under both.",
+    )];
+    heads.extend(RESOURCE_NAMES.iter().map(|n| (*n, "")));
+    b.push_str(&head_row(&heads));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let mut cells = vec![placed(p, &who[p], place[p])];
+        for res in 0..5 {
+            let share = c.mean_of(p, res);
+            cells.push(if share < 0.005 {
+                NONE.to_string()
+            } else {
+                percent(share)
+            });
+        }
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b
 }
 
 /// The two halves of an economy plotted against each other: how often it pays,
@@ -2843,6 +3227,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(&score_plot(study, &who, &place, seats));
     // And what was happening while those lines moved, on the same turn axis.
     b.push_str(&timeline(study, &who, seats));
+    b.push_str(&race(study, &who, &place, seats));
     b.push_str("</section>");
 
     // ---- the turns ----------------------------------------------------------
@@ -3315,7 +3700,12 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     ]));
     b.push_str(T_CLOSE);
     b.push_str(&flows(study, &who, &place, seats));
+    b.push_str(&offers(study, &who, &place, seats));
     b.push_str("</section>");
+
+    // ---- building -----------------------------------------------------------
+    // Where the cards went, which the ledger's built row could not say.
+    b.push_str(&building(study, &who, &place, seats));
 
     // ---- development cards --------------------------------------------------
     b.push_str("<section>");
@@ -4117,7 +4507,13 @@ mod tests {
         // five things that score and not the things that do not.
         assert!(html.contains("victory points"));
         assert!(html.contains("largest militia"));
-        assert!(!html.contains(">roads<"), "roads score nothing (R-11.3)");
+        // In the result card, which is the one that decomposes a score. Roads are
+        // a column on the building card, where what they score is not the point.
+        let result = html
+            .split("</section>")
+            .next()
+            .expect("the result card is the first section");
+        assert!(!result.contains(">roads<"), "roads score nothing (R-11.3)");
         // The sections that were asked for, by their headings.
         for heading in [
             "Result",

@@ -433,15 +433,17 @@ type Sampled = (
     Vec<[f64; MAX_PLAYERS]>,
     Robber,
     Hands,
+    Built,
 );
 
-/// One turn's worth of the two things read off the board rather than off the
-/// moves: where the robber is sitting, and how full every hand is.
+/// One turn's worth of everything read off the board rather than off the moves:
+/// where the robber is sitting, how full every hand is, and who is stuck.
 fn watch(
     state: &carranta_core::state::State,
     seats: usize,
     robber: &mut Robber,
     hands: &mut Hands,
+    built: &mut Built,
 ) {
     use carranta_core::topology::{HEX_COUNT, hex_vertices};
     /// A hand this size or smaller survives a seven (R-6.2).
@@ -467,6 +469,24 @@ fn watch(
             hands.over[p] += 1;
         }
     }
+
+    built.turns += 1;
+    for p in 0..seats {
+        // Holding the price of a settlement and having nowhere legal to put it.
+        // Both halves matter: nowhere to build is only a problem for a seat that
+        // could have built, and cards in hand are only stuck if there is nowhere
+        // for them to go.
+        if state.holds(p, &carranta_core::action::SETTLEMENT_COST)
+            && state.settlement_spots(p, false) == 0
+        {
+            built.stuck[p] += 1;
+        }
+        // The length is recomputed rather than remembered: a road's length can
+        // *fall* when somebody builds a settlement through the middle of it
+        // (R-10.3), so the last value is the only one that is the answer.
+        built.chain[p] =
+            carranta_core::longest_road::longest_road(state.roads[p], state.blocking(p));
+    }
 }
 
 fn series_of(saved: &Saved) -> Sampled {
@@ -489,6 +509,7 @@ fn series_of(saved: &Saved) -> Sampled {
     let mut engine: Vec<[f64; MAX_PLAYERS]> = Vec::new();
     let mut robber = Robber::default();
     let mut hands = Hands::default();
+    let mut built = Built::default();
     // What the board would pay each seat on one roll, given the buildings
     // standing at that moment. The engine itself rather than what it earned:
     // read off the board, so no number of rolls or dice can move it.
@@ -520,8 +541,29 @@ fn series_of(saved: &Saved) -> Sampled {
         let owed = matches!(action, Action::Roll)
             .then(|| carranta_analytics::production::expectation(&state));
         let before = state.hand;
+        // Which of the four things this move bought, if any, and whose it was.
+        let buying = match action {
+            Action::BuildRoad(_) => Some(0),
+            Action::BuildSettlement(_) => Some(1),
+            Action::BuildCity(_) => Some(2),
+            Action::BuyDev => Some(3),
+            _ => None,
+        };
+        let buyer = state.to_act as usize;
         if state.apply(action).is_err() {
             break;
+        }
+        if let Some(kind) = buying
+            && buyer < seats
+        {
+            built.pieces[buyer][kind] += 1;
+            // The price is read off the hand rather than from the rules table, so
+            // a free road from a Road Building card costs what it actually cost,
+            // which is nothing.
+            let paid: u32 = (0..5)
+                .map(|res| u32::from(before[buyer][res].saturating_sub(state.hand[buyer][res])))
+                .sum();
+            built.spent[buyer][kind] += paid;
         }
         if let Some(owed) = owed {
             for p in 0..seats {
@@ -553,10 +595,13 @@ fn series_of(saved: &Saved) -> Sampled {
             out.expected.push(expected);
             cover.live.push(production::coverage(&state, true));
             cover.open.push(production::coverage(&state, false));
+            cover
+                .each
+                .push(production::coverage_by_resource(&state, true));
             score.push(scored(&state));
             seen.push(visible(&state));
             engine.push(sized(&state));
-            watch(&state, seats, &mut robber, &mut hands);
+            watch(&state, seats, &mut robber, &mut hands, &mut built);
         }
         playing |= matches!(state.phase, Phase::PreRoll);
     }
@@ -568,13 +613,16 @@ fn series_of(saved: &Saved) -> Sampled {
         out.expected.push(expected);
         cover.live.push(production::coverage(&state, true));
         cover.open.push(production::coverage(&state, false));
+        cover
+            .each
+            .push(production::coverage_by_resource(&state, true));
         score.push(scored(&state));
         seen.push(visible(&state));
         engine.push(sized(&state));
-        watch(&state, seats, &mut robber, &mut hands);
+        watch(&state, seats, &mut robber, &mut hands, &mut built);
     }
     robber.spots_of(&state);
-    (out, cover, score, seen, engine, robber, hands)
+    (out, cover, score, seen, engine, robber, hands, built)
 }
 
 /// How fast a seat's engine grew, fitted as a rate compounding turn by turn.
@@ -755,6 +803,106 @@ fn r_squared(pts: &[(f64, f64)]) -> f64 {
         return 0.0;
     }
     (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
+}
+
+/// What was actually *in* the offers a seat made.
+///
+/// The trades card counts offers made, withdrawn and turned down. It cannot say
+/// why: a seat nobody would deal with and a seat asking two cards for one are
+/// completely different problems wearing the same three counts. This is the ask.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Asks {
+    /// Offers this seat put on the table.
+    pub offers: [u32; MAX_PLAYERS],
+    /// Cards asked for across those offers, and cards put up for them.
+    pub wanted: [u32; MAX_PLAYERS],
+    pub given: [u32; MAX_PLAYERS],
+    /// Offers of theirs that somebody took.
+    pub taken: [u32; MAX_PLAYERS],
+}
+
+impl Asks {
+    /// Cards asked for each card put up, or `None` for a seat that never
+    /// offered anything.
+    ///
+    /// One is an even swap. Above one is a seat asking to come out ahead, which
+    /// is every seat's right and also the likeliest reason nobody took it.
+    pub fn ask(&self, seat: usize) -> Option<f64> {
+        (self.given[seat] > 0).then(|| f64::from(self.wanted[seat]) / f64::from(self.given[seat]))
+    }
+}
+
+/// Read the offers, and who took them, off the moves.
+///
+/// An acceptance names the offer rather than the offerer, so the live market is
+/// consulted before the move is applied: afterwards the offer it names is gone.
+fn asks_of(saved: &Saved) -> Asks {
+    use carranta_core::action::Action;
+
+    let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
+    let seats = state.players as usize;
+    let mut out = Asks::default();
+    for step in &saved.moves {
+        let Step::Move(action) = *step else { continue };
+        match action {
+            Action::ProposeTrade { by, give, want, .. } if usize::from(by) < seats => {
+                let p = usize::from(by);
+                out.offers[p] += 1;
+                out.given[p] += give.iter().map(|n| u32::from(*n)).sum::<u32>();
+                out.wanted[p] += want.iter().map(|n| u32::from(*n)).sum::<u32>();
+            }
+            Action::AcceptTrade { offer, .. } => {
+                if let Some(o) = state.live_offers().get(usize::from(offer)) {
+                    let from = usize::from(o.from);
+                    if from < seats {
+                        out.taken[from] += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if state.apply(action).is_err() {
+            break;
+        }
+    }
+    out
+}
+
+/// What each seat built, what it cost, and what stopped it.
+///
+/// The ledger says a seat spent forty-six cards on building. Roads, settlements,
+/// cities and development cards are four different decisions, the split is in the
+/// moves, and one number for all of them says nothing about which game the seat
+/// was playing.
+///
+/// The last two figures are not spending at all. A road network's length is what
+/// the longest road tile is contested on, and it is the one thing a seat builds
+/// that the score table cannot show unless they win it. And a seat that could
+/// afford a settlement with nowhere legal to put it was not saving up: it was
+/// stuck, which is a real and otherwise invisible way to lose a game.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Built {
+    /// Pieces and cards bought, per seat: roads, settlements, cities, cards.
+    pub pieces: [[u32; 4]; MAX_PLAYERS],
+    /// Cards spent on each of those, in the same order.
+    pub spent: [[u32; 4]; MAX_PLAYERS],
+    /// The longest continuous road each seat finished with (R-10.3).
+    pub chain: [u32; MAX_PLAYERS],
+    /// Turns ended able to afford a settlement with no legal place for one.
+    pub stuck: [u32; MAX_PLAYERS],
+    /// Turns sampled, for the share.
+    pub turns: usize,
+}
+
+impl Built {
+    /// The four kinds, in the order they are stored.
+    pub const KINDS: [&'static str; 4] = ["roads", "settlements", "cities", "cards"];
+
+    /// Cards this seat spent on building, all four kinds together. The ledger's
+    /// `built` row by another route, which is what makes it a check.
+    pub fn spent_all(&self, seat: usize) -> u32 {
+        self.spent[seat].iter().sum()
+    }
 }
 
 /// One thing that happened, and when.
@@ -1034,12 +1182,28 @@ pub struct Cover {
     /// The gap between the two is what the blockade cost, in rolls rather than
     /// in cards.
     pub open: Vec<[f64; MAX_PLAYERS]>,
+    /// Per sample, per seat, per resource: the chance a roll pays them *that*
+    /// card, robber and all.
+    ///
+    /// Coverage answers the trader's question, "does a roll pay me anything".
+    /// This answers the builder's: a settlement wants a brick and a wood, and a
+    /// seat covered on four numbers that all make wool is not covered for
+    /// anything it wants to build.
+    pub each: Vec<[[f64; 5]; MAX_PLAYERS]>,
 }
 
 impl Cover {
     /// How many turns it followed.
     pub fn turns(&self) -> usize {
         self.live.len()
+    }
+
+    /// A seat's mean coverage of one resource over the game.
+    pub fn mean_of(&self, seat: usize, res: usize) -> f64 {
+        if self.each.is_empty() {
+            return 0.0;
+        }
+        self.each.iter().map(|row| row[seat][res]).sum::<f64>() / self.each.len() as f64
     }
 
     /// A seat's mean over the game, which is the figure to compare seats on: a
@@ -1516,6 +1680,10 @@ pub struct Study {
     pub robber: Robber,
     /// How exposed each hand was to a seven.
     pub hands: Hands,
+    /// What each seat built, what it cost, and what stopped it.
+    pub built: Built,
+    /// What was in the offers each seat made.
+    pub asks: Asks,
     /// Where the clock went, by kind of decision, when there is a clock.
     pub spent: Option<Spent>,
     /// What happened and when, for the strip that anchors every other chart.
@@ -1574,7 +1742,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let board = board_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
-    let (series, cover, score, seen, engine, robber, hands) = series_of(saved);
+    let (series, cover, score, seen, engine, robber, hands, built) = series_of(saved);
     let trades = trades_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
@@ -1663,6 +1831,8 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         engine,
         robber,
         hands,
+        built,
+        asks: asks_of(saved),
         spent: spent_of(saved),
         events: events_of(saved),
         trades,
