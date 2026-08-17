@@ -4499,6 +4499,13 @@ pub(crate) const CSS: &str = "
    worth taking is the system underneath: the role names, the radius scale,
    the muted-foreground habit, and the proportions of a card and a table. */
 :root {
+  /* ---- the shell ----
+     One gutter for the whole application: the distance from the window's edge to
+     the mark, to the board's rails and to the content column, on every page. It
+     is a token rather than a number in four places because it is the one
+     measurement that has to agree across two stylesheets, and the board page
+     declares the same one. */
+  --gutter: clamp(16px, 2.2vw, 32px);
   --background: #F3EDE1;
   --foreground: #33261B;
   --card: #FBF7EF;
@@ -4526,19 +4533,46 @@ pub(crate) const CSS: &str = "
 @font-face { font-family: Audiowide; src: url('/font/audiowide.woff2') format('woff2');
              font-weight: 400; font-display: swap; }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--background); color: var(--foreground);
+/* ---- the table these pages are laid on ----
+   The board's own ground, brought here so the four screens are one place rather
+   than a game with a warm grained table under it and two documents on flat
+   cream. Two things: wide faint pools of colour across the top, so the paper
+   reads as depth instead of absence, and the grain itself.
+
+   The grain is baked into a data URI rather than run as a live `filter: url()`,
+   which would be re-rasterized on every repaint; multiplied and pinned behind
+   the flow, so the cards stay the smooth things laid on the rough one rather
+   than being grained twice. Same noise, same numbers as the board's. */
+body { margin: 0; color: var(--foreground);
        font: 16px/1.55 Figtree, system-ui, sans-serif;
-       -webkit-font-smoothing: antialiased; }
+       -webkit-font-smoothing: antialiased;
+       min-height: 100vh;
+       background:
+         radial-gradient(1200px 620px at 85% -18%, rgba(232, 84, 47, .12), transparent 62%),
+         radial-gradient(900px 520px at 96% 6%, rgba(245, 168, 28, .12), transparent 58%),
+         radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%),
+         var(--background);
+       background-attachment: fixed; }
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42 0 0 0 0 0.32 0 0 0 0 0.19 0.66 0 0 0 -0.2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E\");
+  background-size: 180px 180px;
+  mix-blend-mode: multiply; opacity: .55;
+}
 /* ---- the header ----
-   The same header the board wears, and it shares the content column rather than
-   hugging the window: the mark used to sit at the left gutter while the heading
-   under it was centred in a 62rem column, so on a wide screen the two were
-   hundreds of pixels apart and the header read as a bar over the page rather
-   than as the top of it. */
-header { max-width: 62rem; margin: 0 auto; width: 100%;
-         padding: 1.2rem clamp(16px, 5vw, 64px);
+   The same header the board wears, in the same place: hard against the page's
+   gutter, so the mark is the same distance from the same corner whichever screen
+   you are on. It was briefly centred with the column beneath it, which lined it
+   up with the heading and put it somewhere different from where the board keeps
+   it, and being in the same place on every page is worth more than being level
+   with one thing on two of them. The content column is centred underneath; the
+   header belongs to the window, which is where a site's mark lives. */
+header { padding: 1.1rem var(--gutter);
          display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.mark { font: 400 22px Audiowide, system-ui, sans-serif; color: var(--primary);
+/* Line height 1, as the board sets it: left to the font's own metrics the mark
+   sat three pixels lower here than there, which is exactly the kind of drift two
+   stylesheets describing one header produce. */
+.mark { font: 400 22px/1 Audiowide, system-ui, sans-serif; color: var(--primary);
         text-decoration: none; margin: 0; letter-spacing: .01em; }
 /* What this page is about, beside the mark rather than instead of it: the body
    face and a quieter colour, so the mark stays the mark. */
@@ -4556,7 +4590,7 @@ header { max-width: 62rem; margin: 0 auto; width: 100%;
             text-decoration: none; padding-bottom: 1px;
             border-bottom: 1px solid var(--border); }
 .headLink:hover { color: var(--primary); border-color: var(--primary); }
-main { max-width: 62rem; margin: 0 auto; padding: 0 clamp(16px, 5vw, 64px) 5rem;
+main { max-width: 62rem; margin: 0 auto; padding: 0 var(--gutter) 5rem;
        display: flex; flex-direction: column; gap: 1.5rem; }
 /* Tight tracking on a big heading, which is the one typographic tic of the
    borrowed design worth keeping wholesale. */
@@ -5016,6 +5050,46 @@ mod tests {
         // Both carry the tab icon, which only the board used to.
         assert!(PAGE.contains("rel=\"icon\""));
         assert!(ICON.contains("rel=\"icon\""));
+    }
+
+    #[test]
+    fn every_screen_is_laid_on_the_same_shell() {
+        // The three things that make four screens one place: where the header
+        // sits, and the ground under it. All of it is declared twice, once per
+        // stylesheet, so all of it can drift.
+        const PAGE: &str = include_str!("../assets/index.html");
+        // One gutter, and the header is positioned by it rather than by a number
+        // of its own. That is what puts the mark the same distance from the same
+        // corner on every screen.
+        let gutter = "--gutter: clamp(16px, 2.2vw, 32px);";
+        assert!(CSS.contains(gutter), "the report declares the gutter");
+        assert!(PAGE.contains(gutter), "the board declares the same one");
+        for sheet in [CSS, PAGE] {
+            assert!(
+                sheet.contains("padding: 1.1rem var(--gutter)"),
+                "header inset"
+            );
+        }
+        // The same table under all of them: three pools of colour and the grain.
+        for wash in [
+            "radial-gradient(1200px 620px at 85% -18%, rgba(232, 84, 47, .12), transparent 62%)",
+            "radial-gradient(900px 520px at 96% 6%, rgba(245, 168, 28, .12), transparent 58%)",
+            "radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%)",
+        ] {
+            assert!(CSS.contains(wash), "the report is laid on the same table");
+            assert!(PAGE.contains(wash), "and so is the board");
+        }
+        for sheet in [CSS, PAGE] {
+            assert!(sheet.contains("feTurbulence"), "the grain");
+            assert!(
+                sheet.contains("background-size: 180px 180px"),
+                "at one scale"
+            );
+            assert!(
+                sheet.contains("mix-blend-mode: multiply; opacity: .55"),
+                "one weight"
+            );
+        }
     }
 
     #[test]

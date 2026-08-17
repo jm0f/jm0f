@@ -973,7 +973,8 @@ across the whole window, which covered the header and made it carry a wordmark o
 its own inside the card. It sits in the flow under the application's header now
 (§14), the board's screen is hidden rather than lying behind it, and the card's
 title says what the screen is, **New game**, rather than repeating the mark above
-it. The wash it used to paint over the page is the page's own background here.
+it. It paints no ground of its own either: a page does not need to paint over
+itself, and the wash and grain it used to lay down are the page's already.
 
 **The lobby is never opened over a board.** It used to appear over any board with
 no moves in it, because arriving at one meant the server had dealt it and nobody
@@ -2153,19 +2154,39 @@ thing rather than reading as the start of a list.
   button that opened the lobby as a sheet over the game, so one label had two
   behaviours depending on where it was pressed.
 
-**It shares the column beneath it.** The report's header used to hug the window
-while its heading was centred in a 62rem column, so on a wide screen the mark and
-the title it belonged to were hundreds of pixels apart and the header read as a
-bar over the page rather than as the top of it. Each page lines the header up with
-its own content: the document pages with their column, the lobby with its card,
-and the board with the edge, because the board's content is the window.
+**It belongs to the window, not to the column.** There is one gutter for the
+whole application, `clamp(16px, 2.2vw, 32px)`, declared as a token in both
+stylesheets, and the header is inset by it on every page: the mark lands on the
+same pixel from the same corner whichever screen you are on, and so do the links
+from the other one. It was briefly centred with the report's column instead,
+which lined it up with the heading beneath and put it somewhere different from
+where the board keeps it. Being in the same place on every page is worth more
+than being level with one thing on two of them, which is where a site's mark
+lives anyway.
+
+The same gutter also sets the board's rails, so on the board the mark and the
+column under it do line up. The board is tall rather than wide on any large
+screen, so the width this costs is width that was sitting empty beside it.
+
+**The same ground under all four.** The board was a warm grained table with three
+faint pools of colour washed across the top of it; the report and the home page
+were flat cream; the lobby painted a fourth wash of its own over whatever it
+covered. All four are the table now, the same three pools and the same grain at
+the same scale and weight. This was most of what made the screens look like
+different applications: the header was the part you could name, and the paper was
+the part you could not.
 
 **The board's copy is written by hand**, in `assets/index.html`, because that page
 is one file with its own stylesheet and its own tokens. The classes and the rules
 are named the same on both sides, `mark` included, which is what the rename was
-for: one thing with two names is two things waiting to be edited apart. A test
-reads the board page's own markup and the two rendered ones and fails if they stop
-agreeing about the header's shape.
+for: one thing with two names is two things waiting to be edited apart. Two tests
+read the board page's own markup alongside the two rendered ones and fail if they
+stop agreeing about the header's shape, the gutter, the pools or the grain.
+
+The drift those tests are for is small and invisible one page at a time. The mark
+sat three pixels lower on the rendered pages than on the board for no better
+reason than that one of them set a line height and the other left it to the
+font's metrics.
 
 Both server-rendered pages carry the tab icon the board always had. They had none,
 so every visit to the home page or a report asked for `/favicon.ico`, got a 404,
@@ -2187,6 +2208,13 @@ and left it in the console.
   you at the same seat as them, because the server seats one person and plays the
   rest. The list is what seats will be reached from, so the page is right and the
   server is not there yet.
+- **The board does not fit a phone.** Its three columns have minimum widths of
+  224 and 260 pixels, so below about 560 the layout is wider than the window and
+  the page scrolls sideways: 630 pixels of content in a 420 pixel window. The home
+  page, the report and the lobby all reflow to that width; only the board does
+  not, and it needs a layout for one column rather than a smaller gutter. Long
+  standing, and measured here rather than assumed: the shared gutter costs eight
+  pixels of it and did not cause it.
 - **The lobby's invite link goes nowhere.** It reads
   `/join?table=<seed>&seats=N`, and the server has no `/join`, so the one control
   on that screen that promises to bring somebody else in returns a 404. It was

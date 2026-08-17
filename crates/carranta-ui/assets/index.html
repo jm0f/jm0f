@@ -47,6 +47,12 @@
        thing, a panel laid over the board, and two of them keeping different
        distances from the same outline reads as one of them being misplaced. */
     --float-inset: 14px;
+    /* One gutter for the whole application: the distance from the window's edge
+       to the mark, to the rails and to the content column of the pages the
+       server renders. The report's stylesheet declares the same one, and they
+       have to agree or the header sits in a different place depending on which
+       screen you are on, which is what it used to do. */
+    --gutter: clamp(16px, 2.2vw, 32px);
 
     /* Six terrains separated by a lightness ladder rather than by hue.
        Forest and pasture are both green, fields and desert both warm sand, so
@@ -206,7 +212,7 @@
      wash across the top of it. */
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px;
+    padding: 1.1rem var(--gutter);
     flex: none;
   }
   /* The wordmark is the one place the display face is allowed to be itself:
@@ -379,7 +385,11 @@
      makes them line up at every size without either knowing the other's
      measurements. */
   main {
-    display: grid; gap: clamp(8px, .8vw, 16px); padding: clamp(8px, .8vw, 16px);
+    display: grid; gap: clamp(8px, .8vw, 16px);
+    /* The gutter sideways, so the rails start where the mark above them does;
+       the board is tall rather than wide on any large screen, so the width this
+       costs is width that was sitting empty beside it anyway. */
+    padding: clamp(8px, .8vw, 16px) var(--gutter);
     /* The board is about as tall as it is wide, so on any wide screen its
        height is the limit and the spare width sits empty beside it. Spend it
        on the columns: they were sized to be out of the way, which made the
@@ -954,23 +964,18 @@
      in the flow under the header and the board's own screen is not there at all.
      The wash it used to carry moves to the page, where it belongs once the lobby
      is the page rather than a thing on top of one. */
-  body.atLobby {
-    background:
-      radial-gradient(900px 500px at 50% -10%, rgba(232, 84, 47, .13), transparent 62%),
-      var(--background);
-    background-attachment: fixed;
-  }
+  /* The page's own ground, which is the body's, which is the same three pools of
+     colour and the same grain every other screen is laid on. The lobby used to
+     paint a wash of its own because it covered the page; a page does not need to
+     paint over itself, and a fourth treatment on the fourth screen is the thing
+     this was all for. Its grain is switched off for the same reason: the body is
+     already carrying it, and two coats read as one darker coat. */
+  body.atLobby { overflow: auto; }
   body.atLobby .lobby {
     position: static; inset: auto; background: none; overflow: visible;
-    padding: 0 16px clamp(16px, 6vh, 64px);
+    padding: 0 var(--gutter) clamp(16px, 6vh, 64px);
   }
-  /* Over the card rather than in the window's corner. Every other page lines its
-     header up with the column beneath it, and here the column is the lobby card,
-     so the header takes the card's width and centring. */
-  body.atLobby header {
-    width: min(880px, calc(100% - 32px)); margin: 0 auto;
-    padding-left: 0; padding-right: 0;
-  }
+  body.atLobby .lobby::after { display: none; }
   body.atLobby main { display: none; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
   .field { margin-bottom: 1.35em; }
