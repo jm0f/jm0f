@@ -68,6 +68,63 @@ fn row(cells: &[String], head: bool) -> String {
     out
 }
 
+/// The header every page in this application wears.
+///
+/// One shape across the board, the report and the home page: the mark, what you
+/// are looking at, and the ways out of it, pushed to the far end so the mark and
+/// the name stay together as one thing. A header that changes between pages of
+/// one application reads as three applications, and this one had: the board had
+/// a mark, a table name and two links, the report had a mark and one bare `nav`
+/// link in the body face, and the home page had none at all.
+///
+/// `context` is what this page is about beside the mark, or empty. `links` are
+/// href and label pairs, in the order they should be read.
+///
+/// The board page carries the same markup by hand, in `assets/index.html`,
+/// because that page is one file with its own stylesheet; the classes and the
+/// rules are named the same on both sides so the two cannot drift far without
+/// somebody noticing.
+/// The tab icon, as the board page carries it.
+///
+/// A hex, inline, because there is no request to make for it: the board page has
+/// had this for as long as it has existed and the server-rendered pages had
+/// nothing, so every visit to the home page or a report asked for
+/// `/favicon.ico`, got a 404, and put it in the console. The same markup on both
+/// sides rather than a file to keep in step with itself.
+pub(crate) const ICON: &str = "<link rel=\"icon\" href=\"data:image/svg+xml,\
+     %3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E\
+     %3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E\
+     %3C/svg%3E\">";
+
+pub(crate) fn masthead(context: &str, links: &[(&str, &str)]) -> String {
+    mast("<a class=\"mark\" href=\"/\">Carranta</a>", context, links)
+}
+
+/// The same header for the page it would lead to.
+///
+/// Home is the one page whose title is the name of the thing, so there the mark
+/// is the heading rather than a link: a link to the page you are already on is
+/// an offer of nothing, and a page needs a heading more than it needs that.
+pub(crate) fn masthead_home(links: &[(&str, &str)]) -> String {
+    mast("<h1 class=\"mark\">Carranta</h1>", "", links)
+}
+
+fn mast(mark: &str, context: &str, links: &[(&str, &str)]) -> String {
+    let mut b = format!("<header>{mark}");
+    if !context.is_empty() {
+        let _ = write!(b, "<span class=\"gameName\">{}</span>", esc(context));
+    }
+    if !links.is_empty() {
+        b.push_str("<div class=\"headLinks\">");
+        for (href, label) in links {
+            let _ = write!(b, "<a class=\"headLink\" href=\"{href}\">{label}</a>");
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</header>");
+    b
+}
+
 /// A card's header: the title, and the card's rule behind it.
 ///
 /// A card is a title and a table. The rule that used to sit in a paragraph
@@ -3548,17 +3605,23 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         b,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Carranta, game {id}</title><style>{css}</style></head><body>",
+         <title>Carranta, game {id}</title>{ICON}\
+         <style>{css}</style></head><body>",
         id = esc(&saved.id),
         css = CSS
     );
 
     // ---- the header: which game, and what happened in it --------------------
+    b.push_str(&masthead(
+        "",
+        &[
+            (&format!("/{}/", esc(&saved.id)), "The board"),
+            ("/lobby", "New game"),
+        ],
+    ));
     let _ = write!(
         b,
-        "<header><a class=\"mark\" href=\"/\">Carranta</a>\
-         <nav><a href=\"/{id}/\">the board</a></nav></header>\
-         <main><h1>Game {id}</h1>\
+        "<main><h1>Game {id}</h1>\
          <p class=\"lede\">{seats} players, {mode} market, seed {seed}. \
          {turns} turns, {actions} actions.</p>",
         id = esc(&saved.id),
@@ -4466,13 +4529,33 @@ pub(crate) const CSS: &str = "
 body { margin: 0; background: var(--background); color: var(--foreground);
        font: 16px/1.55 Figtree, system-ui, sans-serif;
        -webkit-font-smoothing: antialiased; }
-header { display: flex; align-items: baseline; gap: 1.2em;
-         padding: 1.2rem clamp(16px, 5vw, 64px); }
+/* ---- the header ----
+   The same header the board wears, and it shares the content column rather than
+   hugging the window: the mark used to sit at the left gutter while the heading
+   under it was centred in a 62rem column, so on a wide screen the two were
+   hundreds of pixels apart and the header read as a bar over the page rather
+   than as the top of it. */
+header { max-width: 62rem; margin: 0 auto; width: 100%;
+         padding: 1.2rem clamp(16px, 5vw, 64px);
+         display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .mark { font: 400 22px Audiowide, system-ui, sans-serif; color: var(--primary);
-        text-decoration: none; }
-nav a { color: var(--muted-foreground); text-decoration: none;
-        border-bottom: 1px solid var(--border); }
-nav a:hover { color: var(--primary); border-color: var(--primary); }
+        text-decoration: none; margin: 0; letter-spacing: .01em; }
+/* What this page is about, beside the mark rather than instead of it: the body
+   face and a quieter colour, so the mark stays the mark. */
+.gameName { font: 500 14px/1 Figtree, system-ui, sans-serif;
+            color: var(--muted-foreground); letter-spacing: .01em;
+            min-width: 0; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+.gameName::before { content: ''; display: inline-block; width: 1px; height: 1em;
+                    background: var(--border); margin-right: 12px;
+                    vertical-align: -.15em; }
+/* The ways out, held together in one group and pushed away from the mark as a
+   group rather than each one being pushed off the last. */
+.headLinks { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+.headLink { color: var(--muted-foreground); font: 500 13px/1 Figtree, system-ui, sans-serif;
+            text-decoration: none; padding-bottom: 1px;
+            border-bottom: 1px solid var(--border); }
+.headLink:hover { color: var(--primary); border-color: var(--primary); }
 main { max-width: 62rem; margin: 0 auto; padding: 0 clamp(16px, 5vw, 64px) 5rem;
        display: flex; flex-direction: column; gap: 1.5rem; }
 /* Tight tracking on a big heading, which is the one typographic tic of the
@@ -4896,6 +4979,43 @@ mod tests {
             moves: s.moves().to_vec(),
             times: s.times().to_vec(),
         }
+    }
+
+    #[test]
+    fn one_header_sits_above_every_screen_in_the_application() {
+        // Four screens, two stylesheets, and the board page's copy is written by
+        // hand. Same classes on both sides or the header is four headers that
+        // look alike until one of them is edited.
+        const PAGE: &str = include_str!("../assets/index.html");
+        let report = masthead("", &[("/abcd-efgh-ijkl/", "The board")]);
+        let home = masthead_home(&[("/lobby", "New game")]);
+        for html in [report.as_str(), home.as_str(), PAGE] {
+            assert!(html.contains("<header>"), "a header");
+            assert!(html.contains("class=\"mark\""), "one name for the mark");
+            assert!(html.contains("class=\"headLinks\""));
+            assert!(html.contains("class=\"headLink\""));
+        }
+        // The mark leads home from everywhere it is a link, and is the heading on
+        // the one page it would otherwise link to.
+        assert!(report.contains("<a class=\"mark\" href=\"/\">"));
+        assert!(home.contains("<h1 class=\"mark\">"));
+        assert!(!home.contains("<a class=\"mark\""), "no link to this page");
+        // New game means the lobby, on every page that offers it, and it is a
+        // link rather than a button on all of them.
+        assert!(PAGE.contains("<a class=\"headLink\" href=\"/lobby\">New game</a>"));
+        assert!(home.contains("href=\"/lobby\">New game</a>"));
+        assert!(
+            !PAGE.contains("<button class=\"headLink\""),
+            "one label, one destination, one kind of element"
+        );
+        // And the rules the two stylesheets share are named the same in both.
+        for rule in [".headLinks", ".headLink", ".gameName"] {
+            assert!(CSS.contains(rule), "the report styles {rule}");
+            assert!(PAGE.contains(rule), "the board styles {rule}");
+        }
+        // Both carry the tab icon, which only the board used to.
+        assert!(PAGE.contains("rel=\"icon\""));
+        assert!(ICON.contains("rel=\"icon\""));
     }
 
     #[test]

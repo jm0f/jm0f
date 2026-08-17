@@ -213,16 +213,21 @@
      large optical size for the high contrast, wonk on for the flared leg.
      Keyed to the class rather than to `h1`, which is what it used to be: it
      became a link to the homepage and quietly fell back to the browser's blue
-     underline, in the body face, next to a clock set in the display one. */
-  h1, .wordmark {
-    font: 400 20px/1 var(--mark); margin: 0; letter-spacing: .01em;
+     underline, in the body face, next to a clock set in the display one.
+
+     `mark` rather than `wordmark`, which is what the server-rendered pages call
+     it: this is their header too, and one thing with two names is two things
+     waiting to be edited apart. Same size as theirs as well, since 20 against 22
+     was the only thing left saying the two headers were not one header. */
+  h1, .mark {
+    font: 400 22px/1 var(--mark); margin: 0; letter-spacing: .01em;
     color: var(--accent);
   }
   /* A link, but the wordmark is the name of the thing rather than a phrase in
      a sentence. It is never underlined, hover included: a rule under a
      display face set at this size reads as a mistake rather than as an
      affordance, and the cursor already says it is a link. */
-  .wordmark { text-decoration: none; display: inline-block; }
+  .mark { text-decoration: none; display: inline-block; }
   /* What this table is called, beside the mark rather than instead of it. In
      the body face and a quieter colour, so the mark stays the mark and the
      name reads as the answer to "which game is this". */
@@ -238,13 +243,13 @@
   }
   /* Somewhere else to go: this game's report, and a new game. Pushed to the far
      end so the mark and the name stay together as one thing and these read as
-     somewhere else to go rather than as more of the title. A button among them
-     is styled as a link because that is what it is: the lobby is a screen, and
-     the only reason it is not an anchor is that it lives on this page. */
+     somewhere else to go rather than as more of the title. The same classes and
+     the same rules as the server-rendered pages use, so the header reads the
+     same on all four screens rather than nearly the same on each. */
   .headLink {
     color: var(--dim); font: 500 13px/1 var(--sans);
-    text-decoration: none; padding-bottom: 1px; cursor: pointer;
-    background: none; border: 0; border-bottom: 1px solid var(--border);
+    text-decoration: none; padding-bottom: 1px;
+    border-bottom: 1px solid var(--border);
   }
   /* Held together in one group, pushed away from the title as a group rather
      than each one being pushed off the last. */
@@ -284,6 +289,7 @@
      does the same thing for the same reason; the click handler guards instead. */
   button, .btn {
     font: inherit; font-weight: 500; color: var(--foreground); background: var(--card);
+    text-decoration: none;
     border: 1px solid var(--border); border-radius: var(--radius-md);
     padding: 5px 10px; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center; gap: .4em;
@@ -939,8 +945,33 @@
     .lobbyCols { grid-template-columns: 1fr; }
     .lobbyCol + .lobbyCol { border-left: 0; padding-left: 0; }
   }
-  .lobbyTitle { font-family: var(--mark); font-size: 28px; margin: 0;
-                color: var(--accent); font-weight: 400; letter-spacing: .01em; }
+  /* The screen's name, not the application's. It used to be the wordmark, which
+     was right while the lobby covered the page and was the only thing on it; the
+     header above it carries the mark now, and two of those is the logo twice. */
+  .lobbyTitle { font: 600 20px/1.3 var(--sans); margin: 0 0 1.4em;
+                color: var(--ink); letter-spacing: 0; }
+  /* The lobby is a page at `/lobby` rather than a sheet over a board, so it sits
+     in the flow under the header and the board's own screen is not there at all.
+     The wash it used to carry moves to the page, where it belongs once the lobby
+     is the page rather than a thing on top of one. */
+  body.atLobby {
+    background:
+      radial-gradient(900px 500px at 50% -10%, rgba(232, 84, 47, .13), transparent 62%),
+      var(--background);
+    background-attachment: fixed;
+  }
+  body.atLobby .lobby {
+    position: static; inset: auto; background: none; overflow: visible;
+    padding: 0 16px clamp(16px, 6vh, 64px);
+  }
+  /* Over the card rather than in the window's corner. Every other page lines its
+     header up with the column beneath it, and here the column is the lobby card,
+     so the header takes the card's width and centring. */
+  body.atLobby header {
+    width: min(880px, calc(100% - 32px)); margin: 0 auto;
+    padding-left: 0; padding-right: 0;
+  }
+  body.atLobby main { display: none; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
   .field { margin-bottom: 1.35em; }
   /* Sized to its words, not to the card. As a full-width block its hover area
@@ -1164,25 +1195,27 @@
      second copy of them along the top was a status bar for a game that does
      not need one. The name links home. -->
 <header>
-  <a class="wordmark" href="/">Carranta</a>
+  <a class="mark" href="/">Carranta</a>
   <span class="gameName" id="gameName" hidden></span>
   <!-- The two other places to go from a board: this game's report, whose
        address is set at start-up rather than rendered since it does not change
-       while you play, and the lobby, for a game with different settings than
-       the home page's form asks about. -->
+       while you play, and the lobby, which has an address of its own. A link
+       rather than a button opening the lobby over the board: one label, one
+       destination, on every page that carries this header. -->
   <div class="headLinks">
     <a class="headLink" id="analytics" href="/">How it is going</a>
-    <button class="headLink" id="another" type="button">New game</button>
+    <a class="headLink" href="/lobby">New game</a>
   </div>
 </header>
 
-<!-- The lobby, docs/ui.md §8. A screen before the game rather than a row of
+<!-- The lobby, docs/ui.md §8, served at `/lobby`. A screen before the game
+     rather than a row of
      dropdowns above it: the settings get room to say what they do, and the
      header keeps only whose turn it is. Seats read "bot" or "open" so the shape
      is right for people joining, though only bots sit behind them today. -->
 <div class="lobby" id="lobby" hidden>
   <div class="lobbyCard panel">
-    <h1 class="lobbyTitle">Carranta</h1>
+    <h1 class="lobbyTitle">New game</h1>
 
     <!-- Two columns, split by what the setting is about. The left one is the
          table: who is at it, who can find it, and which board it deals. The
@@ -1277,9 +1310,9 @@
 
     <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">Deal the board</button>
     <!-- A way out. The lobby used to open itself over every fresh board and the
-         only exit was to deal one; it is opened deliberately now, so changing
-         your mind has to leave the game you were looking at alone. -->
-    <button id="lobbyBack" class="btn btn-block" style="margin-top:.6em">Back to the board</button>
+         only exit was to deal one; it is a page reached by a link now, so
+         changing your mind has somewhere to go. -->
+    <button id="lobbyBack" class="btn btn-block" style="margin-top:.6em">Back to the home page</button>
   </div>
 </div>
 
@@ -3424,15 +3457,10 @@ function openLobby() {
   document.getElementById('lobbyName').focus();
 }
 
-document.getElementById('another').onclick = openLobby;
-
-// Somewhere to go if you change your mind, and where that is depends on what is
-// behind the lobby. Over a game, the game; on `/lobby`, nothing, so the way back
-// is the page you came from, which is home.
-document.getElementById('lobbyBack').onclick = () => {
-  if (LOBBY_ONLY) { location.assign('/'); return; }
-  document.getElementById('lobby').hidden = true;
-};
+// Somewhere to go if you change your mind. The lobby is only ever reached at its
+// own address now, so there is nothing behind it to go back to and the way out is
+// the page every link to it came from.
+document.getElementById('lobbyBack').onclick = () => location.assign('/');
 
 document.getElementById('lobbyGame').oninput = (e) => {
   lobby.game = e.target.value;
@@ -3882,11 +3910,14 @@ function renderPrompt(v) {
     study.href = api('/analytics');
     study.textContent = 'How the game went';
     box.appendChild(study);
-    const b = document.createElement('button');
-    b.className = 'btn-primary btn-block';
-    b.textContent = 'New game';
-    b.onclick = openLobby;
-    box.appendChild(b);
+    const next = document.createElement('a');
+    // `btn` as well: the shape comes from `button, .btn` and the colour from
+    // `btn-primary`, so an anchor without the first is a bare link painted
+    // orange rather than a button.
+    next.className = 'btn btn-primary btn-block';
+    next.href = '/lobby';
+    next.textContent = 'New game';
+    box.appendChild(next);
     host.hidden = false;
     return;
   }
@@ -4605,11 +4636,15 @@ const LOBBY_ONLY = GAME === 'lobby';
     if (LOBBY_ONLY) a.remove();
     else a.href = api('/analytics');
   }
-  // Nor is there a game to want a different one from, and the way out of the
-  // lobby leads home rather than to a board that was never dealt.
+  // At the lobby there is no report to read and no point offering a link to the
+  // page you are standing on, so the header keeps the mark and nothing else. The
+  // board's own screen is hidden and the lobby joins the flow beneath the header,
+  // which is what makes this a page of the application rather than a sheet over
+  // one: the same header sits above the board, the report, the home page and this.
   if (LOBBY_ONLY) {
-    document.getElementById('another').remove();
-    document.getElementById('lobbyBack').textContent = 'Back to the home page';
+    document.body.classList.add('atLobby');
+    document.querySelectorAll('header .headLink[href="/lobby"]')
+      .forEach((n) => n.remove());
   }
 }
 

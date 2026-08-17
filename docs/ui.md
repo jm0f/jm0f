@@ -963,18 +963,26 @@ The home page reads it off the session, which is why that was the right place to
 put it before anything read it at all.
 
 **The lobby has an address of its own: `/lobby`.** It is this page served with
-no game behind it, which is what the home page's one button leads to. There is no
+no game behind it, which is what every **New game** link leads to. There is no
 board to draw, nothing to poll and no report to link to, so none of that runs;
 what is left is the lobby, which is a screen of this application rather than a
 second form somewhere else to drift out of step with this one.
 
-**The lobby no longer opens itself over a board.** It used to appear over any
-board with no moves in it, because arriving at one meant the server had dealt it
-and nobody had said what they wanted. A table is asked for now, so opening the
-lobby on top of it would ask the same questions twice. It is a **New game** link
-in the header instead, next to the report, and it has a way out: **Back to the
-board**, which the auto-opening version never needed because the only exit was to
-deal. On `/lobby` that button leads home, because there is no board behind it.
+It is **a page rather than a sheet over one**. It used to be `position: fixed`
+across the whole window, which covered the header and made it carry a wordmark of
+its own inside the card. It sits in the flow under the application's header now
+(§14), the board's screen is hidden rather than lying behind it, and the card's
+title says what the screen is, **New game**, rather than repeating the mark above
+it. The wash it used to paint over the page is the page's own background here.
+
+**The lobby is never opened over a board.** It used to appear over any board with
+no moves in it, because arriving at one meant the server had dealt it and nobody
+had said what they wanted. A table is asked for now, so opening the lobby on top
+of it would ask the same questions twice, and it has an address, so every way to
+reach it is a link to that address: the header, the end of a game, and the home
+page all point at `/lobby`. Its way out, **Back to the home page**, is a way out
+rather than the sheet closing, which the auto-opening version never needed because
+the only exit was to deal.
 
 **Seats hold bots by default, and used to wait for people.** Waiting was right
 while the lobby was a side door reached from a board somebody was already sitting
@@ -2107,15 +2115,61 @@ not showing. A page read at a glance does not have a hundredth row, and nothing
 is lost: every game keeps its address. "Across all of them" is a different page,
 and it is specified in `analytics-backlog.md`.
 
-**One logo, and it is set as a logo.** The page carried two: a small wordmark in
-a header, linking to the page it was already on, above a large heading saying the
-same word in the report's serif. The report's `h1` is right for a report, because
-there it is a document title; here the heading *is* the name of the thing, so it
-wears the wordmark's face and the wordmark's colour, and the header went away.
+**One logo, and it is the header's.** The page briefly carried two: a small
+wordmark in a header above a large heading saying the same word. It carries the
+application's header now (§14) and no `h1` of its own, because on this one page
+the mark *is* the page's title: the mark is an `h1` here rather than a link, since
+a link to the page you are standing on is an offer of nothing.
 
-The page borrows the report's stylesheet whole, so the tokens, the card, the
-table and the tooltip are one design rather than two that resemble each other.
-What it adds is a button, which the report has none of, and that wordmark.
+The page borrows the report's stylesheet whole, so the tokens, the header, the
+card, the table and the tooltip are one design rather than two that resemble each
+other. What it adds is a button, which the report has none of.
+
+---
+
+## 14. The header
+
+Four screens wear it: the board, the lobby, the report and the home page. It was
+three headers and a gap before this. The board had a mark, a table name and two
+links; the report had a mark and one bare `nav` link in the body face; the lobby
+covered it with a full-screen sheet and put a second wordmark inside that sheet;
+the home page had none. Nothing about that was visibly broken, which is the
+problem with it: an application whose header changes between pages reads as
+several applications that share a colour.
+
+**The mark, what you are looking at, and the ways out of it**, in that order, with
+the links pushed to the far end so the mark and the name stay together as one
+thing rather than reading as the start of a list.
+
+- **The mark** is Audiowide at 22px in the accent, and links home from everywhere
+  it is a link. On the home page it is an `h1` and not a link: that is the one page
+  whose title is the name of the thing, and a link to the page you are standing on
+  is an offer of nothing while a page needs a heading more than it needs that.
+- **The context** is a `.gameName` beside the mark, in the body face and a quieter
+  colour, so the mark stays the mark. The board uses it for the table's name. The
+  report and the home page have a heading of their own beneath and leave it empty.
+- **The links** are `.headLink`, all of them anchors. **New game** means `/lobby`
+  on every page that offers it, which it did not: on the board it used to be a
+  button that opened the lobby as a sheet over the game, so one label had two
+  behaviours depending on where it was pressed.
+
+**It shares the column beneath it.** The report's header used to hug the window
+while its heading was centred in a 62rem column, so on a wide screen the mark and
+the title it belonged to were hundreds of pixels apart and the header read as a
+bar over the page rather than as the top of it. Each page lines the header up with
+its own content: the document pages with their column, the lobby with its card,
+and the board with the edge, because the board's content is the window.
+
+**The board's copy is written by hand**, in `assets/index.html`, because that page
+is one file with its own stylesheet and its own tokens. The classes and the rules
+are named the same on both sides, `mark` included, which is what the rename was
+for: one thing with two names is two things waiting to be edited apart. A test
+reads the board page's own markup and the two rendered ones and fails if they stop
+agreeing about the header's shape.
+
+Both server-rendered pages carry the tab icon the board always had. They had none,
+so every visit to the home page or a report asked for `/favicon.ico`, got a 404,
+and left it in the console.
 
 ---
 

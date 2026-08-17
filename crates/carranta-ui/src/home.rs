@@ -22,7 +22,7 @@ use std::fmt::Write as _;
 
 use carranta_core::state::TradeMode;
 
-use crate::report::CSS;
+use crate::report::{CSS, ICON};
 use crate::store::Saved;
 
 /// One table the server is holding, as the home page needs it.
@@ -59,10 +59,14 @@ pub fn page(open: &[Open], mine: &[Saved], others: &[Saved]) -> String {
         b,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Carranta</title><style>{CSS}{EXTRA}</style></head><body><main>\
-         <h1 class=\"logo\">Carranta</h1>\
+         <title>Carranta</title>{ICON}\
+         <style>{CSS}{EXTRA}</style></head><body>\
+         {head}<main>\
          <p class=\"lede\">Settle an island, trade for what the dice would not \
-         give you, and be first to ten points.</p>"
+         give you, and be first to ten points.</p>",
+        // The same two ways on as the cards below offer, because a header that
+        // only appears on the other pages is not the application's header.
+        head = crate::report::masthead_home(&[("/lobby", "New game")]),
     );
 
     b.push_str(&deal());
@@ -334,19 +338,14 @@ const TABLE_CLOSE: &str = "</table></div>";
 
 /// What this page needs on top of the report's stylesheet.
 ///
-/// The tokens, the card, the table and the tooltip are all already there and are
-/// the same design. What is not: a button, which the report has none of, and a
-/// wordmark set at display size, because the report's `h1` is a document title
-/// and this one is the name of the thing.
+/// The tokens, the header, the card, the table and the tooltip are all already
+/// there and are the same design. What is not: a button, which the report has
+/// none of.
 const EXTRA: &str = "
-main { padding-top: clamp(2rem, 7vh, 5rem); }
-/* The name of the thing, set as the name of the thing. The report's h1 is a
-   document title and belongs in the serif; this one is the wordmark, so it wears
-   the wordmark's face and its colour, and it is the only one on the page: a small
-   mark in a header above a large one saying the same word is the logo twice, and
-   the header's copy is a link to the page it is already on. */
-.logo { font: 400 clamp(30px, 5.5vw, 54px)/1 Audiowide, system-ui, sans-serif;
-        color: var(--primary); letter-spacing: 0; margin: 0 0 .5rem; }
+/* No h1 in the column: on this page the mark in the header *is* the heading, and
+   a second large `Carranta` under a small one is the logo twice. The lede opens
+   the page instead, which is what it was already doing. */
+.lede { margin-top: .5rem; }
 /* A note above the button it explains, rather than a footnote below it: there is
    nothing above it here to be ruled off. */
 .card-head + .note + .go { margin-top: 1.25rem; }
