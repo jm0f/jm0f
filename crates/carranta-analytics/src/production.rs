@@ -192,6 +192,29 @@ pub fn expectation(state: &State) -> [[f64; 5]; MAX_PLAYERS] {
     })
 }
 
+/// How often the board pays a seat anything at all, as a chance per roll.
+///
+/// The expectation above says how much a seat collects; this says how often.
+/// The same pips over one number and over three are the same expectation and a
+/// very different game: the first seat is paid four times as much on a quarter
+/// of the rolls, and spends the rest of the game with nothing to trade. Only
+/// this tells the two apart.
+///
+/// Every number a seat's buildings reach, weighted by how often the dice make
+/// it, and counted once however many buildings sit on it: a number that pays
+/// twice still comes up as often as it comes up. With `respect_robber` a
+/// blocked hex reaches nobody (R-5.8), so the figure is what the seat could
+/// actually collect on rather than what it built towards.
+pub fn coverage(state: &State, respect_robber: bool) -> [f64; MAX_PLAYERS] {
+    let table = yields(state, respect_robber);
+    core::array::from_fn(|p| {
+        (0..OUTCOMES)
+            .filter(|n| table[*n][p].iter().any(|cards| *cards > 0))
+            .map(|n| REFERENCE[n])
+            .sum()
+    })
+}
+
 pub fn analyse(log: &Log) -> Result<Report, ReplayError> {
     let mut state = *log.created.opening;
     let mut r = Report {
@@ -354,6 +377,47 @@ mod tests {
             (total_actual - total_expected).abs() < total_expected * 0.35,
             "expected {total_expected:.0}, actual {total_actual:.0}"
         );
+    }
+
+    #[test]
+    fn coverage_is_how_often_rather_than_how_much() {
+        let log = self_play(4, TradeMode::Disabled);
+        let mut state = *log.created.opening;
+        // A seat on nothing is paid on nothing.
+        for p in 0..MAX_PLAYERS {
+            state.settlements[p] = 0;
+            state.cities[p] = 0;
+        }
+        assert_eq!(coverage(&state, false)[0], 0.0);
+
+        // One settlement covers the numbers its own hexes carry, each counted
+        // once and weighted by how often the dice make it.
+        let hex = (0..HEX_COUNT)
+            .find(|h| state.terrain[*h].yields().is_some() && (2..=12).contains(&state.number[*h]))
+            .expect("a board has land");
+        state.settlements[0] = hex_vertices(hex as u8);
+        state.robber = u8::MAX;
+        let n = state.number[hex];
+        let ways = 6 - (i32::from(n) - 7).unsigned_abs();
+        // Three hexes meet at a corner, so a settlement on this one covers at
+        // least its number and never less often than that number comes up.
+        assert!(coverage(&state, false)[0] >= f64::from(ways) / 36.0 - 1e-12);
+        assert!(coverage(&state, false)[0] <= 1.0);
+
+        // And the robber takes exactly that number away, since these
+        // settlements are the only ones the board has.
+        state.robber = hex as u8;
+        let lost = coverage(&state, false)[0] - coverage(&state, true)[0];
+        let same = (0..HEX_COUNT)
+            .filter(|h| *h != hex && state.number[*h] == n && state.terrain[*h].yields().is_some())
+            .any(|h| hex_vertices(h as u8) & state.settlements[0] != 0);
+        if same {
+            // Another hex carries the number too, so nothing is lost: the
+            // seat is still paid on that roll, by the other hex.
+            assert!(lost.abs() < 1e-12);
+        } else {
+            assert!((lost - f64::from(ways) / 36.0).abs() < 1e-12);
+        }
     }
 
     #[test]

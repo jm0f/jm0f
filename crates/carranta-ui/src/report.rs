@@ -200,6 +200,15 @@ fn pip_rows(pips: &[u32; 5]) -> String {
         }
         out.push_str("</span>");
     }
+    // The whole placement, under a rule, as the number rather than as more
+    // hexes: twenty-two tiles in a row says less than the figure 22 does, and
+    // the total is what one opening is compared with another on.
+    let _ = write!(
+        out,
+        "<span class=\"pip-row sum\" data-tip=\"Every pip the two \
+         settlements touch.\">{}</span>",
+        pips.iter().sum::<u32>(),
+    );
     out.push_str("</span>");
     out
 }
@@ -219,6 +228,14 @@ fn turn_rows(per_turn: &[f64; 5]) -> String {
             name = RESOURCE_NAMES[res],
         );
     }
+    // On the same line as the pips it is the same total of, so the two columns
+    // still read across.
+    let _ = write!(
+        out,
+        "<span class=\"pip-row sum\" data-tip=\"Cards a turn from the whole \
+         placement, at fair odds.\">{:.2}</span>",
+        per_turn.iter().sum::<f64>(),
+    );
     out.push_str("</span>");
     out
 }
@@ -320,10 +337,7 @@ fn over_tip(i: usize, x: f64, y: f64, w: f64, h: f64, text: &str) -> String {
 fn tip_rules(scope: &str, n: usize) -> String {
     let mut out = String::from("<style>");
     for i in 0..n {
-        let _ = write!(
-            out,
-            "{scope}:has(.k{i}:hover) .t{i}{{opacity:1;visibility:visible}}"
-        );
+        let _ = write!(out, "{scope}:has(.k{i}:hover) .t{i}{{display:block}}");
     }
     out.push_str("</style>");
     out
@@ -369,31 +383,27 @@ fn label(name: &str, place: Option<usize>) -> String {
     }
 }
 
-/// A label inside a drawing, carrying the same markup a table row would.
+/// A label on a drawing, carrying the same markup a table row would.
 ///
-/// A `foreignObject` rather than SVG text, so the name and its place badge are
-/// literally the page's own HTML: drawing the badge as a rect and a text would
-/// mean guessing at the width of a name to place it, and would drift from the
-/// tables the first time either changed.
+/// The page's own HTML, in the layer over the drawing rather than inside it.
+/// Inside it, as a `foreignObject`, everything was scaled with the drawing:
+/// a name came out a size the page never sets, and a place badge came out a
+/// different pill from the one in every table, which is the one thing a badge
+/// must not do. Over the top it is the same badge, because it is the same
+/// markup at the same size.
 ///
-/// `at` is where the label points from, and the box is hung off it accordingly,
-/// so a name to the left of a circle still ends at the rim.
-fn svg_label(x: f64, y: f64, at: &str, inner: &str) -> String {
-    const W: f64 = 132.0;
-    // Tall enough for the place badge. A `foreignObject` clips whatever leaves
-    // it, and the first draft was a 24px box holding a pill that needed more,
-    // so every badge in every drawing lost its top and bottom edge.
-    const H: f64 = 38.0;
-    let (left, align) = match at {
-        "end" => (x - W, "to-end"),
-        "mid" => (x - W / 2.0, "to-mid"),
-        _ => (x, "to-start"),
+/// `at` is where the label points from, and the box is hung off the anchor
+/// accordingly, so a name to the left of a circle still ends at the rim.
+fn over_label(x: f64, y: f64, w: f64, h: f64, at: &str, inner: &str) -> String {
+    let align = match at {
+        "end" => "to-end",
+        "mid" => "to-mid",
+        _ => "to-start",
     };
     format!(
-        "<foreignObject x=\"{left:.1}\" y=\"{top:.1}\" width=\"{W}\" height=\"{H}\">\
-         <div xmlns=\"http://www.w3.org/1999/xhtml\" class=\"svg-name {align}\">\
-         <span class=\"ink\">{inner}</span></div></foreignObject>",
-        top = y - H / 2.0,
+        "<div class=\"name {align}\" style=\"left:{lx:.2}%;top:{ly:.2}%\">{inner}</div>",
+        lx = 100.0 * x / w,
+        ly = 100.0 * y / h,
     )
 }
 
@@ -507,41 +517,45 @@ fn sankey(
         }
     }
 
-    // The blocks, and a name beside each.
+    // The blocks, and a name beside each: the block in the drawing, the name in
+    // the layer over it, at the page's own size.
+    let tall = H + TOP * 2.0;
     for s in 0..seats {
         if took[s] > 0 {
             let _ = write!(
                 b,
                 "<rect class=\"node n{s}\" x=\"{x}\" y=\"{y}\" width=\"{NODE}\" \
-                 height=\"{h}\" rx=\"3\"/>\
-                 {name}",
+                 height=\"{h}\" rx=\"3\"/>",
                 x = LEFT,
                 y = from[s].0,
                 h = from[s].1 - from[s].0,
-                name = svg_label(
-                    LEFT - 10.0,
-                    (from[s].0 + from[s].1) / 2.0,
-                    "end",
-                    &placed(s, &who[s], place[s]),
-                ),
             );
+            tips.push_str(&over_label(
+                LEFT - 10.0,
+                (from[s].0 + from[s].1) / 2.0,
+                W,
+                tall,
+                "end",
+                &placed(s, &who[s], place[s]),
+            ));
         }
         if lost[s] > 0 {
             let _ = write!(
                 b,
                 "<rect class=\"node n{s}\" x=\"{x}\" y=\"{y}\" width=\"{NODE}\" \
-                 height=\"{h}\" rx=\"3\"/>\
-                 {name}",
+                 height=\"{h}\" rx=\"3\"/>",
                 x = RIGHT - NODE,
                 y = to[s].0,
                 h = to[s].1 - to[s].0,
-                name = svg_label(
-                    RIGHT + 10.0,
-                    (to[s].0 + to[s].1) / 2.0,
-                    "start",
-                    &placed(s, &who[s], place[s]),
-                ),
             );
+            tips.push_str(&over_label(
+                RIGHT + 10.0,
+                (to[s].0 + to[s].1) / 2.0,
+                W,
+                tall,
+                "start",
+                &placed(s, &who[s], place[s]),
+            ));
         }
     }
     b.push_str("</svg>");
@@ -721,7 +735,7 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
             c if c > 0.3 => "start",
             _ => "mid",
         };
-        b.push_str(&svg_label(tx, ty, at, &name));
+        tips.push_str(&over_label(tx, ty, W, H, at, &name));
     }
     b.push_str("</svg>");
     tips.push_str("</div>");
@@ -816,6 +830,699 @@ struct Curve {
     owed: Vec<f64>,
 }
 
+/// The score, turn by turn, under the table that reports the end of it.
+///
+/// A result table says who won and by how much; it cannot say whether the game
+/// was ever close. A seat that led for a hundred turns and lost, and a seat
+/// that was fourth until the last ten, come out of that table looking the same.
+///
+/// The true score, hidden victory point cards included, which is what the table
+/// above reports: the last point of every line is that seat's points column.
+fn score_plot(study: &Study, who: &[String], seats: usize) -> String {
+    const W: f64 = 720.0;
+    const H: f64 = 210.0;
+    const PAD: f64 = 36.0;
+    const FOOT: f64 = 26.0;
+
+    let rows = &study.score;
+    let turns = rows.len();
+    if turns == 0 || seats == 0 {
+        return String::new();
+    }
+    // The winning score is the ceiling: the game stopped there, so there is
+    // nothing above it to draw and a taller axis would be empty paper.
+    let top = f64::from(
+        rows.iter()
+            .flat_map(|r| r[..seats].iter().copied())
+            .max()
+            .unwrap_or(1)
+            .max(1),
+    );
+    let x = |i: usize| PAD + (W - PAD * 2.0) * i as f64 / (turns - 1).max(1) as f64;
+    let y = |v: f64| H - FOOT - PAD - (H - FOOT - PAD * 2.0) * v / top;
+    let base = H - FOOT - PAD;
+
+    let mut b = format!(
+        "<div class=\"view\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {H}\" \
+         role=\"img\" aria-label=\"The score turn by turn\">"
+    );
+    // Gridlines on points somebody counts in, which for a game to ten is
+    // every second point.
+    let stride = if top > 14.0 { 4.0 } else { 2.0 };
+    let mut v = stride;
+    while v <= top + 1e-9 {
+        let _ = write!(
+            b,
+            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
+             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{v:.0}</text>",
+            r = W - PAD,
+            gy = y(v),
+            tx = PAD - 6.0,
+            ty = y(v) + 4.0,
+        );
+        v += stride;
+    }
+    let step = nice_step(turns);
+    let mut ticks: Vec<usize> = (0..turns).step_by(step).collect();
+    if ticks.last() != Some(&(turns - 1)) {
+        if ticks.last().is_some_and(|last| turns - 1 - last < step / 2) {
+            ticks.pop();
+        }
+        ticks.push(turns - 1);
+    }
+    for i in ticks {
+        let _ = write!(
+            b,
+            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base}\" y2=\"{end}\"/>\
+             <text class=\"axis mid\" x=\"{tx:.1}\" y=\"{ly}\">{n}</text>",
+            tx = x(i),
+            end = base + 5.0,
+            ly = base + 18.0,
+            n = i + 1,
+        );
+    }
+    let _ = write!(
+        b,
+        "<text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">points</text>"
+    );
+    // A score holds until something changes it, so the line is a stair rather
+    // than a slope: drawing it as a slope would show points arriving through a
+    // turn nobody scored in.
+    for p in 0..seats {
+        let mut path = String::new();
+        for i in 0..turns {
+            let v = f64::from(rows[i][p]);
+            if i > 0 {
+                let _ = write!(path, "{:.1},{:.1} ", x(i), y(f64::from(rows[i - 1][p])));
+            }
+            let _ = write!(path, "{:.1},{:.1} ", x(i), y(v));
+        }
+        let _ = write!(
+            b,
+            "<polyline class=\"line f{p}\" points=\"{}\"/>",
+            path.trim()
+        );
+    }
+    b.push_str("</svg>");
+
+    let slot = (W - PAD * 2.0) / (turns - 1).max(1) as f64;
+    b.push_str("<div class=\"over\">");
+    for i in 0..turns {
+        let mut said = format!("Turn {}", i + 1);
+        for p in 0..seats {
+            let _ = write!(said, "\n{}: {}", who[p], rows[i][p]);
+        }
+        let _ = write!(
+            b,
+            "<div class=\"slot{}\" style=\"left:{lx:.3}%;width:{lw:.3}%;top:{lt:.2}%;\
+             height:{lh:.2}%\" data-tip=\"{}\"></div>",
+            if x(i) > W / 2.0 { " to-left" } else { "" },
+            esc(&said),
+            lx = 100.0 * (x(i) - slot / 2.0) / W,
+            lw = 100.0 * slot / W,
+            lt = 100.0 * PAD / H,
+            lh = 100.0 * (base - PAD) / H,
+        );
+    }
+    b.push_str("</div></div></div>");
+    b
+}
+
+/// What each seat's engine was worth a roll, turn by turn, and how fast it grew.
+///
+/// The premise is an assumption worth stating: an economy that compounds beats
+/// one that is merely large. Cards a turn buy buildings, buildings buy more
+/// cards a turn, and a seat whose rate keeps climbing ends the game with an
+/// engine nobody can catch. So an economy is rated on its slope rather than its
+/// size, and the slope is fitted in logs, which is what makes it a rate.
+///
+/// The engine, not the earnings: what one roll was worth given the buildings
+/// standing at the time. The cards that actually arrived are this plus the dice.
+fn engine_card(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    const W: f64 = 720.0;
+    const H: f64 = 220.0;
+    const PAD: f64 = 36.0;
+    const FOOT: f64 = 26.0;
+
+    let rows = &study.engine;
+    let turns = rows.len();
+    if turns < 2 || seats == 0 {
+        return String::new();
+    }
+    let top = rows
+        .iter()
+        .flat_map(|r| r[..seats].iter().copied())
+        .fold(0.1f64, f64::max);
+    let x = |i: usize| PAD + (W - PAD * 2.0) * i as f64 / (turns - 1).max(1) as f64;
+    let y = |v: f64| H - FOOT - PAD - (H - FOOT - PAD * 2.0) * v / top;
+    let base = H - FOOT - PAD;
+
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "Engine",
+        "What one roll was worth to each seat, in cards, at the end of every \
+         turn: the buildings they had standing, not what the dice paid them. \
+         Rated on how fast it grew rather than on how big it got, on the \
+         assumption that an economy which compounds beats one that is merely \
+         large.",
+    ));
+    let _ = write!(
+        b,
+        "<div class=\"view\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {H}\" \
+         role=\"img\" aria-label=\"What a roll was worth to each seat\">"
+    );
+    for k in 1..=4 {
+        let v = top * f64::from(k) / 4.0;
+        let _ = write!(
+            b,
+            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
+             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{v:.1}</text>",
+            r = W - PAD,
+            gy = y(v),
+            tx = PAD - 6.0,
+            ty = y(v) + 4.0,
+        );
+    }
+    let step = nice_step(turns);
+    let mut ticks: Vec<usize> = (0..turns).step_by(step).collect();
+    if ticks.last() != Some(&(turns - 1)) {
+        if ticks.last().is_some_and(|last| turns - 1 - last < step / 2) {
+            ticks.pop();
+        }
+        ticks.push(turns - 1);
+    }
+    for i in ticks {
+        let _ = write!(
+            b,
+            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base}\" y2=\"{end}\"/>\
+             <text class=\"axis mid\" x=\"{tx:.1}\" y=\"{ly}\">{n}</text>",
+            tx = x(i),
+            end = base + 5.0,
+            ly = base + 18.0,
+            n = i + 1,
+        );
+    }
+    let _ = write!(
+        b,
+        "<text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">a roll</text>"
+    );
+    // A stair again, since an engine changes when a building goes up and not
+    // between times.
+    for p in 0..seats {
+        let mut path = String::new();
+        for i in 0..turns {
+            if i > 0 {
+                let _ = write!(path, "{:.1},{:.1} ", x(i), y(rows[i - 1][p]));
+            }
+            let _ = write!(path, "{:.1},{:.1} ", x(i), y(rows[i][p]));
+        }
+        let _ = write!(
+            b,
+            "<polyline class=\"line f{p}\" points=\"{}\"/>",
+            path.trim()
+        );
+    }
+    b.push_str("</svg>");
+    let slot = (W - PAD * 2.0) / (turns - 1).max(1) as f64;
+    b.push_str("<div class=\"over\">");
+    for i in 0..turns {
+        let mut said = format!("Turn {}", i + 1);
+        for p in 0..seats {
+            let _ = write!(said, "\n{}: {:.2} a roll", who[p], rows[i][p]);
+        }
+        let _ = write!(
+            b,
+            "<div class=\"slot{}\" style=\"left:{lx:.3}%;width:{lw:.3}%;top:{lt:.2}%;\
+             height:{lh:.2}%\" data-tip=\"{}\"></div>",
+            if x(i) > W / 2.0 { " to-left" } else { "" },
+            esc(&said),
+            lx = 100.0 * (x(i) - slot / 2.0) / W,
+            lw = 100.0 * slot / W,
+            lt = 100.0 * PAD / H,
+            lh = 100.0 * (base - PAD) / H,
+        );
+    }
+    b.push_str("</div></div></div>");
+
+    // The rating itself.
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "opening",
+            "Cards a roll across the first quarter of the game, which is close \
+             to what the two settlements bought.",
+        ),
+        (
+            "end",
+            "And across the last quarter, which is the engine the game finished \
+             with.",
+        ),
+        (
+            "multiple",
+            "How many times over the engine grew between those two. A seat that \
+             trebled it built three times the economy they started with.",
+        ),
+        (
+            "growth",
+            "What the engine multiplied by each turn, fitted as a straight line \
+             through the log of its size. Two percent a turn compounds to a \
+             doubling in thirty-five.",
+        ),
+        (
+            "doubling",
+            "Turns to double at that rate, if it held. Blank for an engine that \
+             never grew, since nothing flat doubles.",
+        ),
+        (
+            "fit",
+            "How straight that line was, from nought to one, and the honest half \
+             of the figure beside it. Compounding here is bounded at both ends: \
+             the opening is a standing start, the pieces run out, and the game \
+             stops at ten points. A low fit means the growth column is average \
+             steepness rather than a law the seat was obeying.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let cells = match crate::analysis::growth_of(rows, p) {
+            None => vec![placed(p, &who[p], place[p])],
+            Some(g) => vec![
+                placed(p, &who[p], place[p]),
+                format!("{:.2}", g.early),
+                format!("{:.2}", g.late),
+                if g.early > 0.005 {
+                    format!("{:.1}x", g.late / g.early)
+                } else {
+                    NONE.to_string()
+                },
+                format!(
+                    "<span class=\"{}\">{:+.1}%</span>",
+                    if g.per_turn > 0.0 { "up" } else { "down" },
+                    g.per_turn * 100.0
+                ),
+                match g.doubling {
+                    Some(t) => format!("{t:.0}"),
+                    None => NONE.to_string(),
+                },
+                format!("{:.2}", g.fit),
+            ],
+        };
+        b.push_str(&row(&cells, false));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b.push_str("</section>");
+    b
+}
+
+/// How often the board paid each seat, turn by turn.
+///
+/// The companion to the production chart above it, and a different question
+/// about the same board: that one is how much a seat collected, this is how
+/// often they collected at all. A seat can hold a fifth of the pips on the
+/// board and still be paid on a quarter of the rolls, which is a game spent
+/// waiting rather than trading, and no cumulative total shows it.
+///
+/// Solid is what the seat actually collected on, robber and all; dotted, in the
+/// same colour, is what their buildings reach. The gap between the two is what
+/// a blockade cost in rolls rather than in cards.
+fn reach(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    const W: f64 = 720.0;
+    const H: f64 = 280.0;
+    const PAD: f64 = 36.0;
+    const FOOT: f64 = 26.0;
+
+    let c = &study.cover;
+    let turns = c.turns();
+    if turns == 0 || seats == 0 {
+        return String::new();
+    }
+    let x = |i: usize| PAD + (W - PAD * 2.0) * i as f64 / (turns - 1).max(1) as f64;
+    // The scale runs from nought to a quarter of certain, in quarters. Fixed
+    // steps rather than a scale fitted to this game, so that two games are drawn
+    // on the same axis and a line's height means something on its own; but only
+    // as far up as the game reached, since a quarter of empty paper says
+    // nothing either.
+    let ceiling = c
+        .open
+        .iter()
+        .flat_map(|r| r[..seats].iter().copied())
+        .fold(0.25f64, f64::max);
+    let top = (ceiling * 4.0).ceil() / 4.0;
+    let y = |v: f64| H - FOOT - PAD - (H - FOOT - PAD * 2.0) * v / top;
+    let base = H - FOOT - PAD;
+
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "Coverage",
+        "The chance a roll pays a seat anything at all, turn by turn. Every \
+         number their buildings reach, weighted by how often the dice make it \
+         and counted once however many buildings sit on it. Solid is what they \
+         collected on; dotted is what the buildings reach, with the robber \
+         ignored, so the gap is what a blockade cost in rolls.",
+    ));
+    let _ = write!(
+        b,
+        "<div class=\"view\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {H}\" \
+         role=\"img\" aria-label=\"How often the board paid each seat\">"
+    );
+    // Quarters of certain, which are the gridlines a probability wants.
+    for k in 1..=(top * 4.0).round() as u32 {
+        let v = f64::from(k) / 4.0;
+        let _ = write!(
+            b,
+            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
+             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{p:.0}%</text>",
+            r = W - PAD,
+            gy = y(v),
+            tx = PAD - 6.0,
+            ty = y(v) + 4.0,
+            p = v * 100.0,
+        );
+    }
+    let step = nice_step(turns);
+    let mut ticks: Vec<usize> = (0..turns).step_by(step).collect();
+    if ticks.last() != Some(&(turns - 1)) {
+        if ticks.last().is_some_and(|last| turns - 1 - last < step / 2) {
+            ticks.pop();
+        }
+        ticks.push(turns - 1);
+    }
+    for i in ticks {
+        let _ = write!(
+            b,
+            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base}\" y2=\"{end}\"/>\
+             <text class=\"axis mid\" x=\"{tx:.1}\" y=\"{ly}\">{n}</text>",
+            tx = x(i),
+            end = base + 5.0,
+            ly = base + 18.0,
+            n = i + 1,
+        );
+    }
+    let _ = write!(
+        b,
+        "<text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">a roll pays</text>"
+    );
+    for p in 0..seats {
+        for (rows, dash) in [(&c.live, ""), (&c.open, " owed")] {
+            let path: String = (0..turns)
+                .map(|i| format!("{:.1},{:.1}", x(i), y(rows[i][p])))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let _ = write!(
+                b,
+                "<polyline class=\"line k{n} f{p}{dash}\" points=\"{path}\"/>",
+                n = p + 1,
+            );
+        }
+    }
+    b.push_str("</svg>");
+
+    // The same per-turn slots the production chart uses, and for the same
+    // reason: a line's height is readable and its exact figure is not.
+    let slot = (W - PAD * 2.0) / (turns - 1).max(1) as f64;
+    b.push_str("<div class=\"over\">");
+    for i in 0..turns {
+        let mut said = format!("Turn {}", i + 1);
+        for p in 0..seats {
+            let _ = write!(
+                said,
+                "\n{}: {:.0}%, reaching {:.0}%",
+                who[p],
+                c.live[i][p] * 100.0,
+                c.open[i][p] * 100.0,
+            );
+        }
+        let _ = write!(
+            b,
+            "<div class=\"slot{}\" style=\"left:{lx:.3}%;width:{lw:.3}%;top:{lt:.2}%;\
+             height:{lh:.2}%\" data-tip=\"{}\"></div>",
+            if x(i) > W / 2.0 { " to-left" } else { "" },
+            esc(&said),
+            lx = 100.0 * (x(i) - slot / 2.0) / W,
+            lw = 100.0 * slot / W,
+            lt = 100.0 * PAD / H,
+            lh = 100.0 * (base - PAD) / H,
+        );
+    }
+    b.push_str("</div></div>");
+
+    // The legend, which is also the control, exactly as the chart above.
+    b.push_str("<div class=\"key\">");
+    for p in 0..seats {
+        let _ = write!(
+            b,
+            "<input type=\"checkbox\" id=\"cv-{p}\" checked>\
+             <label for=\"cv-{p}\"><span class=\"swatch f{p}\"></span>{name}</label>",
+            name = placed(p, &who[p], place[p]),
+        );
+    }
+    b.push_str("</div></div>");
+
+    // And the figures the lines cannot be read off to the percent.
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "opening",
+            "What the two settlements alone were paid on, which is the coverage \
+             column on the opening card.",
+        ),
+        (
+            "average",
+            "Across every turn of the game, robber and all. The figure to \
+             compare seats on: coverage that was high for ten turns and low for \
+             a hundred was low.",
+        ),
+        (
+            "at the end",
+            "The board they finished on, which is what all that building came \
+             to.",
+        ),
+        (
+            "blocked",
+            "How much of the average the robber took, in rolls. A tenth here is \
+             a tenth of all rolls that would have paid this seat and did not.",
+        ),
+        (
+            "a payout",
+            "Cards on a roll that pays: the engine divided by the coverage. Two \
+             seats can be owed the same cards a turn and collect them in \
+             halves or in threes, and this is which of the two they were doing.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    for p in 0..seats {
+        let (live, open) = (c.mean(p, true), c.mean(p, false));
+        b.push_str(&row(
+            &[
+                placed(p, &who[p], place[p]),
+                percent(study.opening[p].coverage),
+                percent(live),
+                percent(c.live[turns - 1][p]),
+                if open - live < 0.005 {
+                    NONE.to_string()
+                } else {
+                    format!("<span class=\"down\">-{:.0}%</span>", (open - live) * 100.0)
+                },
+                // The engine is what a roll is owed on average, over all rolls;
+                // dividing by the share of rolls that pay leaves what one of
+                // those pays.
+                match (mean_engine(study, p), c.mean(p, false)) {
+                    (e, cov) if cov > 0.005 => format!("{:.1}", e / cov),
+                    _ => NONE.to_string(),
+                },
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(T_CLOSE);
+    b.push_str(&trail(study, who, seats));
+    b.push_str("</section>");
+    b
+}
+
+/// A seat's engine averaged over the whole game, in cards a roll.
+fn mean_engine(study: &Study, seat: usize) -> f64 {
+    if study.engine.is_empty() {
+        return 0.0;
+    }
+    study.engine.iter().map(|row| row[seat]).sum::<f64>() / study.engine.len() as f64
+}
+
+/// The two halves of an economy plotted against each other: how often it pays,
+/// and how much it pays when it does.
+///
+/// One point a quarter and a line joining them, so a seat is a path rather than
+/// a dot. Which direction the path runs is the whole point. Up and to the right
+/// is an engine getting both bigger and broader, which is what building a fifth
+/// settlement on new numbers does. Straight up is more of the same numbers: the
+/// payouts get bigger and no more frequent, which is a boom-and-bust economy
+/// that spends most of its turns unable to trade. Straight right is the
+/// opposite, and rare in practice.
+///
+/// A point a turn instead of a point a quarter would be a cloud of a hundred
+/// and fifty dots per seat with no direction visible in it, which is why this is
+/// quarters: the same four spans the production card divides the game into.
+fn trail(study: &Study, who: &[String], seats: usize) -> String {
+    const W: f64 = 720.0;
+    const H: f64 = 300.0;
+    const PAD: f64 = 44.0;
+    const FOOT: f64 = 30.0;
+    const QUARTERS: usize = 4;
+
+    let c = &study.cover;
+    let turns = c.turns();
+    if turns < QUARTERS * 2 || seats == 0 || study.engine.len() != turns {
+        return String::new();
+    }
+    // The same spans the production card cuts the game into.
+    let cut = |k: usize| (turns * k).div_ceil(QUARTERS).min(turns);
+    let span = |k: usize| (if k == 0 { 0 } else { cut(k) }, cut(k + 1));
+    let mean = |from: usize, to: usize, of: &dyn Fn(usize) -> f64| {
+        if to <= from {
+            return of(from.min(turns - 1));
+        }
+        (from..to).map(of).sum::<f64>() / (to - from) as f64
+    };
+
+    // A point a seat a quarter: how often it paid, and what it was worth a roll.
+    let point = |p: usize, k: usize| {
+        let (from, to) = span(k);
+        (
+            mean(from, to, &|i| c.live[i][p]),
+            mean(from, to, &|i| study.engine[i][p]),
+        )
+    };
+    let top = (0..seats)
+        .flat_map(|p| (0..QUARTERS).map(move |k| (p, k)))
+        .map(|(p, k)| point(p, k).1)
+        .fold(0.2f64, f64::max);
+    let wide = (0..seats)
+        .flat_map(|p| (0..QUARTERS).map(move |k| (p, k)))
+        .map(|(p, k)| point(p, k).0)
+        .fold(0.25f64, f64::max);
+    let right = (wide * 4.0).ceil() / 4.0;
+    // The axis starts at the last quarter below the narrowest economy rather
+    // than at nought: nobody's coverage is near nothing, and a third of the
+    // drawing would be paper.
+    let narrow = (0..seats)
+        .flat_map(|p| (0..QUARTERS).map(move |k| (p, k)))
+        .map(|(p, k)| point(p, k).0)
+        .fold(1.0f64, f64::min);
+    let left = (narrow * 4.0).floor() / 4.0;
+    let x = |v: f64| PAD + (W - PAD * 2.0) * (v - left) / (right - left).max(0.25);
+    let y = |v: f64| H - FOOT - PAD - (H - FOOT - PAD * 2.0) * v / top;
+
+    let mut b = String::from(
+        "<div class=\"view\"><div class=\"frame\"><svg viewBox=\"0 0 720 300\" \
+         role=\"img\" aria-label=\"How often each economy paid against how much\">",
+    );
+    for k in 1..=4 {
+        let v = top * f64::from(k) / 4.0;
+        let _ = write!(
+            b,
+            "<line class=\"grid\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{gy}\" y2=\"{gy}\"/>\
+             <text class=\"axis\" x=\"{tx}\" y=\"{ty}\">{v:.1}</text>",
+            r = W - PAD,
+            gy = y(v),
+            tx = PAD - 6.0,
+            ty = y(v) + 4.0,
+        );
+    }
+    let base = H - FOOT - PAD;
+    let mut at = left + 0.25;
+    while at <= right + 1e-9 {
+        let _ = write!(
+            b,
+            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base}\" y2=\"{end}\"/>\
+             <text class=\"axis mid\" x=\"{tx:.1}\" y=\"{ly}\">{p:.0}%</text>",
+            tx = x(at),
+            end = base + 5.0,
+            ly = base + 18.0,
+            p = at * 100.0,
+        );
+        at += 0.25;
+    }
+    // Both names at the top, since the horizontal one on its own axis lands on
+    // the last tick and neither can be read.
+    let _ = write!(
+        b,
+        "<text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">cards a roll</text>\
+         <text class=\"axis unit\" x=\"{rx}\" y=\"14\">rolls that pay</text>",
+        rx = W - PAD,
+    );
+
+    let mut tips = String::from("<div class=\"over\">");
+    let mut shape = 0;
+    for p in 0..seats {
+        let path: String = (0..QUARTERS)
+            .map(|k| {
+                let (cov, size) = point(p, k);
+                format!("{:.1},{:.1}", x(cov), y(size))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = write!(b, "<polyline class=\"trail f{p}\" points=\"{path}\"/>");
+        for k in 0..QUARTERS {
+            let (cov, size) = point(p, k);
+            // The last quarter is where the economy ended, so it is the solid
+            // one; the earlier ones are where it came from.
+            let _ = write!(
+                b,
+                "<circle class=\"stop f{p} k{shape}{}\" cx=\"{:.1}\" cy=\"{:.1}\" \
+                 r=\"{}\"/>",
+                if k + 1 == QUARTERS { " last" } else { "" },
+                x(cov),
+                y(size),
+                if k + 1 == QUARTERS { 6 } else { 4 },
+            );
+            tips.push_str(&over_tip(
+                shape,
+                x(cov),
+                y(size),
+                W,
+                H,
+                &format!(
+                    "{}, {} quarter\n{:.0}% of rolls pay\n{:.2} cards a roll\n{:.1} on a \
+                     roll that pays",
+                    who[p],
+                    ordinal(k + 1),
+                    cov * 100.0,
+                    size,
+                    if cov > 0.005 { size / cov } else { 0.0 },
+                ),
+            ));
+            shape += 1;
+        }
+        let (cov, size) = point(p, QUARTERS - 1);
+        tips.push_str(&over_label(
+            x(cov) + 12.0,
+            y(size),
+            W,
+            H,
+            "start",
+            &format!("<span class=\"dot s{p}\"></span>{}", esc(&who[p])),
+        ));
+    }
+    b.push_str("</svg>");
+    tips.push_str("</div>");
+    b.push_str(&tips);
+    b.push_str(&tip_rules(".trails", shape));
+    b.push_str("</div></div>");
+    format!("<div class=\"trails\">{b}</div>")
+}
+
+/// A chance, as a whole percentage, since a tenth of a percent of a roll is not
+/// a thing anybody plays around.
+fn percent(v: f64) -> String {
+    format!("{:.0}%", v * 100.0)
+}
+
 /// Production against expectation, turn by turn, with a switch above it.
 ///
 /// The default is every seat at once: a solid line for what each collected and
@@ -850,11 +1557,23 @@ fn curves(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) 
         .chain((0..seats).map(|p| esc(&who[p])))
         .enumerate()
     {
+        // A seat's own colour, on the mark left of the name as everywhere else,
+        // and on the whole pill once it is the one being looked at. Picking
+        // Ines and then reading four teal lines is a moment of doubt the
+        // control can spend a colour to remove.
+        let seat = i.checked_sub(1).map(|p| p.min(MAX_PLAYERS - 1));
         let _ = write!(
             b,
             "<input type=\"radio\" name=\"view\" id=\"view{i}\"{on}>\
-             <label for=\"view{i}\">{label}</label>",
+             <label for=\"view{i}\"{class}>{mark}{label}</label>",
             on = if i == 0 { " checked" } else { "" },
+            // `m` for the mode, and not the `s` the seat marks use: those set a
+            // background on anything wearing them, which painted every pill in
+            // the row rather than the one that was picked.
+            class = seat.map_or(String::new(), |p| format!(" class=\"seat m{p}\"")),
+            mark = seat.map_or(String::new(), |p| format!(
+                "<span class=\"dot s{p}\"></span>"
+            )),
         );
     }
     b.push_str("</div><div class=\"views\">");
@@ -961,9 +1680,31 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
     // The same question asked four times across the game, because when a seat
     // was starved matters: cards missing early delay everything they would
     // have bought, and the same shortfall at the end costs one purchase.
-    b.push_str(T_OPEN);
+    let labels: Vec<String> = (0..seats).map(|p| placed(p, &who[p], place[p])).collect();
+    b.push_str(&quarters(s, &labels, |p, i| {
+        (
+            f64::from(s.actual[i][p].iter().sum::<u32>()),
+            s.expected[i][p].iter().sum::<f64>(),
+        )
+    }));
+    b
+}
+
+/// How far each row ran over or under, four times across the game and once for
+/// the whole of it.
+///
+/// The rows differ and the question does not: seats under the everybody chart,
+/// resources under a seat's own. `at(row, i)` is that row's running total and
+/// running expectation at sample `i`, and a quarter is what the two grew by
+/// across it.
+fn quarters(
+    s: &crate::analysis::Series,
+    labels: &[String],
+    at: impl Fn(usize, usize) -> (f64, f64),
+) -> String {
+    let last = s.turns().saturating_sub(1);
+    let mut b = String::from(T_OPEN);
     b.push_str("<thead>");
-    let mut heads = vec![("", "")];
     let cut = |k: usize| (s.turns() * k).div_ceil(4).min(s.turns()).saturating_sub(1);
     // Named alike and carrying the turns they cover, since "the third quarter"
     // of a hundred and fifty turns is not a span anybody holds in their head.
@@ -981,31 +1722,31 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
     // quarter should not have to find the first one to learn what the brackets
     // hold.
     const OVER: &str = "How far this span ran over or under what was expected, \
-                        as a share of it, with the cards that arrived in \
-                        brackets. A quarter of four cards swings further than \
-                        one of forty.";
+                        as a share of it, with the cards that arrived and the \
+                        cards expected in brackets. A quarter of four cards \
+                        swings further than one of forty.";
+    let mut heads = vec![("", "")];
     heads.extend(spans.iter().map(|s| (s.as_str(), OVER)));
     heads.push((
         "total",
         "The four quarters together, which is the deviation column above, with \
-         everything the board paid this seat in brackets.",
+         everything that arrived and everything expected in brackets.",
     ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
-    for p in 0..seats {
-        let mut cells = vec![placed(p, &who[p], place[p])];
+    for (r, label) in labels.iter().enumerate() {
+        let mut cells = vec![label.clone()];
         for k in 0..4 {
-            // A quarter is what the running totals grew by across it.
             let (from, to) = (if k == 0 { None } else { Some(cut(k)) }, cut(k + 1));
-            let grew = |take: &dyn Fn(usize) -> f64| take(to) - from.map_or(0.0, |i| take(i));
-            let a = grew(&|i| f64::from(s.actual[i][p].iter().sum::<u32>()));
-            let e = grew(&|i| s.expected[i][p].iter().sum::<f64>());
-            cells.push(share_of(a, e));
+            let (a1, e1) = at(r, to);
+            let (a0, e0) = match from {
+                Some(i) => at(r, i),
+                None => (0.0, 0.0),
+            };
+            cells.push(share_of(a1 - a0, e1 - e0));
         }
-        cells.push(share_of(
-            f64::from(s.actual[last][p].iter().sum::<u32>()),
-            s.expected[last][p].iter().sum::<f64>(),
-        ));
+        let (a, e) = at(r, last);
+        cells.push(share_of(a, e));
         b.push_str(&row(&cells, false));
     }
     b.push_str("</tbody>");
@@ -1013,15 +1754,17 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
     b
 }
 
-/// The same, with the cards it was measured over in brackets.
+/// The same, with the two figures it was worked out from in brackets.
 ///
 /// A share on its own hides how much it was taken from, and a quarter of a
-/// short game can hold a handful of cards. Minus a third of six is one bad
-/// roll; minus a third of sixty is a game being lost.
+/// short game can hold a handful of cards: minus a third of six is one bad
+/// roll, and minus a third of sixty is a game being lost. Both numbers rather
+/// than one, in the order the rest of the page writes them, so the percentage
+/// can be checked against what it came from.
 fn share_of(got: f64, owed: f64) -> String {
     match share(got, owed).as_str() {
         NONE => NONE.to_string(),
-        s => format!("{s} <span class=\"worth\">({got:.0})</span>"),
+        s => format!("{s} <span class=\"worth\">({got:.0} of {owed:.1})</span>"),
     }
 }
 
@@ -1114,6 +1857,16 @@ fn table_one(study: &Study, seat: usize) -> String {
         },
     ]));
     b.push_str(T_CLOSE);
+    // And the same question the everybody view asks of the seats, asked of this
+    // seat's five resources: which of them dried up, and when. A seat that lost
+    // its ore in the third quarter was not short of ore all game, and the
+    // whole-game figure above cannot tell the two apart.
+    let labels: Vec<String> = (0..5)
+        .map(|res| format!("<span class=\"dot r{res}\"></span>{}", RESOURCE_NAMES[res]))
+        .collect();
+    b.push_str(&quarters(s, &labels, |res, i| {
+        (f64::from(s.actual[i][seat][res]), s.expected[i][seat][res])
+    }));
     b
 }
 
@@ -1397,6 +2150,9 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     }
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
+    // Under the table, the same figures turn by turn: whether the game was ever
+    // close is not in a final score, and it is the first thing anybody asks.
+    b.push_str(&score_plot(study, &who, seats));
     b.push_str("</section>");
 
     // ---- the turns ----------------------------------------------------------
@@ -2100,6 +2856,16 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(T_CLOSE);
     b.push_str("</section>");
 
+    // ---- the engine ---------------------------------------------------------
+    b.push_str(&engine_card(study, &who, &place, seats));
+
+    // ---- coverage -----------------------------------------------------------
+    // How often the board paid, turn by turn, under the opening it started
+    // from: the opening card says what a placement covered on the day it was
+    // made, and this says what became of that over a hundred turns of building
+    // and blockading.
+    b.push_str(&reach(study, &who, &place, seats));
+
     // The corpus card lived here and does not any more: seat win rates are a
     // claim about many games, and a report on one game is the wrong place to
     // make it. It belongs on a page that reads the whole store, which is the
@@ -2266,13 +3032,16 @@ tfoot tr:hover { background: transparent; }
      in an explanation is a line break. */
   white-space: pre-line; }
 [data-tip] { position: relative; }
+/* Out of layout entirely rather than merely invisible. A hidden box is still a
+   box: absolutely positioned inside a table that scrolls, it stretched the
+   scrollable area, and a one-row table came out with a scrollbar and its own
+   header scrolled out of sight. */
 [data-tip]::after {
-  content: attr(data-tip);
+  content: attr(data-tip); display: none;
   position: absolute; z-index: 20; top: calc(100% + 7px); left: 0;
   font-size: 12.5px; font-family: Figtree, system-ui, sans-serif;
-  opacity: 0; visibility: hidden; pointer-events: none;
-  transition: opacity .12s ease, visibility .12s; }
-[data-tip]:hover::after { opacity: 1; visibility: visible; }
+  pointer-events: none; }
+[data-tip]:hover::after { display: block; }
 /* The tooltip is wider than a number column, so near the right edge of a table
    it hangs from its own right and opens inwards instead of off the side. */
 tr > :nth-last-child(-n+3)[data-tip]::after,
@@ -2289,8 +3058,7 @@ tfoot [data-tip]::after, tbody tr:last-child [data-tip]::after {
    the reader is pointing at. */
 .frame { position: relative; }
 .over { position: absolute; inset: 0; pointer-events: none; }
-.tipat { position: absolute; z-index: 20; opacity: 0; visibility: hidden;
-         transition: opacity .12s ease, visibility .12s; }
+.tipat { display: none; position: absolute; z-index: 20; }
 .tipat.to-left { transform: translateX(-100%); }
 .tipat.up { transform: translateY(-100%); }
 .tipat.to-left.up { transform: translate(-100%, -100%); }
@@ -2310,6 +3078,12 @@ tfoot [data-tip]::after, tbody tr:last-child [data-tip]::after {
            gap: 2px; height: 18px; }
 .pips.rates .pip-row { font-variant-numeric: tabular-nums; font-size: 13px;
                        line-height: 18px; color: var(--muted-foreground); }
+/* The placement's own total, ruled off above like a table's foot, since that is
+   what it is: the column of five added up. */
+.pips .sum { margin-top: 2px; padding-top: 3px; height: 21px;
+             border-top: 1px solid var(--border);
+             font: 600 13px/18px Figtree, system-ui, sans-serif;
+             font-variant-numeric: tabular-nums; color: var(--foreground); }
 /* Numbers and ports as the board draws them: a disc with the figure on it, and
    six and eight in the red everybody looks for. */
 .discs { display: inline-flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; }
@@ -2343,14 +3117,17 @@ tbody tr.sub:hover { background: transparent; }
    so it cannot drift from the same name in a table. */
 /* The box is a fixed width hung off the anchor, so the text is what has to sit
    inside the drawing; `ink` is what a check can measure. */
-.svg-name { display: flex; align-items: center; height: 100%;
-            font: 500 13px/1 Figtree, system-ui, sans-serif;
-            color: var(--foreground); white-space: nowrap; }
-.svg-name.to-end { justify-content: flex-end; }
-.svg-name.to-mid { justify-content: center; }
-.svg-name .ink { display: inline-flex; align-items: center; gap: .4em; }
+/* The line height is the page's own, not a tighter one, because a place badge
+   takes its height from the line it sits on and has to come out the same pill
+   here as in a table. */
+.name { position: absolute; display: flex; align-items: center; gap: .4em;
+        font: 500 13px/1.55 Figtree, system-ui, sans-serif;
+        color: var(--foreground); white-space: nowrap;
+        transform: translateY(-50%); }
+.name.to-end { transform: translate(-100%, -50%); }
+.name.to-mid { transform: translate(-50%, -50%); }
 /* The colour is already the node it labels; a dot beside it says it twice. */
-.svg-name .dot, .key .dot { display: none; }
+.name .dot, .key .dot { display: none; }
 .ribbon.f0, .chord.f0 { fill: var(--p0); } .ribbon.f1, .chord.f1 { fill: var(--p1); }
 .ribbon.f2, .chord.f2 { fill: var(--p2); } .ribbon.f3, .chord.f3 { fill: var(--p3); }
 .node.n0, .rim.n0 { fill: var(--p0); } .node.n1, .rim.n1 { fill: var(--p1); }
@@ -2362,13 +3139,23 @@ tbody tr.sub:hover { background: transparent; }
    are the control. */
 .modes { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1rem; }
 .modes input { position: absolute; opacity: 0; pointer-events: none; }
-.modes label { cursor: pointer; padding: .3em .9em; font-size: 14px;
+.modes label { display: inline-flex; align-items: center; gap: .45em;
+               cursor: pointer; padding: .3em .9em; font-size: 14px;
                border: 1px solid var(--border); border-radius: 999px;
                color: var(--muted-foreground); }
 .modes label:hover { color: var(--foreground); background: var(--muted); }
 .modes input:checked + label { background: var(--foreground);
                                border-color: var(--foreground);
                                color: var(--card); font-weight: 500; }
+/* A seat's pill is the seat's colour once it is the one on screen, and the
+   mark beside the name goes white so it still reads as a mark rather than
+   disappearing into the pill it is on. */
+.modes input:checked + label.seat { color: var(--primary-foreground); }
+.modes input:checked + label.m0 { background: var(--p0); border-color: var(--p0); }
+.modes input:checked + label.m1 { background: var(--p1); border-color: var(--p1); }
+.modes input:checked + label.m2 { background: var(--p2); border-color: var(--p2); }
+.modes input:checked + label.m3 { background: var(--p3); border-color: var(--p3); }
+.modes input:checked + label .dot { background: var(--primary-foreground); }
 .modes input:focus-visible + label { outline: 2px solid var(--primary);
                                      outline-offset: 2px; }
 /* Every view is drawn; exactly one is shown. `nth-of-type` counts the views in
@@ -2448,6 +3235,20 @@ tbody tr.sub:hover { background: transparent; }
    and both of them want all of it. */
 .ring svg { display: block; width: 100%; height: auto; }
 .ring .frame { margin: 0 0 1rem; }
+/* ---- the trail ----
+   The two halves of an economy against each other, a point a quarter, joined so
+   a seat is a path with a direction rather than a dot. */
+.trail { fill: none; stroke-width: 1.5; opacity: .55; stroke-dasharray: 3 3; }
+.stop { fill: var(--card); stroke-width: 2; }
+.stop.last { fill: currentColor; }
+.stop.f0 { fill: var(--card); color: var(--p0); }
+.stop.f1 { fill: var(--card); color: var(--p1); }
+.stop.f2 { fill: var(--card); color: var(--p2); }
+.stop.f3 { fill: var(--card); color: var(--p3); }
+.stop.last.f0 { fill: var(--p0); } .stop.last.f1 { fill: var(--p1); }
+.stop.last.f2 { fill: var(--p2); } .stop.last.f3 { fill: var(--p3); }
+.trails svg { display: block; width: 100%; height: auto; overflow: visible; }
+.trails .frame { margin: 1rem 0 0; }
 .chord { opacity: .4; }
 .chord:hover { opacity: .75; }
 .rim.supply { fill: var(--muted-foreground); }
@@ -2648,28 +3449,42 @@ mod tests {
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
         let html = page(&g, &s);
         let turns = s.series.turns();
-        // A slot per turn in every view, each carrying that turn's figures.
+        // Coverage is sampled with production, so the two charts have the same
+        // turns under them and a slot means the same thing on both.
+        assert_eq!(s.cover.turns(), turns, "one clock for both charts");
+        // A slot per turn in every production view, and one more chart's worth
+        // each for the score, the engine and coverage.
         assert_eq!(
             html.matches("class=\"slot").count(),
-            turns * (1 + s.report.players as usize)
+            turns * (4 + s.report.players as usize)
         );
+        // The score chart ends where the result table says it should.
+        assert_eq!(s.score.len(), turns, "one clock for every chart");
+        for p in 0..s.report.players as usize {
+            assert_eq!(
+                s.score[turns - 1][p],
+                s.points[p].total(),
+                "the last point is the result"
+            );
+        }
         assert!(html.contains(&format!("Turn {turns}")));
         assert!(
             html.contains(", expected "),
             "a slot says the expectation too"
         );
         // A checkbox per curve, checked, so every line starts on the chart.
-        let boxes = html.matches("type=\"checkbox\"").count();
-        // One a seat in the first view, then five a seat in their own view.
         let seats = s.report.players as usize;
+        let boxes = html.matches("checkbox\" id=\"k").count();
+        // One a seat in the first view, then five a seat in their own view.
         assert_eq!(boxes, seats + seats * RESOURCE_NAMES.len());
-        assert_eq!(html.matches("checkbox\" id=\"k").count(), boxes);
+        // And the coverage chart has the same legend, a seat a line.
+        assert_eq!(html.matches("checkbox\" id=\"cv-").count(), seats);
         // And each curve's two lines carry the class its checkbox switches.
         for k in 1..=RESOURCE_NAMES.len() {
             assert!(html.contains(&format!("line k{k} ")), "k{k} is drawn");
         }
         // The turn axis is labelled along its length, not just at its ends.
-        assert!(html.matches("class=\"tick\"").count() >= 4 * (1 + s.report.players as usize));
+        assert!(html.matches("class=\"tick\"").count() >= 4 * (4 + s.report.players as usize));
     }
 
     #[test]

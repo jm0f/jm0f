@@ -425,13 +425,38 @@ impl Series {
 /// turn. The setup is left out for the same reason: it comes before anybody has
 /// a turn to take, and the second settlement's payout lands in the first turn's
 /// figure instead.
-fn series_of(saved: &Saved) -> Series {
+type Sampled = (
+    Series,
+    Cover,
+    Vec<[u32; MAX_PLAYERS]>,
+    Vec<[f64; MAX_PLAYERS]>,
+);
+
+fn series_of(saved: &Saved) -> Sampled {
     use carranta_core::action::Action;
     use carranta_core::state::Phase;
 
     let mut state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
     let seats = state.players as usize;
     let mut out = Series::default();
+    // Coverage and the score are sampled here rather than in replays of their
+    // own, so a turn on one chart is beyond argument the same turn on another.
+    let mut cover = Cover::default();
+    let mut score: Vec<[u32; MAX_PLAYERS]> = Vec::new();
+    let mut engine: Vec<[f64; MAX_PLAYERS]> = Vec::new();
+    // What the board would pay each seat on one roll, given the buildings
+    // standing at that moment. The engine itself rather than what it earned:
+    // read off the board, so no number of rolls or dice can move it.
+    let sized = |state: &carranta_core::state::State| -> [f64; MAX_PLAYERS] {
+        let owed = production::expectation(state);
+        core::array::from_fn(|p| owed[p].iter().sum())
+    };
+    // The true score, hidden cards and all, which is what the result table
+    // reports and therefore what the last point of the chart has to equal.
+    let scored = |state: &carranta_core::state::State| -> [u32; MAX_PLAYERS] {
+        let p = points_of(state, seats);
+        core::array::from_fn(|i| p[i].total())
+    };
     let mut actual = [[0u32; 5]; MAX_PLAYERS];
     let mut expected = [[0.0f64; 5]; MAX_PLAYERS];
     let mut playing = false;
@@ -473,6 +498,10 @@ fn series_of(saved: &Saved) -> Series {
         if playing && action == Action::EndTurn {
             out.actual.push(actual);
             out.expected.push(expected);
+            cover.live.push(production::coverage(&state, true));
+            cover.open.push(production::coverage(&state, false));
+            score.push(scored(&state));
+            engine.push(sized(&state));
         }
         playing |= matches!(state.phase, Phase::PreRoll);
     }
@@ -482,8 +511,148 @@ fn series_of(saved: &Saved) -> Series {
     if out.actual.last() != Some(&actual) {
         out.actual.push(actual);
         out.expected.push(expected);
+        cover.live.push(production::coverage(&state, true));
+        cover.open.push(production::coverage(&state, false));
+        score.push(scored(&state));
+        engine.push(sized(&state));
     }
-    out
+    (out, cover, score, engine)
+}
+
+/// How fast a seat's engine grew, fitted as a rate compounding turn by turn.
+///
+/// The premise, which is worth stating because it is an assumption and not a
+/// fact: an economy that compounds beats one that is merely large. Cards a turn
+/// buys buildings, buildings buy more cards a turn, and a seat whose rate keeps
+/// climbing arrives at the end of the game with an engine the others cannot
+/// catch. So the figure to rate an economy on is not its size but its slope.
+///
+/// Fitted on the **engine** rather than on the cards that arrived: what one
+/// roll was worth to that seat, given the buildings standing at the time. The
+/// cards that arrived are that engine plus the dice, and rating them would rate
+/// the dice. It is read off the board rather than off the payouts for the same
+/// reason: a turn that happened to hold no roll cannot make an engine look
+/// smaller than it was.
+///
+/// Fitted in logs, which is what makes it a growth *rate*: a straight line
+/// through the log of a rate is a rate multiplying by a constant every turn.
+/// `fit` is how straight that line actually was, and it is the honest half of
+/// the number, because compounding in this game is bounded on both ends: the
+/// opening is a standing start, buildings run out, and the game stops at ten
+/// points. A low fit means the growth figure is average steepness rather than
+/// a law the seat was obeying.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Growth {
+    /// What the rate multiplied by each turn, less one: .02 is two percent a
+    /// turn.
+    pub per_turn: f64,
+    /// Turns for the rate to double at that growth, if it held. `None` when it
+    /// was flat or falling, since nothing that is not growing doubles.
+    pub doubling: Option<f64>,
+    /// Expected cards a turn across the first quarter of the game.
+    pub early: f64,
+    /// And across the last, which is the engine the game ended with.
+    pub late: f64,
+    /// How much of the variation in the log rate the straight line explains,
+    /// from 0 to 1.
+    pub fit: f64,
+}
+
+/// Fit one seat's growth, or `None` when there is not enough game to fit.
+///
+/// A handful of turns can be fitted and cannot be believed, so a short game
+/// declines to answer rather than answering badly.
+pub fn growth_of(engine: &[[f64; MAX_PLAYERS]], seat: usize) -> Option<Growth> {
+    /// Fewer turns than this and the fit is a line through noise.
+    const ENOUGH: usize = 16;
+    /// An engine smaller than this is not running, and its log is enormous.
+    const FLOOR: f64 = 0.02;
+
+    // The last turn is dropped: a game ends the moment somebody reaches the
+    // target, so the winning turn is a part turn, and the board it was won on
+    // is the board of the turn before anyway.
+    let turns = engine.len().saturating_sub(1);
+    if turns < ENOUGH {
+        return None;
+    }
+    let size: Vec<f64> = (0..turns).map(|i| engine[i][seat]).collect();
+
+    // The two ends, a quarter of the game each, which is what somebody means by
+    // the engine they started with and the one they finished with.
+    let quarter = (turns / 4).max(2);
+    let mean = |xs: &[f64]| xs.iter().sum::<f64>() / xs.len() as f64;
+    let early = mean(&size[..quarter]);
+    let late = mean(&size[turns - quarter..]);
+
+    // Least squares on the log of the engine, over the turns it was running.
+    let pts: Vec<(f64, f64)> = size
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| **r > FLOOR)
+        .map(|(i, r)| (i as f64, r.ln()))
+        .collect();
+    if pts.len() < ENOUGH {
+        return None;
+    }
+    let n = pts.len() as f64;
+    let (mx, my) = (
+        pts.iter().map(|(x, _)| x).sum::<f64>() / n,
+        pts.iter().map(|(_, y)| y).sum::<f64>() / n,
+    );
+    let sxx: f64 = pts.iter().map(|(x, _)| (x - mx) * (x - mx)).sum();
+    let sxy: f64 = pts.iter().map(|(x, y)| (x - mx) * (y - my)).sum();
+    let syy: f64 = pts.iter().map(|(_, y)| (y - my) * (y - my)).sum();
+    if sxx <= 0.0 {
+        return None;
+    }
+    let slope = sxy / sxx;
+    // R squared, which for a straight line is the square of the correlation.
+    // No p-value anywhere near this (§10.1).
+    let fit = if syy > 0.0 {
+        (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    Some(Growth {
+        per_turn: slope.exp() - 1.0,
+        doubling: (slope > 1e-9).then(|| std::f64::consts::LN_2 / slope),
+        early,
+        late,
+        fit,
+    })
+}
+
+/// How often the board paid each seat anything, turn by turn.
+///
+/// The companion to [`Series`]: that follows how much a seat collected, this
+/// follows how often they collected at all. A seat can be building all game and
+/// still be paid on a quarter of the rolls, and the two lines say different
+/// things about the same board.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cover {
+    /// Per sample, per seat: the chance a roll pays them, robber and all.
+    pub live: Vec<[f64; MAX_PLAYERS]>,
+    /// The same with the robber ignored, which is what the buildings reach.
+    /// The gap between the two is what the blockade cost, in rolls rather than
+    /// in cards.
+    pub open: Vec<[f64; MAX_PLAYERS]>,
+}
+
+impl Cover {
+    /// How many turns it followed.
+    pub fn turns(&self) -> usize {
+        self.live.len()
+    }
+
+    /// A seat's mean over the game, which is the figure to compare seats on: a
+    /// coverage that was high for ten turns and low for a hundred was low.
+    pub fn mean(&self, seat: usize, robber: bool) -> f64 {
+        let rows = if robber { &self.live } else { &self.open };
+        if rows.is_empty() {
+            return 0.0;
+        }
+        rows.iter().map(|row| row[seat]).sum::<f64>() / rows.len() as f64
+    }
 }
 
 /// One trade, as the two parties to it and what crossed between them.
@@ -890,6 +1059,18 @@ pub struct Study {
     pub ledger: [Ledger; MAX_PLAYERS],
     /// Production against expectation, turn by turn.
     pub series: Series,
+    /// How often the board paid each seat, turn by turn.
+    pub cover: Cover,
+    /// Each seat's true score at the end of every turn, hidden victory point
+    /// cards included, on the same clock as the series above. The last row is
+    /// the result: a game ends the moment somebody reaches the target, so the
+    /// chart's last point and the result table's points column are the same
+    /// figures or one of them is wrong.
+    pub score: Vec<[u32; MAX_PLAYERS]>,
+    /// What one roll was worth to each seat at the end of every turn, in cards:
+    /// the engine they had built by then, read off the board rather than off
+    /// what it happened to pay.
+    pub engine: Vec<[f64; MAX_PLAYERS]>,
     /// Who traded with whom, and at what counter.
     pub trades: Trades,
     /// Development cards still in each hand at the end, by kind. With what was
@@ -941,7 +1122,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let board = board_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
-    let series = series_of(saved);
+    let (series, cover, score, engine) = series_of(saved);
     let trades = trades_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
@@ -1015,6 +1196,9 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         turns,
         ledger,
         series,
+        cover,
+        score,
+        engine,
         trades,
         dev_held,
         opening,
@@ -1056,6 +1240,59 @@ mod tests {
             winner: s.winner(),
             moves: s.moves().to_vec(),
             times: s.times().to_vec(),
+        }
+    }
+
+    #[test]
+    fn growth_recovers_a_rate_that_really_is_compounding() {
+        // A made-up engine that doubles every ten turns: the fit should say so,
+        // and say it is a perfectly straight line in logs.
+        let doubles: Vec<[f64; MAX_PLAYERS]> = (0..61)
+            .map(|i| {
+                let mut row = [0.0f64; MAX_PLAYERS];
+                row[0] = 2.0f64.powf(f64::from(i) / 10.0);
+                row
+            })
+            .collect();
+        let g = growth_of(&doubles, 0).expect("sixty turns is enough to fit");
+        assert!((g.doubling.expect("it grows") - 10.0).abs() < 0.2, "{g:?}");
+        assert!(g.fit > 0.999, "a geometric rate is a straight line in logs");
+        assert!(
+            g.late > g.early * 15.0,
+            "and it ends far above where it began"
+        );
+
+        // A flat engine grows at nothing and doubles never.
+        let flat: Vec<[f64; MAX_PLAYERS]> = (0..41).map(|_| [2.0; MAX_PLAYERS]).collect();
+        let g = growth_of(&flat, 0).expect("forty turns is enough");
+        assert!(g.per_turn.abs() < 1e-9, "{g:?}");
+        assert!(g.doubling.is_none(), "flat never doubles");
+        assert_eq!(g.early, g.late);
+
+        // A short game declines to answer rather than answering badly.
+        assert!(growth_of(&flat[..8], 0).is_none());
+    }
+
+    #[test]
+    fn a_real_engine_grows_over_a_real_game() {
+        let g = played(3);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        for p in 0..s.report.players as usize {
+            let growth = growth_of(&s.engine, p).expect("a full game fits");
+            // The expectation ignores the robber, and buildings only ever add
+            // production, so an engine can hold steady and cannot shrink. A
+            // seat that never builds is flat, which is a rating and not a bug.
+            // The expectation ignores the robber and buildings only ever add
+            // production, so a seat that built nothing comes out flat rather
+            // than falling. Which is a rating, not a bug.
+            assert!(growth.per_turn >= 0.0, "seat {p}: {growth:?}");
+            assert!(growth.late >= growth.early, "an engine cannot shrink");
+            assert!((0.0..=1.0).contains(&growth.fit));
+            assert_eq!(
+                growth.doubling.is_some(),
+                growth.per_turn > 0.0,
+                "only a growing engine doubles"
+            );
         }
     }
 

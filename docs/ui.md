@@ -1408,6 +1408,11 @@ Three details, each of them a bug found by measuring rather than by looking:
   tooltip is up.
 - **Near the right edge it hangs from its own right.** The box is wider than a
   number column, so the last three columns of any row open inwards.
+- **A hidden tooltip is out of layout, not merely invisible.** A hidden box is
+  still a box: absolutely positioned inside a table that scrolls, it stretched
+  that table's scrollable area, and the one-row table under the dice histogram
+  came out with a scrollbar and its own header scrolled out of sight. `display:
+  none` until hovered costs the fade and fixes it.
 - **A tooltip in a drawing is laid over the drawing, not drawn in it.** SVG has
   no pseudo-elements and no text that wraps, so the box would have to be a
   `foreignObject`, and a `foreignObject` with *any* SVG geometry painted after
@@ -1426,6 +1431,13 @@ Three details, each of them a bug found by measuring rather than by looking:
   HTML columns over the chart, carrying the ordinary `data-tip` box and drawing
   the guide line as their own left edge.
 
+  The **names and place badges in the drawings** followed the tooltips out for a
+  plainer reason: inside the picture they were scaled with it, so a badge came
+  out a different pill from the badge in every table. A badge that changes shape
+  between two places on one page is the one thing a badge must not do. Over the
+  top it is the same markup at the same size, down to the line height, which is
+  what a pill takes its height from.
+
 There is no subtitle anywhere. A sentence describing a card the reader is
 already looking at is a sentence they read to learn nothing, and a sentence
 carrying a figure is a figure that belongs in a table, so the three that carried
@@ -1436,6 +1448,13 @@ beside its win rate. Figures that belong to nobody's row get their own small
 table rather than a sentence over the one above. The only paragraphs left
 anywhere are answers rather than explanations, like "Nobody finished a turn in
 this game".
+
+**The seat selector wears the seat's colour.** Each pill carries the seat's mark
+left of the name, and the pill fills with that colour once it is the view on
+screen. Picking Ines and then reading four teal lines is a moment of doubt the
+control can spend a colour to remove. The class doing it is `m0`..`m3` rather
+than the `s0`..`s3` the marks use: those set a background on anything wearing
+them, and reusing them painted every pill in the row rather than the one picked.
 
 **A seat wears its colour and its finishing place beside its name, everywhere
 the page names anybody.** The colour is the mark the board plays in, always
@@ -1472,6 +1491,14 @@ is paired with an effect size.
   a different number, since a settlement upgraded to a city stopped being a
   settlement and was still built. The total is the true one, hidden cards
   included, which is not what the table could see while it was playing.
+
+  Under the table, the score turn by turn, one stepped line a seat. A result
+  says who won and by how much; it cannot say whether the game was ever close,
+  and a seat that led for a hundred turns and lost reads exactly like a seat that
+  was never in it. The lines are the true score too, so each one ends on that
+  seat's points column, and a test holds the two together. They step rather than
+  slope, because a score holds until something changes it, and they go *down*
+  where the longest road or the largest militia changed hands.
 - **Turns**, per seat: turns, time, and share of the game's time. A turn is
   what falls between two ends of turn, and it counts everything that landed
   inside it, the turn holder's or not, since a discard, a robbery and an
@@ -1567,6 +1594,12 @@ is paired with an effect size.
   who did better, the second asks what this seat was living on and what it was
   short of.
 
+  The quarters table appears in a seat's own view too, a resource a row rather
+  than a seat: a seat that lost its ore in the third quarter was not short of
+  ore all game, and the whole-game figures above cannot tell the two apart. It
+  is the same builder in both places, given rows and a way to read a running
+  total off them, which is also why the two cannot drift.
+
   The bracketed figure is called **expected**, not owed, everywhere it is shown.
 - **Militia**, as a sankey: thieves down the left, victims down the right, a
   ribbon between each pair as thick as the cards that moved along it. Laid out
@@ -1628,10 +1661,66 @@ is paired with an effect size.
   pairs of openings with equal pips and unequal coverage. Then the ports, at the
   rate they trade.
 
-  No totals row: four openings' pips added together is a number about the board
-  rather than about anybody, and drawn as fifty hexes it is a picture of
-  nothing. Biggest hand left this card for the ledger, which is the card about
-  hands; it was never an opening figure.
+  Each placement's own total closes the pips and per-turn columns, ruled off like
+  a table's foot and on the same line as each other: twenty-two pips, and the
+  0.61 cards a turn that is the same fact in the unit somebody plays in. The
+  pips total is written as the figure rather than as more hexes, since a row of
+  twenty-two tiles says less than the number does.
+
+  No totals *row*, though: four openings' pips added together is a number about
+  the board rather than about anybody, and drawn as fifty hexes it is a picture
+  of nothing. Biggest hand left this card for the ledger, which is the card
+  about hands; it was never an opening figure.
+- **Engine**, what one roll was worth to each seat at the end of every turn, in
+  cards, and how fast that grew. The engine rather than the earnings: the
+  buildings standing at the time, read off the board, so no run of dice and no
+  turn that happened to hold no roll can move it. The cards that actually
+  arrived are this plus the dice, and the production card is where they live.
+
+  The rating rests on an assumption, stated because it is one: **an economy that
+  compounds beats one that is merely large**. Cards a turn buy buildings,
+  buildings buy more cards a turn, and a seat whose rate keeps climbing finishes
+  with an engine the others cannot catch. So the column to read is the slope
+  rather than the size, and it is fitted through the log of the engine, which is
+  what makes it a rate: two percent a turn is a doubling in thirty-five.
+
+  Beside it the **fit**, from nought to one, and it is the honest half of the
+  pair. Compounding here is bounded at both ends: the opening is a standing
+  start, the pieces run out, and the game stops at ten points. A seat that built
+  steadily comes out around .9 and the growth figure means what it says; a seat
+  that built twice and stopped comes out near .2, and the growth figure is
+  average steepness rather than a law it was obeying. No p-value anywhere near
+  it (§10.1).
+
+  Two details the first draft got wrong, both of them found by a test rather
+  than by looking. The opening settlement's payout is a lump and not a rate, so
+  the first turn is left out of the fit; left in, it sat five times above the
+  rest of the game and turned every engine into a decaying one. And the last
+  turn is left out at the other end, because a game ends the moment somebody
+  reaches the target, so the winning turn is a part turn.
+- **Coverage**, the chance a roll pays a seat anything at all, turn by turn.
+  Solid is what they collected on, dotted is what their buildings reach with the
+  robber ignored, and the gap is what a blockade cost in *rolls* rather than in
+  cards. Every number their buildings reach, weighted by how often the dice make
+  it and counted once however many buildings sit on it: a number that pays twice
+  still comes up as often as it comes up. The scale is in quarters of certain, as
+  far up as the game reached, so a line's height means something on its own
+  without a quarter of the card being paper.
+
+  The table's average is the figure to compare seats on, since coverage that was
+  high for ten turns and low for a hundred was low. **A payout** is the engine
+  divided by the coverage: cards on a roll that pays. Two seats can be owed the
+  same cards a turn and collect them in halves or in threes, and that column is
+  which of the two they were doing.
+
+  Below it, the two halves of an economy plotted against each other: how often
+  it pays across, how much a roll is worth up, a point a quarter, joined so a
+  seat is a path with a direction rather than a dot. The direction is the whole
+  point. Up and to the right is an engine getting bigger *and* broader, which is
+  what a fifth settlement on new numbers buys. Straight up is more of the same
+  numbers: bigger payouts, no more often, an economy that spends most of its
+  turns with nothing to trade. A point a turn instead of a point a quarter would
+  be a cloud of a hundred and fifty dots a seat with no direction visible in it.
 
 Seat win rates were on this page and are not any more. They are a claim about
 many games, and a report on one game is the wrong place to make it; they belong
