@@ -275,6 +275,77 @@ impl Server {
         crate::home::page(&open, &mine)
     }
 
+    /// Deal a table from a lobby's query.
+    ///
+    /// One reader for the whole of it, because there are two ways to arrive with
+    /// one: the lobby posting to `api/new`, and an invite link opened as a GET.
+    /// A link that meant something slightly different from the screen that wrote
+    /// it is exactly the drift worth spending a method to avoid.
+    ///
+    /// Everything is optional and everything has a default that plays an
+    /// ordinary game, so a query missing half its parameters still deals a
+    /// table. That matters for a link: it is text somebody may have truncated,
+    /// and a dead link is worse than a table with a default clock on it.
+    fn deal(&self, query: &str, player: &str) -> String {
+        let seats = param(query, "seats")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        let mode = match param(query, "mode").as_deref() {
+            Some("disabled") => TradeMode::Disabled,
+            Some("restricted") => TradeMode::Restricted,
+            _ => TradeMode::Full,
+        };
+        let seed = param(query, "seed")
+            .or_else(|| param(query, "table"))
+            .and_then(|v| crate::game::parse_seed(&decode(&v)))
+            // No clock dependency: the newest table's seed advances.
+            .unwrap_or_else(|| self.next_seed());
+        // The clock is a lobby setting: which kind, and how many seconds it
+        // allows. Zero seconds is untimed either way.
+        let secs: u64 = param(query, "clockSecs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let increment: u64 = param(query, "clockInc")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let clock = Clock::parse(param(query, "clock").as_deref(), secs, increment);
+        // The discard has an allowance of its own, because a seven is an
+        // interruption and not part of anybody's turn. Zero is no limit, and an
+        // absent parameter means the default rather than none: a lobby that does
+        // not mention it still wants one.
+        let discard_secs: u64 = param(query, "discardSecs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_DISCARD_SECS);
+        let name = param(query, "name").unwrap_or_default();
+        let log_shown = param(query, "log").as_deref() != Some("off");
+        let public = wants_public(query);
+        let named = param(query, "game").unwrap_or_default();
+        let pace = Pace::parse(param(query, "pace").as_deref());
+        // Anything but an explicit "rough" counts the stacks, since that is what
+        // the rules already let anybody do (R-5.6).
+        let bank_exact = param(query, "bank").as_deref() != Some("rough");
+        let session = Session::new(seats, seed, mode)
+            .with_clock(clock)
+            .with_log(log_shown)
+            .with_public(public)
+            .with_game(&decode(&named))
+            .with_pace(pace)
+            .with_bank_exact(bank_exact)
+            .with_discard_secs(discard_secs)
+            .with_name(&decode(&name));
+        // A new game is a new address *and* a new table. The old one keeps its
+        // file, keeps its address and keeps being playable, which is what a
+        // table has to be once there is a page listing more than one of them.
+        let id = self.add(Table {
+            id: mint_id(),
+            session,
+            dealt: now(),
+            by: player.to_string(),
+        });
+        self.keep(&id);
+        id
+    }
+
     /// A seed for the next table, and the cursor moved on past it.
     fn next_seed(&self) -> u64 {
         let mut seed = self.seed.lock().unwrap();
@@ -753,66 +824,27 @@ impl Server {
             // Starting a game is the one thing that does not belong to a
             // game, so it is not scoped to one: any page may ask for a table.
             ("POST", "/api/new") => {
-                let seats = param(query, "seats")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(4);
-                let mode = match param(query, "mode").as_deref() {
-                    Some("disabled") => TradeMode::Disabled,
-                    Some("restricted") => TradeMode::Restricted,
-                    _ => TradeMode::Full,
-                };
-                let seed = param(query, "seed")
-                    .and_then(|v| crate::game::parse_seed(&decode(&v)))
-                    // No clock dependency: the newest table's seed advances.
-                    .unwrap_or_else(|| self.next_seed());
-                // The clock is a lobby setting: which kind, and how many
-                // seconds it allows. Zero seconds is untimed either way.
-                let secs: u64 = param(query, "clockSecs")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
-                let increment: u64 = param(query, "clockInc")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
-                let clock = Clock::parse(param(query, "clock").as_deref(), secs, increment);
-                // The discard has an allowance of its own, because a seven is
-                // an interruption and not part of anybody's turn. Zero is no
-                // limit, and an absent parameter means the default rather than
-                // none: a lobby that does not mention it still wants one.
-                let discard_secs: u64 = param(query, "discardSecs")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(DEFAULT_DISCARD_SECS);
-                let name = param(query, "name").unwrap_or_default();
-                let log_shown = param(query, "log").as_deref() != Some("off");
-                let public = wants_public(query);
-                let named = param(query, "game").unwrap_or_default();
-                let pace = Pace::parse(param(query, "pace").as_deref());
-                // Anything but an explicit "rough" counts the stacks, since
-                // that is what the rules already let anybody do (R-5.6).
-                let bank_exact = param(query, "bank").as_deref() != Some("rough");
-                let session = Session::new(seats, seed, mode)
-                    .with_clock(clock)
-                    .with_log(log_shown)
-                    .with_public(public)
-                    .with_game(&decode(&named))
-                    .with_pace(pace)
-                    .with_bank_exact(bank_exact)
-                    .with_discard_secs(discard_secs)
-                    .with_name(&decode(&name));
-                // A new game is a new address *and* a new table. The old one
-                // keeps its file, keeps its address and keeps being playable,
-                // which is what a table has to be once there is a page listing
-                // more than one of them.
-                let id = self.add(Table {
-                    id: mint_id(),
-                    session,
-                    dealt: now(),
-                    by: player.clone(),
-                });
-                self.keep(&id);
+                let id = self.deal(query, &player);
                 // The page is told where it now is, so it can move there
                 // without asking again.
                 let payload = format!("{{\"went\":\"/{id}/\"}}");
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
+            // An invite link, opened. The same query `api/new` takes, as a GET,
+            // so a link is a table somebody already described rather than a
+            // second idea of what a table is.
+            //
+            // Not the host's name: whoever opens this is not them. Not their
+            // key either, so the table belongs to whoever opened it, which is
+            // the only reading that makes their home page useful.
+            ("GET", "/join") => {
+                let id = self.deal(query, &player);
+                let set = if issue {
+                    cookie_header(&player)
+                } else {
+                    String::new()
+                };
+                redirect_with(&mut stream, &format!("/{id}/"), &set)
             }
             _ => respond(&mut stream, 404, "text/plain", b"not found"),
         }
@@ -839,6 +871,25 @@ fn split_game(path: &str) -> (Option<String>, &str) {
             &path[head.len() + 1..]
         },
     )
+}
+
+/// Somewhere else to go, with one extra header line if there is one.
+///
+/// Always a 303: the answer to "open this link" is a page to look at, at the
+/// address that page belongs to, rather than the request repeated. It is what
+/// puts an invite's receiver on their table's own address, so reloading is a
+/// reload and not a second deal.
+fn redirect_with(stream: &mut TcpStream, to: &str, extra: &str) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 303 See Other\r\n\
+         Location: {to}\r\n\
+         Content-Length: 0\r\n\
+         Cache-Control: no-store\r\n\
+         {extra}\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.flush()
 }
 
 /// Unix milliseconds, or zero if the clock is behind 1970.
@@ -1306,6 +1357,115 @@ mod tests {
         assert!(!server.seat(&broken.id), "it cannot be taken up");
         assert!(server.store().load(&broken.id).is_none(), "so it is gone");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_invite_link_deals_the_table_it_describes() {
+        let dir = std::env::temp_dir().join(format!("carranta-join-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server = Box::leak(Box::new(Server::new(4, 7, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        // The query the lobby writes into the link: everything about the table,
+        // and no name, because whoever opens it is not the host.
+        let link = "/join?seats=3&mode=full&clock=chess&clockSecs=300&clockInc=7\
+                    &discardSecs=25&log=off&visibility=public&game=Kitchen+table\
+                    &pace=slow&bank=rough&seed=0abcd-0000-0001";
+        let answer = get(port, link, "");
+        assert!(answer.starts_with("HTTP/1.1 303 See Other"), "{answer:.40}");
+        // A first-time visitor is handed a key here as well, or the table they
+        // were invited to would belong to nobody and never reach their history.
+        assert!(answer.contains("Set-Cookie: carranta="));
+        let went = answer
+            .lines()
+            .find_map(|l| l.strip_prefix("Location: "))
+            .expect("somewhere to go")
+            .trim()
+            .to_string();
+        let id = went.trim_matches('/').to_string();
+        assert!(is_game_id(&id), "{went} is a game's address");
+
+        // And the table is the one the link described, all of it.
+        let tables = server.tables.lock().unwrap();
+        let t = tables.iter().find(|t| t.id == id).expect("dealt");
+        let (seats, seed, mode) = t.session.table();
+        assert_eq!(seats, 3);
+        assert_eq!(mode, TradeMode::Full);
+        assert_eq!(
+            seed,
+            crate::game::parse_seed("0abcd-0000-0001").expect("a seed")
+        );
+        assert_eq!(t.session.game(), "Kitchen table");
+        assert!(t.session.is_public());
+        assert_eq!(t.session.pace(), Pace::Slow);
+        assert_eq!(
+            t.session.clock(),
+            Clock::Chess {
+                bank: 300,
+                increment: 7
+            }
+        );
+        assert_eq!(t.session.discard_secs(), 25);
+        assert!(!t.session.bank_exact());
+        assert!(!t.session.log_shown());
+        // Not the host's name: the link carries none, so the seat falls back to
+        // the blank-name default rather than sitting somebody else down under
+        // the name of the person who sent it.
+        assert_eq!(t.session.name(), "you");
+        // It belongs to whoever opened it, under the key they were just handed,
+        // which is the only reading that puts it on the right home page.
+        let key = answer
+            .lines()
+            .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
+            .and_then(|v| v.split(';').next())
+            .expect("a key was handed out");
+        assert_eq!(t.by, key, "theirs, not the sender's");
+        drop(tables);
+
+        // A link somebody truncated still deals a table. A dead link is worse
+        // than a table with a default clock on it.
+        let bare = get(port, "/join", "");
+        assert!(bare.starts_with("HTTP/1.1 303 See Other"), "{bare:.40}");
+        let mangled = get(port, "/join?seats=&seed=not-a-seed&clock=", "");
+        assert!(
+            mangled.starts_with("HTTP/1.1 303 See Other"),
+            "{mangled:.40}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_share_link_and_the_deal_describe_one_table() {
+        // Two ways to arrive with a lobby's query, and they have to mean the
+        // same thing. They are built by one function on the page and read by one
+        // method here; this pins the halves that a rename would quietly split.
+        const PAGE: &str = include_str!("../assets/index.html");
+        assert!(
+            PAGE.contains("load(`/api/new?${tableQuery(true)}`"),
+            "dealing posts the table's own description"
+        );
+        assert!(
+            PAGE.contains("return `${location.origin}/join?${tableQuery(false)}`;"),
+            "and the link is the same description, without the host's name"
+        );
+        // Every field the server reads has to be one the page writes.
+        for key in [
+            "seats",
+            "mode",
+            "clock",
+            "clockSecs",
+            "clockInc",
+            "discardSecs",
+            "log",
+            "visibility",
+            "game",
+            "pace",
+            "bank",
+        ] {
+            assert!(PAGE.contains(&format!("{key}:")) || PAGE.contains(&format!("'{key}'")));
+        }
     }
 
     #[test]

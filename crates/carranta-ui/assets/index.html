@@ -1268,7 +1268,7 @@
     <div class="lobbyCols">
       <div class="lobbyCol">
       <div class="field">
-        <span class="fieldLabel" data-tip="What this table is called, for the people you invite to it." tabindex="0">Game</span>
+        <span class="fieldLabel" data-tip="What this table is called, on the home page and in the share link." tabindex="0">Game</span>
         <input id="lobbyGame" class="seed" type="text" maxlength="40" placeholder="name this game">
       </div>
 
@@ -1288,7 +1288,7 @@
       </div>
 
       <div class="field">
-        <span class="fieldLabel" data-tip="Not live yet. The link is real, the joining is not." tabindex="0">Invite</span>
+        <span class="fieldLabel" data-tip="Deals whoever opens it their own table on this board, set up exactly like this one. Not a seat at this table: that needs a second person at the same game, which is still to come." tabindex="0">Share</span>
         <div class="copyRow">
           <input id="lobbyLink" class="seed" type="text" readonly>
           <button id="copyLink" class="btn-secondary" type="button">Copy</button>
@@ -3158,7 +3158,7 @@ const CLOCK_NOTE = {
 // is a landing page for a public table to appear on, since an option that
 // promises a listing nobody can read would be a lie about where the game went.
 const VISIBILITY_NOTE = {
-  private: 'Reachable by the invite link alone, and on the home page of the '
+  private: 'Reachable by its own address alone, and on the home page of the '
          + 'browser that dealt it.',
   public: 'Listed on the home page for anyone who can reach this server. '
         + 'Publishing is the answer that cannot be taken back.',
@@ -3262,9 +3262,35 @@ function freshSeed() {
   const s = n.toString(36).padStart(13, '0');
   return `${s.slice(0, 5)}-${s.slice(5, 9)}-${s.slice(9, 13)}`;
 }
+// What this table is, as a query. The one description of a table this page
+// makes: dealing posts it to `api/new`, and the share link is the same thing as
+// a GET on `/join`, so a link cannot mean something slightly different from the
+// screen that wrote it.
+//
+// The host's name is not in it. Whoever opens the link is not them, and a link
+// that filled their name in with somebody else's would be the wrong kind of
+// helpful.
+function tableQuery(withName) {
+  const q = new URLSearchParams({
+    seats: String(lobby.seats),
+    // Humans trade freely or it is not the same game. Not a setting.
+    mode: 'full',
+    clock: lobby.clockKind,
+    clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
+    discardSecs: String(lobby.discardSecs),
+    clockInc: String(lobby.clockKind === 'chess' ? lobby.clockInc : 0),
+    log: lobby.log ? 'on' : 'off',
+    visibility: lobby.visibility,
+    game: lobby.game,
+    pace: lobby.pace,
+    bank: lobby.bank,
+  });
+  if (withName) q.set('name', lobby.name);
+  if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
+  return q;
+}
 function inviteLink() {
-  const q = new URLSearchParams({ table: lobby.seed || '000000', seats: String(lobby.seats) });
-  return `${location.origin}/join?${q}`;
+  return `${location.origin}/join?${tableQuery(false)}`;
 }
 async function copyInto(button, text) {
   const said = button.textContent;
@@ -3536,24 +3562,8 @@ document.getElementById('lobbyStart').onclick = () => {
   lobby.clockSecs = Math.max(5, Number(document.getElementById('lobbyClockSecs').value) || 0);
   lobby.discardSecs = Math.max(0, Number(document.getElementById('lobbyDiscard').value) || 0);
   localStorage.setItem('carranta.name', lobby.name);
-  const q = new URLSearchParams({
-    seats: String(lobby.seats),
-    // Humans trade freely or it is not the same game. Not a setting.
-    mode: 'full',
-    clock: lobby.clockKind,
-    clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
-    discardSecs: String(lobby.discardSecs),
-    clockInc: String(lobby.clockKind === 'chess' ? lobby.clockInc : 0),
-    name: lobby.name,
-    log: lobby.log ? 'on' : 'off',
-    visibility: lobby.visibility,
-    game: lobby.game,
-    pace: lobby.pace,
-    bank: lobby.bank,
-  });
-  if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   document.getElementById('lobby').hidden = true;
-  load(`/api/new?${q}`, { method: 'POST' });
+  load(`/api/new?${tableQuery(true)}`, { method: 'POST' });
 };
 
 const PIPS = {

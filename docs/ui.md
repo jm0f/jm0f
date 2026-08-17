@@ -942,7 +942,7 @@ becomes one column in the same order, because a narrow window should get the
 same screen and not a different one.
 
 It carries: your name, the size of the table, who holds each seat, whether the
-table is listed, an invite link, the turn clock, whether the table keeps a log,
+table is listed, a share link, the turn clock, whether the table keeps a log,
 and a seed. It stays configurable **while people join**, which is what makes it
 a lobby rather than a settings dialog.
 
@@ -1004,6 +1004,31 @@ so that swap does not move anything.
 waiting seat into a bot, which is a decision about who is playing being made by
 a mis-click. The button says how many seats are short and refuses until they
 are filled or the table drops to three.
+
+**The share link is the table, as a link.** It was labelled *Invite* and pointed
+at `/join?table=<seed>&seats=N`, which the server had never implemented: the one
+control on the screen promising to bring somebody else in returned a 404, under a
+tooltip admitting the joining was not live. The link was not real either.
+
+It is real now, and it is the same description of a table that dealing one uses.
+The page builds that description once; pressing **Deal the board** posts it to
+`api/new` and the share link is the same query as a GET on `/join`, so a link
+cannot come to mean something slightly different from the screen that wrote it.
+The server reads it in one place for the same reason. Everything in it is
+optional with a default that plays an ordinary game, because a link is text
+somebody may have truncated and a dead link is worse than a table with a default
+clock on it.
+
+What it does is deal whoever opens it **their own table on this board, set up
+exactly like this one**: same seed, seats, market, clock, discard allowance, pace,
+bank and log, and the same table name. What it does not do is seat them at your
+table, which needs a second person at one game and is still to come. The label
+says *Share* rather than *Invite* for exactly that distance.
+
+Two things are deliberately not in the link. The host's name, because whoever
+opens it is not them and a link that filled in somebody else's name would be the
+wrong kind of helpful; and the host's key, so the table belongs to whoever opened
+it and lands on *their* home page.
 
 **The seed is generated, not blank.** It exists before the game does, so it can
 be copied, shared or written down first.
@@ -2308,13 +2333,6 @@ a tile, so the dock wrapped at the moment you took the longest road.
   not, and it needs a layout for one column rather than a smaller gutter. Long
   standing, and measured here rather than assumed: the shared gutter costs eight
   pixels of it and did not cause it.
-- **The lobby's invite link goes nowhere.** It reads
-  `/join?table=<seed>&seats=N`, and the server has no `/join`, so the one control
-  on that screen that promises to bring somebody else in returns a 404. It was
-  harmless while the lobby was reached from a board and is not now that it is the
-  front door. What it can honestly do before seats exist is reproduce the *board*
-  from its seed at a table of your own, which is not joining, so what the link
-  should say is a decision rather than a fix.
 - **Accounts.** The home page answers "show me my games" from a key in a cookie,
   which follows a browser rather than a person. The key is written into every game
   file, so an account can claim one browser's games later without touching a
