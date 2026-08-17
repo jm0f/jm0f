@@ -1750,11 +1750,11 @@ is paired with an effect size.
   from a seat asking two cards for one: different problems, different answers, same
   three counts. So the ask: cards wanted across every offer, cards put up for them,
   the ratio, and how many of those offers anybody took. The demo games answer their
-  own question here. Every seat asks about 2.4 cards for 1.3, an ask of 1.86 to
-  one, and **not one offer between players was ever accepted** in a hundred and
-  fifty-four of them. The market on this page is dead because the bots all price
-  like that, which is a finding about the bot rather than about the market, and it
-  is written down in `analytics-backlog.md` where the bot work can find it.
+  own question here, and the answer was a bug. Every seat asked about 2.4 cards for
+  1.3, an ask of 1.86 to one, and **not one offer between players was ever
+  accepted** in a hundred and fifty-four of them. That reading started the market
+  fix described below; on the games played since, the ask is nearer 1.6 and about
+  half the offers are taken.
 
   Last of all, **what the offers were asking for**, resource by resource: cards
   wanted less cards put up, so positive is a seat trying to buy that card and
@@ -1767,6 +1767,19 @@ is paired with an effect size.
   useful question, and it reads across to the rest of the page: the seat that spent
   the game trying to sell ore is the same seat that threw fourteen ore away to
   sevens and had four cities making it.
+
+  **This card found a bug in the game, twice over.** Its first reading was that not
+  one offer in a hundred and fifty-four was ever accepted, and the natural
+  conclusion was that an ask of 1.86 to one was too greedy for anybody. That was
+  half of it: the bot's acceptance rule was too strict, taking a deal only when the
+  deal left it further ahead of the table than the seat offering it, which the
+  offerer had chosen not to be the case. But one in seven offers *was* taken in the
+  bot's own driver and none at all in the recorded games, and that gap was the
+  second bug: the path that plays a game out never settled the market, so no offer
+  in any recorded game was ever put to anybody. The zero in the turned-down column
+  was the tell, and nothing but a card showing offers and answers side by side would
+  have shown it. Both are fixed, and the games on this server now carry sixty to
+  eighty player trades each.
 - **Board**, what this board dealt against what an average one deals. The discs
   are a fixed set laid on a fixed set of hexes, so the average is not a
   simulation: it is the mean pips of a disc times the hexes a resource has.

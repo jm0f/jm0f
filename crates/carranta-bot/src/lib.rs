@@ -90,6 +90,19 @@ pub struct Weights {
     /// Percentage of a proposed trade's gain that is credited when deciding to
     /// offer it. A proposal may be refused, so it is worth less than the swap.
     pub offer_discount: i32,
+    /// Percentage of the other side's gain charged against one's own when
+    /// judging a swap.
+    ///
+    /// A trade is the one move that helps two players at once, and this is the
+    /// only weight that says how much that matters. At 100 a deal has to be
+    /// better for me than for them, which sounds like hard bargaining and is
+    /// actually a refusal to trade at all: the seat making an offer picks the
+    /// one it likes best, so its own gain is nearly always the larger, and
+    /// every offer dies. At 0 the bot takes any swap that helps it, including
+    /// the one that hands the leader a city. Somewhere in between it trades on
+    /// roughly even terms and turns down a fleecing, which is what a person
+    /// does.
+    pub rival_gain: i32,
     /// Penalty per offer this seat has already *requested* this turn.
     ///
     /// Cumulative, not a count of live offers: asking costs something whether
@@ -123,6 +136,7 @@ impl Default for Weights {
             steal: 8,
             offer_discount: 55,
             offer_cost: 8,
+            rival_gain: 60,
         }
     }
 }
@@ -210,13 +224,46 @@ impl Heuristic {
         v += state.dev_count(p) as i32 * w.dev;
         v += (state.settlements_left[p] + state.cities_left[p]) as i32 * w.pieces;
 
-        let hand = state.hand_size(p) as i32;
-        v += hand.min(7) * w.hand;
-        if hand > 7 {
-            v += (hand - 7) * w.over_limit;
-        }
-
+        // The cards are all in `hand_value`, including the discard-limit
+        // penalty. They were also inline here, which counted both twice: a card
+        // was worth 6 where the weight says 3, and being over the limit cost
+        // 24 where it says 12. Nothing compared two positions wrongly because of
+        // it, since every position was inflated alike, but the weights did not
+        // mean what they said and a trade was judged against a hand it thought
+        // twice as valuable as it is.
         v + self.hand_value(&state.hand[p])
+    }
+
+    /// What a swap does to a hand: out with `out`, back with `back`.
+    ///
+    /// A trade touches nothing else, which is why this is the whole of it.
+    /// Production, ports, routes and points are all where they were.
+    ///
+    /// `risk` decides whether the discard limit counts. It should for one's own
+    /// hand, where going over it is a real cost, and it should *not* when
+    /// measuring what a swap does for the other side. A seat shedding cards it
+    /// cannot hold is getting safer rather than stronger, and charging that
+    /// relief against one's own gain is how a bot talks itself out of a deal
+    /// that hands it three cards for one. Their progress counts against me;
+    /// their luck at dodging a seven does not.
+    fn swap_gain(&self, hand: &[u8; 5], out: &[u8; 5], back: &[u8; 5], risk: bool) -> i32 {
+        let mut after = *hand;
+        for r in 0..5 {
+            after[r] = after[r].saturating_sub(out[r]) + back[r];
+        }
+        self.hand_worth(&after, risk) - self.hand_worth(hand, risk)
+    }
+
+    /// Whether a swap worth `mine` to me and `theirs` to the other side is one
+    /// to take.
+    ///
+    /// Both halves matter. A deal that does nothing for me is not a deal, and a
+    /// deal that does far more for them is how a table loses to whoever is
+    /// asking. Between those the bot trades, which it has to: a game where
+    /// nobody trades is not this game being played badly, it is a different and
+    /// easier game.
+    fn worth_taking(&self, mine: i32, theirs: i32) -> bool {
+        mine > 0 && mine * 100 > theirs * self.weights.rival_gain
     }
 
     /// The part of a position's value that depends only on the cards held.
@@ -225,10 +272,15 @@ impl Heuristic {
     /// routes and points are all untouched, so a candidate swap can be valued
     /// from this alone instead of re-walking the board.
     fn hand_value(&self, hand: &[u8; 5]) -> i32 {
+        self.hand_worth(hand, true)
+    }
+
+    /// The same, with the discard limit optional. See [`Heuristic::swap_gain`].
+    fn hand_worth(&self, hand: &[u8; 5], risk: bool) -> i32 {
         let w = &self.weights;
         let total: i32 = hand.iter().map(|&n| n as i32).sum();
         let mut v = total.min(7) * w.hand;
-        if total > 7 {
+        if risk && total > 7 {
             v += (total - 7) * w.over_limit;
         }
         // How close the hand is to each purchase, scaled so a complete set is
@@ -296,17 +348,40 @@ impl Heuristic {
                 // until someone takes it, so a brilliant offer and an absurd
                 // one score identically. Value it by the swap it would produce
                 // instead, discounted because it may simply be refused.
-                let mut after = state.hand[me];
-                for r in 0..5 {
-                    after[r] = after[r] - give[r] + want[r];
-                }
-                let gain = self.hand_value(&after) - self.hand_value(&state.hand[me]);
+                let gain = self.swap_gain(&state.hand[me], &give, &want, true);
+                // And discounted to nothing when it certainly will be refused,
+                // which is the difference between offering and haggling with
+                // yourself. Whether anybody would take it is answerable right
+                // here: they will judge it by [`Policy::accepts`], which is this
+                // same rule, so the bot can ask the question they will ask.
+                //
+                // This reads opponents' hands, which the competitive score has
+                // always done through `best_opponent`, so it is not a new kind
+                // of peeking. It is also the half of trading that a market
+                // without it cannot do: an offer priced only for its maker is an
+                // offer nobody wants.
+                // Their side of the same rule, so the answer is theirs and not a
+                // guess: what they gain, against what this offer gains me, which
+                // they will weigh without my discard troubles in it.
+                let mine_to_them = self.swap_gain(&state.hand[me], &give, &want, false);
+                let taker = (0..state.players as usize).any(|q| {
+                    q != me
+                        && state.holds(q, &want)
+                        && self.worth_taking(
+                            self.swap_gain(&state.hand[q], &want, &give, true),
+                            mine_to_them,
+                        )
+                });
+                let credit = if taker {
+                    gain * w.offer_discount / 100
+                } else {
+                    0
+                };
                 // Every candidate proposal carries the same toll, so this does
                 // not pick between offers. It decides whether making *any* is
                 // worth more than getting on with the turn.
                 let asked = state.offers_made[me] as i32;
-                self.value(state, me) - base_other + gain * w.offer_discount / 100
-                    - asked * w.offer_cost
+                self.value(state, me) - base_other + credit - asked * w.offer_cost
             }
 
             Action::BuyDev => {
@@ -344,21 +419,38 @@ impl Heuristic {
 }
 
 impl Policy for Heuristic {
+    /// Whether this seat takes a live offer.
+    ///
+    /// Judged on the swap rather than on the whole position, which is both
+    /// cheaper and the right question. A trade moves cards between two hands and
+    /// touches nothing else, so the two hand values are all of it; and "is this
+    /// deal good for me" is not the same question as "does this deal leave me
+    /// ahead of the table", which is what the competitive score answers.
+    ///
+    /// Asking the second question is what made the bot refuse most offers.
+    /// Accepting only when the position improves *against the best opponent*
+    /// means accepting only when a deal is better for me than for the seat
+    /// offering it, and the seat offering it picked the offer it liked best. Over
+    /// sixty self-play games that took 1 205 of 8 053 offers, one in seven, and
+    /// the ones it took were the ones where the offerer had blundered. On this
+    /// rule the same measurement takes 3 709 of 6 974: fewer offers, because a
+    /// dead one is no longer worth making, and half of them dealt.
+    ///
+    /// (Every trade in the *recorded* games was with the bank or a port, and
+    /// that was a different bug: the path that plays a game out never put an
+    /// offer to anybody at all. Both were found by the same analytics card.)
     fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
-        let before = self.score(state, seat);
-        let mut next = *state;
-        if next
-            .apply(Action::AcceptTrade {
-                offer: offer as u8,
-                by: seat as u8,
-            })
-            .is_err()
-        {
+        let Some(o) = state.live_offers().get(offer) else {
+            return false;
+        };
+        if !state.may_accept(seat, o) || !state.holds(seat, &o.want) {
             return false;
         }
-        // Take it only if it genuinely improves the position. A trade that
-        // merely moves cards around helps whoever offered it.
-        self.score(&next, seat) > before
+        // `give` and `want` are the proposer's side, so the seat taking it hands
+        // over `want` and receives `give`.
+        let mine = self.swap_gain(&state.hand[seat], &o.want, &o.give, true);
+        let theirs = self.swap_gain(&state.hand[o.from as usize], &o.give, &o.want, false);
+        self.worth_taking(mine, theirs)
     }
 
     fn choose(&mut self, state: &State, legal: &[Action]) -> Action {
@@ -711,6 +803,46 @@ mod tests {
         assert!(
             games_with_trades >= 50,
             "only {games_with_trades}/60 games saw a trade ({total} total)"
+        );
+    }
+
+    #[test]
+    fn most_offers_are_priced_to_be_taken() {
+        // Not merely "a trade happened somewhere", which a market can pass while
+        // being decoration: an offer nobody will take is a wasted turn, and a bot
+        // that makes hundreds of them is not trading, it is talking to itself.
+        let (mut offers, mut taken) = (0u32, 0u32);
+        for seed in 0..20u64 {
+            let mut state = State::new(4, seed).with_trade_mode(TradeMode::Full);
+            let mut bots: Vec<Heuristic> = (0..4).map(|s| Heuristic::new(seed * 13 + s)).collect();
+            let mut buf = Vec::new();
+            for _ in 0..20_000 {
+                if matches!(state.phase, Phase::GameOver { .. }) {
+                    break;
+                }
+                state.legal_into(&mut buf);
+                if buf.is_empty() {
+                    break;
+                }
+                let seat = state.decider() as usize;
+                let action = {
+                    let mut ps: Vec<&mut dyn Policy> =
+                        bots.iter_mut().map(|b| b as &mut dyn Policy).collect();
+                    ps[seat].choose(&state, &buf)
+                };
+                offers += u32::from(matches!(action, Action::ProposeTrade { .. }));
+                if state.apply(action).is_err() {
+                    break;
+                }
+                let mut ps: Vec<&mut dyn Policy> =
+                    bots.iter_mut().map(|b| b as &mut dyn Policy).collect();
+                taken += settle_market(&mut state, &mut ps);
+            }
+        }
+        assert!(offers > 100, "only {offers} offers to judge");
+        assert!(
+            taken * 100 >= offers * 30,
+            "{taken} of {offers} offers were taken, which is a market in name only"
         );
     }
 

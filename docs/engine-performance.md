@@ -234,6 +234,26 @@ of cards and one ply cannot see the build it enables, without a
 never trades at all. That feature is not decoration; it is what makes trading
 happen.
 
+**A proposal has to be priced for the seat that would take it.** One ply cannot
+value an offer either: making it changes nothing until somebody accepts, so a
+brilliant offer and an absurd one score the same, and scoring the swap it *would*
+produce means picking whichever offer flatters the offerer most. That is how the
+bot came to ask 1.86 cards for every one it put up. The fix is that the offer is
+scored as dead unless some opponent would take it, and whether they would take it
+is answerable exactly rather than by guess, because they will judge it by the same
+rule this bot uses.
+
+**And a trade is judged on the trade, not on the standings.** Accepting only when
+the position improves against the best opponent sounds like hard bargaining and is
+a refusal to trade: the offering seat picked the offer it liked best, so its gain
+is nearly always the larger. That rule took 1 205 offers out of 8 053 in self-play.
+Judging the swap on its two hand values, with a weight for how much the other
+side's gain counts against one's own, takes 3 709 of 6 974 and makes fewer dead
+offers. One asymmetry in it is deliberate: a seat shedding cards it cannot hold is
+getting *safer* rather than stronger, so the discard-limit part of their gain is
+not charged against mine. Without that the bot turns down three cards for one from
+a player over the limit, which was the first thing a test caught.
+
 **Three actions must be scored without being applied**, or the bot cheats.
 Applying `BuyDev` draws the real top of the deck, which would tell it whether
 the next card is a Victory Point *before* deciding to buy. Applying a robber

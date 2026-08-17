@@ -11,7 +11,7 @@ use carranta_bot::Weights;
 use carranta_core::rng::{Rng, Stream};
 
 /// Weights in the genome.
-pub const GENES: usize = 15;
+pub const GENES: usize = 16;
 
 /// Per-gene mutation scale.
 ///
@@ -35,6 +35,7 @@ const SCALE: [f64; GENES] = [
     3.0,   // steal
     10.0,  // offer_discount
     3.0,   // offer_cost
+    10.0,  // rival_gain
 ];
 
 /// Names, for reporting and for checkpoints.
@@ -54,6 +55,7 @@ pub const NAMES: [&str; GENES] = [
     "steal",
     "offer_discount",
     "offer_cost",
+    "rival_gain",
 ];
 
 /// A candidate agent.
@@ -88,6 +90,7 @@ impl Genome {
                 w.steal,
                 w.offer_discount,
                 w.offer_cost,
+                w.rival_gain,
             ],
         }
     }
@@ -110,6 +113,7 @@ impl Genome {
             steal: g[12],
             offer_discount: g[13],
             offer_cost: g[14],
+            rival_gain: g[15],
         }
     }
 

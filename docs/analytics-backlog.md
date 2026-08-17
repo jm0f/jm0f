@@ -69,8 +69,10 @@ promised is not duplicated here. Every one is a corpus question.
 11. **Who feeds the winner.** Across games, does trading with the eventual winner
     correlate with losing? The per-game column exists; the claim needs a corpus.
 12. **Supply-trade dependence.** Win rate by share of trades made against the
-    bank or a port rather than against a person, which is a proxy for a table
-    that would not deal with you.
+    bank or a port rather than against a person, which is a proxy for a table that
+    would not deal with you. Answerable now that the recorded games have a market
+    in them: every game written before the market fix has none, so the corpus has
+    to be built from games played after it.
 13. **Robber targeting.** Is the leader targeted? Robber placements against the
     target's score at the time, pooled. Needs the per-turn score the report already
     samples, which is not yet stored across games. The per-game blockade table
@@ -104,13 +106,29 @@ Not a backlog item, but the reason the backlog is worth working: two findings th
 came out of building the cards, both of which are about the *engine* rather than
 about the analytics.
 
-- **The bots never trade with each other, and the offers table says why.** Across
-  a hundred and fifty-four offers in one demo game, not one was accepted. Every
-  seat asks about 2.4 cards for 1.3 put up, an ask of 1.86 to one, and no seat will
-  take that from another seat pricing the same way. Every trade in these games is
-  with the bank or a port. That is a heuristic-tuning ticket, and it also means
-  every corpus figure about player-to-player trading is measuring an empty set
-  until it is fixed.
+- **The bots never traded with each other, and it was two bugs, not one.** Fixed
+  now, and worth keeping written down because the second one hid behind the first.
+
+  The offers table said no offer in a hundred and fifty-four was ever accepted,
+  and the obvious reading was that the ask of 1.86 to one was too greedy for
+  anybody to take. Half true. The bot's acceptance rule was genuinely too strict:
+  it took a deal only when the deal improved its position *against the best
+  opponent*, which means only when the deal was better for it than for the seat
+  offering it, and the offering seat had picked the offer it liked best. Over sixty
+  self-play games that rule took 1 205 of 8 053 offers.
+
+  One in seven is not none, which is what gave the second bug away. `play_out`,
+  the path that plays every demo game and therefore every game the analytics page
+  reads, chose a move, narrated it and looped: it never settled the market. No
+  offer was ever put to anybody, so no offer was taken, and none was refused
+  either. That zero in the "turned down" column was the tell, and it took a
+  measurement of the bot's own driver to notice it.
+
+  Both are fixed. The rule now judges a swap on the swap, and prices an offer by
+  whether anybody would take it, so the bot makes fewer offers and lands more of
+  them: 3 709 of 6 974 in the same measurement. `play_out` settles after every
+  move, and a test pins each half. Recorded games now carry sixty to eighty
+  player-to-player trades apiece where they carried none.
 - **A quarter of some seats' turns end unable to spend.** The building card's stuck
   column runs to a fifth of the game for the winner in the demo: cards in hand, the
   price of a settlement covered, and nowhere legal to put one. Whether that is the

@@ -1039,6 +1039,16 @@ impl Session {
             if !self.narrate(action) {
                 break;
             }
+            // And then the table answers whatever was put to it. Without this
+            // an offer made here was never put to anybody at all: not taken,
+            // not turned down, just left on the table until its maker withdrew
+            // it. Every game played this way had a market that could only trade
+            // with the bank, which is not a market, and the analytics said so
+            // before anybody noticed the code did it.
+            //
+            // Every seat, the human's included, because in a game played out
+            // there is nobody here to ask and the seat is the table's own hand.
+            self.settle_between_bots(HUMAN);
         }
         self.note_winner();
     }
@@ -1439,7 +1449,7 @@ impl Session {
         // refilled and an expired clock forfeited the next turn too. In setup
         // that meant one timeout took both of a player's placements.
         self.hand_over_clock();
-        self.settle_between_bots();
+        self.settle_between_bots(HUMAN + 1);
         self.run_bots();
         self.hand_over_clock();
     }
@@ -1559,7 +1569,7 @@ impl Session {
             // Each bot pays for its own thinking, and the turn passing between
             // two bots is still the turn passing.
             self.hand_over_clock();
-            self.settle_between_bots();
+            self.settle_between_bots(HUMAN + 1);
         }
         self.note_winner();
     }
@@ -1574,7 +1584,10 @@ impl Session {
     /// is a verdict, three arriving in turn is the table thinking. Every answer
     /// is recorded, so a proposal can be shown being considered rather than
     /// only reported once it has failed.
-    fn settle_between_bots(&mut self) {
+    /// `from` is the lowest seat to ask. It is seat one while somebody is
+    /// playing, since the human answers for themselves by being offered the
+    /// choice, and seat nought in a game played out, where nobody is.
+    fn settle_between_bots(&mut self, from: u8) {
         if self.state.trade_mode == TradeMode::Disabled {
             return;
         }
@@ -1598,7 +1611,7 @@ impl Session {
             let mut next = None;
             'outer: for d in self.deals.iter() {
                 let Some(i) = d.at else { continue };
-                for seat in 1..self.state.players {
+                for seat in from..self.state.players {
                     // Only the seats it was actually put to. A seat that was
                     // never asked has nothing to say and is not left waiting
                     // on the card for the rest of the turn.
@@ -2279,6 +2292,47 @@ mod tests {
             s.propose(None, [1, 0, 0, 0, 0], [0, 1, 0, 0, 0], s.version() + 5),
             Err(Refused::Stale)
         );
+    }
+
+    #[test]
+    fn a_game_played_out_puts_its_offers_to_the_table() {
+        // `play_out` chose a move, narrated it and looped, and never settled the
+        // market: every offer in every demo game sat there until its maker
+        // withdrew it. Nobody accepted, nobody even refused, and the analytics
+        // page reported a table that only ever traded with the bank. The market
+        // was decoration in exactly the games the page was built to read.
+        //
+        // Two seeds, because a market is a property of the whole game rather
+        // than of one turn, and one seed that happens to trade would pass this
+        // while the settle was gone again.
+        let mut seen = 0;
+        for seed in [7u64, 21] {
+            let mut s = Session::new(4, seed, TradeMode::Full).with_pace(Pace::Instant);
+            s.play_out();
+            assert!(s.winner().is_some(), "seed {seed} did not finish");
+            let offered = s
+                .moves()
+                .iter()
+                .filter(|m| matches!(m, Step::Move(Action::ProposeTrade { .. })))
+                .count();
+            let took = s
+                .moves()
+                .iter()
+                .filter(|m| matches!(m, Step::Move(Action::AcceptTrade { .. })))
+                .count();
+            let refused = s
+                .moves()
+                .iter()
+                .filter(|m| matches!(m, Step::Passed { .. }))
+                .count();
+            assert!(offered > 0, "seed {seed} made no offers at all");
+            assert!(
+                took + refused > 0,
+                "seed {seed}: {offered} offers and not one answer, so nobody was asked"
+            );
+            seen += took;
+        }
+        assert!(seen > 0, "no offer was taken in either game");
     }
 
     #[test]
