@@ -5093,6 +5093,41 @@ mod tests {
     }
 
     #[test]
+    fn the_dock_scales_to_its_column_rather_than_wrapping() {
+        // The rule the strip under the board lives by: shrink as far as it takes
+        // to stay on one row and no further, and only wrap when shrinking more
+        // would cost more than a second row does. Three things make that true and
+        // all three are easy to undo by accident.
+        const PAGE: &str = include_str!("../assets/index.html");
+        // It is sized by the column it is in, not by the window. A `vw` here is
+        // the bug this replaced: the rails stop growing at 400px and the window
+        // does not, so the two stopped growing together.
+        assert!(
+            PAGE.contains("font-size: clamp(9px, 1.16cqw, 14px)"),
+            "sized by cqw"
+        );
+        assert!(
+            PAGE.contains("container-type: inline-size"),
+            "and something has to be the container"
+        );
+        // Every measurement inside it is in `em`, so the strip is one shape at
+        // one scale and its width is a fixed multiple of its type size. A `px`
+        // gap or padding here breaks the arithmetic the coefficient rests on.
+        assert!(PAGE.contains("gap: 1.25em;"), "the gap between groups");
+        assert!(
+            PAGE.contains("padding: 1em 1.1em;"),
+            "and the strip's own inset"
+        );
+        // The push between the hand and the controls costs no width. It was an
+        // empty group, which cost a gap on each side of a thing with none.
+        assert!(PAGE.contains(".dockGroup.pushed { margin-left: auto; }"));
+        assert!(
+            !PAGE.contains("dockGroup spacer"),
+            "no empty group paying for two gaps"
+        );
+    }
+
+    #[test]
     fn the_page_says_what_the_game_did() {
         let history: Vec<Saved> = (0..3u64).map(played).collect();
         let s = study(&history[1], &history).expect("it studies");

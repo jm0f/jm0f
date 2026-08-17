@@ -51,9 +51,9 @@ pub struct Open {
 
 /// The page, rendered.
 ///
-/// `open` is every table in memory, newest first; `mine` and `others` are what
-/// the store has, already split by whose they are.
-pub fn page(open: &[Open], mine: &[Saved], others: &[Saved]) -> String {
+/// `open` is every table in memory, newest first; `mine` is what the store has
+/// that belongs to whoever is asking.
+pub fn page(open: &[Open], mine: &[Saved]) -> String {
     let mut b = String::new();
     let _ = write!(
         b,
@@ -64,14 +64,16 @@ pub fn page(open: &[Open], mine: &[Saved], others: &[Saved]) -> String {
          {head}<main>\
          <p class=\"lede\">Settle an island, trade for what the dice would not \
          give you, and be first to ten points.</p>",
-        // The same two ways on as the cards below offer, because a header that
-        // only appears on the other pages is not the application's header.
-        head = crate::report::masthead_home(&[("/lobby", "New game")]),
+        // No links. Every other page's header offers a way back to this one and a
+        // way to a new game; this page is the way back, and the card below is the
+        // way to a new game, said properly and in the place the eye lands. A
+        // header link to the page's own first button is furniture.
+        head = crate::report::masthead_home(&[]),
     );
 
     b.push_str(&deal());
     b.push_str(&joining(open));
-    b.push_str(&played(mine, others));
+    b.push_str(&played(mine));
     b.push_str("</main></body></html>");
     b
 }
@@ -170,7 +172,12 @@ fn joining(open: &[Open]) -> String {
 }
 
 /// The card that lists games already played.
-fn played(mine: &[Saved], others: &[Saved]) -> String {
+///
+/// Only this visitor's. There was a second card under it listing every other game
+/// in the store, which was a browsable pile of other people's games on the front
+/// page: interesting while the store held six demo games and nothing else, and
+/// not a section anybody wants once it holds theirs.
+fn played(mine: &[Saved]) -> String {
     let mut b = String::from("<section>");
     b.push_str(&head(
         "Your games",
@@ -189,19 +196,6 @@ fn played(mine: &[Saved], others: &[Saved]) -> String {
         b.push_str(&list(mine));
     }
     b.push_str("</section>");
-
-    if !others.is_empty() {
-        b.push_str("<section>");
-        b.push_str(&head(
-            "Also on this server",
-            "Every other game in the store: games dealt in another browser, and \
-             the ones the server played itself so that the analytics have \
-             something to read. Anybody who can reach this server can read them, \
-             which is what a loopback server on your own machine means.",
-        ));
-        b.push_str(&list(others));
-        b.push_str("</section>");
-    }
     b
 }
 
@@ -412,7 +406,7 @@ mod tests {
 
     #[test]
     fn the_page_offers_the_three_things_it_is_for() {
-        let html = page(&[], &[], &[]);
+        let html = page(&[], &[]);
         // One button, and it leads to the lobby rather than dealing anything: the
         // settings live there, and a second form here would be half of them.
         assert!(html.contains("href=\"/lobby\""));
@@ -426,7 +420,7 @@ mod tests {
 
     #[test]
     fn an_empty_server_says_so_rather_than_showing_nothing() {
-        let html = page(&[], &[], &[]);
+        let html = page(&[], &[]);
         assert!(html.contains("No tables."));
         assert!(html.contains("None yet."));
         // And there is nothing to say about other people's games when there are
@@ -439,7 +433,7 @@ mod tests {
         let mine = table("aaaa-aaaa-aaaa", false, true, None);
         let theirs = table("bbbb-bbbb-bbbb", false, false, None);
         let listed = table("cccc-cccc-cccc", true, false, None);
-        let html = page(&[mine, theirs, listed], &[], &[]);
+        let html = page(&[mine, theirs, listed], &[]);
         assert!(html.contains("aaaa-aaaa-aaaa"), "my own unlisted table");
         assert!(
             !html.contains("bbbb-bbbb-bbbb"),
@@ -449,7 +443,7 @@ mod tests {
         // Mine and published says both: one says why it is on my list, the other
         // says it is on everybody's, and that is the half that cannot be undone.
         let both = table("eeee-eeee-eeee", true, true, None);
-        let row = page(&[both], &[], &[]);
+        let row = page(&[both], &[]);
         let row = row
             .split("eeee-eeee-eeee")
             .next()
@@ -465,7 +459,7 @@ mod tests {
         // history card, which reads it off the store rather than out of memory.
         for mine in [true, false] {
             let over = table("dddd-dddd-dddd", true, mine, Some(1));
-            let html = page(&[over], &[], &[]);
+            let html = page(&[over], &[]);
             assert!(!html.contains("dddd-dddd-dddd"), "mine: {mine}");
             assert!(html.contains("No tables."));
         }
@@ -474,7 +468,7 @@ mod tests {
     #[test]
     fn a_played_game_offers_its_board_and_its_report() {
         let g = game("ffff-ffff-ffff", "Egon", Some(0));
-        let html = page(&[], std::slice::from_ref(&g), &[]);
+        let html = page(&[], std::slice::from_ref(&g));
         assert!(html.contains("href=\"/ffff-ffff-ffff/\""));
         assert!(html.contains("href=\"/ffff-ffff-ffff/analytics\""));
         // Turns, counted the way the report counts them, not moves.
@@ -485,12 +479,17 @@ mod tests {
     }
 
     #[test]
-    fn other_peoples_games_get_their_own_card() {
-        let theirs = [game("1111-1111-1111", "", None)];
-        let html = page(&[], &[], &theirs);
-        assert!(html.contains("Also on this server"));
-        assert!(html.contains("1111-1111-1111"));
+    fn the_page_shows_nobody_elses_games() {
+        // There was a second card under the history listing every other game in
+        // the store. Fine while the store held six demo games; a browsable pile
+        // of other people's games on the front page once it holds theirs.
+        let g = game("1111-1111-1111", "", None);
+        let html = page(&[], std::slice::from_ref(&g));
+        assert!(html.contains("1111-1111-1111"), "mine is shown");
         assert!(html.contains(">unfinished</span>"));
+        assert!(!html.contains("Also on this server"), "and only mine");
+        // Nor is there a header link to the page's own first button.
+        assert!(!html.contains("class=\"headLink\""));
     }
 
     #[test]
@@ -498,7 +497,7 @@ mod tests {
         let games: Vec<Saved> = (0..SHOWN + 3)
             .map(|i| game(&format!("{:04}-0000-0000", i + 1000), "Egon", Some(0)))
             .collect();
-        let html = page(&[], &games, &[]);
+        let html = page(&[], &games);
         assert!(html.contains("1000-0000-0000"), "the newest is shown");
         let last = format!("{:04}-0000-0000", SHOWN + 1002);
         assert!(!html.contains(&last), "the oldest is not");
@@ -515,7 +514,7 @@ mod tests {
             game: "<script>alert(1)</script>".to_string(),
             ..sneaky
         };
-        let html = page(&[sneaky], &[], &[]);
+        let html = page(&[sneaky], &[]);
         assert!(!html.contains("<script"), "no script on the home page");
         assert!(html.contains("&lt;script&gt;"));
         assert!(!html.contains("onfocus=\"x"));
@@ -525,7 +524,7 @@ mod tests {
             name: "<b>bold</b>".to_string(),
             ..game("3333-3333-3333", "", Some(0))
         };
-        let html = page(&[], &[g], &[]);
+        let html = page(&[], &[g]);
         assert!(!html.contains("<b>bold</b>"));
         assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
     }

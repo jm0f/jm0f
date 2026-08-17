@@ -255,18 +255,15 @@ impl Server {
             .filter(|t| t.winner.is_none())
             .map(|t| t.id.clone())
             .collect();
-        let (mut mine, mut others) = (Vec::new(), Vec::new());
-        for g in self.store.all() {
-            if live.contains(&g.id) {
-                continue;
-            }
-            if !player.is_empty() && g.by == player {
-                mine.push(g);
-            } else {
-                others.push(g);
-            }
-        }
-        crate::home::page(&open, &mine, &others)
+        // Theirs only. Everything else in the store is somebody else's game and
+        // has no business on their front page.
+        let mine: Vec<Saved> = self
+            .store
+            .all()
+            .into_iter()
+            .filter(|g| !live.contains(&g.id) && !player.is_empty() && g.by == player)
+            .collect();
+        crate::home::page(&open, &mine)
     }
 
     /// A seed for the next table, and the cursor moved on past it.
@@ -347,6 +344,56 @@ impl Server {
             }
         }
         out
+    }
+
+    /// Put a stored game back on a table, so it can be played on again.
+    ///
+    /// This is what writing a game down as its moves was always for: seats, seed
+    /// and the ordered steps rebuild the position exactly, so restarting the
+    /// server costs the table and not the game. Before this, an unfinished game
+    /// whose table had gone answered every click with "that game is over", which
+    /// was true of the table and false of the game, and the only way out of it
+    /// was to abandon a game somebody was in the middle of.
+    ///
+    /// Returns whether the game is now on a table. A finished one is not put back
+    /// on one: there is nothing to play, and reading it off disk is what the
+    /// report and the board's read-only view already do.
+    ///
+    /// **A game this build cannot replay is deleted.** The rules moved under it,
+    /// so it is not a game any more; leaving it is a row on the home page that
+    /// refuses to open, which is worse than either keeping it or losing it.
+    fn seat(&self, id: &str) -> bool {
+        if self.tables.lock().unwrap().iter().any(|t| t.id == id) {
+            return true;
+        }
+        let Some(saved) = self.store.load(id) else {
+            return false;
+        };
+        if saved.winner.is_some() {
+            return false;
+        }
+        let Some(session) = Session::resume(saved.seats, saved.seed, saved.mode, &saved.moves)
+        else {
+            eprintln!("cannot replay {id}, deleting it");
+            self.store.remove(id);
+            return false;
+        };
+        // The file carries the game. It does not carry how the table was set up
+        // to play it: the pace, the clock and whether a log was kept are the
+        // lobby's answers and were never written down, so a resumed game gets
+        // the defaults. Worth fixing in the format; not worth refusing to resume
+        // a game over.
+        let session = session
+            .with_name(&saved.name)
+            .with_pace(Pace::parse(None))
+            .with_record(saved.times.clone());
+        self.add(Table {
+            id: saved.id.clone(),
+            session,
+            dealt: saved.dealt,
+            by: saved.by.clone(),
+        });
+        true
     }
 
     /// A game as it stands, live or stored.
@@ -599,11 +646,14 @@ impl Server {
             }
             ("GET", "/api/state") => {
                 let id = game.clone().unwrap_or_default();
+                // An unfinished game off a table is put back on one first, so a
+                // tab left open across a restart carries on where it was.
+                self.seat(&id);
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
-                    // A game no longer on a table is one this server has put
-                    // away: read it off disk and hand it back as it stands.
-                    // Nothing ticks, because nothing is waiting.
+                    // What is left is a finished game, which is read rather than
+                    // played: hand it back as it stands. Nothing ticks, because
+                    // nothing is waiting.
                     drop(tables);
                     return match self.stored(&id) {
                         Some(p) => respond(&mut stream, 200, "application/json", p.as_bytes()),
@@ -622,6 +672,7 @@ impl Server {
             }
             ("POST", "/api/act") => {
                 let id = game.clone().unwrap_or_default();
+                self.seat(&id);
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
@@ -643,6 +694,7 @@ impl Server {
             // Put back a development card whose action was never finished.
             ("POST", "/api/cancel") => {
                 let id = game.clone().unwrap_or_default();
+                self.seat(&id);
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
@@ -659,6 +711,7 @@ impl Server {
             }
             ("POST", "/api/propose") => {
                 let id = game.clone().unwrap_or_default();
+                self.seat(&id);
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
@@ -1102,6 +1155,113 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, id);
         assert_eq!(all[0].by, "keytest0000000000", "and whose game it is");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_game_off_its_table_is_taken_up_again_rather_than_frozen() {
+        // The point of writing a game down as its moves. Restarting the server,
+        // or dealing sixteen more tables, used to leave an unfinished game
+        // answering every click with "that game is over": true of the table and
+        // false of the game, and there was no way back into it.
+        let dir = std::env::temp_dir().join(format!("carranta-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 12, TradeMode::Full, &dir);
+        let id = server.add(Table {
+            id: mint_id(),
+            session: Session::new(4, 12, TradeMode::Full).with_name("Egon"),
+            dealt: now(),
+            by: "keytest0000000000".to_string(),
+        });
+        for _ in 0..6 {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let v = t.session.version();
+            t.session.act(0, v).expect("the opening is playable");
+        }
+        server.keep(&id);
+        let before = server.store().load(&id).expect("written down");
+        assert!(before.winner.is_none(), "still being played");
+        assert_eq!(before.times.len(), before.moves.len(), "and timed");
+
+        // The table goes; the game does not.
+        server.tables.lock().unwrap().clear();
+        assert!(server.seat(&id), "taken up again");
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables
+                .iter_mut()
+                .find(|t| t.id == id)
+                .expect("back on a table");
+            assert_eq!(t.session.moves(), &before.moves[..], "the same game");
+            assert_eq!(t.session.times(), &before.times[..], "with its own clock");
+            assert_eq!(t.by, before.by, "still theirs");
+            assert_eq!(t.dealt, before.dealt, "and still as old as it is");
+            // And it can be played on, which is the whole point.
+            let v = t.session.version();
+            t.session.act(0, v).expect("playable");
+        }
+        server.keep(&id);
+        let after = server.store().load(&id).expect("written down again");
+        // More than one: a click is the human's move and then whatever the bots
+        // do before the turn comes back round.
+        assert!(after.moves.len() > before.moves.len(), "the game went on");
+        assert_eq!(
+            &after.times[..before.times.len()],
+            &before.times[..],
+            "history kept"
+        );
+        assert!(
+            after.times[before.times.len()] >= before.times[before.times.len() - 1],
+            "and the clock went forwards, not back to nought"
+        );
+
+        // A finished game is not put back on a table: there is nothing to play.
+        let done = server.add(Table {
+            id: mint_id(),
+            session: {
+                let mut s = Session::new(4, 3, TradeMode::Full);
+                s.play_out();
+                s
+            },
+            dealt: now(),
+            by: String::new(),
+        });
+        server.keep(&done);
+        server.tables.lock().unwrap().clear();
+        assert!(!server.seat(&done), "a game with a winner stays read-only");
+        assert!(server.store().load(&done).is_some(), "and is still on disk");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_game_this_build_cannot_replay_is_thrown_away() {
+        // The rules moved under it, so it is not a game any more. Left alone it
+        // is a row on the home page that refuses to open, which is worse than
+        // either keeping it or losing it.
+        let dir = std::env::temp_dir().join(format!("carranta-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 1, TradeMode::Full, &dir);
+        let broken = Saved {
+            id: game_id(77),
+            seats: 4,
+            seed: 5,
+            mode: TradeMode::Full,
+            name: "Egon".to_string(),
+            by: "keytest0000000000".to_string(),
+            dealt: now(),
+            winner: None,
+            // Ending a turn before the board has been dealt is not a move any
+            // build of these rules will replay.
+            moves: vec![crate::game::Step::Move(
+                carranta_core::action::Action::EndTurn,
+            )],
+            times: vec![1],
+        };
+        server.store().save(&broken).expect("written");
+        assert!(server.store().load(&broken.id).is_some());
+        assert!(!server.seat(&broken.id), "it cannot be taken up");
+        assert!(server.store().load(&broken.id).is_none(), "so it is gone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

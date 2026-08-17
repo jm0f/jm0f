@@ -2077,12 +2077,21 @@ honest makes this page work before anything has loaded.
   done, since that is what a live table has, and it is tagged **yours**, **listed**
   or both: the two answer different questions, and being listed is the one that
   cannot be taken back, so it is said out loud rather than implied.
-- **Your games**, and beneath it **Also on this server**. A game arrives in the
-  history when it ends, and leaves the tables list at the same moment: one of the
-  two lists has to give a game up or it appears twice, and the line between them
-  is whether there is anything left to do at it. Each row offers the board and the
-  report, one of them as the action and the other beside it, which one depending on
-  whether the game finished.
+- **Your games**, and only this visitor's. A game arrives in the history when it
+  ends, and leaves the tables list at the same moment: one of the two lists has to
+  give a game up or it appears twice, and the line between them is whether there is
+  anything left to do at it. Each row offers the board and the report, one of them
+  as the action and the other beside it, which one depending on whether the game
+  finished.
+
+  There was a second card under it listing every other game in the store. It was
+  interesting while the store held six demo games and nothing else, and a browsable
+  pile of other people's games on the front page as soon as it held anybody's.
+
+**Nothing in the header.** Every other page's header offers a way back here and
+a way to a new game. This page is the way back, and the card below is the way to a
+new game, said properly and where the eye lands; a header link to the page's own
+first button is furniture.
 
 **Whose games are whose is a cookie, and the page says so.** A key handed to a
 browser on its first request, sixteen characters, held for a year, `HttpOnly` and
@@ -2103,6 +2112,30 @@ tables is a page whose links have to work. A table that falls off the end is not
 lost, because every move writes its file; what it loses is the ability to be
 played on, which is the right thing to lose first, and finished tables are
 evicted before unfinished ones.
+
+**A game outlives its table.** Restarting the server, or dealing sixteen more
+tables, used to leave an unfinished game answering every click with "that game is
+over": true of the table, false of the game, and there was no way back into it
+short of abandoning something somebody was in the middle of. Asking to play a game
+that is not on a table now puts it back on one, which is what writing a game down
+as its moves was always for: seats, seed and the ordered steps rebuild the position
+exactly, so a restart costs the table and not the game.
+
+The clock comes back with it. Replaying the moves stamps each one at the moment it
+is replayed, which would turn an hour-long game into a four millisecond one, so the
+recorded times are put back and the session's own origin is wound back to the last
+of them: what happens next lands after everything that already has. The time the
+server spent stopped is not counted, because nobody was thinking during it.
+
+What does not come back is how the table was set up to play: the pace, the clock
+and whether a log was kept are the lobby's answers and were never written down, so
+a resumed game gets the defaults. That is a gap in the format rather than a reason
+to refuse to resume a game.
+
+**A game this build cannot replay is deleted.** If the rules have moved under it,
+it is not a game any more, and leaving it is a row on the home page that refuses to
+open, which is worse than either keeping it or losing it. This is the only thing
+that deletes a game.
 
 **A fresh server deals nothing.** It used to deal a table on start-up and on
 every visit to the root, which put a game on disk for every time the page was
@@ -2194,6 +2227,50 @@ and left it in the console.
 
 ---
 
+## 15. The dock never wraps
+
+The strip of controls under the board is the one thing in this layout with a hard
+minimum: it is a row of cards and buttons at a size you can read, and below that
+width it has nowhere to go but a second row. It kept finding one.
+
+**The rule.** Shrink as far as it takes to stay on one row and no further, and
+wrap only when shrinking more would cost more than a second row does.
+
+Three things make that true, and all three are easy to undo by accident.
+
+- **It is sized by the column it is in.** It used to be `clamp(11px, .74vw, 14px)`,
+  on the reasoning that the dock and the space it has to fit both grow with the
+  window, so whether it fits is very nearly constant. Very nearly: the rails either
+  side stop growing at 400px and the window does not, so the middle column grows in
+  jumps the dock's type did not follow. A container query is the honest version of
+  the same reasoning, `1.16cqw`, one per cent of the column the dock is actually
+  in. An element cannot query its own container, so the dock sits in a cell that is
+  one.
+- **Every measurement inside it is in `em`.** That is what makes the strip one
+  shape at one scale, so its width is a fixed multiple of its type size and the
+  coefficient can be the reciprocal of that multiple. It is measured, not tuned:
+  85.4 type sizes wide with both award tiles in hand, which is the widest the strip
+  is ever asked to be. A `px` gap anywhere in it breaks the arithmetic.
+- **The push between your hand and the controls costs nothing.** It was an empty
+  group with `flex: 1`, which did the job and spent two of the dock's gaps on a
+  thing with no width. An auto margin is the same gesture and takes space that is
+  spare.
+
+The rails gave up some width too, from 20 and 21 per cent to 17.5 and 18.5. They
+keep their floors, so the narrow windows where they were sized up are unchanged;
+what changed is the band from a laptop to a large monitor, where they were holding
+width the dock needed and the seat rows did not.
+
+Measured across ten window widths, with no award tile, with one and with both: one
+row everywhere from 1366px up. Below that the type is on its floor of 9px, where
+the uppercase labels are just over seven and are the last size at which they are
+still words, and it wraps. The board does not fit those windows anyway (§11).
+
+The awards group is the reason this kept surfacing: it appears only when you hold
+a tile, so the dock wrapped at the moment you took the longest road.
+
+---
+
 ## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a
@@ -2215,6 +2292,12 @@ and left it in the console.
   not, and it needs a layout for one column rather than a smaller gutter. Long
   standing, and measured here rather than assumed: the shared gutter costs eight
   pixels of it and did not cause it.
+- **The file does not record how a table was set up.** Seats, seed, market, name,
+  owner, moves and times are written down; the pace, the clock, the discard
+  allowance, the bank and whether a log was kept are not. A game resumed after a
+  restart therefore comes back with the defaults for all five. The game itself is
+  exact, which is why resuming is worth doing at all, but a table with a chess clock
+  on it comes back untimed.
 - **The lobby's invite link goes nowhere.** It reads
   `/join?table=<seed>&seats=N`, and the server has no `/join`, so the one control
   on that screen that promises to bring somebody else in returns a 404. It was

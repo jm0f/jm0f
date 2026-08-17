@@ -387,6 +387,16 @@ impl Store {
         decode(&std::fs::read_to_string(path).ok()?)
     }
 
+    /// Throw a game away.
+    ///
+    /// For the one case that earns it: a file this build can no longer replay,
+    /// which is not a game any more but a row on the home page that refuses to
+    /// open. Keeping it helps nobody, and the analytics cannot read it either.
+    pub fn remove(&self, id: &str) -> bool {
+        self.path(id)
+            .is_some_and(|p| std::fs::remove_file(p).is_ok())
+    }
+
     /// Every game on disk, newest first.
     pub fn all(&self) -> Vec<Saved> {
         let mut out: Vec<Saved> = std::fs::read_dir(&self.dir)

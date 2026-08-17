@@ -1094,6 +1094,33 @@ impl Session {
         Some(s)
     }
 
+    /// Take a resumed game's clock up where its record left off.
+    ///
+    /// [`Session::resume`] replays the moves and stamps each one at the moment
+    /// it is replayed, so a game an hour long comes back as a game four
+    /// milliseconds long. The recorded times are the real ones and are put back,
+    /// and the session's own origin is wound back to the last of them: whatever
+    /// happens next lands after everything that already has, rather than in the
+    /// first second of a game that is an hour old. The time the server spent
+    /// stopped is not counted, because nobody was thinking during it.
+    ///
+    /// Ignored rather than trusted when the two lists are different lengths. A
+    /// step with the wrong time on it is a wrong answer, where a step with no
+    /// time is a missing one, and the file format has always allowed the second.
+    pub fn with_record(mut self, times: Vec<u32>) -> Self {
+        if times.len() != self.moves.len() {
+            return self;
+        }
+        if let Some(&last) = times.last()
+            && let Some(origin) = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_millis(u64::from(last)))
+        {
+            self.started = origin;
+        }
+        self.times = times;
+        self
+    }
+
     /// Say no again, on the way back through a recorded game.
     ///
     /// Written out rather than routed through `answer`, which would push the
