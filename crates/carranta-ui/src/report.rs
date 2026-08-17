@@ -81,7 +81,7 @@ fn row(cells: &[String], head: bool) -> String {
 /// a figure is a figure that belongs in the table.
 fn card_head(title: &str, why: &str) -> String {
     format!(
-        "<div class=\"card-head\"><h2 title=\"{}\">{title}</h2></div>",
+        "<div class=\"card-head\"><h2 data-tip=\"{}\">{title}</h2></div>",
         esc(why)
     )
 }
@@ -175,7 +175,7 @@ fn head_row(cells: &[(&str, &str)]) -> String {
         if why.is_empty() {
             let _ = write!(out, "<th>{label}</th>");
         } else {
-            let _ = write!(out, "<th title=\"{}\">{label}</th>", esc(why));
+            let _ = write!(out, "<th data-tip=\"{}\">{label}</th>", esc(why));
         }
     }
     out.push_str("</tr>");
@@ -192,11 +192,11 @@ fn pip_rows(pips: &[u32; 5]) -> String {
     for (res, n) in pips.iter().enumerate() {
         let _ = write!(
             out,
-            "<span class=\"pip-row\" title=\"{n} {name} pips\">",
+            "<span class=\"pip-row\" data-tip=\"{n} {name} pips\">",
             name = RESOURCE_NAMES[res],
         );
         for _ in 0..*n {
-            let _ = write!(out, "{}", hex(&format!("on r{res}"), ""));
+            let _ = write!(out, "{}", hex(&format!("on r{res}")));
         }
         out.push_str("</span>");
     }
@@ -210,7 +210,7 @@ fn turn_rows(per_turn: &[f64; 5]) -> String {
     for (res, v) in per_turn.iter().enumerate() {
         let _ = write!(
             out,
-            "<span class=\"pip-row\" title=\"{name}\">{}</span>",
+            "<span class=\"pip-row\" data-tip=\"{name}\">{}</span>",
             if *v < 0.005 {
                 NONE.to_string()
             } else {
@@ -237,7 +237,7 @@ fn discs(numbers: &[u8]) -> String {
         let hot = *n == 6 || *n == 8;
         let _ = write!(
             out,
-            "<span class=\"disc{}\" title=\"{n}, {ways} ways\">{n}</span>",
+            "<span class=\"disc{}\" data-tip=\"{n}, {ways} ways\">{n}</span>",
             if hot { " hot" } else { "" },
             ways = 6 - (i32::from(*n) - 7).abs(),
         );
@@ -257,13 +257,13 @@ fn port_marks(ports: &[Option<usize>]) -> String {
             Some(res) => {
                 let _ = write!(
                     out,
-                    "<span class=\"port r{res}\" title=\"two to one, {}\">2:1</span>",
+                    "<span class=\"port r{res}\" data-tip=\"two to one, {}\">2:1</span>",
                     RESOURCE_NAMES[*res],
                 );
             }
-            None => {
-                out.push_str("<span class=\"port any\" title=\"three to one, anything\">3:1</span>")
-            }
+            None => out.push_str(
+                "<span class=\"port any\" data-tip=\"three to one, anything\">3:1</span>",
+            ),
         }
     }
     out.push_str("</span>");
@@ -271,18 +271,62 @@ fn port_marks(ports: &[Option<usize>]) -> String {
 }
 
 /// One board tile, at the size of a line of text.
-fn hex(class: &str, title: &str) -> String {
+///
+/// It says nothing on hover of its own: a tile is one dot of a row, and the
+/// row it belongs to is what carries the explanation.
+fn hex(class: &str) -> String {
     // A flat-top hex, the shape the board is made of.
     const PATH: &str = "M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z";
-    let title = if title.is_empty() {
-        String::new()
-    } else {
-        format!("<title>{}</title>", esc(title))
-    };
     format!(
-        "<svg viewBox=\"-1 -1 20 22.8\" class=\"tile\">{title}\
+        "<svg viewBox=\"-1 -1 20 22.8\" class=\"tile\">\
          <path class=\"{class}\" d=\"{PATH}\"/></svg>"
     )
+}
+
+/// A tooltip belonging to a shape in a drawing, laid over the drawing rather
+/// than inside it.
+///
+/// Two things rule out putting it in the picture. SVG has no pseudo-elements
+/// and no text that wraps, so the box would have to be a `foreignObject`; and
+/// a `foreignObject` with any SVG geometry painted after it is dropped behind
+/// the whole drawing by the browser, which is exactly the case here, since
+/// every shape after this one is geometry. Over the top it is ordinary page
+/// HTML at the page's own size, which is also how it comes out looking like
+/// the tooltips in the tables rather than like a drawing of one.
+///
+/// The position is a percentage of the drawing's own box, so it holds wherever
+/// the drawing is scaled to. Which way it opens is settled here rather than in
+/// the stylesheet: near an edge it opens back towards the middle.
+fn over_tip(i: usize, x: f64, y: f64, w: f64, h: f64, text: &str) -> String {
+    let (left, up) = (x > w / 2.0, y > h / 2.0);
+    format!(
+        "<div class=\"tipat t{i}{}{}\" style=\"left:{lx:.2}%;top:{ly:.2}%\">\
+         <span class=\"tipin\">{}</span></div>",
+        if left { " to-left" } else { "" },
+        if up { " up" } else { "" },
+        esc(text),
+        lx = 100.0 * x / w,
+        ly = 100.0 * y / h,
+    )
+}
+
+/// The rules that tie those tooltips to their shapes.
+///
+/// One a shape, which is the price of doing this without a script: CSS can ask
+/// whether a drawing holds a hovered shape, but it cannot be told *which* one
+/// without a selector naming it. They are written beside the drawing they
+/// belong to rather than in the stylesheet, since only the drawing knows how
+/// many shapes it ended up with.
+fn tip_rules(scope: &str, n: usize) -> String {
+    let mut out = String::from("<style>");
+    for i in 0..n {
+        let _ = write!(
+            out,
+            "{scope}:has(.k{i}:hover) .t{i}{{opacity:1;visibility:visible}}"
+        );
+    }
+    out.push_str("</style>");
+    out
 }
 
 /// A count with a second, smaller count in brackets after it.
@@ -420,11 +464,14 @@ fn sankey(
     let from = stack(&took);
     let to = stack(&lost);
 
+    // The drawing, and over it the layer its tooltips live in.
     let mut b = format!(
-        "<div class=\"flow\"><svg viewBox=\"0 0 {W} {h}\" role=\"img\" \
-         aria-label=\"Who took cards from whom\">",
+        "<div class=\"flow\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {h}\" \
+         role=\"img\" aria-label=\"Who took cards from whom\">",
         h = H + TOP * 2.0
     );
+    let mut tips = String::from("<div class=\"over\">");
+    let mut shape = 0;
 
     // The ribbons first, so the blocks and names sit over them.
     let mut out_at: Vec<f64> = from.iter().map(|(y, _)| *y).collect();
@@ -438,16 +485,23 @@ fn sankey(
             let thick = f64::from(n) * scale;
             let (a, c) = (out_at[thief], in_at[victim]);
             let (bmid, cmid) = (LEFT + NODE + 60.0, RIGHT - NODE - 60.0);
-            let _ = write!(
-                b,
-                "<path class=\"ribbon f{thief}\" d=\"M{x0} {a} C{bmid} {a} {cmid} {c} {x1} {c} \
-                 L{x1} {c2} C{cmid} {c2} {bmid} {a2} {x0} {a2} Z\"><title>{title}</title></path>",
-                x0 = LEFT + NODE,
-                x1 = RIGHT - NODE,
+            let (x0, x1) = (LEFT + NODE, RIGHT - NODE);
+            let d = format!(
+                "M{x0} {a} C{bmid} {a} {cmid} {c} {x1} {c} \
+                 L{x1} {c2} C{cmid} {c2} {bmid} {a2} {x0} {a2} Z",
                 a2 = a + thick,
                 c2 = c + thick,
-                title = esc(&format!("{} took {n} from {}", who[thief], who[victim])),
             );
+            let _ = write!(b, "<path class=\"ribbon f{thief} k{shape}\" d=\"{d}\"/>");
+            tips.push_str(&over_tip(
+                shape,
+                (x0 + x1) / 2.0,
+                (a + c) / 2.0 + thick / 2.0,
+                W,
+                H + TOP * 2.0,
+                &format!("{} took {n} from {}", who[thief], who[victim]),
+            ));
+            shape += 1;
             out_at[thief] += thick;
             in_at[victim] += thick;
         }
@@ -490,7 +544,11 @@ fn sankey(
             );
         }
     }
-    b.push_str("</svg></div>");
+    b.push_str("</svg>");
+    tips.push_str("</div>");
+    b.push_str(&tips);
+    b.push_str(&tip_rules(".flow", shape));
+    b.push_str("</div></div>");
     b
 }
 
@@ -560,8 +618,8 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
     let (mx, my) = (W / 2.0, H / 2.0);
     let point = |angle: f64, radius: f64| (mx + radius * angle.cos(), my + radius * angle.sin());
     let mut b = format!(
-        "<div class=\"ring\"><svg viewBox=\"0 0 {W} {H}\" role=\"img\" \
-         aria-label=\"Who traded with whom\">"
+        "<div class=\"ring\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {H}\" \
+         role=\"img\" aria-label=\"Who traded with whom\">"
     );
 
     // Grouped by pair so the ribbons of one pair lie together rather than
@@ -577,6 +635,8 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
         .collect();
     order.sort_unstable();
 
+    let mut tips = String::from("<div class=\"over\">");
+    let mut shape = 0;
     let mut cursor: Vec<f64> = arc.iter().map(|(a, _)| *a).collect();
     for (a, c, i) in order {
         let d = &tr.deals[i];
@@ -595,20 +655,28 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
         };
         // Through the centre, which is what makes a chord read as one link
         // rather than two lines that happen to meet.
-        let _ = write!(
-            b,
-            "<path class=\"chord f{seat}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
-             Q{mx} {my} {u1:.1} {v1:.1} A{R} {R} 0 0 1 {u0:.1} {v0:.1} Q{mx} {my} {x0:.1} {y0:.1} Z\">\
-             <title>{}</title></path>",
-            esc(&format!(
+        let path = format!(
+            "M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
+             Q{mx} {my} {u1:.1} {v1:.1} A{R} {R} 0 0 1 {u0:.1} {v0:.1} \
+             Q{mx} {my} {x0:.1} {y0:.1} Z"
+        );
+        let seat = d.seat.min(MAX_PLAYERS - 1);
+        let _ = write!(b, "<path class=\"chord f{seat} k{shape}\" d=\"{path}\"/>");
+        tips.push_str(&over_tip(
+            shape,
+            (x0 + u0) / 2.0,
+            (y0 + v0) / 2.0,
+            W,
+            H,
+            &format!(
                 "Turn {}: {} gave {}, took {}, {counter}",
                 d.turn,
                 who[d.seat],
                 hand_text(&d.gave),
                 hand_text(&d.took),
-            )),
-            seat = d.seat.min(MAX_PLAYERS - 1),
-        );
+            ),
+        ));
+        shape += 1;
     }
 
     // The rim, and a name outside each arc.
@@ -623,15 +691,23 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
         } else {
             "supply".to_string()
         };
-        let _ = write!(
-            b,
-            "<path class=\"rim {class}\" d=\"M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
-             L{x2:.1} {y2:.1} A{r2} {r2} 0 0 0 {x3:.1} {y3:.1} Z\"><title>{}</title></path>",
-            esc(&format!("{} trades", tr.ends(*party))),
+        let band = format!(
+            "M{x0:.1} {y0:.1} A{R} {R} 0 0 1 {x1:.1} {y1:.1} \
+             L{x2:.1} {y2:.1} A{r2} {r2} 0 0 0 {x3:.1} {y3:.1} Z",
             r2 = R + BAND,
         );
+        let _ = write!(b, "<path class=\"rim {class} k{shape}\" d=\"{band}\"/>");
         let centre = (a0 + a1) / 2.0;
         let (tx, ty) = point(centre, R + BAND + 14.0);
+        tips.push_str(&over_tip(
+            shape,
+            tx,
+            ty,
+            W,
+            H,
+            &format!("{} trades", tr.ends(*party)),
+        ));
+        shape += 1;
         let name = match *party {
             w if w == Trades::BANK => "the bank".to_string(),
             w if w == Trades::PORT => "ports".to_string(),
@@ -647,7 +723,11 @@ fn chord(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
         };
         b.push_str(&svg_label(tx, ty, at, &name));
     }
-    b.push_str("</svg></div>");
+    b.push_str("</svg>");
+    tips.push_str("</div>");
+    b.push_str(&tips);
+    b.push_str(&tip_rules(".ring", shape));
+    b.push_str("</div></div>");
     b
 }
 
@@ -844,7 +924,7 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
          ledger above splits apart.",
     ));
     heads.push((
-        "luck",
+        "deviation",
         "How far the total ran over or under what was expected, as a share of \
          it. Minus a fifth means this seat collected four cards for every five \
          the board owed them.",
@@ -897,10 +977,18 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
             )
         })
         .collect();
-    heads.extend(spans.iter().map(|s| (s.as_str(), "")));
+    // Every column carries the same note, since a reader hovering the fourth
+    // quarter should not have to find the first one to learn what the brackets
+    // hold.
+    const OVER: &str = "How far this span ran over or under what was expected, \
+                        as a share of it, with the cards that arrived in \
+                        brackets. A quarter of four cards swings further than \
+                        one of forty.";
+    heads.extend(spans.iter().map(|s| (s.as_str(), OVER)));
     heads.push((
-        "whole game",
-        "The four quarters together, which is the luck column above.",
+        "total",
+        "The four quarters together, which is the deviation column above, with \
+         everything the board paid this seat in brackets.",
     ));
     b.push_str(&head_row(&heads));
     b.push_str("</thead><tbody>");
@@ -912,9 +1000,9 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
             let grew = |take: &dyn Fn(usize) -> f64| take(to) - from.map_or(0.0, |i| take(i));
             let a = grew(&|i| f64::from(s.actual[i][p].iter().sum::<u32>()));
             let e = grew(&|i| s.expected[i][p].iter().sum::<f64>());
-            cells.push(share(a, e));
+            cells.push(share_of(a, e));
         }
-        cells.push(share(
+        cells.push(share_of(
             f64::from(s.actual[last][p].iter().sum::<u32>()),
             s.expected[last][p].iter().sum::<f64>(),
         ));
@@ -923,6 +1011,18 @@ fn table_all(study: &Study, who: &[String], place: &[Option<usize>], seats: usiz
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
     b
+}
+
+/// The same, with the cards it was measured over in brackets.
+///
+/// A share on its own hides how much it was taken from, and a quarter of a
+/// short game can hold a handful of cards. Minus a third of six is one bad
+/// roll; minus a third of sixty is a game being lost.
+fn share_of(got: f64, owed: f64) -> String {
+    match share(got, owed).as_str() {
+        NONE => NONE.to_string(),
+        s => format!("{s} <span class=\"worth\">({got:.0})</span>"),
+    }
 }
 
 /// How far a figure ran over or under what was expected, as a share of it.
@@ -1054,8 +1154,8 @@ fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize, table: &str) 
     let y = |v: f64| H - FOOT - PAD - (H - FOOT - PAD * 2.0) * v / top;
 
     let mut b = format!(
-        "<div class=\"view\"><svg viewBox=\"0 0 {W} {H}\" role=\"img\" \
-         aria-label=\"Cumulative production against expectation\">"
+        "<div class=\"view\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {H}\" \
+         role=\"img\" aria-label=\"Cumulative production against expectation\">"
     );
     // Gridlines and their values, so the height of a line can be read.
     for k in 1..=4 {
@@ -1109,21 +1209,29 @@ fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize, table: &str) 
                 .map(|(i, v)| format!("{:.1},{:.1}", x(i), y(*v)))
                 .collect::<Vec<_>>()
                 .join(" ");
+            // A line says nothing on hover: the slots below cover the drawing
+            // and take the pointer first, and the legend already names it.
             let _ = write!(
                 b,
-                "<polyline class=\"line k{n} {colour}{dash}\" points=\"{path}\">\
-                 <title>{name}</title></polyline>",
+                "<polyline class=\"line k{n} {colour}{dash}\" points=\"{path}\"/>",
                 n = k + 1,
                 colour = c.colour,
-                name = esc(&c.name),
             );
         }
     }
 
-    // A slot per turn, over everything, carrying that turn's figures and a
-    // guide under the pointer. The whole tooltip is a `title`, which is the
-    // only kind this page can have and the only kind it needs.
+    b.push_str("</svg>");
+
+    // A slot per turn, laid over the drawing rather than drawn in it: page
+    // HTML, so it carries the same tooltip a table column carries and says its
+    // figures at the same size. The guide under the pointer is the slot's own
+    // left edge, drawn by the stylesheet.
+    //
+    // The box is hung from the top of the chart rather than from the pointer,
+    // because the lines climb as the game goes on and a box that followed the
+    // pointer up would sit on the very figures it is describing.
     let slot = (W - PAD * 2.0) / (turns - 1).max(1) as f64;
+    b.push_str("<div class=\"over\">");
     for i in 0..turns {
         let mut said = format!("Turn {}", i + 1);
         for c in curves {
@@ -1135,16 +1243,17 @@ fn plot(view: usize, curves: &[Curve], ceiling: f64, turns: usize, table: &str) 
         }
         let _ = write!(
             b,
-            "<g class=\"slot\"><rect x=\"{rx:.1}\" y=\"{PAD}\" width=\"{slot:.2}\" \
-             height=\"{h}\"/><line class=\"guide\" x1=\"{gx:.1}\" x2=\"{gx:.1}\" \
-             y1=\"{PAD}\" y2=\"{base}\"/><title>{}</title></g>",
+            "<div class=\"slot{}\" style=\"left:{lx:.3}%;width:{lw:.3}%;top:{lt:.2}%;\
+             height:{lh:.2}%\" data-tip=\"{}\"></div>",
+            if x(i) > W / 2.0 { " to-left" } else { "" },
             esc(&said),
-            rx = x(i) - slot / 2.0,
-            gx = x(i),
-            h = base - PAD,
+            lx = 100.0 * (x(i) - slot / 2.0) / W,
+            lw = 100.0 * slot / W,
+            lt = 100.0 * PAD / H,
+            lh = 100.0 * (base - PAD) / H,
         );
     }
-    b.push_str("</svg>");
+    b.push_str("</div></div>");
 
     // The legend, which is also the control: a checkbox a curve, so clicking a
     // name takes its two lines off the chart.
@@ -1416,7 +1525,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
             let got = r.rolls[n as usize - 2];
             let _ = write!(
                 b,
-                "<td><div class=\"col\" title=\"{n}: rolled {got}, expected {e}\">\
+                "<td><div class=\"col\" data-tip=\"{n}: rolled {got}, expected {e}\">\
                  <div class=\"stem\" style=\"height:{h:.1}%\"></div>\
                  <div class=\"owed\" style=\"bottom:{m:.1}%\"></div></div></td>",
                 e = n1(expect(n)),
@@ -1566,7 +1675,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
                     .collect::<Vec<_>>(),
             ));
         }
-        let mut cells = vec![format!("<span title=\"{}\">{name}</span>", esc(why))];
+        let mut cells = vec![format!("<span data-tip=\"{}\">{name}</span>", esc(why))];
         for s in 0..seats {
             let led = study.ledger[s];
             cells.push(cell(led.rows()[i].1, led.rows()[i].2));
@@ -1589,7 +1698,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     ));
     b.push_str(&row(
         &std::iter::once(format!(
-            "<span title=\"{}\">most at once</span>",
+            "<span data-tip=\"{}\">most at once</span>",
             esc(
                 "The most cards this seat ever held at one time. Not part of \
                  the ledger's arithmetic: a peak is a moment rather than a \
@@ -1879,10 +1988,16 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         owed_all += owed;
         b.push_str(&row(
             &[
+                // The disc says which resource by its colour, as it does on the
+                // board and in the opening, so the name beside it was saying
+                // the same thing twice. It hangs off the disc for the reader
+                // still learning the colours.
                 match kind.checked_sub(1) {
-                    None => "<span class=\"port any\">3:1</span>".to_string(),
+                    None => "<span class=\"port any\" data-tip=\"three to one, any \
+                             resource\">3:1</span>"
+                        .to_string(),
                     Some(res) => format!(
-                        "<span class=\"port r{res}\">2:1</span> {}",
+                        "<span class=\"port r{res}\" data-tip=\"two to one, {}\">2:1</span>",
                         RESOURCE_NAMES[res]
                     ),
                 },
@@ -2110,7 +2225,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .owed { position: absolute; left: -3px; right: -3px; height: 2px;
         margin-bottom: -1px; background: var(--primary); border-radius: 1px; }
 /* Anything that explains itself on hover says so, quietly. */
-thead th[title], .card-head h2[title] { cursor: help;
+thead th[data-tip], .card-head h2[data-tip] { cursor: help;
                   text-decoration: underline dotted #BFAF9C;
                   text-underline-offset: 4px; }
 /* The totals, ruled off above and set in the ink of a figure that matters. */
@@ -2120,6 +2235,66 @@ tbody tr:last-child td { border-bottom: 0; }
 tfoot tr:hover { background: transparent; }
 /* What a thing was worth, beside how many of it there were. */
 .worth { color: var(--muted-foreground); }
+
+/* ---- tooltips ----
+   Most of what this page has to say about itself is said on hover, and the
+   browser's own tooltip is a grey system box, in a system font, at a size the
+   page never uses: the one element on a carefully set report that belongs to
+   no design at all. So the page draws its own, in the card's ink on the card's
+   paper, at the family radius.
+
+   It hangs off `data-tip` rather than `title` because the two cannot coexist:
+   leave the title on and the native box opens over the drawn one a moment
+   later. The cost is that a `title` is reachable by keyboard and this is not,
+   which is a real loss and the reason nothing here is *only* in a tooltip.
+
+   It opens downwards, since a header is the thing most often asked about and
+   there is always table under it. A table sits in a box that scrolls sideways,
+   and a box that scrolls on one axis clips on the other, so the box stops
+   clipping for as long as a tooltip is open: a one-row table is shorter than
+   its own explanation, and the alternative is a tooltip cut in half. */
+/* The box itself, in ems throughout, because the same box is used inside the
+   drawings where a pixel is whatever the drawing has been scaled to. */
+[data-tip]::after, .tipin {
+  display: block; width: max-content; max-width: 20em;
+  padding: .55em .7em;
+  background: var(--foreground); color: var(--card);
+  border-radius: .65em;
+  box-shadow: 0 .5em 1.5em rgba(51, 38, 27, .22);
+  font-weight: 400; line-height: 1.45; text-align: left; text-transform: none;
+  /* The figures a chart gives for a turn are one line each, and a line break
+     in an explanation is a line break. */
+  white-space: pre-line; }
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; z-index: 20; top: calc(100% + 7px); left: 0;
+  font-size: 12.5px; font-family: Figtree, system-ui, sans-serif;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s ease, visibility .12s; }
+[data-tip]:hover::after { opacity: 1; visibility: visible; }
+/* The tooltip is wider than a number column, so near the right edge of a table
+   it hangs from its own right and opens inwards instead of off the side. */
+tr > :nth-last-child(-n+3)[data-tip]::after,
+tr > :nth-last-child(-n+3) [data-tip]::after { left: auto; right: 0; }
+/* The bottom row has nothing underneath it to open over, so it opens up. */
+tfoot [data-tip]::after, tbody tr:last-child [data-tip]::after {
+  top: auto; bottom: calc(100% + 7px); }
+.tw:has([data-tip]:hover) { overflow: visible; }
+
+/* The same box over a drawing. The drawing is scaled to whatever width the
+   card gives it, so a tooltip is anchored at a percentage of that box and
+   hangs off the corner the server picked, which is always the one that opens
+   inwards. The layer takes no pointer events: the shapes underneath are what
+   the reader is pointing at. */
+.frame { position: relative; }
+.over { position: absolute; inset: 0; pointer-events: none; }
+.tipat { position: absolute; z-index: 20; opacity: 0; visibility: hidden;
+         transition: opacity .12s ease, visibility .12s; }
+.tipat.to-left { transform: translateX(-100%); }
+.tipat.up { transform: translateY(-100%); }
+.tipat.to-left.up { transform: translate(-100%, -100%); }
+.tipin { font: 12.5px Figtree, system-ui, sans-serif; }
 /* ---- the opening ----
    Pips as tiles, a row per resource, so a column of them lines up down the
    table and a resource nobody can produce reads as the gap it is. */
@@ -2160,7 +2335,8 @@ tbody tr.sub:hover { background: transparent; }
    Thieves down the left, victims down the right, a ribbon between each pair as
    thick as the cards that moved along it. Laid out on the server, since every
    position is a fraction of a total known the moment the game ends. */
-.flow svg { display: block; width: 100%; height: auto; margin: 0 0 1rem; }
+.flow svg { display: block; width: 100%; height: auto; }
+.flow .frame { margin: 0 0 1rem; }
 .ribbon { opacity: .45; }
 .ribbon:hover { opacity: .8; }
 /* A name inside a drawing, which is the page's own markup in a foreignObject
@@ -2238,9 +2414,18 @@ tbody tr.sub:hover { background: transparent; }
 .view:has(.key input:nth-of-type(4):not(:checked)) .line.k4,
 .view:has(.key input:nth-of-type(5):not(:checked)) .line.k5 { display: none; }
 /* One slot per turn, over everything, carrying that turn's figures. */
-.slot rect { fill: transparent; }
-.slot .guide { stroke: var(--muted-foreground); stroke-width: 1; opacity: 0; }
-.slot:hover .guide { opacity: .55; }
+/* One turn's worth of chart, over the drawing: the pointer's target, its own
+   tooltip, and a guide down the chart drawn as its left edge. The layer above
+   it takes no pointer events, so a slot has to ask for them back. */
+.slot { position: absolute; pointer-events: auto; }
+.slot::before { content: ''; position: absolute; left: 50%; top: 0; bottom: -1.2rem;
+                border-left: 1px solid var(--muted-foreground); opacity: 0;
+                transition: opacity .12s ease; }
+.slot:hover::before { opacity: .55; }
+/* The box hangs from the top of the chart at the turn it belongs to, and turns
+   in the right half of the chart open leftwards. */
+.slot::after { top: .4rem; left: 50%; }
+.slot.to-left::after { left: auto; right: 50%; }
 .tick { stroke: var(--border); stroke-width: 1; }
 .f0, .swatch.f0 { stroke: var(--p0); background: var(--p0); }
 .f1, .swatch.f1 { stroke: var(--p1); background: var(--p1); }
@@ -2261,7 +2446,8 @@ tbody tr.sub:hover { background: transparent; }
 /* Over the table and across the whole card. Beside it, the circle was small
    and the table was squeezed out of its own columns; the card has one measure
    and both of them want all of it. */
-.ring svg { display: block; width: 100%; height: auto; margin: 0 0 1rem; }
+.ring svg { display: block; width: 100%; height: auto; }
+.ring .frame { margin: 0 0 1rem; }
 .chord { opacity: .4; }
 .chord:hover { opacity: .75; }
 .rim.supply { fill: var(--muted-foreground); }
@@ -2369,6 +2555,40 @@ mod tests {
     }
 
     #[test]
+    fn every_tooltip_on_the_page_is_one_the_page_drew() {
+        let g = played(4);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let html = page(&g, &s);
+        // Not one native tooltip left: a `title` attribute anywhere, or a
+        // `<title>` inside a drawing, is the browser's grey box coming back.
+        assert!(!html.contains("title=\""), "no native tooltip attributes");
+        assert_eq!(
+            html.matches("<title>").count(),
+            1,
+            "the only <title> is the document's own"
+        );
+        // The drawings carry the page's own box instead, laid over them.
+        let tips = html.matches("class=\"tipat t").count();
+        assert!(tips > 20, "the drawings explain themselves too");
+        // And every one of those is reachable: a shape to hover, and a rule
+        // tying the two together, since without a script nothing else can.
+        for i in 0..tips {
+            if !html.contains(&format!(" t{i}\"")) && !html.contains(&format!(" t{i} ")) {
+                continue;
+            }
+            assert!(
+                html.contains(&format!(":has(.k{i}:hover) .t{i}")),
+                "tooltip {i} is tied to its shape"
+            );
+        }
+        assert_eq!(
+            html.matches(":hover) .t").count(),
+            tips,
+            "one rule a tooltip, and no rule without one"
+        );
+    }
+
+    #[test]
     fn a_scoring_column_says_how_many_and_what_they_were_worth() {
         let g = played(2);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
@@ -2376,9 +2596,12 @@ mod tests {
         // Every column of the result table carries its own rule rather than a
         // paragraph under the table carrying all five.
         assert!(
-            html.contains("<th title="),
+            html.contains("<th data-tip="),
             "the columns explain themselves"
         );
+        // And the page draws its own tooltip rather than leaving it to the
+        // browser's grey system box, which belongs to no design at all.
+        assert!(!html.contains("<th title="), "not the native tooltip");
         assert!(!html.contains("Points, not pieces"), "and the note is gone");
         // A city held reads as the count with its two points in brackets.
         let cities = s.points[..s.report.players as usize]
@@ -2427,7 +2650,7 @@ mod tests {
         let turns = s.series.turns();
         // A slot per turn in every view, each carrying that turn's figures.
         assert_eq!(
-            html.matches("class=\"slot\"").count(),
+            html.matches("class=\"slot").count(),
             turns * (1 + s.report.players as usize)
         );
         assert!(html.contains(&format!("Turn {turns}")));

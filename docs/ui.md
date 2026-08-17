@@ -1389,6 +1389,43 @@ can see there is something to hover. A note under a table is read through to
 reach the figures, or not read at all; a tooltip is one hover from the reader
 who wants it and invisible to the one who does not.
 
+**The page draws every one of those tooltips itself.** The browser's own box is
+a grey system rectangle in a system font at a size the page never uses: the one
+element on a carefully set report that belongs to no design at all. Ours is the
+card's ink on the card's paper at the family radius, and it is the same box
+everywhere, over a table or over a drawing. It hangs off `data-tip` rather than
+`title` because the two cannot coexist, and the cost is honest: a `title` is
+reachable by keyboard and this is not, which is why nothing on the page lives
+*only* in a tooltip.
+
+Three details, each of them a bug found by measuring rather than by looking:
+
+- **It opens downwards, and a table stops clipping while it is open.** A header
+  is the thing most often asked about and there is always table under it. But a
+  table sits in a box that scrolls sideways, and a box that scrolls on one axis
+  clips on the other, so a one-row table would cut its own explanation in half.
+  `:has([data-tip]:hover)` turns the clipping off for exactly as long as a
+  tooltip is up.
+- **Near the right edge it hangs from its own right.** The box is wider than a
+  number column, so the last three columns of any row open inwards.
+- **A tooltip in a drawing is laid over the drawing, not drawn in it.** SVG has
+  no pseudo-elements and no text that wraps, so the box would have to be a
+  `foreignObject`, and a `foreignObject` with *any* SVG geometry painted after
+  it is dropped behind the whole drawing by the browser. That is always the case
+  here, since every later shape is geometry. So the drawings carry a layer of
+  page HTML over them, positioned as a percentage of the drawing's own box so it
+  holds at any width, and the tooltip comes out at the page's own text size
+  instead of at whatever the drawing was scaled to.
+
+  Tying one of those to its shape is the one place this page pays for having no
+  script: CSS can ask whether a drawing holds a hovered shape but cannot be told
+  *which*, so each drawing writes a rule per shape beside itself. About forty in
+  a typical game, and the alternative is a script.
+
+  The per-turn slots on the production chart went the same way and are now plain
+  HTML columns over the chart, carrying the ordinary `data-tip` box and drawing
+  the guide line as their own left edge.
+
 There is no subtitle anywhere. A sentence describing a card the reader is
 already looking at is a sentence they read to learn nothing, and a sentence
 carrying a figure is a figure that belongs in a table, so the three that carried
@@ -1512,12 +1549,14 @@ is paired with an effect size.
   exactly what it paid. Counting it on one line only offset every seat by a few
   cards for the whole game.
 
-  The everybody table carries a **luck** column, how far a seat's total ran over
-  or under what was expected as a share of it, and under it the same question
-  asked four times across the game. When a seat was starved matters: cards
-  missing early delay everything they would have bought, and the same shortfall
-  at the end costs one purchase. A quarter is what the running totals grew by
-  across it.
+  The everybody table carries a **deviation** column, how far a seat's total ran
+  over or under what was expected as a share of it, and under it the same
+  question asked four times across the game. When a seat was starved matters:
+  cards missing early delay everything they would have bought, and the same
+  shortfall at the end costs one purchase. A quarter is what the running totals
+  grew by across it, and each cell carries the cards it was measured over in
+  brackets, since a third of six is one bad roll and a third of sixty is a game
+  being lost. The last column is **total**, the four quarters together.
 
   Under each chart, its own table, so the figures change with the view. Every
   seat has one: production per resource with the expectation in brackets, and a
@@ -1566,7 +1605,9 @@ is paired with an effect size.
   expected more pips than one reaching two. The layout is the same on every
   board, so only the difference column is luck. The **a hex** column divides
   that out and is the figure to compare ports on, against the board's mean of
-  3.2 pips a hex.
+  3.2 pips a hex. A row is named by its disc alone, in the port's own colour, as
+  the board and the opening name it; the resource beside it was the same thing
+  said twice, and it is on the disc for anybody still learning the colours.
 - **Development cards**, each column how many of that card were drawn with how
   many were played in brackets. The victory point column has no brackets: a
   victory point card is never played, it counts from the moment it is drawn
