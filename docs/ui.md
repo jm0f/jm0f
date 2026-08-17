@@ -1499,6 +1499,19 @@ is paired with an effect size.
   seat's points column, and a test holds the two together. They step rather than
   slope, because a score holds until something changes it, and they go *down*
   where the longest road or the largest militia changed hands.
+
+  Two lines a seat, though: the true score solid, and **the score the rest of the
+  table could see** dotted beneath it, which is the same total less the hidden
+  victory point cards. They part the moment a card is drawn and never rejoin, and
+  the gap is the whole tension of an endgame. In the demo game the winner crosses
+  the finish line at ten while their visible line stops at eight, so the table was
+  playing against a seat two points further along than it knew.
+
+  The **finish line** is drawn across at ten points, because "was it close" is
+  read against the finish rather than against the top of the paper. Both this
+  chart and the engine chart carry legends now, and the legends are also controls:
+  clicking a name takes that seat's lines off the chart, the same way the
+  production card's does.
 - **Turns**, per seat: turns, time, and share of the game's time. A turn is
   what falls between two ends of turn, and it counts everything that landed
   inside it, the turn holder's or not, since a discard, a robbery and an
@@ -1522,12 +1535,37 @@ is paired with an effect size.
   across each bar, over a table of both figures. The chart is a row of that same
   table, so a bar and its column are aligned by the table rather than by a
   number kept in step by hand, and bars and marks share one axis, the tallest of
-  either. Beneath it, the deviation as a KL divergence in bits, the percentile
-  against every other finished game here, and how many games that was. **No
-  p-value**, deliberately (§10.1): across enough games one in twenty clears
-  p<0.05 by construction, and those are precisely the games somebody screenshots
-  as proof of rigging. Until there is a second game the percentile is blank and
-  the column says why, because a percentile of one game is not a percentile.
+  either. **No p-value**, deliberately (§10.1): across enough games one in twenty
+  clears p<0.05 by construction, and those are precisely the games somebody
+  screenshots as proof of rigging.
+
+  Beneath the histogram, four figures, and three of them were fixed after a
+  review of the statistics rather than of the code:
+
+  - **Out of place**, how many rolls landed on a different number than a fair
+    spread would put them on. Total variation distance times the rolls, which is
+    exactly the count that would have to move to make the histogram fair. Bits are
+    the right thing to rank a corpus by and nobody has ever looked at a game and
+    thought in bits; this is the same deviation in a unit somebody can picture.
+  - **Deviation**, the KL divergence in bits, now **less the bias a finite sample
+    puts into it**. A plug-in KL estimate is biased upward by about `(k-1)/(2n)`
+    nats, which at a hundred and forty rolls is 0.05 bits: the same order as the
+    deviations being ranked, and always in the direction of "this game was
+    unlucky". Since the corpus holds games of every length, the raw figure ranked
+    short games as unluckier than long ones with identical dice. Floored at
+    nought, so a fair game now reads nought rather than a positive floor.
+  - **Standing**, where the game sits among every finished game, most deviant
+    first, as a place rather than a percentile while the corpus is small. A
+    percentile of six games moves twenty points when a seventh is played, and
+    printing it to the percent claimed a resolution the corpus did not have. Past
+    a score of games it becomes a percentile, which carries more than a place
+    does. Blank until there is a second game, because a percentile of one game is
+    not a percentile.
+  - **Games compared**, so the figure beside it can be discounted properly.
+
+  Sevens are *not* given a row of their own: the histogram's seven column already
+  carries the count and the expectation, and a second copy of two numbers is not
+  a finding.
 - **Production**, a ledger. Every card that reached a hand or left it, by what
   moved it: production, invention, monopoly, stolen and traded in against built,
   discarded, robbed, monopolised and traded out. Read down, what came in less
@@ -1671,6 +1709,25 @@ is paired with an effect size.
   the board rather than about anybody, and drawn as fifty hexes it is a picture
   of nothing. Biggest hand left this card for the ledger, which is the card
   about hands; it was never an opening figure.
+- **Deviation**, what became of each seat's expectation on the way to their hand
+  (§10.2). One number for the gap was three causes in a coat: the dice, which
+  are chance; the robber, which is the rest of the table choosing to sit on your
+  hexes; and the supply, which is a rule (R-5.6). They have different answers,
+  respectively shrug, play differently, and nothing at all, so they are four
+  columns adding across to what arrived rather than one figure standing for all
+  of them. The engine computed this decomposition from the first day and the page
+  never showed it, which was the largest gap on the page.
+
+  The dice column carries its own standard deviation in brackets, and that figure
+  is exact rather than estimated: production on one roll has a known distribution
+  over eleven outcomes and rolls are independent, so the variances add even as
+  the buildings change under them. In the demo game every seat lands inside one
+  sd of fair while their deviation percentages read minus fifteen, which is the
+  card earning its place: those shortfalls were the robber, not the dice.
+
+  Rolls only, which is why the arrived column sits a card or two under the
+  ledger's production row. The opening settlements paid before anybody rolled,
+  and a payout with no dice in it belongs in neither the expectation nor the luck.
 - **Engine**, what one roll was worth to each seat at the end of every turn, in
   cards, and how fast that grew. The engine rather than the earnings: the
   buildings standing at the time, read off the board, so no run of dice and no
@@ -1683,6 +1740,21 @@ is paired with an effect size.
   with an engine the others cannot catch. So the column to read is the slope
   rather than the size, and it is fitted through the log of the engine, which is
   what makes it a rate: two percent a turn is a doubling in thirty-five.
+
+  **Two accounts of the same numbers are fitted, and the shape column says which
+  one won.** Over the range one game covers, one and a half to two and a half
+  times the opening, the log of a straight ramp is very nearly straight too, so a
+  good log fit *on its own* cannot tell compounding from steady accretion, which
+  is the exact claim the card exists to make. So a straight line through the
+  engine is fitted as well, and the wider fit wins by a clear margin or the
+  answer is "steady". In the demo game both engines that grew come out steady,
+  not compounding, and the growth figure greys out entirely for the seat whose
+  engine barely moved. Calling that pair compounding would have been the whole
+  error this column exists to prevent.
+
+  A doubling time longer than the game is arithmetic rather than a finding: at a
+  tenth of a percent a turn the answer is six hundred turns and the game lasted a
+  hundred and fifty, so the column is blank past the end of the game.
 
   Beside it the **fit**, from nought to one, and it is the honest half of the
   pair. Compounding here is bounded at both ends: the opening is a standing
@@ -1721,6 +1793,8 @@ is paired with an effect size.
   numbers: bigger payouts, no more often, an economy that spends most of its
   turns with nothing to trade. A point a turn instead of a point a quarter would
   be a cloud of a hundred and fifty dots a seat with no direction visible in it.
+  The stops grow and darken through the game, so the path reads as a path without
+  hovering it.
 
 Seat win rates were on this page and are not any more. They are a claim about
 many games, and a report on one game is the wrong place to make it; they belong

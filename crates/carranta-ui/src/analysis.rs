@@ -429,6 +429,7 @@ type Sampled = (
     Series,
     Cover,
     Vec<[u32; MAX_PLAYERS]>,
+    Vec<[u32; MAX_PLAYERS]>,
     Vec<[f64; MAX_PLAYERS]>,
 );
 
@@ -441,6 +442,12 @@ fn series_of(saved: &Saved) -> Sampled {
     let mut out = Series::default();
     // Coverage and the score are sampled here rather than in replays of their
     // own, so a turn on one chart is beyond argument the same turn on another.
+    // Coverage reads the robber where it stands at the end of the turn. A militia
+    // played mid-turn moves the robber before that turn's roll, so for that one
+    // turn the sample can differ from the board the roll actually faced. Left
+    // alone deliberately: every other figure here is an end-of-turn board, and
+    // one sample in a hundred and fifty moving by one hex is worth less than two
+    // clocks on one page.
     let mut cover = Cover::default();
     let mut score: Vec<[u32; MAX_PLAYERS]> = Vec::new();
     let mut engine: Vec<[f64; MAX_PLAYERS]> = Vec::new();
@@ -456,6 +463,14 @@ fn series_of(saved: &Saved) -> Sampled {
     let scored = |state: &carranta_core::state::State| -> [u32; MAX_PLAYERS] {
         let p = points_of(state, seats);
         core::array::from_fn(|i| p[i].total())
+    };
+    // And the score the table could see: the same total less the victory point
+    // cards nobody else knew about. The gap between the two is the whole tension
+    // of an endgame, and only the true score is in the result.
+    let mut seen: Vec<[u32; MAX_PLAYERS]> = Vec::new();
+    let visible = |state: &carranta_core::state::State| -> [u32; MAX_PLAYERS] {
+        let p = points_of(state, seats);
+        core::array::from_fn(|i| p[i].total() - p[i].cards.points)
     };
     let mut actual = [[0u32; 5]; MAX_PLAYERS];
     let mut expected = [[0.0f64; 5]; MAX_PLAYERS];
@@ -501,6 +516,7 @@ fn series_of(saved: &Saved) -> Sampled {
             cover.live.push(production::coverage(&state, true));
             cover.open.push(production::coverage(&state, false));
             score.push(scored(&state));
+            seen.push(visible(&state));
             engine.push(sized(&state));
         }
         playing |= matches!(state.phase, Phase::PreRoll);
@@ -514,9 +530,10 @@ fn series_of(saved: &Saved) -> Sampled {
         cover.live.push(production::coverage(&state, true));
         cover.open.push(production::coverage(&state, false));
         score.push(scored(&state));
+        seen.push(visible(&state));
         engine.push(sized(&state));
     }
-    (out, cover, score, engine)
+    (out, cover, score, seen, engine)
 }
 
 /// How fast a seat's engine grew, fitted as a rate compounding turn by turn.
@@ -553,9 +570,57 @@ pub struct Growth {
     pub early: f64,
     /// And across the last, which is the engine the game ended with.
     pub late: f64,
-    /// How much of the variation in the log rate the straight line explains,
-    /// from 0 to 1.
+    /// How much of the variation in the log of the engine a straight line
+    /// explains, from 0 to 1. High means the engine really was multiplying.
     pub fit: f64,
+    /// The same for a straight line through the engine itself rather than its
+    /// log: high means the engine was growing by a constant amount a turn.
+    ///
+    /// Both, because over the range a real game covers, one and a half to two
+    /// and a half times the opening, the log of a straight ramp is very nearly
+    /// straight too. A good log fit on its own therefore does not distinguish
+    /// compounding from steady accretion, which is the exact claim this whole
+    /// figure exists to make, so the honest thing is to fit both and say which
+    /// one the engine actually looked like.
+    pub fit_line: f64,
+    /// Turns the fit ran over, which is what a doubling time has to be read
+    /// against: a doubling five games away is not a fact about this game.
+    pub turns: usize,
+}
+
+/// Which shape an engine grew in, on the evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    /// It multiplied: the log fit beats the straight one by a clear margin.
+    Compounding,
+    /// It climbed by about the same amount every turn.
+    Steady,
+    /// It barely moved, so neither line describes anything.
+    Flat,
+}
+
+impl Growth {
+    /// What this engine looked like, which decides how much the growth figure
+    /// beside it is worth.
+    ///
+    /// The margin is deliberately wide. Two fits within a hundredth of each
+    /// other are not evidence for either shape, and calling that compounding
+    /// would be the whole error this method exists to avoid.
+    pub fn shape(&self) -> Shape {
+        const MARGIN: f64 = 0.05;
+        if self.per_turn < 0.001 || self.fit.max(self.fit_line) < 0.3 {
+            Shape::Flat
+        } else if self.fit > self.fit_line + MARGIN {
+            Shape::Compounding
+        } else {
+            Shape::Steady
+        }
+    }
+
+    /// Whether the growth figure is describing a shape the engine really had.
+    pub fn believable(&self) -> bool {
+        self.fit >= 0.5 && self.shape() != Shape::Flat
+    }
 }
 
 /// Fit one seat's growth, or `None` when there is not enough game to fit.
@@ -613,13 +678,42 @@ pub fn growth_of(engine: &[[f64; MAX_PLAYERS]], seat: usize) -> Option<Growth> {
     } else {
         0.0
     };
+    // And the same fit against the engine itself, which is the rival account of
+    // the same numbers: not multiplying, just climbing.
+    let straight: Vec<(f64, f64)> = size
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (i as f64, *r))
+        .collect();
+    let fit_line = r_squared(&straight);
     Some(Growth {
         per_turn: slope.exp() - 1.0,
         doubling: (slope > 1e-9).then(|| std::f64::consts::LN_2 / slope),
         early,
         late,
         fit,
+        fit_line,
+        turns,
     })
+}
+
+/// How much of the variation in `y` a straight line through it explains.
+fn r_squared(pts: &[(f64, f64)]) -> f64 {
+    let n = pts.len() as f64;
+    if n < 2.0 {
+        return 0.0;
+    }
+    let (mx, my) = (
+        pts.iter().map(|(x, _)| x).sum::<f64>() / n,
+        pts.iter().map(|(_, y)| y).sum::<f64>() / n,
+    );
+    let sxx: f64 = pts.iter().map(|(x, _)| (x - mx) * (x - mx)).sum();
+    let sxy: f64 = pts.iter().map(|(x, y)| (x - mx) * (y - my)).sum();
+    let syy: f64 = pts.iter().map(|(_, y)| (y - my) * (y - my)).sum();
+    if sxx <= 0.0 || syy <= 0.0 {
+        return 0.0;
+    }
+    (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
 }
 
 /// How often the board paid each seat anything, turn by turn.
@@ -1067,6 +1161,9 @@ pub struct Study {
     /// chart's last point and the result table's points column are the same
     /// figures or one of them is wrong.
     pub score: Vec<[u32; MAX_PLAYERS]>,
+    /// The same score as the rest of the table could see it, with the hidden
+    /// victory point cards left out. What everybody was playing against.
+    pub seen: Vec<[u32; MAX_PLAYERS]>,
     /// What one roll was worth to each seat at the end of every turn, in cards:
     /// the engine they had built by then, read off the board rather than off
     /// what it happened to pay.
@@ -1091,6 +1188,9 @@ pub struct Study {
     /// percentage from 0 to 100, or `None` until there are others to sit
     /// against. A percentile of one game is not a percentile.
     pub dice_percentile: Option<f64>,
+    /// The same standing as a place out of the whole corpus, most deviant
+    /// first, which is the honest form of it while the corpus is small.
+    pub dice_rank: Option<(usize, usize)>,
     pub corpus_games: usize,
     /// What this result did to each seat's rating.
     pub movement: [Option<Movement>; MAX_PLAYERS],
@@ -1122,7 +1222,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     let board = board_of(saved);
     let turns = turns_of(saved);
     let ledger = ledger_of(saved);
-    let (series, cover, score, engine) = series_of(saved);
+    let (series, cover, score, seen, engine) = series_of(saved);
     let trades = trades_of(saved);
     let timed = !saved.times.is_empty() && saved.times.len() == saved.moves.len();
     let production = production::analyse(&log).ok()?;
@@ -1155,8 +1255,17 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
     // Out of a hundred, not out of one. `deviation_percentile` answers with a
     // share, which read as "these dice deviated more than 1% of games" on a
     // page where it meant all of them.
-    let dice_percentile = (!deviations.is_empty())
-        .then(|| dice::Corpus::from_games(deviations).deviation_percentile(this.kl_bits) * 100.0);
+    let dice_percentile = (!deviations.is_empty()).then(|| {
+        dice::Corpus::from_games(deviations.clone()).deviation_percentile(this.kl_fair) * 100.0
+    });
+    // Where this game stands as a place rather than as a share. A percentile of
+    // six games moves twenty points when a seventh is played, and printing it to
+    // the percent claims a resolution the corpus does not have; a rank claims
+    // exactly what it knows.
+    let dice_rank = (!deviations.is_empty()).then(|| {
+        let above = deviations.iter().filter(|d| **d > this.kl_fair).count();
+        (above + 1, deviations.len() + 1)
+    });
     let seat_wins = (others > 0).then(|| games.seat_win_rate());
 
     // Ratings, in the order the games were played, stopping either side of this
@@ -1198,6 +1307,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         series,
         cover,
         score,
+        seen,
         engine,
         trades,
         dev_held,
@@ -1207,6 +1317,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         production,
         dice: this,
         dice_percentile,
+        dice_rank,
         corpus_games: others,
         movement,
         seat_wins,
@@ -1257,6 +1368,9 @@ mod tests {
         let g = growth_of(&doubles, 0).expect("sixty turns is enough to fit");
         assert!((g.doubling.expect("it grows") - 10.0).abs() < 0.2, "{g:?}");
         assert!(g.fit > 0.999, "a geometric rate is a straight line in logs");
+        assert!(g.fit > g.fit_line, "and a curve against a straight one");
+        assert_eq!(g.shape(), Shape::Compounding);
+        assert!(g.believable());
         assert!(
             g.late > g.early * 15.0,
             "and it ends far above where it began"
@@ -1268,9 +1382,54 @@ mod tests {
         assert!(g.per_turn.abs() < 1e-9, "{g:?}");
         assert!(g.doubling.is_none(), "flat never doubles");
         assert_eq!(g.early, g.late);
+        assert_eq!(g.shape(), Shape::Flat);
+        assert!(!g.believable(), "and nothing about it is worth believing");
+
+        // An engine climbing by the same amount every turn is steady, not
+        // compounding, however well its log happens to fit a line.
+        let ramp: Vec<[f64; MAX_PLAYERS]> = (0..61)
+            .map(|i| {
+                let mut row = [0.0f64; MAX_PLAYERS];
+                row[0] = 0.5 + 0.02 * f64::from(i);
+                row
+            })
+            .collect();
+        let g = growth_of(&ramp, 0).expect("sixty turns is enough");
+        assert_eq!(g.shape(), Shape::Steady, "{g:?}");
+        assert!(g.fit_line > 0.999, "a ramp is a straight line");
+        assert!(g.per_turn > 0.0, "and it is still growing");
 
         // A short game declines to answer rather than answering badly.
         assert!(growth_of(&flat[..8], 0).is_none());
+    }
+
+    #[test]
+    fn the_opening_and_the_coverage_chart_agree_about_the_same_board() {
+        let g = played(7);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        let seats = s.report.players as usize;
+        // The opening card's coverage and the chart's first unblocked sample are
+        // the same board read twice, so they cannot disagree. The first sample is
+        // the end of the first turn, and only the seat taking it can have built
+        // by then, so that one seat is allowed to be above its opening and
+        // nobody is allowed to be below.
+        let mut equal = 0;
+        for p in 0..seats {
+            let opening = s.opening[p].coverage;
+            let first = s.cover.open[0][p];
+            assert!(
+                first >= opening - 1e-12,
+                "seat {p}: coverage fell from {opening} to {first} without a \
+                 building coming down"
+            );
+            if (first - opening).abs() < 1e-12 {
+                equal += 1;
+            }
+        }
+        assert!(
+            equal >= seats - 1,
+            "only the seat that took the first turn can have moved"
+        );
     }
 
     #[test]
@@ -1733,10 +1892,16 @@ mod tests {
             assert!((0.0..=100.0).contains(p), "{id} is at {p}");
         }
         seen.sort_by(|a, b| a.1.total_cmp(&b.1));
-        // Six games, so the shares are sixths: the calmest is at 0 and the
-        // wildest at 100, which is exactly what a share of one would hide.
-        assert_eq!(seen.first().unwrap().1, 0.0);
+        // The wildest game in the set is above all of them, which is exactly
+        // what a share of one would have hidden. The calmest is not pinned to
+        // nought any more: the deviation is bias-corrected and floored there, so
+        // several games in a fair set genuinely tie at nought, and a tie is not
+        // a bottom place.
         assert_eq!(seen.last().unwrap().1, 100.0);
+        assert!(
+            seen.first().unwrap().1 < 100.0,
+            "not everything is the worst"
+        );
     }
 
     #[test]

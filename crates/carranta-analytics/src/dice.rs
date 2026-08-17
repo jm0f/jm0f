@@ -75,9 +75,26 @@ pub struct GameDice {
     /// Sevens, tracked separately: 16.7% of rolls, and the whole robber
     /// economy runs on them.
     pub sevens: u32,
-    /// Effect size, in bits. Comparable across games of different length,
-    /// which is what makes it the right thing to rank a corpus by.
+    /// Effect size, in bits, as measured. Comparable across games of different
+    /// length only after the correction below, which is what a corpus should be
+    /// ranked by.
     pub kl_bits: f64,
+    /// The same, less the bias a finite sample puts into it.
+    ///
+    /// A plug-in KL estimate is biased *upward*: the observed histogram always
+    /// fits itself better than the truth does, by about `(k-1)/(2n)` nats even
+    /// when the dice are perfect. Since `n` is the number of rolls and the
+    /// corpus holds games of every length, the raw figure ranks short games as
+    /// unluckier than long ones with identical dice. Floored at nought, because
+    /// a negative divergence is not a thing.
+    pub kl_fair: f64,
+    /// How many rolls sat on a different number than a fair spread would put
+    /// them on: total variation distance in rolls rather than in bits.
+    ///
+    /// The same deviation as `kl_fair` measures, in a unit somebody can picture.
+    /// Bits are the right thing to rank by and nobody has ever looked at a game
+    /// and thought in bits.
+    pub misplaced: f64,
     /// Pearson's statistic. Reported for provenance; its *asymptotic* p-value
     /// is not valid at this sample size, which is why the next field exists.
     pub chi_squared: f64,
@@ -118,14 +135,48 @@ pub fn analyse_game(rolls: &[u8], sims: u32, seed: u64) -> GameDice {
         }
     }
 
+    let kl_bits = kl_divergence_bits(&counts, &REFERENCE);
     GameDice {
         rolls: n,
         counts,
         sevens: counts[5],
-        kl_bits: kl_divergence_bits(&counts, &REFERENCE),
+        kl_bits,
+        kl_fair: fair_bits(kl_bits, n),
+        misplaced: misplaced_rolls(&counts, &expected),
         chi_squared: observed_stat,
         p_value: (at_least + 1) as f64 / (sims + 1) as f64,
     }
+}
+
+/// A plug-in KL estimate less its own small-sample bias, in bits.
+///
+/// The bias is `(k-1)/(2n)` nats for `k` outcomes and `n` draws, which at sixty
+/// rolls is a tenth of a bit: the same order as the deviations being ranked, and
+/// always in the direction of "this game was unlucky". Correcting it is the
+/// difference between a corpus ranked by dice and a corpus ranked by how short
+/// its games were.
+pub fn fair_bits(kl_bits: f64, rolls: u32) -> f64 {
+    if rolls == 0 {
+        return 0.0;
+    }
+    let bias = (OUTCOMES - 1) as f64 / (2.0 * f64::from(rolls) * std::f64::consts::LN_2);
+    (kl_bits - bias).max(0.0)
+}
+
+/// How many rolls landed on a different number than a fair spread would put
+/// them on.
+///
+/// Total variation distance times the number of rolls, which is exactly the
+/// count that would have to move to make the histogram fair. Half the sum of
+/// the absolute differences, because every roll moved is one too many somewhere
+/// and one too few somewhere else, and counting both ends counts it twice.
+pub fn misplaced_rolls(counts: &[u32; OUTCOMES], expected: &[f64; OUTCOMES]) -> f64 {
+    counts
+        .iter()
+        .zip(expected)
+        .map(|(o, e)| (f64::from(*o) - e).abs())
+        .sum::<f64>()
+        / 2.0
 }
 
 /// Recorded games to compare one game against.

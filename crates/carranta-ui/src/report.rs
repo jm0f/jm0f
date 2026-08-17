@@ -830,6 +830,141 @@ struct Curve {
     owed: Vec<f64>,
 }
 
+/// The gap between what the board owed a seat and what it paid them, split into
+/// the three things that make it (§10.2).
+///
+/// The deviation column on the production card is one number standing for three
+/// causes that mean completely different things:
+///
+/// ```text
+/// arrived = expected - robber - supply + dice
+/// ```
+///
+/// `dice` is chance. `robber` is other players choosing to sit on your hexes,
+/// which is a social outcome and not a random one. `supply` is a rules artefact
+/// (R-5.6): cards owed that the stack could not pay. Reported as one figure they
+/// tell a player nothing about which of the three happened to them, and the
+/// three have different answers: shrug, play differently, or nothing at all.
+///
+/// The engine has computed this from the first day and the page never showed it.
+/// It is exact rather than estimated, including the standard deviation the dice
+/// column is measured in: production on one roll has a known distribution over
+/// eleven outcomes, and rolls are independent, so the variances add even as the
+/// buildings change under them.
+///
+/// Rolls only, which is why `arrived` here is a card or two under the ledger's
+/// production row: the opening settlements paid before anybody rolled, and a
+/// payout with no dice in it belongs in neither the expectation nor the luck.
+fn deviation_card(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
+    let pr = &study.production;
+    if pr.rolls == 0 || seats == 0 {
+        return String::new();
+    }
+    let mut b = String::from("<section>");
+    b.push_str(&card_head(
+        "Deviation",
+        "What the board owed each seat over every roll, and what became of it \
+         on the way to their hand. The robber is somebody's decision, the \
+         supply is a rule, and only the dice column is chance, so the three are \
+         split apart rather than added into one number. Rolls only: the opening \
+         settlements paid before anybody rolled.",
+    ));
+    b.push_str(T_OPEN);
+    b.push_str("<thead>");
+    b.push_str(&head_row(&[
+        ("", ""),
+        (
+            "expected",
+            "Cards the pips through their buildings owed them over every roll of \
+             the game, at fair odds, with the robber ignored.",
+        ),
+        (
+            "robber",
+            "Cards that expectation lost to the robber sitting on their hexes \
+             (R-5.8). Not chance: this is what the rest of the table chose to do \
+             to them.",
+        ),
+        (
+            "supply",
+            "Cards a roll owed them that the stack could not pay (R-5.6). \
+             Usually nothing, and never anybody's fault.",
+        ),
+        (
+            "dice",
+            "What the dice did, given where the robber actually sat: the one \
+             genuinely random term. In brackets, the same figure in standard \
+             deviations, which is exact rather than estimated. Beyond two is a \
+             game worth remembering; beyond three is rare.",
+        ),
+        (
+            "arrived",
+            "Cards that reached their hand from a roll. The four columns to the \
+             left add across to it exactly, which is what makes them a \
+             decomposition rather than four numbers that happen to sit \
+             together.",
+        ),
+    ]));
+    b.push_str("</thead><tbody>");
+    let mut foot = [0.0f64; 5];
+    for p in 0..seats {
+        let d = pr.decompose(p);
+        for (slot, v) in foot.iter_mut().zip([
+            d.e_raw,
+            d.robber_cost,
+            d.supply_denial,
+            d.dice_luck,
+            d.actual,
+        ]) {
+            *slot += v;
+        }
+        b.push_str(&row(
+            &[
+                placed(p, &who[p], place[p]),
+                format!("{:.1}", d.e_raw),
+                cost(d.robber_cost),
+                cost(d.supply_denial),
+                format!(
+                    "<span class=\"{}\">{:+.1}</span> \
+                     <span class=\"worth\">({:+.1} sd)</span>",
+                    if d.dice_luck >= 0.0 { "up" } else { "down" },
+                    d.dice_luck,
+                    d.luck_z,
+                ),
+                format!("{:.0}", d.actual),
+            ],
+            false,
+        ));
+    }
+    b.push_str("</tbody>");
+    b.push_str(&totals(&[
+        "the board".to_string(),
+        format!("{:.1}", foot[0]),
+        cost(foot[1]),
+        cost(foot[2]),
+        format!(
+            "<span class=\"{}\">{:+.1}</span>",
+            if foot[3] >= 0.0 { "up" } else { "down" },
+            foot[3]
+        ),
+        format!("{:.0}", foot[4]),
+    ]));
+    b.push_str(T_CLOSE);
+    b.push_str("</section>");
+    b
+}
+
+/// A cost, written as the negative it is, and blank when there was none.
+///
+/// Nought robber cost happens on a board nobody blockaded, and a column of
+/// `-0.0` reads as a figure rather than as the nothing it is.
+fn cost(v: f64) -> String {
+    if v < 0.05 {
+        NONE.to_string()
+    } else {
+        format!("<span class=\"down\">-{v:.1}</span>")
+    }
+}
+
 /// The score, turn by turn, under the table that reports the end of it.
 ///
 /// A result table says who won and by how much; it cannot say whether the game
@@ -838,7 +973,7 @@ struct Curve {
 ///
 /// The true score, hidden victory point cards included, which is what the table
 /// above reports: the last point of every line is that seat's points column.
-fn score_plot(study: &Study, who: &[String], seats: usize) -> String {
+fn score_plot(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
     const W: f64 = 720.0;
     const H: f64 = 210.0;
     const PAD: f64 = 36.0;
@@ -905,23 +1040,44 @@ fn score_plot(study: &Study, who: &[String], seats: usize) -> String {
         b,
         "<text class=\"axis start unit\" x=\"{PAD}\" y=\"14\">points</text>"
     );
+    // Where the game ends, drawn, because "was it close" is read against the
+    // finish and not against the top of the paper.
+    let win = f64::from(carranta_core::state::WINNING_VP);
+    if win <= top {
+        let _ = write!(
+            b,
+            "<line class=\"finish\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{fy:.1}\" \
+             y2=\"{fy:.1}\"/><text class=\"axis mid finish-mark\" x=\"{tx:.1}\" \
+             y=\"{ty:.1}\">{win:.0} to win</text>",
+            r = W - PAD,
+            fy = y(win),
+            tx = W - PAD - 30.0,
+            ty = y(win) - 5.0,
+        );
+    }
     // A score holds until something changes it, so the line is a stair rather
     // than a slope: drawing it as a slope would show points arriving through a
     // turn nobody scored in.
+    //
+    // Two lines a seat: the true score solid, and the score the rest of the
+    // table could see dotted under it. They part the moment a victory point card
+    // is drawn and never rejoin, and the gap is what nobody else knew about.
     for p in 0..seats {
-        let mut path = String::new();
-        for i in 0..turns {
-            let v = f64::from(rows[i][p]);
-            if i > 0 {
-                let _ = write!(path, "{:.1},{:.1} ", x(i), y(f64::from(rows[i - 1][p])));
+        for (values, dash) in [(rows, ""), (&study.seen, " owed")] {
+            let mut path = String::new();
+            for i in 0..turns {
+                if i > 0 {
+                    let _ = write!(path, "{:.1},{:.1} ", x(i), y(f64::from(values[i - 1][p])));
+                }
+                let _ = write!(path, "{:.1},{:.1} ", x(i), y(f64::from(values[i][p])));
             }
-            let _ = write!(path, "{:.1},{:.1} ", x(i), y(v));
+            let _ = write!(
+                b,
+                "<polyline class=\"line k{n} f{p}{dash}\" points=\"{}\"/>",
+                path.trim(),
+                n = p + 1,
+            );
         }
-        let _ = write!(
-            b,
-            "<polyline class=\"line f{p}\" points=\"{}\"/>",
-            path.trim()
-        );
     }
     b.push_str("</svg>");
 
@@ -930,7 +1086,11 @@ fn score_plot(study: &Study, who: &[String], seats: usize) -> String {
     for i in 0..turns {
         let mut said = format!("Turn {}", i + 1);
         for p in 0..seats {
-            let _ = write!(said, "\n{}: {}", who[p], rows[i][p]);
+            let (all, open) = (rows[i][p], study.seen[i][p]);
+            let _ = write!(said, "\n{}: {all}", who[p]);
+            if all != open {
+                let _ = write!(said, ", {open} in the open");
+            }
         }
         let _ = write!(
             b,
@@ -944,7 +1104,9 @@ fn score_plot(study: &Study, who: &[String], seats: usize) -> String {
             lh = 100.0 * (base - PAD) / H,
         );
     }
-    b.push_str("</div></div></div>");
+    b.push_str("</div></div>");
+    b.push_str(&key(who, place, seats, "sc"));
+    b.push_str("</div>");
     b
 }
 
@@ -1038,8 +1200,9 @@ fn engine_card(study: &Study, who: &[String], place: &[Option<usize>], seats: us
         }
         let _ = write!(
             b,
-            "<polyline class=\"line f{p}\" points=\"{}\"/>",
-            path.trim()
+            "<polyline class=\"line k{n} f{p}\" points=\"{}\"/>",
+            path.trim(),
+            n = p + 1,
         );
     }
     b.push_str("</svg>");
@@ -1062,7 +1225,9 @@ fn engine_card(study: &Study, who: &[String], place: &[Option<usize>], seats: us
             lh = 100.0 * (base - PAD) / H,
         );
     }
-    b.push_str("</div></div></div>");
+    b.push_str("</div></div>");
+    b.push_str(&key(who, place, seats, "en"));
+    b.push_str("</div>");
 
     // The rating itself.
     b.push_str(T_OPEN);
@@ -1088,20 +1253,31 @@ fn engine_card(study: &Study, who: &[String], place: &[Option<usize>], seats: us
             "growth",
             "What the engine multiplied by each turn, fitted as a straight line \
              through the log of its size. Two percent a turn compounds to a \
-             doubling in thirty-five.",
+             doubling in thirty-five. Greyed where the shape column says the \
+             figure is not describing anything.",
         ),
         (
             "doubling",
             "Turns to double at that rate, if it held. Blank for an engine that \
-             never grew, since nothing flat doubles.",
+             never grew, and blank when the answer runs past the length of the \
+             game: a doubling five games away is not a fact about this one.",
+        ),
+        (
+            "shape",
+            "Which account of the engine the numbers actually support. \
+             Compounding is a rate multiplying, which is the thing worth having. \
+             Steady is climbing by the same amount every turn, which a growth \
+             percentage flatters. Flat is neither. Both accounts are fitted and \
+             the wider fit wins, because over the range one game covers the log \
+             of a straight ramp is very nearly straight too, and a good log fit \
+             on its own cannot tell the two apart.",
         ),
         (
             "fit",
-            "How straight that line was, from nought to one, and the honest half \
-             of the figure beside it. Compounding here is bounded at both ends: \
-             the opening is a standing start, the pieces run out, and the game \
-             stops at ten points. A low fit means the growth column is average \
-             steepness rather than a law the seat was obeying.",
+            "How straight the log line was, from nought to one, and the honest \
+             half of the growth figure. Compounding here is bounded at both \
+             ends: the opening is a standing start, the pieces run out, and the \
+             game stops at ten points.",
         ),
     ]));
     b.push_str("</thead><tbody>");
@@ -1119,12 +1295,30 @@ fn engine_card(study: &Study, who: &[String], place: &[Option<usize>], seats: us
                 },
                 format!(
                     "<span class=\"{}\">{:+.1}%</span>",
-                    if g.per_turn > 0.0 { "up" } else { "down" },
+                    // Greyed rather than hidden when the shape does not support
+                    // it: the figure is still what was fitted, and reading it as
+                    // a rate would be the mistake.
+                    match (g.believable(), g.per_turn > 0.0) {
+                        (false, _) => "worth",
+                        (true, true) => "up",
+                        (true, false) => "down",
+                    },
                     g.per_turn * 100.0
                 ),
                 match g.doubling {
-                    Some(t) => format!("{t:.0}"),
-                    None => NONE.to_string(),
+                    // A doubling time past the end of the game is arithmetic
+                    // rather than a finding: at a tenth of a percent a turn the
+                    // answer is six hundred turns, and the game lasted a
+                    // hundred and fifty.
+                    Some(t) if t <= g.turns as f64 => format!("{t:.0}"),
+                    _ => NONE.to_string(),
+                },
+                match g.shape() {
+                    crate::analysis::Shape::Compounding => {
+                        "<span class=\"up\">compounding</span>".to_string()
+                    }
+                    crate::analysis::Shape::Steady => "steady".to_string(),
+                    crate::analysis::Shape::Flat => "<span class=\"worth\">flat</span>".to_string(),
                 },
                 format!("{:.2}", g.fit),
             ],
@@ -1134,6 +1328,26 @@ fn engine_card(study: &Study, who: &[String], place: &[Option<usize>], seats: us
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
     b.push_str("</section>");
+    b
+}
+
+/// A chart's legend, which is also its control: a checkbox a seat, so clicking a
+/// name takes that seat's lines off the chart.
+///
+/// The same markup the production card uses, so the same positional rules switch
+/// the lines off. An `id` only has to be unique on the page; the rules count
+/// inputs rather than name them.
+fn key(who: &[String], place: &[Option<usize>], seats: usize, tag: &str) -> String {
+    let mut b = String::from("<div class=\"key\">");
+    for p in 0..seats {
+        let _ = write!(
+            b,
+            "<input type=\"checkbox\" id=\"{tag}-{p}\" checked>\
+             <label for=\"{tag}-{p}\"><span class=\"swatch f{p}\"></span>{name}</label>",
+            name = placed(p, &who[p], place[p]),
+        );
+    }
+    b.push_str("</div>");
     b
 }
 
@@ -1472,14 +1686,17 @@ fn trail(study: &Study, who: &[String], seats: usize) -> String {
             let (cov, size) = point(p, k);
             // The last quarter is where the economy ended, so it is the solid
             // one; the earlier ones are where it came from.
+            // Earlier quarters are fainter and smaller, so the path reads as a
+            // path without hovering it: the solid dot is where the economy
+            // ended and the trail behind it is where it came from.
             let _ = write!(
                 b,
-                "<circle class=\"stop f{p} k{shape}{}\" cx=\"{:.1}\" cy=\"{:.1}\" \
-                 r=\"{}\"/>",
+                "<circle class=\"stop f{p} q{k} k{shape}{}\" cx=\"{:.1}\" cy=\"{:.1}\" \
+                 r=\"{:.1}\"/>",
                 if k + 1 == QUARTERS { " last" } else { "" },
                 x(cov),
                 y(size),
-                if k + 1 == QUARTERS { 6 } else { 4 },
+                3.0 + k as f64,
             );
             tips.push_str(&over_tip(
                 shape,
@@ -2152,7 +2369,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(T_CLOSE);
     // Under the table, the same figures turn by turn: whether the game was ever
     // close is not in a final score, and it is the first thing anybody asks.
-    b.push_str(&score_plot(study, &who, seats));
+    b.push_str(&score_plot(study, &who, &place, seats));
     b.push_str("</section>");
 
     // ---- the turns ----------------------------------------------------------
@@ -2311,16 +2528,28 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(&head_row(&[
         ("", ""),
         (
-            "deviation",
-            "How far these rolls fell from a fair pair, as a KL divergence in \
-             bits. An effect size, which is the figure §10.1 asks for in place \
-             of a significance claim.",
+            "out of place",
+            "How many rolls landed on a different number than a fair spread \
+             would put them on: the count that would have to move to make the \
+             histogram fair. The same deviation as the bits beside it, in a unit \
+             somebody can picture, since nobody has ever looked at a game and \
+             thought in bits.",
         ),
         (
-            "percentile",
-            "How much of the recorded corpus these dice deviated further than. \
-             Blank until there is a second finished game to compare with, since \
-             a percentile of one game is not a percentile.",
+            "deviation",
+            "How far these rolls fell from a fair pair, as a KL divergence in \
+             bits, less the bias a finite sample puts into it. An effect size, \
+             which is the figure §10.1 asks for in place of a significance \
+             claim. Nought means these dice were indistinguishable from fair, \
+             which most games are.",
+        ),
+        (
+            "standing",
+            "Where this game sits among every finished game recorded here, most \
+             deviant first. A place rather than a percentile while the corpus is \
+             small, because a percentile of six games moves twenty points when a \
+             seventh is played. Blank until there is a second game to stand \
+             against.",
         ),
         (
             "games compared",
@@ -2331,14 +2560,23 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     b.push_str(&row(
         &[
             "these dice".to_string(),
-            format!("{:.3} bits", study.dice.kl_bits),
-            match study.dice_percentile {
+            format!(
+                "{:.0} <span class=\"worth\">of {}</span>",
+                study.dice.misplaced, study.dice.rolls
+            ),
+            format!("{:.3} bits", study.dice.kl_fair),
+            match (study.dice_rank, study.dice_percentile) {
+                // A rank is what the corpus knows while it is small. Past a
+                // score of games a percentile carries more than a place does.
+                (Some((rank, of)), _) if of < 20 => {
+                    format!("{} <span class=\"worth\">of {of}</span>", ordinal(rank))
+                }
                 // "More than 100% of five games" is not a figure anybody wants
                 // to read. At the top of the range the answer is all of them.
-                Some(p) if p >= 99.5 => "every one".to_string(),
-                Some(p) if p < 0.5 => "none".to_string(),
-                Some(p) => format!("{p:.0}%"),
-                None => NONE.to_string(),
+                (_, Some(p)) if p >= 99.5 => "every one".to_string(),
+                (_, Some(p)) if p < 0.5 => "none".to_string(),
+                (_, Some(p)) => format!("{p:.0}%"),
+                _ => NONE.to_string(),
             },
             study.corpus_games.to_string(),
         ],
@@ -2472,6 +2710,11 @@ pub fn page(saved: &Saved, study: &Study) -> String {
 
     // ---- production per turn -------------------------------------------------
     b.push_str(&curves(study, &who, &place, seats));
+
+    // ---- what became of the expectation --------------------------------------
+    // The deviation column above is three causes in one number, and the engine
+    // has always known which was which (§10.2).
+    b.push_str(&deviation_card(study, &who, &place, seats));
 
     // ---- the militia --------------------------------------------------------
     b.push_str("<section>");
@@ -3171,6 +3414,11 @@ tbody tr.sub:hover { background: transparent; }
 /* What was owed, drawn as a claim rather than as a fact. */
 .line.owed { stroke-dasharray: 4 4; stroke-width: 1.5; opacity: .75; }
 .grid { stroke: var(--border); stroke-width: 1; }
+/* Where the game ends. Drawn in the colour a win is written in, since it is the
+   same fact: ten points. */
+.finish { stroke: var(--primary); stroke-width: 1; opacity: .5;
+          stroke-dasharray: 6 4; }
+.finish-mark { fill: var(--primary); opacity: .85; font-weight: 500; }
 .axis { font: 400 11px Figtree, system-ui, sans-serif; fill: var(--muted-foreground);
         text-anchor: end; }
 .axis.start { text-anchor: start; }
@@ -3240,6 +3488,7 @@ tbody tr.sub:hover { background: transparent; }
    a seat is a path with a direction rather than a dot. */
 .trail { fill: none; stroke-width: 1.5; opacity: .55; stroke-dasharray: 3 3; }
 .stop { fill: var(--card); stroke-width: 2; }
+.stop.q0 { opacity: .45; } .stop.q1 { opacity: .6; } .stop.q2 { opacity: .8; }
 .stop.last { fill: currentColor; }
 .stop.f0 { fill: var(--card); color: var(--p0); }
 .stop.f1 { fill: var(--card); color: var(--p1); }
@@ -3343,16 +3592,38 @@ mod tests {
             "Ratings",
             "Dice",
             "Production",
+            "Deviation",
             "Militia",
             "Trades",
             "Development cards",
+            "Board",
             "Opening",
+            "Engine",
+            "Coverage",
         ] {
             assert!(html.contains(heading), "{heading} is a section");
         }
         // And the thing §10.1 forbids is not on it.
         assert!(!html.contains("p-value ="), "no significance claim");
         assert!(html.contains("bits"), "an effect size instead");
+    }
+
+    #[test]
+    fn the_deviation_columns_add_across_to_what_arrived() {
+        let g = played(4);
+        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        for p in 0..s.report.players as usize {
+            let d = s.production.decompose(p);
+            // The §10.2 identity, which is what makes the card a decomposition
+            // rather than four numbers printed beside each other.
+            assert!(d.residual().abs() < 1e-9, "seat {p}: {d:?}");
+        }
+        let html = page(&g, &s);
+        assert!(html.contains("sd)"), "the dice column carries its own z");
+        assert!(
+            html.contains("only the dice column is chance"),
+            "and the card says which column is which"
+        );
     }
 
     #[test]
@@ -3666,7 +3937,12 @@ mod tests {
         assert_eq!(s.dice_percentile, None);
         assert_eq!(s.corpus_games, 0);
         assert!(html.contains("<td>0</td>"), "no games compared");
-        assert!(html.contains("Blank until there is a second finished game"));
+        assert!(html.contains("Blank until there is a second game to stand"));
+        // The deviation is legible without knowing what a bit is.
+        assert!(
+            html.contains("out of place"),
+            "and in rolls as well as bits"
+        );
         // And the card that only exists once there is a corpus does not.
         assert!(!html.contains("Across every game here"));
     }

@@ -129,16 +129,24 @@ impl Corpus {
             dice::analyse_game(&game_rolls, sims, log.game_id)
         } else {
             let counts = dice::histogram(&game_rolls);
+            let rolls: u32 = counts.iter().sum();
+            let kl_bits = crate::stats::kl_divergence_bits(&counts, &dice::REFERENCE);
+            let expected: [f64; dice::OUTCOMES] =
+                core::array::from_fn(|i| dice::REFERENCE[i] * f64::from(rolls));
             dice::GameDice {
-                rolls: counts.iter().sum(),
+                rolls,
                 counts,
                 sevens: counts[5],
-                kl_bits: crate::stats::kl_divergence_bits(&counts, &dice::REFERENCE),
+                kl_bits,
+                kl_fair: dice::fair_bits(kl_bits, rolls),
+                misplaced: dice::misplaced_rolls(&counts, &expected),
                 chi_squared: 0.0,
                 p_value: 1.0,
             }
         };
-        self.dice_deviations.push(d.kl_bits);
+        // The bias-corrected figure, because this list is ranked across games of
+        // different lengths and the raw one would rank the short ones first.
+        self.dice_deviations.push(d.kl_fair);
         if sims > 0 {
             self.dice_p_values.push(d.p_value);
         }
