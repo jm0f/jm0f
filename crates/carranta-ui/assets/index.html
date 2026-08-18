@@ -164,6 +164,11 @@
       radial-gradient(820px 640px at -8% 58%, rgba(232, 84, 47, .09), transparent 58%),
       radial-gradient(760px 560px at 104% 92%, rgba(49, 175, 201, .09), transparent 60%),
       var(--bg);
+    /* Moot on this page, whose body is exactly the viewport and never scrolls,
+       and declared anyway: the two stylesheets are one ground under four
+       screens, and a rule that is only written on one side of it is a rule
+       waiting to matter on the day this page does scroll. */
+    background-attachment: fixed;
   }
 
   /* ---- grain, style.md §3.5 --------------------------------------------- */

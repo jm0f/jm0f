@@ -5105,6 +5105,10 @@ mod tests {
             assert!(PAGE.contains(wash), "and so is the board");
         }
         for sheet in [CSS, PAGE] {
+            assert!(
+                sheet.contains("background-attachment: fixed"),
+                "the pools are of the window, not of the document"
+            );
             assert!(sheet.contains("feTurbulence"), "the grain");
             assert!(
                 sheet.contains("background-size: 180px 180px"),
