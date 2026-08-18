@@ -971,19 +971,25 @@ second form somewhere else to drift out of step with this one.
 It is **a page rather than a sheet over one**. It used to be `position: fixed`
 across the whole window, which covered the header and made it carry a wordmark of
 its own inside the card. It sits in the flow under the application's header now
-(§14), the board's screen is hidden rather than lying behind it, and the card's
-title says what the screen is, **New game**, rather than repeating the mark above
-it. It paints no ground of its own either: a page does not need to paint over
-itself, and the wash and grain it used to lay down are the page's already.
+(§14), and the board's screen is hidden rather than lying behind it. It paints no
+ground of its own either: a page does not need to paint over itself, and the wash
+and grain it used to lay down are the page's already.
+
+**One control, and no title.** The card briefly carried a heading naming the
+screen and a second button leading home, and both were the page saying something
+it had already said: the header above it carries the mark, which goes home from
+every screen in the application, and there is only one card here to be the subject
+of a heading. What is left is the settings and the one button that acts on them.
+The sit-down card keeps its own title, because that one arrives over a board and
+has to say what it is interrupting.
 
 **The lobby is never opened over a board.** It used to appear over any board with
 no moves in it, because arriving at one meant the server had dealt it and nobody
 had said what they wanted. A table is asked for now, so opening the lobby on top
 of it would ask the same questions twice, and it has an address, so every way to
 reach it is a link to that address: the header, the end of a game, and the home
-page all point at `/lobby`. Its way out, **Back to the home page**, is a way out
-rather than the sheet closing, which the auto-opening version never needed because
-the only exit was to deal.
+page all point at `/lobby`. Its way out is the mark in the header, which the
+auto-opening version had no use for because the only exit was to deal.
 
 **Seats hold bots by default and can be left open.** Waiting for people was the
 default while the lobby was a side door reached from a board somebody was already
@@ -2085,8 +2091,9 @@ was the lobby inside a game you were already in, and a game you had finished was
 reachable only if you had kept the link. The wordmark carried a comment saying it
 opened the lobby because there was no home to go to.
 
-**Three cards, in the order somebody wants them.** New game, Tables, and what
-you have played.
+**One button, and then whatever there is.** The page opens with **New game**,
+centred, and three lines under it saying what is behind it; below that come the
+tables and the history, each present only when it has something in it.
 
 Like the report (§12), it is **a document rather than an application**: server
 rendered, and with **no script at all**. Nothing on it changes without a request,
@@ -2098,6 +2105,21 @@ honest makes this page work before anything has loaded.
   fields that decide what game it is, which was two forms asking overlapping
   halves of one question, and the half here was the smaller one. A page with no
   script can still start a game, because starting one is a link.
+
+  It is **not a card**. The card is the shape this page uses for a list of
+  things, and a list of one thing dressed as a list reads as the first of
+  several: the button sat inside a bordered box, under a heading and a
+  paragraph, third in the reading order of its own section, and the eye landed
+  on the word *New game* rather than on the thing to press. Now it is the first
+  and the largest thing on the page, and the only centred thing in the
+  application, because there is no column of text here to read from its left
+  edge.
+
+  **Three lines under it**, one clause each, in the order somebody meets them:
+  the game, then what the server keeps of it, then who else is at the table.
+  *Settle an island, trade, and strategize. Analyze your games with advanced
+  analytics. Play humans and the best AI in the world.* They replaced the lede,
+  which said one of the three at greater length.
 - **Tables** is somewhere to sit: every game in memory that has not been won.
   Your own are there whether or not you listed them, because you have to be able
   to get back to a game you dealt; other people's are there only if their host
@@ -2116,10 +2138,17 @@ honest makes this page work before anything has loaded.
   interesting while the store held six demo games and nothing else, and a browsable
   pile of other people's games on the front page as soon as it held anybody's.
 
+**An empty section is absent, not empty.** Both lists used to render a card
+saying they had nothing in them, which meant that the one visit where the page
+has the least to say and the most to prove, a first arrival at an idle server,
+was two empty boxes under the button: a server with nothing on it rather than a
+game to play. What is not there is not mentioned. The page starts as the one
+thing somebody came for and grows as they play.
+
 **Nothing in the header.** Every other page's header offers a way back here and
-a way to a new game. This page is the way back, and the card below is the way to a
-new game, said properly and where the eye lands; a header link to the page's own
-first button is furniture.
+a way to a new game. This page is the way back, and the button below is the way
+to a new game, said properly and where the eye lands; a header link to the page's
+own first button is furniture.
 
 **Whose games are whose is a cookie, and the page says so.** A key handed to a
 browser on its first request, sixteen characters, held for a year, `HttpOnly` and
@@ -2537,6 +2566,18 @@ ever. And a person who gave no name used to be stored as "Player 2", a name
 derived from a seat number, which became a lie the moment the seat moved: what an
 unnamed seat is called is now the page's to decide, from the seat it is actually
 in.
+
+**And a third thing, which was a stall.** A move is what runs the bots, and
+before the first move there has been no move. While seat nought was always the
+person that was invisible, because the person was the one being asked; after a
+draw a bot can hold it, and something has to play it. The poll is the only clock
+this process has, and it asked the wrong question: *is a bot mid-thought?* An
+instant table has nothing to wait for, so the answer is no by definition, and
+one dealt at instant pace whose draw put a bot at nought sat at turn one until
+somebody closed the tab. The poll now asks the position rather than the pace, so
+a table with a bot to move gets one whether or not the bot is being made to look
+like it is thinking. Pace still decides how fast the moves arrive; it no longer
+decides whether they arrive at all.
 
 ---
 

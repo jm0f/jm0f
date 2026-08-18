@@ -1674,34 +1674,49 @@ impl Session {
         self
     }
 
-    /// Whether a bot has a move to make and is still waiting to make it.
+    /// Whether the table has something for a bot to do right now.
     ///
-    /// The page uses this to poll quickly while the table is moving and slowly
-    /// while it is not, rather than either polling fast forever or letting a
-    /// paced move sit unseen until the next lazy tick.
-    pub fn bot_thinking(&self) -> bool {
-        if self.pace == Pace::Instant || matches!(self.state.phase, Phase::GameOver { .. }) {
+    /// Nothing to do with pace: this is about the position, not about how long
+    /// the answer is being held back for. An offer on the table is a bot about
+    /// to answer it, whoever's turn it is. Otherwise a bot is to move when the
+    /// seat deciding is not a person and nothing is being asked of anybody: the
+    /// same question with "a person" in place of "seat nought", so a table with
+    /// two people at it is not read as waiting on the bots through both of
+    /// their turns.
+    fn bots_to_move(&self) -> bool {
+        if matches!(self.state.phase, Phase::GameOver { .. }) {
             return false;
         }
-        // An offer on the table is a bot about to answer it, whoever's turn it
-        // is, so the page has to keep asking or the answer arrives whenever the
-        // idle poll next happens to land.
-        // A bot is mid-move when the seat deciding is not a person and nothing
-        // is being asked of anybody: the same question as before with "a person"
-        // in place of "seat nought", so a table with two people at it does not
-        // poll fast through both of their turns.
         self.state.offer_count > 0
             || (!self.is_person(self.state.decider()) && !self.waiting_on_a_person())
     }
 
-    /// Let a paced table move on when the wait for the next move is up.
+    /// Whether a bot has a move to make and is still waiting to make it.
+    ///
+    /// The page uses this to poll quickly while the table is moving and slowly
+    /// while it is not, rather than either polling fast forever or letting a
+    /// paced move sit unseen until the next lazy tick. An instant table has
+    /// nothing to wait for, so there is never anything mid-thought on one.
+    pub fn bot_thinking(&self) -> bool {
+        self.pace != Pace::Instant && self.bots_to_move()
+    }
+
+    /// Let a stalled table move on.
     ///
     /// Bots are advanced from the human's move, which is fine when they answer
     /// instantly and a deadlock when they do not: a paced bot breaks out of the
     /// loop to wait, and without this nothing ever asks it again. The server
     /// calls this on every poll, which is also the only clock this process has.
+    ///
+    /// Asked of the position rather than of the pace, which is the fix for a
+    /// table that never began. A move is what runs the bots, and before the
+    /// first one there has been no move: while seat nought was always the human
+    /// that was invisible, because the human was the one being asked. Once the
+    /// turn order is drawn a bot can hold seat nought, and on an instant table
+    /// `bot_thinking` is false by definition, so nothing ever asked it to play
+    /// and the table sat at turn one for ever.
     pub fn tick(&mut self) {
-        if self.bot_thinking() {
+        if self.bots_to_move() {
             self.finish_move();
         }
     }
@@ -2325,6 +2340,38 @@ mod tests {
                 .iter()
                 .all(|c| matches!(c.target(), Target::Vertex(_)))
         );
+    }
+
+    #[test]
+    fn a_table_whose_first_seat_is_a_bot_starts_itself() {
+        // A move is what runs the bots, and before the first move there has been
+        // no move. While seat nought was always the person that was invisible,
+        // because the person was the one being asked. Once the turn order is
+        // drawn a bot can hold seat nought, and then something has to play it:
+        // the poll, which is the only clock this process has.
+        //
+        // Instant is the case that broke. A paced table looked mid-thought and
+        // was ticked along; an instant one has nothing to wait for, so nothing
+        // ever asked it to play and it sat at turn one for ever.
+        // One poll is enough to get a paced table moving, and that is all this
+        // asserts of one: the rest of its opening arrives a beat at a time on
+        // later polls, which is the pacing working rather than a stall.
+        for pace in [Pace::Instant, Pace::Fast] {
+            let mut s = Session::new(4, 21, TradeMode::Full)
+                .with_pace(pace)
+                .with_people(&[2]);
+            assert!(!s.is_person(s.state().decider()), "a bot opens the setup");
+            assert!(s.choices_for(2).is_empty(), "and it is not seat two's turn");
+            s.tick();
+            assert!(s.started(), "the table played on its own: {pace:?}");
+        }
+        // An instant one runs the whole opening in that one poll and stops where
+        // it should: at the person, with something to answer.
+        let mut s = Session::new(4, 21, TradeMode::Full)
+            .with_pace(Pace::Instant)
+            .with_people(&[2]);
+        s.tick();
+        assert!(!s.choices_for(2).is_empty(), "and stopped at the person");
     }
 
     #[test]

@@ -1319,7 +1319,10 @@
      is right for people joining, though only bots sit behind them today. -->
 <div class="lobby" id="lobby" hidden>
   <div class="lobbyCard panel">
-    <h1 class="lobbyTitle">New game</h1>
+    <!-- No title. The header above says what this is, the card is the only thing
+         on the screen, and a heading naming it was the page telling you where
+         you are twice. The sit-down card keeps its own, because that one arrives
+         over a board and has to say what it is interrupting. -->
 
     <!-- Two columns, split by what the setting is about. The left one is the
          table: who is at it, who can find it, and which board it deals. The
@@ -1412,11 +1415,11 @@
       </div>
     </div>
 
+    <!-- One button, and it is the only thing this screen is for. The way out is
+         the mark in the header, which goes home from every page in the
+         application: a second control saying the same thing put two answers
+         under the one question the screen actually asks. -->
     <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">Deal the board</button>
-    <!-- A way out. The lobby used to open itself over every fresh board and the
-         only exit was to deal one; it is a page reached by a link now, so
-         changing your mind has somewhere to go. -->
-    <button id="lobbyBack" class="btn btn-block" style="margin-top:.6em">Back to the home page</button>
   </div>
 </div>
 
@@ -3730,11 +3733,6 @@ function openLobby() {
   renderLobby();
   document.getElementById('lobbyName').focus();
 }
-
-// Somewhere to go if you change your mind. The lobby is only ever reached at its
-// own address now, so there is nothing behind it to go back to and the way out is
-// the page every link to it came from.
-document.getElementById('lobbyBack').onclick = () => location.assign('/');
 
 document.getElementById('lobbyGame').oninput = (e) => {
   lobby.game = e.target.value;

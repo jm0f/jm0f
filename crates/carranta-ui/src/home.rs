@@ -65,12 +65,10 @@ pub fn page(open: &[Open], mine: &[Saved]) -> String {
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>Carranta</title>{ICON}\
          <style>{CSS}{EXTRA}</style></head><body>\
-         {head}<main>\
-         <p class=\"lede\">Settle an island, trade for what the dice would not \
-         give you, and be first to ten points.</p>",
+         {head}<main>",
         // No links. Every other page's header offers a way back to this one and a
-        // way to a new game; this page is the way back, and the card below is the
-        // way to a new game, said properly and in the place the eye lands. A
+        // way to a new game; this page is the way back, and the button below is
+        // the way to a new game, said properly and in the place the eye lands. A
         // header link to the page's own first button is furniture.
         head = crate::report::masthead_home(&[]),
     );
@@ -82,40 +80,44 @@ pub fn page(open: &[Open], mine: &[Saved]) -> String {
     b
 }
 
-/// The card that starts a game.
+/// What the page is for: one button, and three lines saying what is behind it.
 ///
-/// One button, and it does not deal anything: it leads to the lobby, which is
-/// where the settings live and always did. Two forms asking overlapping halves
-/// of the same question is one too many, and the half here was the smaller one.
+/// Not a card. The card is the shape this page uses for a list of things, and a
+/// list of one thing dressed as a list reads as the first of several: the button
+/// sat inside a bordered box below a heading and a paragraph, third in the
+/// reading order of its own section. Here it is the first thing on the page and
+/// the largest, which is what it is.
+///
+/// It does not deal anything either: it leads to the lobby, which is where the
+/// settings live and always did. Two forms asking overlapping halves of the same
+/// question is one too many, and the half here was the smaller one.
+///
+/// The three lines under it are the three reasons to press it, one clause each,
+/// in the order somebody meets them: the game, then what the server keeps of it,
+/// then who else is at the table. Long enough to say something and short enough
+/// to be read without deciding to read them.
 fn deal() -> String {
-    let mut b = String::from("<section>");
-    b.push_str(&head(
-        "New game",
-        "The lobby is where a table is set up: your name, how many seats, who \
-         holds each one, the clock, the board's seed, and whether the table is \
-         listed here for other people to find.",
-    ));
+    let mut b = String::from("<section class=\"hero\">");
     b.push_str(
-        "<p class=\"note\">You take a seat and the rest of the table is played \
-         by the house bot.</p>\
-         <a class=\"go\" href=\"/lobby\">Set up a game</a>",
+        "<a class=\"go big\" href=\"/lobby\">New game</a>\
+         <ul class=\"claims\">\
+         <li>Settle an island, trade, and strategize.</li>\
+         <li>Analyze your games with advanced analytics.</li>\
+         <li>Play humans and the best AI in the world.</li>\
+         </ul>",
     );
     b.push_str("</section>");
     b
 }
 
-/// The card that lists tables you could open.
+/// The card that lists tables you could open, or nothing at all.
+///
+/// Nothing at all is the point of the early return. A card saying "no tables"
+/// is a hole in the page on the one visit where the page has the least to say
+/// and the most to prove: somebody arriving at an idle server was shown two
+/// empty boxes under the button, which is a server with nothing on it rather
+/// than a game to play. What is not there is not mentioned.
 fn joining(open: &[Open]) -> String {
-    let mut b = String::from("<section>");
-    b.push_str(&head(
-        "Tables",
-        "Games this server is holding in memory. A listed table is one whose \
-         host chose to publish it; your own show up whether or not you did. One \
-         seat is a person and the rest are bots, so joining a table somebody \
-         else dealt puts you at the same seat as them for now: seats for a \
-         second person are the next thing to build, and this list is what they \
-         will be reached from.",
-    ));
     // Somewhere to sit, which a finished game is not: a game with a winner is
     // history, and history is the card below. Your own unlisted tables are here
     // because you have to be able to get back to a game you dealt, and so are
@@ -127,13 +129,16 @@ fn joining(open: &[Open]) -> String {
         .filter(|t| t.winner.is_none() && (t.mine || t.seated || t.public))
         .collect();
     if live.is_empty() {
-        b.push_str(
-            "<p class=\"note\">No tables. Set one up above and it will be here \
-             until somebody wins it.</p>",
-        );
-        b.push_str("</section>");
-        return b;
+        return String::new();
     }
+    let mut b = String::from("<section>");
+    b.push_str(&head(
+        "Tables",
+        "Games this server is holding in memory. A listed table is one whose \
+         host chose to publish it; your own show up whether or not you did. A \
+         table with a chair nobody is in says so, and that is the row to take \
+         if you came here to play somebody.",
+    ));
     b.push_str(TABLE_OPEN);
     b.push_str(
         "<thead><tr><th></th><th>seats</th><th>market</th><th>played</th>\
@@ -205,13 +210,20 @@ fn joining(open: &[Open]) -> String {
     b
 }
 
-/// The card that lists games already played.
+/// The card that lists games already played, or nothing at all.
 ///
 /// Only this visitor's. There was a second card under it listing every other game
 /// in the store, which was a browsable pile of other people's games on the front
 /// page: interesting while the store held six demo games and nothing else, and
 /// not a section anybody wants once it holds theirs.
+///
+/// Absent rather than empty, for the same reason the table list is: a first
+/// visit has no history and does not need to be told twice that it has none.
+/// The page grows as somebody plays, and starts as the one thing they came for.
 fn played(mine: &[Saved]) -> String {
+    if mine.is_empty() {
+        return String::new();
+    }
     let mut b = String::from("<section>");
     b.push_str(&head(
         "Your games",
@@ -221,14 +233,7 @@ fn played(mine: &[Saved]) -> String {
          as far as this page can tell. Accounts are what fix that, and the key is \
          stored in a way that lets an account claim it later.",
     ));
-    if mine.is_empty() {
-        b.push_str(
-            "<p class=\"note\">None yet. A game arrives here when it ends; until \
-             then it is a table above.</p>",
-        );
-    } else {
-        b.push_str(&list(mine));
-    }
+    b.push_str(&list(mine));
     b.push_str("</section>");
     b
 }
@@ -371,12 +376,23 @@ const TABLE_CLOSE: &str = "</table></div>";
 /// none of.
 const EXTRA: &str = "
 /* No h1 in the column: on this page the mark in the header *is* the heading, and
-   a second large `Carranta` under a small one is the logo twice. The lede opens
-   the page instead, which is what it was already doing. */
-.lede { margin-top: .5rem; }
-/* A note above the button it explains, rather than a footnote below it: there is
-   nothing above it here to be ruled off. */
-.card-head + .note + .go { margin-top: 1.25rem; }
+   a second large `Carranta` under a small one is the logo twice. The button
+   opens the page instead, because the button is what the page is for.
+
+   Centred, and the only centred thing in the application: everywhere else a
+   column of text is read from its left edge, and here there is no column to
+   read. Given air above it rather than sat under the header, so the eye lands
+   on it and not on the first thing that happens to be at the top. */
+.hero { border: 0; background: none; box-shadow: none; padding: 0;
+        margin: clamp(2.5rem, 9vh, 6rem) 0 clamp(1rem, 3vh, 2rem);
+        text-align: center; }
+/* Three lines, one clause each, under the thing they are reasons for. A list
+   because they are a list, without the bullets, which would make three items
+   out of what reads as three sentences. */
+.claims { list-style: none; margin: 1.75rem 0 0; padding: 0;
+          display: grid; gap: .55rem;
+          font: 400 clamp(15px, 1.4vw, 17px)/1.5 Figtree, system-ui, sans-serif;
+          color: var(--muted-foreground); }
 /* The one button on the page that starts something, in the colour the win is
    written in, and the same shape as a place badge so the family holds. */
 .go { display: inline-block; text-decoration: none; cursor: pointer;
@@ -387,6 +403,10 @@ const EXTRA: &str = "
 .go:hover { filter: brightness(1.06); }
 .go:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
 .go.small { font-size: 13px; padding: .35em .7em; }
+/* The one on the front page, sized as the thing the page is for. Everything is
+   in `em` off the font size, so one number moves the whole button. */
+.go.big { font-size: clamp(19px, 2.1vw, 25px); padding: .62em 1.5em;
+          border-radius: var(--radius-xl); }
 /* A second action beside a first is quieter: same shape, the page's own ink. */
 .go.quiet { background: var(--card); color: var(--muted-foreground);
             border-color: var(--border); }
@@ -452,27 +472,39 @@ mod tests {
     }
 
     #[test]
-    fn the_page_offers_the_three_things_it_is_for() {
+    fn the_page_leads_with_the_one_thing_it_is_for() {
         let html = page(&[], &[]);
         // One button, and it leads to the lobby rather than dealing anything: the
         // settings live there, and a second form here would be half of them.
-        assert!(html.contains("href=\"/lobby\""));
+        assert!(html.contains("href=\"/lobby\">New game</a>"));
         assert!(!html.contains("<form"), "the settings are the lobby's");
-        assert!(html.contains(">Tables</h2>"));
-        assert!(html.contains(">Your games</h2>"));
+        // Three lines under it, the three reasons to press it.
+        assert!(html.contains("Settle an island, trade, and strategize."));
+        assert!(html.contains("Analyze your games with advanced analytics."));
+        assert!(html.contains("Play humans and the best AI in the world."));
+        // The button is first: it is what the page is for, and anything above it
+        // is something read before the thing somebody came to do.
+        let button = html.find("href=\"/lobby\"").expect("the button");
+        let first_claim = html.find("Settle an island").expect("the claims");
+        assert!(button < first_claim, "the button, then the reasons");
         // The rule of this page and of the report: no script at all.
         assert!(!html.contains("<script"), "no script on the home page");
         assert!(!html.contains("onclick"));
     }
 
     #[test]
-    fn an_empty_server_says_so_rather_than_showing_nothing() {
+    fn an_empty_server_is_the_button_and_nothing_else() {
+        // Two cards saying they have nothing in them is a hole in the page on
+        // the one visit where it has the least to say. What is not there is not
+        // mentioned; the sections arrive as somebody plays.
         let html = page(&[], &[]);
-        assert!(html.contains("No tables."));
-        assert!(html.contains("None yet."));
-        // And there is nothing to say about other people's games when there are
-        // none, so that card is absent rather than empty.
+        assert!(!html.contains(">Tables</h2>"), "no empty table list");
+        assert!(!html.contains(">Your games</h2>"), "and no empty history");
         assert!(!html.contains("Also on this server"));
+        assert!(html.contains("New game"), "only the way to start one");
+        // And they arrive the moment there is something to put in them.
+        assert!(page(&[table("aaaa-aaaa-aaaa", true, false, None)], &[]).contains(">Tables</h2>"));
+        assert!(page(&[], &[game("bbbb-bbbb-bbbb", "Egon", Some(0))]).contains(">Your games</h2>"));
     }
 
     #[test]
@@ -556,7 +588,7 @@ mod tests {
             let over = table("dddd-dddd-dddd", true, mine, Some(1));
             let html = page(&[over], &[]);
             assert!(!html.contains("dddd-dddd-dddd"), "mine: {mine}");
-            assert!(html.contains("No tables."));
+            assert!(!html.contains(">Tables</h2>"), "and no list at all");
         }
     }
 

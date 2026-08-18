@@ -2402,23 +2402,33 @@ mod tests {
                 ),
             )
         };
-        // Whoever is to act can move, and the other cannot: which of them it is
-        // depends on the order the table drew. Read from one answer rather than
-        // two, because asking is also what lets the bots take their turns, and a
-        // version from before that is stale by the time it is used.
-        let acting = get(port, &format!("/{id}/api/state"), host);
-        let host_first = acting.contains("\"yourTurn\":true");
-        let v: u64 = acting
-            .rsplit("\"version\":")
-            .next()
-            .and_then(|t| t.split(&[',', '}'][..]).next())
-            .and_then(|t| t.trim().parse().ok())
-            .unwrap_or_default();
-        let (mover, idler) = if host_first {
-            (host, guest)
-        } else {
-            (guest, host)
-        };
+        // Whoever is to act can move, and the other cannot. Which of them it is
+        // depends on the order the table drew, and it may be neither for a beat
+        // while the bots take their turns, so this asks until a person is being
+        // asked. Version and turn come out of the same answer, because asking is
+        // also what lets the bots move and a version read before that is stale
+        // by the time it is used.
+        let mut mover = host;
+        let mut idler = guest;
+        let mut v = 0;
+        for _ in 0..40 {
+            let answer = get(port, &format!("/{id}/api/state"), host);
+            v = answer
+                .rsplit("\"version\":")
+                .next()
+                .and_then(|t| t.split(&[',', '}'][..]).next())
+                .and_then(|t| t.trim().parse().ok())
+                .unwrap_or_default();
+            if answer.contains("\"yourTurn\":true") {
+                (mover, idler) = (host, guest);
+                break;
+            }
+            let theirs = get(port, &format!("/{id}/api/state"), guest);
+            if theirs.contains("\"yourTurn\":true") {
+                (mover, idler) = (guest, host);
+                break;
+            }
+        }
         let idle = play(idler, v);
         assert!(
             idle.contains("no longer offered"),
@@ -2529,9 +2539,11 @@ mod tests {
         assert!(turned_away.contains("\"seat\":-1"), "{turned_away:.60}");
         assert!(get(port, &format!("/{id}/api/state"), late).contains("\"you\":-1"));
 
-        // A move, which is what makes this a game with a file: an unstarted
-        // table has nothing on disk, because nothing has happened at it.
-        assert!(server.store().load(&id).is_none(), "nothing written yet");
+        // A move, which is what makes this a game with a file. It may have
+        // happened already: giving the last chair to a bot settles the table,
+        // which draws the turn order (§18), and if a bot drew the opening seat
+        // then the next poll plays it. Either way what the rest of this needs is
+        // a game under way, so it is played only if nobody has.
         let (host_seat, early_seat) = (
             server.seated(&id, host).expect("seated"),
             server.seated(&id, early).expect("seated"),
@@ -2539,12 +2551,13 @@ mod tests {
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
-            assert!(!t.session.started(), "dealt, filled, and not yet played");
-            let acting = t.session.state().decider();
-            let v = t.session.version();
-            t.session
-                .act_as(acting, 0, v)
-                .expect("the opening is playable");
+            if !t.session.started() {
+                let acting = t.session.state().decider();
+                let v = t.session.version();
+                t.session
+                    .act_as(acting, 0, v)
+                    .expect("the opening is playable");
+            }
             assert!(t.session.started(), "and now it is under way");
         }
 
@@ -3262,7 +3275,9 @@ mod tests {
         let first = get(port, "/", "");
         assert!(first.starts_with("HTTP/1.1 200 OK"), "{first:.40}");
         assert!(first.contains("href=\"/lobby\""), "somewhere to start one");
-        assert!(first.contains("No tables."), "nothing dealt yet");
+        // An idle server is the button and nothing else: a card saying it holds
+        // no tables is a hole in the page rather than an answer.
+        assert!(!first.contains(">Tables</h2>"), "nothing dealt yet");
         let key = first
             .lines()
             .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
