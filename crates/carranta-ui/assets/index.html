@@ -1732,7 +1732,19 @@ function portGroups() {
 // Player colours as values rather than CSS variables, because a piece is
 // drawn in several tones of one colour and they have to be computed.
 const SEAT_HEX = ['#2CA7BA', '#3C2EB8', '#C065D2', '#C1256B'];
-const HUMAN_SEAT = 0;   // ghosts are always shown in your own colour
+// Whose colour a ghost is drawn in: the reader's own seat.
+//
+// It was the constant nought, from when the person at the keyboard was always
+// in the first chair, and the draw and the second seat both made that a lie:
+// somebody sitting in the fourth chair was shown teal ghosts and then put down
+// a crimson piece. The dock's build buttons were already right, and their own
+// comment promised that pressing one showed ghosts in the same colour, which
+// is the promise this keeps.
+//
+// Nought for a watcher, who has no colour of their own and is offered nothing
+// to place anyway: the value is only ever read while drawing a spot to build
+// on, and a watcher is drawn none.
+const ghostSeat = (v) => (v && v.you >= 0 ? v.you : 0);
 
 // ---- what you are about to build -------------------------------------------
 // One kind of piece at a time, or nothing. The board draws build spots only for
@@ -2097,7 +2109,7 @@ function draw() {
   // of its opacity. It answers "what goes here" without a legend, and a city
   // upgrade looks different from a new settlement, which a dot never did.
   const ghost = (name, x, y, k, anchor, choice) => {
-    const node = place(svg, name, x, y, k, HUMAN_SEAT, anchor);
+    const node = place(svg, name, x, y, k, ghostSeat(view), anchor);
     if (!node) return;
     node.setAttribute('opacity', 0.45);
     const g = el('g', { class: 'spot ghost' });
@@ -3176,7 +3188,7 @@ function renderBuilding(v, theirs, rolled) {
           : missing(v, COSTS[kind]) || `nowhere legal to put a ${kind}`));
     const b = document.createElement('button');
     b.className = 'act build' + (building === kind ? ' armed' : '');
-    b.innerHTML = buildGlyph(art, live ? SEAT_HEX[v.you] : BUILD_GREY);
+    b.innerHTML = buildGlyph(art, live ? SEAT_HEX[ghostSeat(v)] : BUILD_GREY);
     // The name is carried here rather than on the face, so it is on the button
     // for a screen reader and for anyone who does not recognise the drawing.
     b.setAttribute('aria-label', label);
