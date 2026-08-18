@@ -1108,6 +1108,10 @@
   body.atLobby .lobbyCount { margin-top: clamp(.4em, .9vh, .8em); }
   body.atLobby .lobby::after { display: none; }
   body.atLobby main { display: none; }
+  /* Before the first payload, neither: see the note on the body tag. The
+     header's links go too, because a lobby has none and letting them paint and
+     then disappear is the same flash in miniature. */
+  body.booting main, body.booting .lobby, body.booting .headLinks { display: none; }
   /* Nothing in the header but the mark. The report is about a game that has not
      happened, New game leads to the screen you are standing on, and leaving is
      what the mark does. */
@@ -1332,7 +1336,14 @@
   .answer.said-no { background: rgba(51, 38, 27, .07); }
 </style>
 </head>
-<body>
+<!-- Nothing but the header until the first payload says which screen this is.
+     The board's chrome is in the markup and the lobby is not, so a page that
+     showed what it had while it waited showed empty clocks, an empty bank, an
+     empty players panel and a dock, and then replaced the lot with a lobby: a
+     flash of the wrong screen on the way to every table. The class comes off in
+     the first render, and the header is static and correct either way, so what
+     is on screen meanwhile is a header on the page's own ground. -->
+<body class="booting">
 <!-- The wordmark, and nothing else. Whose turn it is, the turn number, the
      dice and the seed are all already on the screen where they belong; a
      second copy of them along the top was a status bar for a game that does
@@ -2435,6 +2446,8 @@ function render() {
   // it does not exist as far as the people gathering are concerned: the host
   // can still change the seed and the seats, and a board that kept redrawing
   // itself under the settings would say otherwise.
+  // The page knows which screen it is now, so it may show one.
+  document.body.classList.remove('booting');
   document.body.classList.toggle('atLobby', !!v.inLobby);
   document.getElementById('lobby').hidden = !v.inLobby;
   // The talk panel is one element with two homes: the lobby card while the
@@ -4995,6 +5008,7 @@ document.getElementById('leave').onclick = async () => {
 // bouncing to the home page, because a tab that silently became a different
 // screen is worse than one that tells you what happened to the last one.
 function tableGone() {
+  document.body.classList.remove('booting');
   document.getElementById('sitLead').textContent =
     'It was waiting for people and nobody came, so it was closed. Nothing was '
     + 'played at it.';
