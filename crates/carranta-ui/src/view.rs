@@ -58,8 +58,8 @@ pub fn render_with_note(session: &Session, note: &str) -> String {
 pub struct Room {
     /// Chairs nobody has taken, which is what stops the game starting.
     pub free: usize,
-    /// Whether the seat being rendered for is the one that dealt the table, and
-    /// therefore the one that may give up on the empty chairs.
+    /// Whether this reader may give the empty chairs to the bots: the host, or
+    /// whoever is sitting in seat nought if the host has gone.
     pub host: bool,
 }
 
@@ -263,7 +263,7 @@ fn render_room(session: &Session, seat: u8, room: Room, note: Option<&str>) -> S
     // Chairs nobody is in, and whether this reader is the one who may fill them
     // with bots and get on with it.
     j.int("seatsFree", room.free as i64);
-    j.bool("youDealt", room.host);
+    j.bool("youMayStart", room.host);
     j.bool("canPropose", session.can_propose_for(seat));
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);

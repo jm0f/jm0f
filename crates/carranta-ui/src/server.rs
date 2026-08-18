@@ -224,6 +224,13 @@ struct Table {
     by: String,
     /// Who is in each seat, in seat order. Seat nought is whoever dealt it.
     chairs: Vec<Chair>,
+    /// When each seat was last heard from, in seat order, Unix milliseconds.
+    ///
+    /// Beside the chairs rather than inside them, because it is not part of who
+    /// is in the seat: the chairs are what gets written down and this never is.
+    /// A restarted server has heard from nobody, which is the truth, and the
+    /// people come back the moment their pages ask again.
+    seen: Vec<u64>,
     /// When anything last happened here: dealt, asked about, sat down at,
     /// moved on. Unix milliseconds.
     ///
@@ -285,16 +292,90 @@ impl Table {
     }
 
     fn seat_the_people(&mut self) {
-        let people: Vec<u8> = self
+        let playing = self.playing();
+        self.session.seat_people(&playing);
+    }
+
+    /// Whether this seat's person has been heard from lately.
+    ///
+    /// The page asks for the state every three seconds, so absence means the tab
+    /// is closed rather than that somebody is thinking. Not stored anywhere: a
+    /// seat is present because somebody just asked about it, which is as direct
+    /// a measure of "are they there" as this server can take.
+    fn present(&self, seat: u8) -> bool {
+        matches!(self.chairs.get(seat as usize), Some(Chair::Taken { .. }))
+            && self
+                .seen
+                .get(seat as usize)
+                .is_some_and(|&t| now().saturating_sub(t) <= AWAY_LIMIT)
+    }
+
+    /// Which seats the table is actually waiting for.
+    ///
+    /// A seat whose person has gone is played by the house bot, so one person
+    /// leaving does not stop the game for everybody still at it. With one
+    /// exception, and it is the whole reason this is a method rather than a
+    /// filter: if *nobody* is there, the table waits for all of them. A game
+    /// that played itself to the end because everyone stepped out for ten
+    /// minutes would be a game destroyed rather than a game continued.
+    fn playing(&self) -> Vec<u8> {
+        let seated: Vec<u8> = self
             .chairs
             .iter()
             .enumerate()
             .filter(|(_, c)| matches!(c, Chair::Taken { .. }))
             .map(|(i, _)| i as u8)
             .collect();
-        self.session.seat_people(&people);
+        let here: Vec<u8> = seated
+            .iter()
+            .copied()
+            .filter(|&s| self.present(s))
+            .collect();
+        if here.is_empty() { seated } else { here }
+    }
+
+    /// Whether this visitor may give the empty chairs to the bots.
+    ///
+    /// Whoever dealt the table, or whoever is sitting in seat nought, which is
+    /// the same person until the host stands up before the game starts. Without
+    /// the second half their table would be left with nobody able to start it,
+    /// waiting on somebody who had already gone.
+    ///
+    /// Not any seat: the others are waiting for the same person the host is, and
+    /// one of them deciding for everybody would be a different rule.
+    fn may_start(&self, player: &str) -> bool {
+        if player.is_empty() {
+            return false;
+        }
+        self.by == player || self.chairs.first().and_then(Chair::key) == Some(player)
+    }
+
+    /// Note that this seat's person is still there.
+    ///
+    /// Returns whether it changed anything, so the caller can re-seat the table
+    /// only when somebody has actually arrived or gone rather than on every
+    /// poll.
+    fn saw(&mut self, seat: u8) -> bool {
+        let before = self.playing();
+        if let Some(t) = self.seen.get_mut(seat as usize) {
+            *t = now();
+        }
+        before != self.playing()
     }
 }
+
+/// How long a seat is held for somebody who has stopped asking about it.
+///
+/// The page polls every three seconds, so this is not a measure of how long
+/// somebody has been thinking: it is how long since their browser was there at
+/// all. Two minutes is long enough to survive a laptop lid and a lost network,
+/// and short enough that a table is not stopped for a quarter of an hour by
+/// somebody who has gone to lunch.
+///
+/// What it costs the person who went away is that the house bot plays their seat
+/// while they are gone. What it saves is everybody else's game, and the seat is
+/// still theirs to come back to.
+const AWAY_LIMIT: u64 = 2 * 60 * 1000;
 
 /// How long a table waiting for people is held before it is closed.
 ///
@@ -478,6 +559,7 @@ impl Server {
             dealt: now(),
             by: player.to_string(),
             chairs: chairs_from(query, seats, player, &name),
+            seen: vec![now(); seats as usize],
             stirred: now(),
         };
         table.seat_the_people();
@@ -591,6 +673,7 @@ impl Server {
                 // Nor is anybody sitting at it. It is finished by the time it
                 // gets here, so there is nothing to sit down to.
                 chairs: vec![Chair::Bot; self.seats as usize],
+                seen: vec![0; self.seats as usize],
                 stirred: now(),
             });
             self.keep(&id);
@@ -667,6 +750,10 @@ impl Server {
                     },
                 })
                 .collect(),
+            // Nobody has been heard from since the restart, which is the truth:
+            // the bots hold the seats until their people's pages ask again, and
+            // a table nobody comes back to waits rather than playing itself out.
+            seen: vec![0; saved.setup.chairs.len().max(saved.seats as usize)],
             // Taken up now, whenever it was dealt: what the waiting limit asks
             // is how long since anybody looked, and somebody just did.
             stirred: now(),
@@ -736,6 +823,54 @@ impl Server {
         Some(seat)
     }
 
+    /// Give up a seat.
+    ///
+    /// Two different things, and which one it is depends on whether the game has
+    /// begun. Before the first move nothing has happened yet, so the chair goes
+    /// back to the table for somebody else to take and the person is simply not
+    /// at it. After the first move the seat is part of a game in progress: it
+    /// stays theirs, the house bot plays it, and they can come back to it, which
+    /// is the same arrangement as somebody whose laptop shut.
+    ///
+    /// A seat cannot be handed to the table mid-game because the rules need every
+    /// seat to move and the other players are owed an opponent, not a gap.
+    fn leave(&self, id: &str, player: &str) -> bool {
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        let Some(seat) = table.seat_of(player) else {
+            return false;
+        };
+        let name = match &table.chairs[seat as usize] {
+            Chair::Taken { name, .. } => name.clone(),
+            _ => String::new(),
+        };
+        if table.session.started() {
+            // Heard from a long time ago, which is exactly what having gone is.
+            // The seat keeps their key, so coming back is the ordinary path and
+            // not a second kind of joining.
+            table.seen[seat as usize] = 0;
+            table
+                .session
+                .note_to_table(format!("{name} left the table"));
+        } else {
+            table.chairs[seat as usize] = Chair::Open;
+            table.session.name_seat(seat, "");
+            table
+                .session
+                .note_to_table(format!("{name} left, and the seat is free again"));
+        }
+        table.seat_the_people();
+        let started = table.session.started();
+        let saved = saved_of(table);
+        drop(tables);
+        if started {
+            let _ = self.store.save(&saved);
+        }
+        true
+    }
+
     /// Fill the open chairs with bots and let the game begin.
     ///
     /// The host's answer to nobody turning up. Without it a table dealt with a
@@ -749,7 +884,7 @@ impl Server {
         // Whoever dealt it. Not any seat: the other people at the table are
         // waiting for the same person the host is, and one of them deciding for
         // everybody is a different rule than the one this is.
-        if table.by != player || player.is_empty() || table.session.started() {
+        if !table.may_start(player) || table.session.started() {
             return false;
         }
         let short = table.waiting();
@@ -1036,6 +1171,18 @@ impl Server {
                 // under a name, through `api/sit`, because with the door closing
                 // at the first move it matters that you meant to come in.
                 let seat = self.seated(&id, &player);
+                // And that they are still there. A page asking is a person at
+                // it, which is the only evidence this server can have; the seat
+                // is re-let to the bots or taken back from them only when that
+                // answer actually changes.
+                if let Some(s) = seat {
+                    let mut tables = self.tables.lock().unwrap();
+                    if let Some(t) = tables.iter_mut().find(|t| t.id == id)
+                        && t.saw(s)
+                    {
+                        t.seat_the_people();
+                    }
+                }
                 let mut tables = self.tables.lock().unwrap();
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     // What is left is a finished game, which is read rather than
@@ -1058,7 +1205,7 @@ impl Server {
                 // about this table you can be too late for.
                 let room = view::Room {
                     free: t.waiting(),
-                    host: !player.is_empty() && t.by == player,
+                    host: t.may_start(&player),
                 };
                 let payload = match seat {
                     Some(s) => view::render_seated(&t.session, s, room),
@@ -1188,6 +1335,16 @@ impl Server {
                     payload.as_bytes(),
                     &set,
                 )
+            }
+            // Standing up from a seat.
+            ("POST", "/api/leave") => {
+                let id = game.clone().unwrap_or_default();
+                self.seat(&id);
+                self.stir(&id);
+                if !self.leave(&id, &player) {
+                    return respond(&mut stream, 403, "text/plain", b"no seat of yours");
+                }
+                respond(&mut stream, 200, "application/json", b"{}")
             }
             // The host giving up on the seats nobody took.
             ("POST", "/api/start") => {
@@ -1654,6 +1811,7 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            seen: vec![now(); 4],
             stirred: now(),
         });
         server.keep(&id);
@@ -1712,6 +1870,7 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            seen: vec![now(); 4],
             stirred: now(),
         });
         for _ in 0..6 {
@@ -1791,6 +1950,7 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            seen: vec![now(); 4],
             stirred: now(),
         });
         server.keep(&done);
@@ -2102,7 +2262,7 @@ mod tests {
         // Two chairs going, and the host's own name on theirs.
         let mine = get(port, &format!("/{id}/api/state"), host);
         assert!(mine.contains("\"seatsFree\":2"));
-        assert!(mine.contains("\"youDealt\":true"));
+        assert!(mine.contains("\"youMayStart\":true"));
         assert!(mine.contains("Marta"));
 
         // And nobody can move while a chair is empty: the first move shuts the
@@ -2284,6 +2444,138 @@ mod tests {
         assert_eq!(saved.setup.chairs[0].name, "Marta");
         assert_eq!(saved.setup.chairs[1].name, "Vidal");
         assert_eq!(saved.setup.chairs[3].who, "bot");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn leaving_before_the_start_gives_the_chair_back() {
+        let dir = std::env::temp_dir().join(format!("carranta-leave-early-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 61, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+
+        // Nothing has happened yet, so standing up leaves nothing behind: the
+        // chair is the table's again and somebody else may take it.
+        assert!(server.leave(&id, guest));
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert_eq!(t.chairs[1], Chair::Open);
+            assert_eq!(t.waiting(), 1, "and the table is short again");
+            assert_eq!(t.seat_of(guest), None, "they are not at it");
+            assert_eq!(t.session.name_of(1), "", "and their name went with them");
+        }
+        assert_eq!(server.sit(&id, "thirdkey00000000", "Nils"), Some(1));
+        assert!(
+            server.store().all().is_empty(),
+            "and none of it was written"
+        );
+
+        // The host standing up before the start hands the table on rather than
+        // stranding it: whoever is in seat nought may start it.
+        let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        assert!(server.leave(&id, host));
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert!(!t.may_start(guest), "not any seat");
+        }
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1), "still theirs");
+        // Somebody takes the empty seat nought, and it is theirs to start.
+        assert_eq!(server.sit(&id, "fourthkey0000000", "Aleks"), Some(0));
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert!(t.may_start("fourthkey0000000"), "seat nought may start it");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn leaving_a_game_under_way_hands_the_seat_to_a_bot_and_keeps_it_yours() {
+        let dir = std::env::temp_dir().join(format!("carranta-leave-late-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 62, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal(
+            "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
+            host,
+        );
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        assert!(server.start(&id, host));
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let v = t.session.version();
+            t.session.act_as(0, 0, v).expect("playable");
+            assert!(t.session.started());
+        }
+
+        // Mid-game, the seat cannot go back to the table: the others are owed an
+        // opponent rather than a gap. It stays theirs and the bot plays it.
+        assert!(server.leave(&id, guest));
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert_eq!(t.seat_of(guest), Some(1), "the seat is still theirs");
+            assert_eq!(t.waiting(), 0, "and is not on offer to anybody else");
+            assert!(!t.present(1), "but nobody is in it");
+            assert!(!t.session.is_person(1), "so the bots play it");
+            assert!(
+                t.session.is_person(0),
+                "and the person still there is asked"
+            );
+        }
+
+        // Coming back is the ordinary path: their next request is the evidence.
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            assert!(t.saw(1), "their return changes who is playing");
+            t.seat_the_people();
+            assert!(t.session.is_person(1), "and the seat is theirs again");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_table_nobody_is_at_waits_rather_than_playing_itself_out() {
+        // One person gone is a seat the bots cover. Everybody gone is a game
+        // that must not finish without them: a table that played itself to the
+        // end while the room was empty would be a game destroyed, not continued.
+        let dir = std::env::temp_dir().join(format!("carranta-empty-room-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 63, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal(
+            "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
+            host,
+        );
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        assert!(server.start(&id, host));
+
+        let mut tables = server.tables.lock().unwrap();
+        let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+        assert_eq!(t.playing(), vec![0, 1], "both here");
+
+        // One walks away.
+        t.seen[1] = 0;
+        assert_eq!(t.playing(), vec![0], "the other carries on");
+
+        // Then so does the other, and the table waits for both of them.
+        t.seen[0] = 0;
+        assert_eq!(
+            t.playing(),
+            vec![0, 1],
+            "an empty room waits rather than playing on"
+        );
+        drop(tables);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -2374,6 +2374,38 @@ whether they want one, because their one chance closes at the first move and a
 page that quietly let them watch would have spent it for them. What it asks is
 the only thing the table does not already know: what to call them.
 
+### Leaving
+
+**Standing up means two different things, and which one depends on the first
+move.** Before it, nothing has happened: the chair goes back to the table for
+somebody else to take, the name goes with it, and the table is short again.
+After it, the seat is part of a game in progress and cannot be handed back,
+because the other players are owed an opponent rather than a gap. It stays
+theirs, the house bot plays it, and they can come back to it. The control says
+which of the two it will do.
+
+**Going away without saying so is the same thing.** The page asks for the state
+every three seconds, so a seat that has not been heard from for two minutes has
+had its tab closed rather than its owner thinking. That seat is played by the
+house bot until its person's page asks again, at which point it is theirs once
+more: coming back is the ordinary path and not a second kind of joining.
+
+Presence is not stored anywhere and is never written down. A seat is present
+because somebody just asked about it, which is as direct a measure as this server
+can take, and a restarted server has correctly heard from nobody.
+
+**Except when nobody is there at all.** One person gone is a seat the bots cover
+so the game carries on for everybody still at it. Everybody gone is a game that
+must not finish without them, so the table waits for all of them. A game that
+played itself to the end while the room was empty would be a game destroyed
+rather than a game continued, and that is the whole reason this is a rule about
+the table rather than a filter over the seats.
+
+**The host standing up before the start hands the table on.** Whoever is sitting
+in seat nought may fill the empty chairs and begin, as well as whoever dealt it.
+Without that second half a host who changed their mind would leave their table
+waiting on somebody who had already gone, with nobody able to start it.
+
 **A table waiting for nobody is closed.** Twenty minutes after anybody last
 looked at it, an unstarted table holding an open chair stops existing. That is
 measured from the last request about it rather than from when it was dealt,
@@ -2432,10 +2464,6 @@ able to say whose turn it is.
 
 ### What is still missing
 
-- **Leaving.** A chair, once taken, is taken: there is no standing up, and no
-  timeout that gives a seat back to the table. A person who closes the tab
-  freezes their seat until the turn clock forfeits it, which the clock will do
-  move by move but not to the point of handing the seat back.
 
 ---
 

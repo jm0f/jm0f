@@ -5039,8 +5039,11 @@ mod tests {
         // link rather than a button on all of them.
         assert!(PAGE.contains("<a class=\"headLink\" href=\"/lobby\">New game</a>"));
         assert!(home.contains("href=\"/lobby\">New game</a>"));
+        // A New game button would be that: the lobby has an address, so offering
+        // it as anything but a link is a second way to reach one place. Leaving
+        // a seat is a button because it is not somewhere to go.
         assert!(
-            !PAGE.contains("<button class=\"headLink\""),
+            !PAGE.contains(">New game</button>"),
             "one label, one destination, one kind of element"
         );
         // And the rules the two stylesheets share are named the same in both.
