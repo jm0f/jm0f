@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Carranta</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%23E8542F'/%3E%3C/svg%3E">
 <style>
   /* Two faces, served from the binary, style.md §6.
      Fraunces for display: a variable serif with an optical-size axis and a
@@ -1361,7 +1361,7 @@
       </div>
 
       <div class="field">
-        <span class="fieldLabel" data-tip="Seats wait for people by default. The server cannot seat a person yet, so an open seat is played by a bot until it can." tabindex="0">Who is playing</span>
+        <span class="fieldLabel" data-tip="Every seat is a bot or a person. Hold a seat for a person and the table waits for them: deal it, then send whoever you are inviting the link on the next screen. Seats still going are also listed on the home page if the table is public." tabindex="0">Who is playing</span>
         <div class="seatSlots" id="lobbySlots"></div>
       </div>
 
@@ -3565,13 +3565,22 @@ function renderLobby() {
       control = document.createElement('button');
       control.type = 'button';
       control.className = 'btn-ghost btn-sm';
-      control.textContent = 'Remove';
+      // What arrives, not what leaves. This said **Remove**, which is true of
+      // the bot and silent about the point: holding a seat is the whole of how
+      // somebody else gets into your game, and nothing on this screen said so.
+      // Somebody asked how to invite a friend while looking straight at the
+      // button that does it.
+      control.textContent = 'Hold for a person';
+      control.dataset.tip = 'Keeps this seat empty for somebody to take. '
+        + 'The table waits for them, and the link to send is on the next screen.';
       control.onclick = () => { lobby.roles[i] = 'open'; renderLobby(); };
     } else {
       control = document.createElement('button');
       control.type = 'button';
       control.className = 'btn-primary btn-sm';
       control.textContent = 'Add bot';
+      control.dataset.tip = 'Gives this seat to the house bot, so the table is '
+        + 'full and starts as soon as it is dealt.';
       control.onclick = () => { lobby.roles[i] = 'bot'; renderLobby(); };
     }
     // The loader stands in for the dot until the seat is taken.

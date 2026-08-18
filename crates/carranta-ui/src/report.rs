@@ -93,7 +93,7 @@ fn row(cells: &[String], head: bool) -> String {
 /// sides rather than a file to keep in step with itself.
 pub(crate) const ICON: &str = "<link rel=\"icon\" href=\"data:image/svg+xml,\
      %3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E\
-     %3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%237ba85c'/%3E\
+     %3Cpolygon points='16,2 29,9 29,23 16,30 3,23 3,9' fill='%23E8542F'/%3E\
      %3C/svg%3E\">";
 
 pub(crate) fn masthead(context: &str, links: &[(&str, &str)]) -> String {

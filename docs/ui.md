@@ -997,6 +997,14 @@ sitting at; it is the front door now, and a front door whose one button refuses
 until you have pressed three others is the wrong first screen. So the default is
 bots, and opening a chair is a click a seat.
 
+**The button says what arrives, not what leaves.** It read **Remove**, which is
+true of the bot and silent about the point: holding a seat is the whole of how
+somebody else gets into your game, and nothing on the screen said so. Somebody
+asked how to invite a friend while looking straight at the control that does it.
+It reads **Hold for a person** now, against **Add bot** for the way back, and the
+field's own tooltip carries the sentence the screen was missing: hold a seat, deal
+the table, and send whoever you are inviting the link on the next screen.
+
 **Dealing with an open seat used to be refused** and is not any more, because the
 refusal was about the server rather than about the table: it could not seat a
 person, so dealing would have quietly turned a waiting seat into a bot. It can
@@ -1008,11 +1016,6 @@ browser between games, which is the closest thing to being remembered without
 an account. When there are accounts the name comes from one and the field goes
 away; the server already stores it per session rather than the page holding it,
 so that swap does not move anything.
-
-**The board cannot be dealt with an empty seat.** Dealing would quietly turn a
-waiting seat into a bot, which is a decision about who is playing being made by
-a mis-click. The button says how many seats are short and refuses until they
-are filled or the table drops to three.
 
 **There is no share link on this screen, and there were two mistakes in getting
 there.** It was first labelled *Invite* and pointed at `/join?table=<seed>&seats=N`,
@@ -2330,6 +2333,12 @@ font's metrics.
 Both server-rendered pages carry the tab icon the board always had. They had none,
 so every visit to the home page or a report asked for `/favicon.ico`, got a 404,
 and left it in the console.
+
+**The icon is a hex in the brand orange**, `#E8542F`, the colour the mark and
+every primary button are written in. It was a green left over from a palette this
+design has not used for a long time: the one mark of the application that appears
+outside it, in a row of tabs beside other people's, and it was the one thing not
+wearing the colour.
 
 ---
 
