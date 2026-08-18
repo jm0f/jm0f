@@ -73,6 +73,14 @@ pub struct Room {
     pub you_ready: bool,
     pub ready: usize,
     pub of: usize,
+    /// Whether this reader is the table's host: the one whose settings these
+    /// are, and the only one who may change them while the table is a room.
+    pub host: bool,
+    /// The chat setting the table was dealt with, as a setting. `chat_open` is
+    /// whether talking works right now, which a room always allows; the host's
+    /// form needs the underlying answer, or editing it would show the room's
+    /// yes instead of the table's.
+    pub chat_setting: bool,
     /// Which seats are held for somebody who has not arrived, and which have
     /// said they are ready: one bit per seat, seat nought lowest.
     ///
@@ -320,6 +328,10 @@ fn render_room(
             .map(i64::from),
     );
     j.bool("youAreReady", room.you_ready);
+    j.bool("youAreHost", room.host);
+    j.bool("chatSetting", room.chat_setting);
+    j.str("pace", session.pace().name());
+    j.bool("public", session.is_public());
     j.int("ready", room.ready as i64);
     j.int("readyOf", room.of as i64);
     j.bool("chat", room.chat_open);

@@ -983,13 +983,27 @@ of a heading. What is left is the settings and the one button that acts on them.
 The sit-down card keeps its own title, because that one arrives over a board and
 has to say what it is interrupting.
 
-**The lobby is never opened over a board.** It used to appear over any board with
-no moves in it, because arriving at one meant the server had dealt it and nobody
-had said what they wanted. A table is asked for now, so opening the lobby on top
-of it would ask the same questions twice, and it has an address, so every way to
-reach it is a link to that address: the header, the end of a game, and the home
-page all point at `/lobby`. Its way out is the mark in the header, which the
-auto-opening version had no use for because the only exit was to deal.
+**Opening the lobby is creating one.** `GET /lobby` mints a fresh table and
+redirects to its address; the lobby screen is that table, rendered while it is
+still a room. The header, the end of a game and the home page all point at
+`/lobby`, and each arrival there is a new table of your own. The screen used to
+be a local form whose settings existed only in your tab until you dealt, which
+was exactly why it could not be shared: there was nothing behind it to share.
+Now the address bar is the invitation from the first moment the screen exists.
+
+**The form is the table, not a draft of one.** Every control writes through
+`api/setup`: the server deals the game again from the new description, keeps the
+people and the conversation, and clears the ready marks, because what everybody
+agreed to is not what the table is any more. The host's edits reach every open
+copy of the lobby on the next poll. Guests see the same controls, disabled, with
+a tip saying whose they are: agreeing to be ready means knowing to what. Only
+the host edits, because a stranger at a public table rewriting the clock is the
+obvious grief.
+
+**The board is not shown while the table is a room.** The host can still change
+the seed and the seats, and a board redrawing itself under the settings would
+claim they were already spent. The game exists server-side from the start, which
+is what gives the room an address; the people see it when it starts.
 
 **Every seat behind the dealer is a bot, and there is nothing to decide about
 one.** The seat rows carry no controls: your row is where your name is typed, and
@@ -1021,8 +1035,8 @@ an account. When there are accounts the name comes from one and the field goes
 away; the server already stores it per session rather than the page holding it,
 so that swap does not move anything.
 
-**There is no share link on this screen, and there were two mistakes in getting
-there.** It was first labelled *Invite* and pointed at `/join?table=<seed>&seats=N`,
+**The Invite field is this page's own address, and there were three designs
+before it.** It was first labelled *Invite* and pointed at `/join?table=<seed>&seats=N`,
 which the server had never implemented: the one control on the screen promising
 to bring somebody else in returned a 404, under a tooltip admitting the joining
 was not live.
@@ -1041,12 +1055,14 @@ kind of failure: everything worked, and the thing they were trying to do did not
 happen. The lobby's own **Deal, and hold a seat** tooltip was by then telling them
 to share it.
 
-**A table cannot be linked to before it exists, and this screen runs before it
-exists.** So the invitation is not here. It is on the next screen, in the waiting
-room (§16), where it is the table's own address, and whoever opens it is offered
-one of the seats being held. What the lobby still carries is the **seed**, which
-is the other half of what the field was being read as: the way to take a board
-from one game to another.
+**A table could not be linked to before it existed, and the screen used to run
+before it existed.** So for a while the invitation lived on the next screen, in
+a waiting room under the dealt board, and somebody asked, from the lobby, for
+the third time, how to invite a friend. That was the design failing the
+question, not the person: the place people gather has to be the place the link
+is. It is now. Opening `/lobby` creates the table, so the screen has an address
+from its first frame, and the **Invite** field shows it. The **seed** stays too,
+as the way to carry a board from one game to another.
 
 The `/join` route stays. A table described by URL is a real thing to want and
 already-sent links still work; it is simply not what an invitation is. Everything
@@ -2507,13 +2523,15 @@ is takeable right up to the first move, so the press that says the table is who
 it is now would not mean anything if a stranger could walk into one of those
 chairs a moment later.
 
-**The room shows who is here, by name.** A line of seats in seat order and in the
-seats' own colours, the same way the players panel reads once the game starts:
-each one is a person under their name, a chair still being kept, or a house bot,
-and each person carries whether they have said they are ready. Before this the
-room said how many chairs were empty, which is not what somebody waiting wants to
-know. What they want is who has turned up and who they are still waiting for, and
-both of those are names.
+**The room is the lobby screen, and it shows who is here by name.** The seat
+rows are the roster: each one is a person under their name, or a house bot
+marked *plays until somebody joins*, and each person carries whether they have
+said they are ready. Your own row is where your name is typed, and retyping it
+is how it is changed. The ready button sits at the card's foot with the count
+beside it, because your own button says what you did and *2 of 3 ready* says
+what everybody else did, which is the thing you are actually wondering. Table
+talk sits in the card too, the same panel the game uses, moved in while the
+table is a room and moved back when it starts: one element, one history.
 
 **A room always talks**, whatever the table was dealt with. Gathering people is a
 conversation by nature: *two minutes*, *start without me*, *who else is coming*.
@@ -2569,20 +2587,11 @@ played itself to the end while the room was empty would be a game destroyed
 rather than a game continued, and that is the whole reason this is a rule about
 the table rather than a filter over the seats.
 
-**The invitation lives in the room**, because that is the first moment
-there is a table to invite anybody to. It is the table's own address, shown in a
-field and not only behind a Copy button: this is the one control on the screen
-whose whole job is to be pasted somewhere else, and reading it back is how
-somebody knows they are sending the right table. It is also how it gets passed on
-where the clipboard is not available, which is every phone handing a link to
-somebody sitting in the same room. Opening it puts the reader at that table with
-a seat offered (§16, above); it is not the lobby's old share link, which dealt
-them a table of their own (§8).
-
-**The host standing up before the start hands the table on.** Whoever is sitting
-in seat nought may fill the empty chairs and begin, as well as whoever dealt it.
-Without that second half a host who changed their mind would leave their table
-waiting on somebody who had already gone, with nobody able to start it.
+**The invitation is the lobby's own address** (§8): the table exists from the
+moment the screen does, so the link works from the first frame. It is shown in a
+field and not only behind a Copy button, because reading it back is how somebody
+knows they are sending the right table, and a visible address is how it gets
+passed on where the clipboard is not available.
 
 **A table waiting for nobody is closed.** Twenty minutes after anybody last
 looked at it, an unstarted table holding an open chair stops existing. That is

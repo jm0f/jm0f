@@ -976,32 +976,19 @@
      of them would be true. */
   .bigClock.quiet { color: var(--dim); }
 
-  /* A table waiting for people. The board is dealt and visible behind it, which
-     is the point: what you are waiting for is a game you can already see. */
-  .waitingRoom { grid-column: 2; grid-row: 2; display: flex; align-items: center;
-                 justify-content: center; gap: 1em; flex-wrap: wrap; }
-  .waitingRoom { flex-direction: column; gap: .7em; }
-  .waitingRoom .said { color: var(--dim); }
-  /* Who is here, in seat order and in the seats' own colours, so the room reads
-     the same way the players panel does once the game starts. Wrapping rather
-     than a fixed row: four names of unknown length in a column of unknown
-     width. */
-  .roomSeats { display: flex; flex-wrap: wrap; justify-content: center;
-               gap: .5em 1.4em; }
-  .roomSeat { display: flex; align-items: center; gap: .45em; }
-  .roomWho { font-weight: 600; }
-  .roomWho.empty { font-weight: 400; color: var(--dim); }
-  /* Said quietly, because it is a state and not a control: the only button in
-     the room is your own. */
+  /* Ready is a state, said quietly beside a name rather than as a control:
+     the only button is your own, at the foot of the card. */
   .roomReady { font-size: .85em; color: var(--dim); }
   .roomReady.is { color: var(--accent); }
-  .roomInvite, .roomGo { display: flex; align-items: center;
-                         justify-content: center; gap: .7em; flex-wrap: wrap; }
-  .roomKept { font-size: .9em; opacity: .8; }
-  /* Wide enough to read a whole address without scrolling it, and allowed to
-     give way before the words either side of it do. */
-  .waitLink { flex: 0 1 26em; min-width: 12em; }
-  body:not(.waiting) .waitingRoom { display: none; }
+  /* The count under the ready button: what everybody else did, which is the
+     thing you are actually sitting there wondering about. */
+  .lobbyCount { margin: .8em 0 0; text-align: center; color: var(--dim);
+                font-size: .92em; }
+  /* The talk panel while it lives in the lobby card: bounded, so a chatty
+     room scrolls its talk rather than pushing the ready button off screen. */
+  .lobbyTalk { margin-top: 1.4em; }
+  .lobbyTalk .talkPanel { max-height: 300px; border: 1px solid var(--border);
+                          border-radius: var(--radius-lg); }
   body.waiting .dockCell { display: none; }
 
   /* ---- table talk ------------------------------------------------------- */
@@ -1389,8 +1376,16 @@
       </div>
 
       <div class="field">
-        <span class="fieldLabel" data-tip="Every seat behind you is a bot, and every bot’s chair goes to whoever arrives before the game starts. To invite friends: deal, then send them the link on the next screen. The game begins when everybody at the table says they are ready." tabindex="0">Who is playing</span>
+        <span class="fieldLabel" data-tip="Every seat behind you is a bot, and every bot’s chair goes to whoever opens this lobby before the game starts. The game begins when everybody here says they are ready." tabindex="0">Who is playing</span>
         <div class="seatSlots" id="lobbySlots"></div>
+      </div>
+
+      <div class="field">
+        <span class="fieldLabel" data-tip="This lobby’s own address. Send it to your friends: whoever opens it lands here, takes a bot’s seat, and plays. It works from the moment this screen exists, because this screen is the table." tabindex="0">Invite</span>
+        <div class="copyRow">
+          <input id="lobbyLink" class="seed" type="text" readonly onfocus="this.select()">
+          <button id="copyLobbyLink" class="btn-secondary" type="button">Copy</button>
+        </div>
       </div>
 
       <div class="field" id="paceField">
@@ -1473,11 +1468,17 @@
       </div>
     </div>
 
-    <!-- One button, and it is the only thing this screen is for. The way out is
-         the mark in the header, which goes home from every page in the
-         application: a second control saying the same thing put two answers
-         under the one question the screen actually asks. -->
-    <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">Deal the board</button>
+    <!-- Table talk sits in the lobby too: gathering people is a conversation
+         by nature, and the panel is the same element the game uses, moved here
+         while the table is a room and moved back when it starts. One panel,
+         one history, two homes. -->
+    <div class="lobbyTalk" id="lobbyTalk"></div>
+
+    <!-- One button, and it is everybody's: the room ends when the room agrees.
+         The way out is the mark in the header, which goes home from every page
+         in the application. -->
+    <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">I am ready</button>
+    <p class="lobbyCount" id="lobbyCount"></p>
   </div>
 </div>
 
@@ -1588,9 +1589,6 @@
   <!-- Everything you do, in one place under the board, docs/ui.md §3. A card
        the width of the board, not a bar the width of the window: your hand and
        the actions belong to the game, and the frame should say so. -->
-  <!-- What sits where the dock does while the table is still filling up. -->
-  <div class="waitingRoom panel" id="waitingRoom" hidden></div>
-
   <div class="dockCell">
   <footer class="dock panel">
   <!-- The composer, docked to the dock: same width, same height, sitting
@@ -2392,7 +2390,24 @@ function render() {
       : 'The seat goes back to the table for somebody else.';
   }
   offerASeat(v);
-  renderWaiting(v);
+  // The lobby, or the game: one payload, two screens, and `inLobby` is the
+  // switch. While the table is a room the board is not shown at all, because
+  // it does not exist as far as the people gathering are concerned: the host
+  // can still change the seed and the seats, and a board that kept redrawing
+  // itself under the settings would say otherwise.
+  document.body.classList.toggle('atLobby', !!v.inLobby);
+  document.getElementById('lobby').hidden = !v.inLobby;
+  // The talk panel is one element with two homes: the lobby card while the
+  // table is a room, its own column once the game is on. Moved rather than
+  // duplicated, so there is one history and one input whoever is talking.
+  {
+    const talk = document.getElementById('talkPanel');
+    const inCard = document.getElementById('lobbyTalk');
+    const inGame = document.querySelector('aside.col.right');
+    const home = v.inLobby ? inCard : inGame;
+    if (talk.parentElement !== home) home.appendChild(talk);
+  }
+  if (v.inLobby) renderLobby(v);
   renderTalk(v);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.title = `${turn} · Carranta`;
@@ -3352,6 +3367,8 @@ const PACE_NOTE = {
 
 // Nothing here works yet, and none of it can until there are accounts: a table
 // of strangers needs someone to hold responsible for what is said on it.
+// What a guest's disabled control says instead of its usual tip.
+const GUEST_NOTE = 'The host sets this. You will see changes as they make them.';
 const CHAT_NOTE = {
   none: 'Nobody can talk.',
   text: 'Typed messages between the people at the table. Not kept: the record '
@@ -3360,31 +3377,10 @@ const CHAT_NOTE = {
   both: 'Typed and spoken together. Needs accounts.',
 };
 
-const lobby = {
-  seats: 4,
-  game: '',
-  // Bots, and only bots: there is no other thing a seat behind the dealer can
-  // be. Kept as a list because the query format carries one and `/join` links
-  // in the wild still say `open`, which the server now reads as a bot too.
-  roles: ['you', 'bot', 'bot', 'bot'],
-  visibility: 'private',
-  pace: 'fast',
-  chat: 'none',
-  bank: 'exact',
-  clockKind: 'turn',
-  clockInc: INCREMENT_DEFAULT,
-  log: true,
-  clockSecs: 60,
-  // A seven is an interruption, not a turn, so it gets its own short window.
-  discardSecs: DEFAULT_DISCARD_SECS,
-  seed: '',
-  name: '',
-};
+// There is no local lobby state any more. The form is the table's settings,
+// read from the payload and written back through `api/setup`: the server is
+// the draft, which is what lets two people look at the same one.
 
-// The engine seeds from a u64, so the seed should span one. Six digits was a
-// millionth of the space and would have collided across a few thousand games;
-// this draws the whole range from the platform's cryptographic source, which
-// is also the only one here that is not a weak PRNG in its own right.
 // The waiting loader, built once per row.
 //
 // Delay per cell is (column + distance from the middle row) x 90ms. Written
@@ -3425,48 +3421,8 @@ function shimmer(text) {
   return el;
 }
 
-function freshSeed() {
-  const b = new Uint32Array(2);
-  crypto.getRandomValues(b);
-  const n = (BigInt(b[0]) << 32n) | BigInt(b[1]);
-  const s = n.toString(36).padStart(13, '0');
-  return `${s.slice(0, 5)}-${s.slice(5, 9)}-${s.slice(9, 13)}`;
-}
-// What this table is, as a query. Dealing posts it to `api/new`; the same query
-// as a GET on `/join` deals one too, which is how a table can be described by
-// URL rather than set up by hand.
-//
-// It was also the lobby's share link, and that was the mistake: a description
-// deals a table, so two people opening the same description are at two tables.
-// An invitation names one, and a table has a name only after it exists, so the
-// invitation is the table's own address and lives on the board's screen.
-//
-// The host's name is not in it, and was not even when this was shared. Whoever
-// opens it is not them, and a link that filled their name in with somebody
-// else's would be the wrong kind of helpful.
-function tableQuery(withName) {
-  const q = new URLSearchParams({
-    seats: String(lobby.seats),
-    // Humans trade freely or it is not the same game. Not a setting.
-    mode: 'full',
-    clock: lobby.clockKind,
-    clockSecs: String(lobby.clockKind === 'off' ? 0 : lobby.clockSecs),
-    discardSecs: String(lobby.discardSecs),
-    clockInc: String(lobby.clockKind === 'chess' ? lobby.clockInc : 0),
-    log: lobby.log ? 'on' : 'off',
-    visibility: lobby.visibility,
-    game: lobby.game,
-    pace: lobby.pace,
-    bank: lobby.bank,
-    chat: lobby.chat,
-    // Who is in each seat, in seat order. Seat nought is whoever deals it,
-    // whatever this says, so the word there is only ever read as a placeholder.
-    roles: lobby.roles.join(','),
-  });
-  if (withName) q.set('name', lobby.name);
-  if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
-  return q;
-}
+// The seed is the server's to mint: it deals the table before this page ever
+// loads, and `api/setup` is how a different one is asked for.
 // The address of a table that exists, which is the only kind of link that can
 // seat anybody. Not built from the settings: a description of a table deals a
 // new one, and two people following the same description end up at two tables.
@@ -3511,7 +3467,6 @@ function tabs(host, options, current, pick) {
     b.onclick = () => {
       if (o.disabled) return;
       pick(value);
-      renderLobby();
     };
     buttons.push(b);
     host.appendChild(b);
@@ -3535,60 +3490,74 @@ function tabs(host, options, current, pick) {
   };
 }
 
-function renderLobby() {
-  tabs(document.getElementById('lobbySeats'),
-    // Four first because four is the default, and the default belongs where
-    // the eye lands rather than where the counting starts.
-    [[4, '4 players', { tip: MODE_NOTE[4] }],
-     [3, '3 players', { tip: MODE_NOTE[3] }]], lobby.seats, v => {
-      lobby.seats = v;
-      lobby.roles = lobby.roles.slice(0, v);
-      // A seat added by going from three players to four gets the same answer
-      // the others start with, so widening the table does not disable dealing.
-      while (lobby.roles.length < v) lobby.roles.push('bot');
-    });
+// The lobby, rendered from the server rather than from a local draft.
+//
+// It used to be a form with defaults that dealt a table on submit, which meant
+// the screen a link could bring you to did not exist until the settings were
+// already spent. Now the table exists the moment the screen does, the address
+// bar is the invitation, and this form *is* the table: the host edits and
+// everybody gathered sees the current answer on the next poll; a guest sees the
+// same controls, disabled, because saying you are ready means knowing to what.
+function renderLobby(v) {
+  const mine = !!v.youAreHost;
+  const lock = (o) => (mine ? o : { ...o, disabled: true, tip: GUEST_NOTE });
+  const send = (over) => pushSetup(over);
 
+  tabs(document.getElementById('lobbySeats'),
+    [[4, '4 players', lock({ tip: MODE_NOTE[4] })],
+     [3, '3 players', lock({ tip: MODE_NOTE[3] })]], v.players,
+    (n) => send({ seats: n }));
+
+  // ---- who is here, live ---------------------------------------------------
+  // The same roster the game's own screens use: seat colours, names, and who
+  // has said they are ready. Not a plan for a table, the table.
   const slots = document.getElementById('lobbySlots');
+  const typing = document.activeElement && document.activeElement.id === 'lobbyName'
+    ? document.activeElement.value
+    : null;
   slots.textContent = '';
-  for (let i = 0; i < lobby.seats; i++) {
+  const people = new Set(v.people || []);
+  const readySet = new Set(v.readySeats || []);
+  for (let i = 0; i < v.players; i++) {
     const row = document.createElement('div');
     row.className = 'seatSlot';
     const dot = document.createElement('span');
     dot.className = 'dot';
     dot.style.background = COLOURS[i];
-    // Your own seat is where your name is typed. It is the row that already
-    // says who is sitting there, so a separate field asking the same thing was
-    // asking twice.
     let name;
-    if (i === 0) {
+    if (i === v.you) {
       name = document.createElement('input');
       name.className = 'seed slotName';
       name.id = 'lobbyName';
       name.maxLength = 24;
       name.placeholder = 'your name';
       name.autocomplete = 'nickname';
-      name.value = lobby.name;
-      name.oninput = (e) => { lobby.name = e.target.value; };
+      name.value = typing !== null ? typing
+        : (v.youName || localStorage.getItem('carranta.name') || '');
+      // Sitting again under a new name is how a name is changed: the server
+      // has one path for "this is me, called this".
+      name.onchange = (e) => {
+        const said = e.target.value.trim();
+        if (!said) return;
+        localStorage.setItem('carranta.name', said);
+        fetch(api('/api/sit'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ name: said }),
+        }).then(() => load(api('/api/state')));
+      };
     } else {
       name = document.createElement('span');
-      name.className = 'slotName';
-      name.textContent = BOT_NAMES[i];
+      name.className = 'slotName' + (people.has(i) ? '' : ' empty');
+      name.textContent = people.has(i) ? seatName(v, i) : BOT_NAMES[i];
     }
-    // No control on a seat, because there is no decision to make about one.
-    // There used to be two states behind the dealer, a bot and a chair held
-    // empty for a person, with a button toggling between them; and holding a
-    // chair was how you invited somebody, which nobody could guess from a
-    // button. Every seat is a bot now, every bot's chair goes to whoever
-    // arrives before the game starts, and the game starts when the people at
-    // the table say they are ready. A seat that blocked the game was strictly
-    // worse than a bot's, which plays until somebody better turns up.
     const cell = document.createElement('span');
     cell.className = 'seatCtl';
-    if (i === 0) {
-      const you = document.createElement('span');
-      you.className = 'tag tag-secondary';
-      you.textContent = 'you';
-      cell.appendChild(you);
+    if (people.has(i)) {
+      const state = document.createElement('span');
+      state.className = 'roomReady' + (readySet.has(i) ? ' is' : '');
+      state.textContent = readySet.has(i) ? 'ready' : 'not ready';
+      cell.appendChild(state);
     } else {
       const until = document.createElement('span');
       until.className = 'slotUntil';
@@ -3598,79 +3567,99 @@ function renderLobby() {
     row.append(dot, name, cell);
     slots.appendChild(row);
   }
+  if (typing !== null) {
+    const back = document.getElementById('lobbyName');
+    back.focus();
+    back.setSelectionRange(back.value.length, back.value.length);
+  }
 
-  // Always live: every table has bots in it until people take their chairs.
   tabs(document.getElementById('lobbyPace'),
-    [['slow', 'slow', { tip: PACE_NOTE.slow }],
-     ['fast', 'fast', { tip: PACE_NOTE.fast }],
-     ['instant', 'instant', { tip: PACE_NOTE.instant }]],
-    lobby.pace, v => { lobby.pace = v; });
+    [['slow', 'slow', lock({ tip: PACE_NOTE.slow })],
+     ['fast', 'fast', lock({ tip: PACE_NOTE.fast })],
+     ['instant', 'instant', lock({ tip: PACE_NOTE.instant })]],
+    v.pace, (n) => send({ pace: n }));
 
   tabs(document.getElementById('lobbyBank'),
-    [['exact', 'exact count', { tip: BANK_NOTE.exact }],
-     ['rough', 'stack size', { tip: BANK_NOTE.rough }]],
-    lobby.bank, v => { lobby.bank = v; });
-
-  tabs(document.getElementById('lobbyChat'),
-    [['none', 'no chat', { tip: CHAT_NOTE.none }],
-     ['text', 'text', { tip: CHAT_NOTE.text }],
-     ['voice', 'voice', { disabled: true, tip: CHAT_NOTE.voice }],
-     ['both', 'text & voice', { disabled: true, tip: CHAT_NOTE.both }]],
-    lobby.chat, v => { lobby.chat = v; });
+    [['exact', 'exact count', lock({ tip: BANK_NOTE.exact })],
+     ['rough', 'stack size', lock({ tip: BANK_NOTE.rough })]],
+    v.bankExact ? 'exact' : 'rough', (n) => send({ bank: n }));
 
   tabs(document.getElementById('lobbyVisibility'),
-    [['private', 'private', { tip: VISIBILITY_NOTE.private }],
-     // Selectable now that there is a page for a listed table to appear on.
-     ['public', 'public', { tip: VISIBILITY_NOTE.public }]],
-    lobby.visibility, v => { lobby.visibility = v; });
+    [['private', 'private', lock({ tip: VISIBILITY_NOTE.private })],
+     ['public', 'public', lock({ tip: VISIBILITY_NOTE.public })]],
+    v.public ? 'public' : 'private', (n) => send({ visibility: n }));
+
+  tabs(document.getElementById('lobbyChat'),
+    [['none', 'no chat', lock({ tip: CHAT_NOTE.none })],
+     ['text', 'text', lock({ tip: CHAT_NOTE.text })],
+     ['voice', 'voice', { disabled: true, tip: CHAT_NOTE.voice }],
+     ['both', 'text & voice', { disabled: true, tip: CHAT_NOTE.voice }]],
+    v.chatSetting ? 'text' : 'none', (n) => send({ chat: n }));
 
   tabs(document.getElementById('lobbyClockKind'),
-    CLOCK_KINDS.map(([v, label]) => [v, label, { tip: CLOCK_NOTE[v] }]),
-    lobby.clockKind,
-    v => {
-      lobby.clockKind = v;
-      // Each kind measures a different thing, so carrying the number across
-      // would turn "60 seconds a turn" into a one-minute chess bank.
-      if (v !== 'off') lobby.clockSecs = CLOCK_DEFAULT[v];
-      if (v === 'chess') lobby.clockInc = INCREMENT_DEFAULT;
-    });
-  // Greyed rather than removed when there is no clock: a field that vanishes
-  // takes the layout with it, and the number is still worth seeing.
-  const off = lobby.clockKind === 'off';
+    [['turn', 'per turn', lock({ tip: CLOCK_NOTE.turn })],
+     ['chess', 'chess clock', lock({ tip: CLOCK_NOTE.chess })],
+     ['off', 'no clock', lock({ tip: CLOCK_NOTE.off })]],
+    v.clock, (n) => send({
+      clock: n,
+      // A kind needs an allowance the moment it is chosen, or the change is a
+      // clock of zero seconds, which is untimed with extra steps.
+      clockSecs: v.clockSecs || (n === 'chess' ? 300 : 60),
+    }));
+
+  const off = v.clock === 'off';
   const secs = document.getElementById('lobbyClockSecs');
-  secs.value = lobby.clockSecs;
-  secs.disabled = off;
+  if (document.activeElement !== secs) secs.value = v.clockSecs;
+  secs.disabled = off || !mine;
   document.getElementById('lobbyClockSecsRow').classList.toggle('spent', off);
   document.getElementById('lobbyClockSecsUnit').textContent =
-    lobby.clockKind === 'chess' ? 'seconds each' : 'seconds';
-  // The increment is what makes a chess clock a chess clock, so it only exists
-  // when one is chosen.
-  document.getElementById('lobbyClockIncRow').hidden = lobby.clockKind !== 'chess';
-  document.getElementById('lobbyClockInc').value = lobby.clockInc;
-  // Always live, whatever the turn clock is doing: the discard has its own
-  // allowance and a table can want that bounded while the turns are not.
-  document.getElementById('lobbyDiscard').value = lobby.discardSecs;
+    v.clock === 'chess' ? 'seconds each' : 'seconds';
+  document.getElementById('lobbyClockIncRow').hidden = v.clock !== 'chess';
+  const inc = document.getElementById('lobbyClockInc');
+  if (document.activeElement !== inc) inc.value = v.clockIncrement;
+  inc.disabled = !mine;
+  const disc = document.getElementById('lobbyDiscard');
+  if (document.activeElement !== disc) disc.value = v.discardSecs;
+  disc.disabled = !mine;
 
   tabs(document.getElementById('lobbyLog'),
-    [[true, 'keep a log', { tip: LOG_NOTE.on }],
-     [false, 'play from memory', { tip: LOG_NOTE.off }]], lobby.log,
-    v => { lobby.log = v; });
+    [[true, 'keep a log', lock({ tip: LOG_NOTE.on })],
+     [false, 'play from memory', lock({ tip: LOG_NOTE.off })]],
+    v.logShown, (n) => send({ log: n ? 'on' : 'off' }));
 
-  // Set rather than rebuilt, so a name being typed survives the re-render that
-  // adding a bot or changing the clock causes.
   const game = document.getElementById('lobbyGame');
-  if (game.value !== lobby.game) game.value = lobby.game;
-  document.getElementById('lobbySeed').value = lobby.seed;
+  if (document.activeElement !== game && game.value !== (v.game || '')) {
+    game.value = v.game || '';
+  }
+  game.disabled = !mine;
+  const seed = document.getElementById('lobbySeed');
+  if (document.activeElement !== seed) seed.value = v.seed;
+  seed.disabled = !mine;
 
-  // One label, always. It used to count held seats into its own text, and there
-  // is nothing to count any more: every table is dealt the same way, into a room
-  // where friends can take the bots' chairs until everybody says they are ready.
+  // ---- the way in and the way out -----------------------------------------
+  // The invitation is this page's own address: the table exists, so the link
+  // does, from the first moment there is a screen to share.
+  const link = document.getElementById('lobbyLink');
+  if (document.activeElement !== link) link.value = inviteLink();
+  // And the one button. Yours to press whoever you are: the room ends when
+  // everybody in it agrees, which for one person is just starting.
   const start = document.getElementById('lobbyStart');
-  start.removeAttribute('aria-disabled');
-  start.setAttribute('data-tip',
-    'Deals the board into a room. Friends can take the bots\u2019 chairs from '
-    + 'the link on the next screen until everybody there is ready.');
-  start.textContent = 'Deal the board';
+  const count = document.getElementById('lobbyCount');
+  if (v.you >= 0) {
+    start.hidden = false;
+    start.className = v.youAreReady ? 'btn btn-block' : 'btn-primary btn-block';
+    start.textContent = v.youAreReady ? 'Not ready'
+      : (v.readyOf === 1 ? 'Start the game' : 'I am ready');
+    start.onclick = () => fetch(api('/api/ready'), { method: 'POST' })
+      .then(() => load(api('/api/state')));
+  } else {
+    start.hidden = true;
+  }
+  count.textContent = v.readyOf === 0
+    ? 'Waiting for somebody to sit down.'
+    : v.readyOf === 1 && v.you >= 0
+      ? 'Bots play the other seats. Anybody with the link can take one until you start.'
+      : `${v.ready} of ${v.readyOf} ready. The game starts when everybody is.`;
 }
 
 // What has been said, and whether this reader may say anything.
@@ -3740,174 +3729,54 @@ document.getElementById('talkSay').onsubmit = async (e) => {
   load(api('/api/state'));
 };
 
-// The room: who is here, who is ready, and the link that brings the rest.
-//
-// It replaced a line of text and one person's button. The button belonged to the
-// host, which meant a host who closed their tab left everybody else sitting in a
-// room nothing could start; and the line said how many chairs were empty, which
-// is not what somebody waiting wants to know. What they want is who has turned
-// up and who they are still waiting for, and both of those are names.
-function renderWaiting(v) {
-  const box = document.getElementById('waitingRoom');
-  // Shown for as long as the table is a room, which is not the same as "a chair
-  // is still empty". A table whose held chairs have all filled is still a room
-  // until the people in it are ready, and that is exactly the window a third and
-  // fourth friend arrive in: hiding this at zero took the link away at the
-  // moment it was most needed.
-  box.hidden = !v.inLobby;
-  if (box.hidden) return;
-  box.textContent = '';
-
-  // ---- who is here -------------------------------------------------------
-  const held = new Set(v.heldSeats || []);
-  const ready = new Set(v.readySeats || []);
-  const people = new Set(v.people || []);
-  const list = document.createElement('div');
-  list.className = 'roomSeats';
-  for (let i = 0; i < v.players; i++) {
-    const row = document.createElement('span');
-    row.className = 'roomSeat';
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dot.style.background = COLOURS[i];
-    const who = document.createElement('span');
-    who.className = 'roomWho';
-    if (people.has(i)) {
-      who.textContent = i === v.you ? 'You' : seatName(v, i);
-    } else if (held.has(i)) {
-      // A chair being kept is the one thing on this panel that is still
-      // happening, so it gets the loader the lobby uses for the same state.
-      who.className += ' empty';
-      who.appendChild(shimmer('waiting'));
-    } else {
-      who.className += ' empty';
-      who.textContent = BOT_NAMES[i];
-    }
-    row.append(dot, who);
-    // Only people can be ready. A bot is not waiting for anything and a chair
-    // nobody is in has nobody to answer for it.
-    if (people.has(i)) {
-      const tick = document.createElement('span');
-      tick.className = 'roomReady' + (ready.has(i) ? ' is' : '');
-      tick.textContent = ready.has(i) ? 'ready' : 'not ready';
-      row.appendChild(tick);
-    }
-    list.appendChild(row);
-  }
-  box.appendChild(list);
-
-  // ---- the link ----------------------------------------------------------
-  // Shown, not just copyable. A button that says it copied something is asking
-  // to be trusted about what it copied, and this is the one control on the
-  // screen whose whole job is to be pasted somewhere else: reading it back is
-  // how somebody knows they are sending the right table. It is also the way to
-  // pass it on when the clipboard is not available, which is every phone
-  // handing a link to somebody sitting next to them.
-  const invite = document.createElement('div');
-  invite.className = 'roomInvite';
-  const say = document.createElement('span');
-  say.className = 'said';
-  say.textContent = v.seatsTakeable === 0
-    ? 'Every seat is taken.'
-    : v.seatsTakeable === 1
-      ? 'One more can join:'
-      : `${v.seatsTakeable} more can join:`;
-  invite.appendChild(say);
-  if (v.seatsTakeable > 0) {
-    const link = document.createElement('input');
-    link.className = 'seed waitLink';
-    link.type = 'text';
-    link.readOnly = true;
-    link.value = inviteLink();
-    link.onfocus = () => link.select();
-    invite.appendChild(link);
-    const copy = document.createElement('button');
-    copy.className = 'btn';
-    copy.textContent = 'Copy link';
-    copy.onclick = (e) => copyInto(e.target, inviteLink());
-    invite.appendChild(copy);
-  }
-  box.appendChild(invite);
-
-  // ---- the way out -------------------------------------------------------
-  // Everybody's, not the host's. The room ends when the room agrees, which is a
-  // condition the people in it can satisfy between them however the tabs fall.
-  const go = document.createElement('div');
-  go.className = 'roomGo';
-  if (v.you >= 0) {
-    const btn = document.createElement('button');
-    btn.className = v.youAreReady ? 'btn' : 'btn-primary';
-    // Alone at the table, your ready is the start, so the button says the
-    // thing it will actually do.
-    btn.textContent = v.youAreReady ? 'Not ready'
-      : (v.readyOf === 1 ? 'Start the game' : 'I am ready');
-    btn.onclick = () => fetch(api('/api/ready'), { method: 'POST' })
-      .then(() => load(api('/api/state')));
-    go.appendChild(btn);
-  }
-  const count = document.createElement('span');
-  count.className = 'said';
-  // The count is the whole point of a ready check: your own button says what you
-  // did, and this says what everybody else did, which is the thing you are
-  // actually sitting there wondering about.
-  count.textContent = v.readyOf === 0
-    ? 'Waiting for somebody to sit down.'
-    : v.readyOf === 1 && v.you >= 0
-      ? 'Bots play the other seats. Anybody with the link can take one until you start.'
-      : `${v.ready} of ${v.readyOf} ready. The game starts when everybody is.`;
-  go.appendChild(count);
-  box.appendChild(go);
-
-  // Said out loud, because it is the one thing about this screen that happens
-  // without anybody pressing anything.
-  const kept = document.createElement('span');
-  kept.className = 'said roomKept';
-  kept.textContent = 'The room is held while somebody has it open, and for twenty minutes after.';
-  box.appendChild(kept);
+// The lobby's own inputs commit on change rather than on keystroke: each one
+// sends the whole description and the server deals the table again from it, so
+// a keystroke apiece would re-deal the board eight times while a name is typed.
+// `pushSetup` reads the last payload for everything the change does not name.
+function pushSetup(over) {
+  const v = view;
+  if (!v) return;
+  const q = new URLSearchParams({
+    seats: String(v.players),
+    game: v.game || '',
+    seed: v.seed,
+    clock: v.clock,
+    clockSecs: String(v.clockSecs),
+    clockInc: String(v.clockIncrement),
+    discardSecs: String(v.discardSecs),
+    pace: v.pace,
+    bank: v.bankExact ? 'exact' : 'rough',
+    log: v.logShown ? 'on' : 'off',
+    visibility: v.public ? 'public' : 'private',
+    chat: v.chatSetting ? 'text' : 'none',
+  });
+  for (const [k, val] of Object.entries(over)) q.set(k, String(val));
+  fetch(api('/api/setup'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: q,
+  }).then(() => load(api('/api/state')));
 }
 
-function openLobby() {
-  // A new seed every time the lobby opens, so there is nothing to press to get
-  // one. Paste over it to replay a board.
-  lobby.seed = freshSeed();
-  // A name outlives the game it was typed into, which is the closest thing to
-  // being remembered while there is nobody to sign in as.
-  if (!lobby.name) lobby.name = localStorage.getItem('carranta.name') || '';
-  document.getElementById('lobby').hidden = false;
-  renderLobby();
-  document.getElementById('lobbyName').focus();
-}
-
-document.getElementById('lobbyGame').oninput = (e) => {
-  lobby.game = e.target.value;
+document.getElementById('lobbyGame').onchange = (e) => {
+  pushSetup({ game: e.target.value.trim() });
 };
-document.getElementById('lobbySeed').oninput = (e) => {
-  lobby.seed = e.target.value.trim();
+document.getElementById('lobbySeed').onchange = (e) => {
+  pushSetup({ seed: e.target.value.trim() });
 };
-document.getElementById('lobbyClockSecs').oninput = (e) => {
-  lobby.clockSecs = Math.max(5, Number(e.target.value) || 0);
+document.getElementById('lobbyClockSecs').onchange = (e) => {
+  pushSetup({ clockSecs: Math.max(5, Number(e.target.value) || 0) });
 };
-document.getElementById('lobbyClockInc').oninput = (e) => {
-  lobby.clockInc = Math.max(0, Number(e.target.value) || 0);
+document.getElementById('lobbyClockInc').onchange = (e) => {
+  pushSetup({ clockInc: Math.max(0, Number(e.target.value) || 0) });
 };
 // Zero is allowed here and nowhere else on this panel: it means no limit on the
 // discard, which is a thing a table may reasonably want.
-document.getElementById('lobbyDiscard').oninput = (e) => {
-  lobby.discardSecs = Math.max(0, Number(e.target.value) || 0);
+document.getElementById('lobbyDiscard').onchange = (e) => {
+  pushSetup({ discardSecs: Math.max(0, Number(e.target.value) || 0) });
 };
-document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.seed);
-
-document.getElementById('lobbyStart').onclick = () => {
-  if (document.getElementById('lobbyStart').getAttribute('aria-disabled')) return;
-  lobby.name = (document.getElementById('lobbyName').value || '').trim();
-  lobby.game = (document.getElementById('lobbyGame').value || '').trim();
-  lobby.seed = document.getElementById('lobbySeed').value.trim();
-  lobby.clockSecs = Math.max(5, Number(document.getElementById('lobbyClockSecs').value) || 0);
-  lobby.discardSecs = Math.max(0, Number(document.getElementById('lobbyDiscard').value) || 0);
-  localStorage.setItem('carranta.name', lobby.name);
-  document.getElementById('lobby').hidden = true;
-  load(`/api/new?${tableQuery(true)}`, { method: 'POST' });
-};
+document.getElementById('copySeed').onclick = (e) => copyInto(e.target, view ? view.seed : '');
+document.getElementById('copyLobbyLink').onclick = (e) => copyInto(e.target, inviteLink());
 
 const PIPS = {
   1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]],
@@ -5024,30 +4893,15 @@ function act(i) {
 // being played now.
 const GAME = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] || '';
 const api = (path) => `/${GAME}${path}`;
-// `/lobby` is this page with no game behind it: the home page's New game button
-// leads here, and the lobby is a screen of this application rather than a second
-// form somewhere else to drift out of step with this one. There is no board to
-// draw, nothing to poll and no report to link to, so none of that runs.
-const LOBBY_ONLY = GAME === 'lobby';
+// `/lobby` used to be this page with no game behind it; opening it now mints a
+// table server-side and redirects here, so every visit to this page has a game
+// id in the path and one loop serves the lobby, the board and the finished game.
 
 // The header's way through to this game's report. Written once, because the
 // address does not change while the game is being played.
 {
   const a = document.getElementById('analytics');
-  if (a) {
-    if (LOBBY_ONLY) a.remove();
-    else a.href = api('/analytics');
-  }
-  // At the lobby there is no report to read and no point offering a link to the
-  // page you are standing on, so the header keeps the mark and nothing else. The
-  // board's own screen is hidden and the lobby joins the flow beneath the header,
-  // which is what makes this a page of the application rather than a sheet over
-  // one: the same header sits above the board, the report, the home page and this.
-  if (LOBBY_ONLY) {
-    document.body.classList.add('atLobby');
-    document.querySelectorAll('header .headLink[href="/lobby"]')
-      .forEach((n) => n.remove());
-  }
+  if (a) a.href = api('/analytics');
 }
 
 // The table is short of people, and this reader is not in a seat. Ask them once
@@ -5112,14 +4966,7 @@ function tableGone() {
   box.hidden = false;
 }
 
-// Straight to the board. A fresh board used to open the lobby on top of itself,
-// because arriving at one meant the server had dealt it for you and nobody had
-// said what they wanted. That is the home page's job now, and a table reached
-// from it was asked for: opening the lobby over it would ask the same questions
-// a second time. The lobby is still a click away from the header and from the
-// end of a game, which is where wanting a different game actually happens.
-if (LOBBY_ONLY) openLobby();
-else loadArt().then(() => load(api('/api/state')));
+loadArt().then(() => load(api('/api/state')));
 
 // The server is restarted whenever a change is pulled, and a page served by
 // the old one cannot re-render its way up to date. Watch the build stamp and
@@ -5133,9 +4980,6 @@ else loadArt().then(() => load(api('/api/state')));
 // because a fast poll against a board nobody is touching is just traffic.
 const POLL_IDLE = 3000, POLL_MOVING = 150;
 (async function poll() {
-  // Nothing to watch: a lobby has no board to bring up to date, and asking about
-  // a game that does not exist is a 404 every three seconds.
-  if (LOBBY_ONLY) return;
   try {
     const r = await fetch(api('/api/state'), { cache: 'no-store' });
     // Closed while this page sat open. Stop asking: a 404 every three seconds

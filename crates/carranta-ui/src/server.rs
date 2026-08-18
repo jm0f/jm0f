@@ -491,6 +491,8 @@ impl Table {
         let room = view::Room {
             takeable: self.takeable(),
             lobby: self.in_lobby(),
+            host: !player.is_empty() && self.by == player,
+            chat_setting: self.chat,
             you_ready: self
                 .seat_of(player)
                 .and_then(|s| self.ready.get(s as usize).copied())
@@ -1121,6 +1123,17 @@ impl Server {
         let mut tables = self.tables.lock().unwrap();
         let table = tables.iter_mut().find(|t| t.id == id)?;
         if let Some(seat) = table.seat_of(player) {
+            // Sitting again under a new name is how a name is changed: one path
+            // for "this is me, called this", whether it is the first time or a
+            // correction.
+            let name = called(name);
+            if !name.is_empty()
+                && let Chair::Taken { name: had, .. } = &mut table.chairs[seat as usize]
+                && *had != name
+            {
+                *had = name.clone();
+                table.session.name_seat(seat, &name);
+            }
             return Some(seat);
         }
         if player.is_empty() || table.session.started() || table.session.winner().is_some() {
@@ -1284,6 +1297,79 @@ impl Server {
     /// bot, which is what the host's button used to do and is still the only
     /// sensible reading: a chair nobody took by the time everybody was ready is
     /// a chair nobody is coming to.
+    /// Change a room's settings, which is the host's alone to do.
+    ///
+    /// The table is dealt again from the new description: the session is the
+    /// board and the clock, and both may have changed, so a fresh one is the
+    /// truth and a patched one is a bug factory. What survives is everything
+    /// that belongs to the people rather than the game: the chairs, their
+    /// names, what has been said, and the table's identity. What does not is
+    /// the ready marks, because what everybody agreed to is not what the table
+    /// is any more.
+    ///
+    /// Refused when shrinking would unseat somebody: a person is never moved by
+    /// a settings change, so four seats cannot become three while a person is
+    /// sitting in the fourth.
+    fn setup(&self, id: &str, player: &str, query: &str) -> Result<(), &'static str> {
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return Err("that game is over");
+        };
+        if player.is_empty() || table.by != player {
+            return Err("only the host changes the table");
+        }
+        if !table.in_lobby() {
+            return Err("the game has started");
+        }
+        let seats: u8 = param(query, "seats")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4)
+            .clamp(3, 4);
+        if table
+            .chairs
+            .iter()
+            .enumerate()
+            .any(|(i, c)| i >= seats as usize && matches!(c, Chair::Taken { .. }))
+        {
+            return Err("somebody is sitting in that seat");
+        }
+        let seed = param(query, "seed")
+            .and_then(|v| crate::game::parse_seed(&decode(&v)))
+            .unwrap_or_else(|| table.session.seed());
+        let secs: u64 = param(query, "clockSecs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let increment: u64 = param(query, "clockInc")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let clock = Clock::parse(param(query, "clock").as_deref(), secs, increment);
+        let discard_secs: u64 = param(query, "discardSecs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_DISCARD_SECS);
+        let named = param(query, "game").unwrap_or_default();
+        table.session = Session::new(seats, seed, TradeMode::Full)
+            .with_clock(clock)
+            .with_log(param(query, "log").as_deref() != Some("off"))
+            .with_public(wants_public(query))
+            .with_game(&decode(&named))
+            .with_pace(Pace::parse(param(query, "pace").as_deref()))
+            .with_bank_exact(param(query, "bank").as_deref() != Some("rough"))
+            .with_discard_secs(discard_secs);
+        table.chat = param(query, "chat").as_deref() == Some("text");
+        // The people keep their chairs; the counts around them follow the new
+        // width of the table.
+        table.chairs.resize(seats as usize, Chair::Bot);
+        table.seen.resize(seats as usize, now());
+        table.ready = vec![false; seats as usize];
+        table.seat_the_people();
+        for seat in 0..seats {
+            table.session.name_seat(seat, "");
+        }
+        table.name_the_seats();
+        table.stirred = now();
+        Ok(())
+    }
+
     fn ready(&self, id: &str, player: &str) -> bool {
         let mut tables = self.tables.lock().unwrap();
         let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
@@ -1522,17 +1608,21 @@ impl Server {
             // drift. The key is handed out here as well, because dealing from the
             // lobby is the first thing many visitors do and the table has to know
             // whose it is.
-            ("GET", "/lobby") => respond_with(
-                &mut stream,
-                200,
-                "text/html; charset=utf-8",
-                page_served().as_bytes(),
-                &if issue {
+            // Opening the lobby is creating one. The screen needs an address
+            // the moment it exists, because its whole point is to be shared,
+            // and an address needs a table behind it: so this mints one, with
+            // the settings the form starts from, and sends the visitor to it.
+            // Everything after that happens at the table's own address, host
+            // and guests on the same screen.
+            ("GET", "/lobby") => {
+                let id = self.deal("seats=4&clock=turn&clockSecs=60&discardSecs=10", &player);
+                let set = if issue {
                     cookie_header(&player)
                 } else {
                     String::new()
-                },
-            ),
+                };
+                redirect_with(&mut stream, &format!("/{id}/"), &set)
+            }
             ("GET", "/") => {
                 let id = game.unwrap_or_default();
                 // On a table, or on disk, or neither. A game nobody has heard of
@@ -1803,6 +1893,22 @@ impl Server {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 }
                 respond(&mut stream, 200, "application/json", b"{}")
+            }
+            // The host changing the room's settings.
+            ("POST", "/api/setup") => {
+                let id = game.clone().unwrap_or_default();
+                self.seat(&id);
+                self.stir(&id);
+                let note = self.setup(&id, &player, &body).err();
+                let seat = self.seated(&id, &player);
+                let payload = {
+                    let tables = self.tables.lock().unwrap();
+                    match tables.iter().find(|t| t.id == id) {
+                        Some(t) => t.seen_by(seat, &player, note),
+                        None => String::from("{}"),
+                    }
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             // Saying you are ready. The last person to say it starts the game.
             ("POST", "/api/ready") => {
@@ -2587,11 +2693,14 @@ mod tests {
         // by one method here; this pins the halves that a rename would quietly
         // split.
         const PAGE: &str = include_str!("../assets/index.html");
+        // The lobby's form writes the table through one route, and the server
+        // reads it with the same parser dealing uses, so the form and the deal
+        // cannot mean two slightly different tables.
         assert!(
-            PAGE.contains("load(`/api/new?${tableQuery(true)}`"),
-            "dealing posts the table's own description"
+            PAGE.contains("api('/api/setup')"),
+            "the form writes the table's own description"
         );
-        // And the invitation is not that description. A description deals a
+        // And the invitation is not a description at all. A description deals a
         // table, so two people opening one are at two tables: the link that
         // seats somebody names a table that already exists, which is the page
         // they are on.
@@ -2600,7 +2709,7 @@ mod tests {
             "the invitation is the table's own address"
         );
         assert!(
-            !PAGE.contains("/join?${tableQuery"),
+            !PAGE.contains("tableQuery"),
             "and never the settings dressed up as one"
         );
         // Every field the server reads has to be one the page writes.
@@ -3915,12 +4024,22 @@ mod tests {
         let again = get(port, "/", &key);
         assert!(!again.contains("Set-Cookie"), "one key per browser");
 
-        // The lobby is the board page with no game behind it, and it hands out a
-        // key too, because dealing from it is the first thing many visitors do.
+        // Opening the lobby is creating one: the visitor is sent to a fresh
+        // table's own address, key in hand, because the screen's whole point is
+        // to be shared and an address needs a table behind it.
         let lobby = get(port, "/lobby", "");
-        assert!(lobby.starts_with("HTTP/1.1 200 OK"), "{lobby:.40}");
-        assert!(lobby.contains("id=\"lobby\""), "it is the lobby screen");
+        assert!(lobby.starts_with("HTTP/1.1 303 See Other"), "{lobby:.40}");
         assert!(lobby.contains("Set-Cookie: carranta="));
+        let went = lobby
+            .lines()
+            .find_map(|l| l.strip_prefix("Location: "))
+            .expect("somewhere to go")
+            .trim()
+            .to_string();
+        assert!(
+            is_game_id(went.trim_matches('/')),
+            "to a table of its own: {went}"
+        );
 
         // Deal one the way the lobby does, and it is listed as this visitor's.
         let dealt = ask(
