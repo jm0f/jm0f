@@ -978,6 +978,9 @@
   .waitingRoom { grid-column: 2; grid-row: 2; display: flex; align-items: center;
                  justify-content: center; gap: 1em; flex-wrap: wrap; }
   .waitingRoom .said { color: var(--dim); }
+  /* Wide enough to read a whole address without scrolling it, and allowed to
+     give way before the words either side of it do. */
+  .waitLink { flex: 0 1 26em; min-width: 12em; }
   body:not(.waiting) .waitingRoom { display: none; }
   body.waiting .dockCell { display: none; }
 
@@ -985,9 +988,20 @@
   /* A column of what was said with the box to say it at the foot, which is the
      shape every conversation has: the newest line sits directly above where you
      type the next one. */
-  .talkPanel { display: flex; flex-direction: column; min-height: 0; }
+  /* The height of its column, always, whatever is in it. It used to be as tall
+     as it had lines, so a table nobody had spoken at was a small box floating
+     at the top of an empty column, and the panel grew downwards as people
+     talked: a thing that changes size while you read it. The left column's
+     panels hold their shape and this one is the same furniture. */
+  .talkPanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
   .talkList { flex: 1; min-height: 0; overflow-y: auto; display: flex;
               flex-direction: column; gap: .5em; margin: .8em 0; }
+  /* Why there is nothing to read, in the middle of the space where the reading
+     would be. At the foot it would have been a line at the bottom of a tall
+     empty box, which reads as something that failed rather than as an answer. */
+  .talkEmpty { margin: auto; text-align: center; max-width: 22em;
+               color: var(--dim); font-size: .92em; line-height: 1.45;
+               opacity: .75; }
   .talkLine { display: flex; gap: .5em; align-items: baseline; }
   /* The seat's colour on the name, the same colour it is everywhere else, so
      who said it is read the way whose piece it is is read. */
@@ -1361,13 +1375,19 @@
         <div class="tabs" id="lobbyVisibility"></div>
       </div>
 
-      <div class="field">
-        <span class="fieldLabel" data-tip="Deals whoever opens it their own table on this board, set up exactly like this one. Not a seat at this table: that needs a second person at the same game, which is still to come." tabindex="0">Share</span>
-        <div class="copyRow">
-          <input id="lobbyLink" class="seed" type="text" readonly>
-          <button id="copyLink" class="btn-secondary" type="button">Copy</button>
-        </div>
-      </div>
+      <!-- There was a Share field here, and it was the wrong link in the wrong
+           place. It described a table rather than naming one, so opening it
+           dealt the opener their own board set up identically: right while
+           nobody could sit at somebody else's table, and wrong the moment they
+           could. Somebody copied it, pasted it into another browser, and
+           landed in a different game.
+
+           A table cannot be linked to before it exists, and this screen runs
+           before it exists. The invitation belongs to the table, so it is on
+           the next screen, in the waiting room, where it is the table's own
+           address and whoever opens it takes one of the seats being held. The
+           seed below is what carries a board from one game to another, which
+           is the other half of what this field was being read as. -->
 
       <div class="field">
         <span class="fieldLabel" data-tip="The same seed deals the same board. Paste one in to replay a board you have seen." tabindex="0">Seed</span>
@@ -3383,14 +3403,18 @@ function freshSeed() {
   const s = n.toString(36).padStart(13, '0');
   return `${s.slice(0, 5)}-${s.slice(5, 9)}-${s.slice(9, 13)}`;
 }
-// What this table is, as a query. The one description of a table this page
-// makes: dealing posts it to `api/new`, and the share link is the same thing as
-// a GET on `/join`, so a link cannot mean something slightly different from the
-// screen that wrote it.
+// What this table is, as a query. Dealing posts it to `api/new`; the same query
+// as a GET on `/join` deals one too, which is how a table can be described by
+// URL rather than set up by hand.
 //
-// The host's name is not in it. Whoever opens the link is not them, and a link
-// that filled their name in with somebody else's would be the wrong kind of
-// helpful.
+// It was also the lobby's share link, and that was the mistake: a description
+// deals a table, so two people opening the same description are at two tables.
+// An invitation names one, and a table has a name only after it exists, so the
+// invitation is the table's own address and lives on the board's screen.
+//
+// The host's name is not in it, and was not even when this was shared. Whoever
+// opens it is not them, and a link that filled their name in with somebody
+// else's would be the wrong kind of helpful.
 function tableQuery(withName) {
   const q = new URLSearchParams({
     seats: String(lobby.seats),
@@ -3414,8 +3438,11 @@ function tableQuery(withName) {
   if (/^[0-9a-z-]{3,20}$/i.test(lobby.seed)) q.set('seed', lobby.seed);
   return q;
 }
+// The address of a table that exists, which is the only kind of link that can
+// seat anybody. Not built from the settings: a description of a table deals a
+// new one, and two people following the same description end up at two tables.
 function inviteLink() {
-  return `${location.origin}/join?${tableQuery(false)}`;
+  return location.origin + location.pathname;
 }
 async function copyInto(button, text) {
   const said = button.textContent;
@@ -3621,7 +3648,6 @@ function renderLobby() {
   const game = document.getElementById('lobbyGame');
   if (game.value !== lobby.game) game.value = lobby.game;
   document.getElementById('lobbySeed').value = lobby.seed;
-  document.getElementById('lobbyLink').value = inviteLink();
 
   // An open seat is dealt open now. It used to refuse, because the server could
   // not seat a person and dealing would have turned the seat into a bot behind
@@ -3633,7 +3659,7 @@ function renderLobby() {
   const start = document.getElementById('lobbyStart');
   start.removeAttribute('aria-disabled');
   start.setAttribute('data-tip', short
-    ? 'Deals the board and holds the open seats. Share the link and whoever opens it takes one.'
+    ? 'Deals the board and holds the open seats. The table’s link is on the next screen; whoever opens it takes one.'
     : 'Deal the board');
   start.textContent = short === 1
     ? 'Deal, and hold a seat'
@@ -3652,9 +3678,19 @@ function renderTalk(v) {
   const note = document.getElementById('talkNote');
   const talk = v.talk || [];
   // Same lines, same order: leave the box alone rather than rebuilding it under
-  // somebody who is typing.
-  if (list.childElementCount !== talk.length) {
+  // somebody who is typing. Counted off a note of its own rather than off the
+  // children, because an empty list has a child too: the line saying why.
+  if (list.dataset.lines !== String(talk.length)) {
+    list.dataset.lines = String(talk.length);
     list.textContent = '';
+    if (!talk.length) {
+      const why = document.createElement('p');
+      why.className = 'talkEmpty';
+      why.textContent = v.chat
+        ? 'Nothing said yet.'
+        : 'This table was dealt without chat.';
+      list.appendChild(why);
+    }
     talk.forEach((t) => {
       const line = document.createElement('div');
       line.className = 'talkLine';
@@ -3674,10 +3710,12 @@ function renderTalk(v) {
   // read the board: standing behind the players is not sitting at the table.
   const mine = v.chat && v.you >= 0 && v.winner === null;
   say.hidden = !mine;
-  note.textContent = !v.chat
-    ? 'This table was dealt without chat.'
-    : (v.you < 0 ? 'You are watching. Only the players talk.'
-      : (talk.length ? '' : 'Nothing said yet.'));
+  // A footnote about this reader, under the box they would have typed in. Why
+  // there is nothing to read is the list's to say, not this line's: one is
+  // about the conversation and the other is about you.
+  note.textContent = v.chat && v.you < 0
+    ? 'You are watching. Only the players talk.'
+    : '';
   panel.hidden = false;
 }
 
@@ -3713,10 +3751,23 @@ function renderWaiting(v) {
   kept.className = 'said';
   kept.textContent = 'The table is held while this page is open, and for twenty minutes after.';
   box.appendChild(said);
+  // Shown, not just copyable. A button that says it copied something is asking
+  // to be trusted about what it copied, and this is the one control on the
+  // screen whose whole job is to be pasted somewhere else: reading it back is
+  // how somebody knows they are sending the right table. It is also the way to
+  // pass it on when the clipboard is not available, which is every phone
+  // handing a link to somebody sitting next to them.
+  const link = document.createElement('input');
+  link.className = 'seed waitLink';
+  link.type = 'text';
+  link.readOnly = true;
+  link.value = inviteLink();
+  link.onfocus = () => link.select();
+  box.appendChild(link);
   const copy = document.createElement('button');
   copy.className = 'btn';
   copy.textContent = 'Copy link';
-  copy.onclick = (e) => copyInto(e.target, location.origin + location.pathname);
+  copy.onclick = (e) => copyInto(e.target, inviteLink());
   box.appendChild(copy);
   // Only the host's to press: everybody else at the table is waiting for the
   // same person they are, and one of them deciding for all of them is a
@@ -3749,7 +3800,6 @@ document.getElementById('lobbyGame').oninput = (e) => {
 };
 document.getElementById('lobbySeed').oninput = (e) => {
   lobby.seed = e.target.value.trim();
-  document.getElementById('lobbyLink').value = inviteLink();
 };
 document.getElementById('lobbyClockSecs').oninput = (e) => {
   lobby.clockSecs = Math.max(5, Number(e.target.value) || 0);
@@ -3763,7 +3813,6 @@ document.getElementById('lobbyDiscard').oninput = (e) => {
   lobby.discardSecs = Math.max(0, Number(e.target.value) || 0);
 };
 document.getElementById('copySeed').onclick = (e) => copyInto(e.target, lobby.seed);
-document.getElementById('copyLink').onclick = (e) => copyInto(e.target, inviteLink());
 
 document.getElementById('lobbyStart').onclick = () => {
   if (document.getElementById('lobbyStart').getAttribute('aria-disabled')) return;

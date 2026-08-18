@@ -77,47 +77,39 @@ pub struct Talk<'a> {
     pub text: &'a str,
 }
 
-/// The table as one seat sees it.
+/// The table as one seat sees it, and nothing the table itself knows.
 ///
 /// Everything private is keyed to this seat: the hand, the development cards,
 /// whose turn it is, which offers are yours and which are being put to you, and
 /// the numbered list of choices a click comes back as. Two people at one table
 /// are served two of these, and neither can see the other's cards or press the
 /// other's buttons, because neither is ever sent them.
+///
+/// Not what a route should answer with. This is a session and a seat, so the
+/// room comes out defaulted: no chat, nothing said, no chairs going. Right for a
+/// session with nothing behind it, and the cause of a real bug when a route
+/// reached for it. Use [`render_all`].
 pub fn render_for(session: &Session, seat: u8) -> String {
     render_inner(session, seat, None)
 }
 
-/// The same, for a seat at a table that may still be filling up.
-pub fn render_seated(session: &Session, seat: u8, room: Room) -> String {
-    render_room(session, seat, room, &[], None)
-}
-
-/// The same, with what has been said at the table.
-pub fn render_at_table(session: &Session, seat: u8, room: Room, talk: &[Talk<'_>]) -> String {
-    render_room(session, seat, room, talk, None)
-}
-
-/// The same, with something to tell that seat.
-pub fn render_for_with_note(session: &Session, seat: u8, note: &str) -> String {
-    render_inner(session, seat, Some(note))
-}
-
-/// The table as somebody watching it sees it: the public position, nobody's
-/// hand, and nothing to press.
+/// Everything one reader is sent, in one call: their seat or none, what the
+/// table knows about itself, what has been said at it, and anything to tell
+/// them.
 ///
-/// Rendered for a seat that does not exist, which is what makes it safe: every
-/// private field is keyed off that seat, so a hand it is not holding is a hand
-/// of nothing and a turn it does not have is never its turn. The fog is the
-/// spectator's, so the counts other people can see are still there.
-pub fn render_watching(session: &Session) -> String {
-    render_inner(session, NOBODY, None)
-}
-
-/// The same, for somebody looking at a table that may still be filling up: they
-/// are the ones who most need to know there is a chair going.
-pub fn render_watching_room(session: &Session, room: Room, talk: &[Talk<'_>]) -> String {
-    render_room(session, NOBODY, room, talk, None)
+/// The one a server route uses, and the only one that can answer for a table.
+/// `None` for the seat is somebody watching, rendered for a seat that does not
+/// exist, which is what makes it safe rather than careful: every private field
+/// is keyed off that seat, so a hand it is not holding is a hand of nothing and
+/// a turn it does not have is never its turn.
+pub fn render_all(
+    session: &Session,
+    seat: Option<u8>,
+    room: Room,
+    talk: &[Talk<'_>],
+    note: Option<&str>,
+) -> String {
+    render_room(session, seat.unwrap_or(NOBODY), room, talk, note)
 }
 
 /// A seat number no table has, for somebody who is not sitting at one.

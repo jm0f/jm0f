@@ -1014,30 +1014,43 @@ waiting seat into a bot, which is a decision about who is playing being made by
 a mis-click. The button says how many seats are short and refuses until they
 are filled or the table drops to three.
 
-**The share link is the table, as a link.** It was labelled *Invite* and pointed
-at `/join?table=<seed>&seats=N`, which the server had never implemented: the one
-control on the screen promising to bring somebody else in returned a 404, under a
-tooltip admitting the joining was not live. The link was not real either.
+**There is no share link on this screen, and there were two mistakes in getting
+there.** It was first labelled *Invite* and pointed at `/join?table=<seed>&seats=N`,
+which the server had never implemented: the one control on the screen promising
+to bring somebody else in returned a 404, under a tooltip admitting the joining
+was not live.
 
-It is real now, and it is the same description of a table that dealing one uses.
-The page builds that description once; pressing **Deal the board** posts it to
-`api/new` and the share link is the same query as a GET on `/join`, so a link
-cannot come to mean something slightly different from the screen that wrote it.
-The server reads it in one place for the same reason. Everything in it is
-optional with a default that plays an ordinary game, because a link is text
-somebody may have truncated and a dead link is worse than a table with a default
-clock on it.
+Then it was made real, as the same description of a table that dealing one uses:
+pressing **Deal the board** posts that description to `api/new`, and the link was
+the same query as a GET on `/join`. It was honest about itself, in a tooltip that
+said it dealt whoever opened it *their own table on this board, set up exactly
+like this one*, and not a seat at this one, because seats for a second person did
+not exist yet.
 
-What it does is deal whoever opens it **their own table on this board, set up
-exactly like this one**: same seed, seats, market, clock, discard allowance, pace,
-bank and log, and the same table name. What it does not do is seat them at your
-table, which needs a second person at one game and is still to come. The label
-says *Share* rather than *Invite* for exactly that distance.
+They exist now, and that made the field a trap. A description **deals** a table;
+two people opening one are at two tables. Somebody copied it out of the lobby,
+pasted it into another browser and landed in a different game, which is the worst
+kind of failure: everything worked, and the thing they were trying to do did not
+happen. The lobby's own **Deal, and hold a seat** tooltip was by then telling them
+to share it.
 
-Two things are deliberately not in the link. The host's name, because whoever
-opens it is not them and a link that filled in somebody else's name would be the
-wrong kind of helpful; and the host's key, so the table belongs to whoever opened
-it and lands on *their* home page.
+**A table cannot be linked to before it exists, and this screen runs before it
+exists.** So the invitation is not here. It is on the next screen, in the waiting
+room (§16), where it is the table's own address, and whoever opens it is offered
+one of the seats being held. What the lobby still carries is the **seed**, which
+is the other half of what the field was being read as: the way to take a board
+from one game to another.
+
+The `/join` route stays. A table described by URL is a real thing to want and
+already-sent links still work; it is simply not what an invitation is. Everything
+in the query is optional with a default that plays an ordinary game, because a
+link is text somebody may have truncated and a dead link is worse than a table
+with a default clock on it.
+
+Two things were deliberately never in it. The host's name, because whoever opens
+it is not them and a link that filled in somebody else's name would be the wrong
+kind of helpful; and the host's key, so the table belongs to whoever opened it and
+lands on *their* home page.
 
 **The seed is generated, not blank.** It exists before the game does, so it can
 be copied, shared or written down first.
@@ -2450,6 +2463,16 @@ played itself to the end while the room was empty would be a game destroyed
 rather than a game continued, and that is the whole reason this is a rule about
 the table rather than a filter over the seats.
 
+**The invitation lives in the waiting room**, because that is the first moment
+there is a table to invite anybody to. It is the table's own address, shown in a
+field and not only behind a Copy button: this is the one control on the screen
+whose whole job is to be pasted somewhere else, and reading it back is how
+somebody knows they are sending the right table. It is also how it gets passed on
+where the clipboard is not available, which is every phone handing a link to
+somebody sitting in the same room. Opening it puts the reader at that table with
+a seat offered (§16, above); it is not the lobby's old share link, which dealt
+them a table of their own (§8).
+
 **The host standing up before the start hands the table on.** Whoever is sitting
 in seat nought may fill the empty chairs and begin, as well as whoever dealt it.
 Without that second half a host who changed their mind would leave their table
@@ -2536,6 +2559,25 @@ anybody starts a conversation they expected to keep.
 **Two hundred lines, two hundred and forty characters each.** The oldest fall off
 the front, because a table talks for an hour and a page should not be handed all
 of it every three seconds.
+
+**The panel is the height of its column, always.** It used to be as tall as it
+had lines, so a table nobody had spoken at was a small box floating at the top of
+an empty column, and the panel grew downwards as people talked: furniture that
+changes size while you read it. Why there is nothing to read is said in the
+middle of the space where the reading would be, rather than as a footnote at the
+bottom of a tall empty box, which reads as something that failed instead of as an
+answer. The footnote under the box is kept for the one line that is about the
+reader rather than about the conversation: *you are watching, only the players
+talk*.
+
+**Every answer about a table carries the whole table.** The routes used to render
+a move's reply off the session alone, which is a view with the table's half
+missing: no chat, nothing said, no chairs going. So the panel emptied itself on
+every click and announced that the table had been dealt without chat, until the
+next poll three seconds later put the conversation back. There is one payload
+builder on the table now and every route goes through it. The session could never
+have supplied any of it, and §9.7.1 below is why: what was said is carried to the
+page beside the game rather than through it.
 
 ### The one rule that shaped the design
 

@@ -328,6 +328,37 @@ impl Table {
         }
     }
 
+    /// Everything one reader is sent, from one place.
+    ///
+    /// Every route that answers about a table goes through here, which is the
+    /// point of it. The routes used to render straight off the session, which
+    /// is a view with the table's half of the answer missing: no chat, nothing
+    /// said, no chairs going. So a poll showed the conversation and the reply
+    /// to a move wiped it, and the panel announced that the table had been
+    /// dealt without chat until the next poll three seconds later put it back.
+    ///
+    /// The session cannot supply any of it. Who is waiting, who may start, and
+    /// what was said are the table's, and §9.7.1 is why the last one stays
+    /// there: free text from a player must never reach a bot's input, so it is
+    /// carried to the page beside the game rather than through it.
+    fn seen_by(&self, seat: Option<u8>, player: &str, note: Option<&str>) -> String {
+        let room = view::Room {
+            free: self.waiting(),
+            host: self.may_start(player),
+            chat: self.chat,
+        };
+        let talk: Vec<view::Talk<'_>> = self
+            .said
+            .iter()
+            .map(|d| view::Talk {
+                seat: d.seat,
+                name: &d.name,
+                text: &d.text,
+            })
+            .collect();
+        view::render_all(&self.session, seat, room, &talk, note)
+    }
+
     fn seat_the_people(&mut self) {
         let playing = self.playing();
         self.session.seat_people(&playing);
@@ -1343,24 +1374,7 @@ impl Server {
                 // nobody is ever sent another seat's hand. Either way it carries
                 // how many chairs are still going, because that is the one thing
                 // about this table you can be too late for.
-                let room = view::Room {
-                    free: t.waiting(),
-                    host: t.may_start(&player),
-                    chat: t.chat,
-                };
-                let talk: Vec<view::Talk<'_>> = t
-                    .said
-                    .iter()
-                    .map(|d| view::Talk {
-                        seat: d.seat,
-                        name: &d.name,
-                        text: &d.text,
-                    })
-                    .collect();
-                let payload = match seat {
-                    Some(s) => view::render_at_table(&t.session, s, room, &talk),
-                    None => view::render_watching_room(&t.session, room, &talk),
-                };
+                let payload = t.seen_by(seat, &player, None);
                 drop(tables);
                 self.keep(&id);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
@@ -1383,27 +1397,28 @@ impl Server {
                 // taken. The way past it is `api/start`, which is the host
                 // saying the bots may have them.
                 if t.waiting() > 0 {
-                    let payload = view::render_for_with_note(
-                        &t.session,
-                        seat,
-                        "the table is still waiting for people",
+                    let payload = t.seen_by(
+                        Some(seat),
+                        &player,
+                        Some("the table is still waiting for people"),
                     );
                     drop(tables);
                     return respond(&mut stream, 200, "application/json", payload.as_bytes());
                 }
-                let session = &mut t.session;
                 let action = json::read_u64(&body, "action");
                 let version = json::read_u64(&body, "version");
-                let payload = match (action, version) {
+                let note = match (action, version) {
                     // As their own seat, and the index is into their own list of
                     // choices: one person cannot press another's button, because
                     // the only thing they can name is something on their screen.
-                    (Some(a), Some(v)) => match session.act_as(seat, a as usize, v) {
-                        Ok(()) => view::render_for(&session, seat),
-                        Err(e) => view::render_for_with_note(&session, seat, &refusal(&e)),
-                    },
-                    _ => view::render_for_with_note(session, seat, "malformed request"),
+                    (Some(a), Some(v)) => t
+                        .session
+                        .act_as(seat, a as usize, v)
+                        .err()
+                        .map(|e| refusal(&e)),
+                    _ => Some("malformed request".to_string()),
                 };
+                let payload = t.seen_by(Some(seat), &player, note.as_deref());
                 drop(tables);
                 self.keep(&id);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
@@ -1420,14 +1435,11 @@ impl Server {
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
                 };
-                let session = &mut t.session;
-                let payload = match json::read_u64(&body, "version") {
-                    Some(v) => match session.cancel_as(seat, v) {
-                        Ok(()) => view::render_for(&session, seat),
-                        Err(e) => view::render_for_with_note(&session, seat, &refusal(&e)),
-                    },
-                    None => view::render_for_with_note(&session, seat, "malformed request"),
+                let note = match json::read_u64(&body, "version") {
+                    Some(v) => t.session.cancel_as(seat, v).err().map(|e| refusal(&e)),
+                    None => Some("malformed request".to_string()),
                 };
+                let payload = t.seen_by(Some(seat), &player, note.as_deref());
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             ("POST", "/api/propose") => {
@@ -1441,23 +1453,23 @@ impl Server {
                 let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
                     return respond(&mut stream, 409, "text/plain", b"that game is over");
                 };
-                let session = &mut t.session;
                 let give = json::read_u8_array(&body, "give", 5);
                 let want = json::read_u8_array(&body, "want", 5);
                 let version = json::read_u64(&body, "version");
                 // Absent means the open market; a seat number addresses it.
                 let to = json::read_u64(&body, "to").map(|n| n as u8);
-                let payload = match (give, want, version) {
+                let note = match (give, want, version) {
                     (Some(g), Some(w), Some(v)) => {
                         let g = [g[0], g[1], g[2], g[3], g[4]];
                         let w = [w[0], w[1], w[2], w[3], w[4]];
-                        match session.propose_as(seat, to, g, w, v) {
-                            Ok(()) => view::render_for(&session, seat),
-                            Err(e) => view::render_for_with_note(&session, seat, &refusal(&e)),
-                        }
+                        t.session
+                            .propose_as(seat, to, g, w, v)
+                            .err()
+                            .map(|e| refusal(&e))
                     }
-                    _ => view::render_for_with_note(&session, seat, "malformed request"),
+                    _ => Some("malformed request".to_string()),
                 };
+                let payload = t.seen_by(Some(seat), &player, note.as_deref());
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
             // Take a chair at this table, under a name.
@@ -1518,15 +1530,13 @@ impl Server {
                 if !self.start(&id, &player) {
                     return respond(&mut stream, 403, "text/plain", b"not yours to start");
                 }
-                let payload = match self.seated(&id, &player) {
-                    Some(seat) => {
-                        let tables = self.tables.lock().unwrap();
-                        match tables.iter().find(|t| t.id == id) {
-                            Some(t) => view::render_for(&t.session, seat),
-                            None => String::from("{}"),
-                        }
+                let seat = self.seated(&id, &player);
+                let payload = {
+                    let tables = self.tables.lock().unwrap();
+                    match tables.iter().find(|t| t.id == id) {
+                        Some(t) => t.seen_by(seat, &player, None),
+                        None => String::from("{}"),
                     }
-                    None => String::from("{}"),
                 };
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
@@ -2262,17 +2272,25 @@ mod tests {
 
     #[test]
     fn the_share_link_and_the_deal_describe_one_table() {
-        // Two ways to arrive with a lobby's query, and they have to mean the
-        // same thing. They are built by one function on the page and read by one
-        // method here; this pins the halves that a rename would quietly split.
+        // A table's description is written by one function on the page and read
+        // by one method here; this pins the halves that a rename would quietly
+        // split.
         const PAGE: &str = include_str!("../assets/index.html");
         assert!(
             PAGE.contains("load(`/api/new?${tableQuery(true)}`"),
             "dealing posts the table's own description"
         );
+        // And the invitation is not that description. A description deals a
+        // table, so two people opening one are at two tables: the link that
+        // seats somebody names a table that already exists, which is the page
+        // they are on.
         assert!(
-            PAGE.contains("return `${location.origin}/join?${tableQuery(false)}`;"),
-            "and the link is the same description, without the host's name"
+            PAGE.contains("return location.origin + location.pathname;"),
+            "the invitation is the table's own address"
+        );
+        assert!(
+            !PAGE.contains("/join?${tableQuery"),
+            "and never the settings dressed up as one"
         );
         // Every field the server reads has to be one the page writes.
         for key in [
@@ -2592,6 +2610,69 @@ mod tests {
             too_late.contains("\"seat\":-1"),
             "the door is shut, not the seat"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_answer_about_a_table_carries_the_whole_table() {
+        // A move used to be answered off the session alone, which is a view with
+        // the table's half missing: no chat, nothing said, no chairs going. So
+        // the panel emptied itself on every click and announced that the table
+        // had been dealt without chat, until the next poll three seconds later
+        // put the conversation back.
+        let dir = std::env::temp_dir().join(format!("carranta-whole-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 51, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let host = "hostkey000000000";
+        let id = server.deal(
+            "seats=4&roles=you,bot,bot,bot&name=Marta&chat=text&pace=instant",
+            host,
+        );
+        assert!(server.say(&id, host, "anybody there"));
+
+        // Whatever it is asked, and however it answers: a good move, a refused
+        // one, and a request it cannot read at all.
+        let state = get(port, &format!("/{id}/api/state"), host);
+        let v = state
+            .rsplit("\"version\":")
+            .next()
+            .and_then(|t| t.split(&[',', '}'][..]).next())
+            .and_then(|t| t.trim().parse::<u64>().ok())
+            .expect("a version");
+        let post = |body: String| -> String {
+            ask(
+                port,
+                &format!(
+                    "POST /{id}/api/act HTTP/1.1\r\nHost: localhost\r\n\
+                     Cookie: {PLAYER_COOKIE}={host}\r\n\
+                     Content-Length: {}\r\n\r\n{body}",
+                    body.len()
+                ),
+            )
+        };
+        for (what, answer) in [
+            ("a move", post(format!("{{\"action\":0,\"version\":{v}}}"))),
+            (
+                "a stale click",
+                post(format!("{{\"action\":0,\"version\":{v}}}")),
+            ),
+            ("nonsense", post("{}".to_string())),
+            ("a poll", state.clone()),
+        ] {
+            assert!(
+                answer.contains("\"chat\":true"),
+                "{what} says the table has chat"
+            );
+            assert!(
+                answer.contains("anybody there"),
+                "{what} carries what was said"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3017,7 +3098,7 @@ mod tests {
                 text: &d.text,
             })
             .collect();
-        let out = view::render_at_table(&t.session, 0, view::Room::default(), &talk);
+        let out = view::render_all(&t.session, Some(0), view::Room::default(), &talk, None);
         // Two things make this safe and neither is a filter on the words. The
         // payload is JSON fetched over HTTP, so what must not happen is the text
         // breaking out of its string: the quotes are escaped.
