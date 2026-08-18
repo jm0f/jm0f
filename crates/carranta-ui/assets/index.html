@@ -1151,6 +1151,9 @@
   .seatSlot { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto;
               align-items: center; column-gap: 16px; }
   .seatCtl { display: flex; justify-content: flex-end; min-width: 5.8em; }
+  /* What a bot's seat is, said quietly beside its name: a placeholder, not a
+     decision. The row used to carry a button here. */
+  .slotUntil { color: var(--dim); font-size: .85em; }
   .seatSlot .dot { width: 1.05em; height: 1.05em; border-radius: 50%; flex: none; }
   .seatSlot .slotName { flex: 1; font-weight: 500; }
   .seatSlot .slotName.empty { color: var(--muted-foreground); font-weight: 400; }
@@ -1386,7 +1389,7 @@
       </div>
 
       <div class="field">
-        <span class="fieldLabel" data-tip="Every seat is a bot or a person. Hold a seat for a person and the table waits for them: deal it, then send whoever you are inviting the link on the next screen. Seats still going are also listed on the home page if the table is public." tabindex="0">Who is playing</span>
+        <span class="fieldLabel" data-tip="Every seat behind you is a bot, and every bot’s chair goes to whoever arrives before the game starts. To invite friends: deal, then send them the link on the next screen. The game begins when everybody at the table says they are ready." tabindex="0">Who is playing</span>
         <div class="seatSlots" id="lobbySlots"></div>
       </div>
 
@@ -3360,12 +3363,9 @@ const CHAT_NOTE = {
 const lobby = {
   seats: 4,
   game: '',
-  // Bots, because that is who the server can actually seat. Seats waited for
-  // people by default for as long as the lobby was a side door reached from a
-  // board; it is the front door now, and a front door whose one button refuses
-  // until you have pressed three others is the wrong first screen. Waiting for
-  // somebody is still a click a seat, and it still refuses to deal until the
-  // seat is answered, so nothing became a decision made by mis-click.
+  // Bots, and only bots: there is no other thing a seat behind the dealer can
+  // be. Kept as a list because the query format carries one and `/join` links
+  // in the wild still say `open`, which the server now reads as a bot too.
   roles: ['you', 'bot', 'bot', 'bot'],
   visibility: 'private',
   pace: 'fast',
@@ -3554,10 +3554,6 @@ function renderLobby() {
     const row = document.createElement('div');
     row.className = 'seatSlot';
     const dot = document.createElement('span');
-    // An empty seat shows its colour as the loader rather than as a dot: the
-    // marker is the same size and in the same place, so the row settles into a
-    // solid dot when somebody takes the seat instead of rearranging.
-    const taken = i === 0 || lobby.roles[i] === 'bot';
     dot.className = 'dot';
     dot.style.background = COLOURS[i];
     // Your own seat is where your name is typed. It is the row that already
@@ -3574,61 +3570,40 @@ function renderLobby() {
       name.value = lobby.name;
       name.oninput = (e) => { lobby.name = e.target.value; };
     } else {
-      // A seat waiting for someone has nobody in it, so it carries no name. A
-      // bot only gets called Bram once you have decided to put one there.
       name = document.createElement('span');
-      name.className = 'slotName' + (taken ? '' : ' empty');
-      if (taken) name.textContent = BOT_NAMES[i];
-      else name.appendChild(shimmer('waiting'));
+      name.className = 'slotName';
+      name.textContent = BOT_NAMES[i];
     }
-
-    // Waiting is a state, not a control, so it is written rather than offered.
-    // The only thing you can do to a seat is put a bot in it or take it out
-    // again, and that is one button whose colour is the seat's.
-    let control;
-    if (i === 0) {
-      control = document.createElement('span');
-      control.className = 'tag tag-secondary';
-      control.textContent = 'you';
-    } else if (lobby.roles[i] === 'bot') {
-      control = document.createElement('button');
-      control.type = 'button';
-      control.className = 'btn-ghost btn-sm';
-      // What arrives, not what leaves. This said **Remove**, which is true of
-      // the bot and silent about the point: holding a seat is the whole of how
-      // somebody else gets into your game, and nothing on this screen said so.
-      // Somebody asked how to invite a friend while looking straight at the
-      // button that does it.
-      control.textContent = 'Hold for a person';
-      control.dataset.tip = 'Keeps this seat empty for somebody to take. '
-        + 'The table waits for them, and the link to send is on the next screen.';
-      control.onclick = () => { lobby.roles[i] = 'open'; renderLobby(); };
-    } else {
-      control = document.createElement('button');
-      control.type = 'button';
-      control.className = 'btn-primary btn-sm';
-      control.textContent = 'Add bot';
-      control.dataset.tip = 'Gives this seat to the house bot, so the table is '
-        + 'full and starts as soon as it is dealt.';
-      control.onclick = () => { lobby.roles[i] = 'bot'; renderLobby(); };
-    }
-    // The loader stands in for the dot until the seat is taken.
+    // No control on a seat, because there is no decision to make about one.
+    // There used to be two states behind the dealer, a bot and a chair held
+    // empty for a person, with a button toggling between them; and holding a
+    // chair was how you invited somebody, which nobody could guess from a
+    // button. Every seat is a bot now, every bot's chair goes to whoever
+    // arrives before the game starts, and the game starts when the people at
+    // the table say they are ready. A seat that blocked the game was strictly
+    // worse than a bot's, which plays until somebody better turns up.
     const cell = document.createElement('span');
     cell.className = 'seatCtl';
-    cell.appendChild(control);
-    row.append(taken ? dot : pixelLoader(COLOURS[i]), name, cell);
+    if (i === 0) {
+      const you = document.createElement('span');
+      you.className = 'tag tag-secondary';
+      you.textContent = 'you';
+      cell.appendChild(you);
+    } else {
+      const until = document.createElement('span');
+      until.className = 'slotUntil';
+      until.textContent = 'plays until somebody joins';
+      cell.appendChild(until);
+    }
+    row.append(dot, name, cell);
     slots.appendChild(row);
   }
 
-  // Always shown, inert until a bot is sitting down. A setting that appears
-  // and disappears as seats fill moves everything below it and reads as the
-  // lobby rearranging itself; one that greys says the same thing and stays put.
-  const anyBot = lobby.roles.some(r => r === 'bot');
-  const idle = anyBot ? null : 'Nothing to pace yet. Add a bot to a seat.';
+  // Always live: every table has bots in it until people take their chairs.
   tabs(document.getElementById('lobbyPace'),
-    [['slow', 'slow', { tip: idle || PACE_NOTE.slow, disabled: !anyBot }],
-     ['fast', 'fast', { tip: idle || PACE_NOTE.fast, disabled: !anyBot }],
-     ['instant', 'instant', { tip: idle || PACE_NOTE.instant, disabled: !anyBot }]],
+    [['slow', 'slow', { tip: PACE_NOTE.slow }],
+     ['fast', 'fast', { tip: PACE_NOTE.fast }],
+     ['instant', 'instant', { tip: PACE_NOTE.instant }]],
     lobby.pace, v => { lobby.pace = v; });
 
   tabs(document.getElementById('lobbyBank'),
@@ -3687,21 +3662,15 @@ function renderLobby() {
   if (game.value !== lobby.game) game.value = lobby.game;
   document.getElementById('lobbySeed').value = lobby.seed;
 
-  // An open seat is dealt open now. It used to refuse, because the server could
-  // not seat a person and dealing would have turned the seat into a bot behind
-  // your back; it can, so waiting for somebody is an answer rather than an
-  // unfinished form. The house bot plays the chair until they arrive, because
-  // the rules need every seat to move and a game that waits for a stranger
-  // before it starts is a game nobody plays.
-  const short = lobby.roles.filter(r => r === 'open').length;
+  // One label, always. It used to count held seats into its own text, and there
+  // is nothing to count any more: every table is dealt the same way, into a room
+  // where friends can take the bots' chairs until everybody says they are ready.
   const start = document.getElementById('lobbyStart');
   start.removeAttribute('aria-disabled');
-  start.setAttribute('data-tip', short
-    ? 'Deals the board and holds the open seats. The table’s link is on the next screen; whoever opens it takes one.'
-    : 'Deal the board');
-  start.textContent = short === 1
-    ? 'Deal, and hold a seat'
-    : short ? `Deal, and hold ${short} seats` : 'Deal the board';
+  start.setAttribute('data-tip',
+    'Deals the board into a room. Friends can take the bots\u2019 chairs from '
+    + 'the link on the next screen until everybody there is ready.');
+  start.textContent = 'Deal the board';
 }
 
 // What has been said, and whether this reader may say anything.
@@ -3868,7 +3837,10 @@ function renderWaiting(v) {
   if (v.you >= 0) {
     const btn = document.createElement('button');
     btn.className = v.youAreReady ? 'btn' : 'btn-primary';
-    btn.textContent = v.youAreReady ? 'Not ready' : 'I am ready';
+    // Alone at the table, your ready is the start, so the button says the
+    // thing it will actually do.
+    btn.textContent = v.youAreReady ? 'Not ready'
+      : (v.readyOf === 1 ? 'Start the game' : 'I am ready');
     btn.onclick = () => fetch(api('/api/ready'), { method: 'POST' })
       .then(() => load(api('/api/state')));
     go.appendChild(btn);
@@ -3880,7 +3852,9 @@ function renderWaiting(v) {
   // actually sitting there wondering about.
   count.textContent = v.readyOf === 0
     ? 'Waiting for somebody to sit down.'
-    : `${v.ready} of ${v.readyOf} ready. The game starts when everybody is.`;
+    : v.readyOf === 1 && v.you >= 0
+      ? 'Bots play the other seats. Anybody with the link can take one until you start.'
+      : `${v.ready} of ${v.readyOf} ready. The game starts when everybody is.`;
   go.appendChild(count);
   box.appendChild(go);
 

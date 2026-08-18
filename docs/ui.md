@@ -991,25 +991,29 @@ reach it is a link to that address: the header, the end of a game, and the home
 page all point at `/lobby`. Its way out is the mark in the header, which the
 auto-opening version had no use for because the only exit was to deal.
 
-**Seats hold bots by default and can be left open.** Waiting for people was the
-default while the lobby was a side door reached from a board somebody was already
-sitting at; it is the front door now, and a front door whose one button refuses
-until you have pressed three others is the wrong first screen. So the default is
-bots, and opening a chair is a click a seat.
+**Every seat behind the dealer is a bot, and there is nothing to decide about
+one.** The seat rows carry no controls: your row is where your name is typed, and
+the others each say *plays until somebody joins*, which is the whole truth about
+them.
 
-**The button says what arrives, not what leaves.** It read **Remove**, which is
-true of the bot and silent about the point: holding a seat is the whole of how
-somebody else gets into your game, and nothing on the screen said so. Somebody
-asked how to invite a friend while looking straight at the control that does it.
-It reads **Hold for a person** now, against **Add bot** for the way back, and the
-field's own tooltip carries the sentence the screen was missing: hold a seat, deal
-the table, and send whoever you are inviting the link on the next screen.
-
-**Dealing with an open seat used to be refused** and is not any more, because the
-refusal was about the server rather than about the table: it could not seat a
-person, so dealing would have quietly turned a waiting seat into a bot. It can
-(§16), so the button says what it will do, **Deal, and hold a seat**, and does
+Three designs stood here before this one, and each fell to the same question,
+"how do I invite a friend?". First seats waited for people by default, and the one
+button refused until every seat was answered: the wrong first screen for a front
+door. Then bots were the default and a **Remove** button opened a chair, which
+was true of the bot and silent about the point, and somebody asked how to invite
+a friend while looking straight at the control that does it. Then the button said
+**Hold for a person**, which named the point and kept the flaw: holding chairs
+asked the host to predict how many friends would come, and to be right. One held
+chair and two friends meant one of them stood outside a table with two bots in
 it.
+
+The answer is that a chair held empty was never a different thing from a bot's
+chair, just a worse one. A bot's chair goes to whoever arrives before the game
+starts (§16), so the hold bought nothing a bot does not, and it blocked the game
+while a bot plays it. With the hold gone, the per-seat decision went with it, and
+inviting somebody is one sentence, on the field's tooltip and true of every
+table: deal, then send the link on the next screen. The old `open` word in a
+`/join` link is still read, as a bot, so nothing already sent went dead.
 
 **Your name is editable because nobody is signed in.** It is kept in the
 browser between games, which is the closest thing to being remembered without
@@ -2448,44 +2452,39 @@ empty chairs and hand them to the house bot: everybody else at the table is
 waiting for the same person they are, and one of them deciding for all of them
 would be a different rule.
 
-**A table dealt with a chair held is a room, and a room is closed by its host.**
-This is the lobby phase, and without it the rest of this section does not work.
-The held chair filling used to be the starting gun: the friend who read the
-message first took it, the next poll played the first move, and the second
-friend arrived at a game already under way. So an invitation was good for exactly
-one person, and only if they were quick.
+**Every dealt table is a room.** This is the lobby phase, and without it nothing
+else in this section works. When the game started the moment the chairs were
+answered, the friend who read the message first got the seat, the next poll
+played the first move, and the second friend arrived at a game already under
+way: an invitation was good for exactly one person, and only if they were quick.
+It was then a room only when a chair had been held empty, which made the hold the
+price of being joinable, and a solo table's bot seats joinable in theory and
+never in practice, because it started before anyone could open the link. Now the
+window is simply there, on every table, until its people say they are ready. The
+cost is one press for solo play; it buys every table the same first screen.
 
 While a table is a room, nothing is played at it. `api/act` refuses, and the poll
 does not tick the session, which is what would otherwise run the bots: the poll
 is the only clock this process has, so not winding it is the whole of holding the
 table still. No turn clock runs either, because nobody's turn is running down
-while everybody is still walking in.
+while everybody is still walking in. What is not a room: demo games the server
+plays against itself, and games taken back up off disk, which began long ago.
 
-A table of bots is not a room and never waits: holding a chair is how a host says
-they are waiting for somebody, and a solo game has said the opposite. So the
-common case is untouched, and only the case that asked to wait does.
-
-**A bot's chair is a person's chair until the game begins.** Holding seats open
-asked the host to have predicted how many friends would come, and to have been
-right: one chair held and two friends meant one of them stood outside a table
-with two bots sitting in it. A bot is what a seat holds when nobody better has
-turned up, and somebody arriving before the first move is better, so an arrival
-takes a held chair if there is one and a bot's otherwise.
-
-That is two numbers about a table and not one, and they are deliberately kept
-apart because they answer different questions:
-
-- **waiting** is the chairs the host held open. It is what stops the table
-  starting, and what *Waiting for one more player* counts.
-- **takeable** is every chair that is not a person's, while the game has not
-  begun. It is what an arrival gets, what the home page advertises, and what the
-  invitation is for.
-
-A table with one chair held and two bots is waiting for one person and has room
-for three.
+**A bot's chair is a person's chair until the game begins.** A bot is what a seat
+holds when nobody better has turned up, and somebody arriving before the first
+move is better. **takeable** counts them: every chair that is not a person's,
+while the table is a room. It is what an arrival gets, what the home page
+advertises, and what the invitation is for.
 
 **Nothing happens when every seat is a person's.** There is nobody to displace,
 so the arrival watches and the page says so rather than pretending to seat them.
+People are never moved for a newcomer, only bots.
+
+**Leaving a room gives the chair back to a bot**, takes the leaver's name with
+it, and clears their yes, or the next person to take the chair would inherit a
+ready they never pressed. And leaving can be the thing everybody else was
+waiting for: if everyone still seated has said they are ready, the room closes,
+because the people who pressed the button have nothing left to press.
 
 **The room ends when the room agrees.** Everybody sitting at it says they are
 ready, and the last person to say it starts the game: any chair still empty goes
@@ -2532,10 +2531,9 @@ their tabs sat in memory for ever: nothing had started, so there was no game to
 keep, and nobody was left to say they were ready. It is any room now, twenty
 minutes after the last request about it.
 
-**The order is still drawn once.** Settled used to mean "no chair held and
-nothing played", which stayed true for as long as nobody had moved: with bots'
-chairs takeable, a second and third arrival would each have re-drawn the turn
-order and moved people who had already seen where they were sitting. The table
+**The order is drawn when the room closes, once.** Not when the chairs fill,
+because people can arrive right up to that moment; and not again after, because a
+re-draw moves people who have already seen where they are sitting. The table
 remembers that it drew.
 
 **Sitting down is deliberate, and carries a name.** Opening the table is not
