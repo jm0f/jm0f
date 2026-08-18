@@ -31,6 +31,28 @@ use crate::view;
 
 const PAGE: &str = include_str!("../assets/index.html");
 
+/// The board page as served: the raw asset with the build stamped into its
+/// header.
+///
+/// The other pages carry the stamp because the server renders them; this one is
+/// a file, and its stamp was filled in by script from the first payload, which
+/// works on a board and not on the lobby: the lobby has no game behind it, so
+/// nothing ever arrived to fill it and the one screen most likely to be checked
+/// after a rebuild said nothing. Substituted once, at first use, because the
+/// answer cannot change while the process lives.
+fn page_served() -> &'static str {
+    static SERVED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SERVED.get_or_init(|| {
+        PAGE.replace(
+            "<span class=\"build\" id=\"build\"></span>",
+            &format!(
+                "<span class=\"build\" id=\"build\">{}</span>",
+                env!("CARRANTA_BUILD")
+            ),
+        )
+    })
+}
+
 /// The board art, compiled in and served from memory.
 ///
 /// Named here rather than read from disk so the binary stays a single file
@@ -1504,7 +1526,7 @@ impl Server {
                 &mut stream,
                 200,
                 "text/html; charset=utf-8",
-                PAGE.as_bytes(),
+                page_served().as_bytes(),
                 &if issue {
                     cookie_header(&player)
                 } else {
@@ -1522,7 +1544,7 @@ impl Server {
                         &mut stream,
                         200,
                         "text/html; charset=utf-8",
-                        PAGE.as_bytes(),
+                        page_served().as_bytes(),
                         // The board page is often the first page somebody opens,
                         // from a link, so the key is handed out here too or their
                         // first game would belong to nobody.
