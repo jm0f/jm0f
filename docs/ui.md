@@ -2330,6 +2330,15 @@ sat three pixels lower on the rendered pages than on the board for no better
 reason than that one of them set a line height and the other left it to the
 font's metrics.
 
+**Which build is serving the page, beside the mark.** Dim, small, and on every
+screen. It was already in every payload for exactly this reason, with a comment
+saying so, and rendered nowhere: it had been dropped when the four headers were
+made one. An afternoon went on that. Somebody looked at a page, saw the old
+behaviour, and had no way to answer the first question worth asking, which is
+whether they were looking at the new code at all; the answer turned out to be a
+local binary several commits behind, and finding that out took a terminal and a
+`curl`. It is now legible enough to read out and quiet enough to ignore.
+
 Both server-rendered pages carry the tab icon the board always had. They had none,
 so every visit to the home page or a report asked for `/favicon.ico`, got a 404,
 and left it in the console.
@@ -2478,23 +2487,50 @@ for three.
 **Nothing happens when every seat is a person's.** There is nobody to displace,
 so the arrival watches and the page says so rather than pretending to seat them.
 
-**One button ends the room**, and it is the host's. It reads *Start with bots*
-while chairs are still held, *Start the game* once they have all filled, and it
-does three things at once: gives any chair still empty to the house bot, shuts
-the door, and lets the table move. It used to disappear the moment the count
-reached zero, which left a host whose friends had all arrived with no way to
-begin.
+**The room ends when the room agrees.** Everybody sitting at it says they are
+ready, and the last person to say it starts the game: any chair still empty goes
+to the house bot, the door shuts, and the table moves.
 
-Shutting the door is not optional extra work for that button. A bot's chair is
-takeable right up to the first move, so the one press that says the table is who
+It was one person's button. Whoever dealt the table could give the chairs away
+and begin, with a fallback to whoever held seat nought if they had gone. That
+left a room nothing could start whenever the host closed their tab and a bot held
+seat nought: three people sitting in it, and no way forward but to deal another
+table. A condition the people in the room can satisfy between them has no such
+hole, however the tabs fall. Pressing it again takes it back, because somebody
+who said yes and then noticed a fourth friend arriving should be able to wait.
+
+The count is the point of it, not the button. Your own button says what you did;
+*2 of 3 ready* says what everybody else did, which is the thing you are actually
+sitting there wondering about.
+
+Shutting the door is not optional extra work for that last press. A bot's chair
+is takeable right up to the first move, so the press that says the table is who
 it is now would not mean anything if a stranger could walk into one of those
 chairs a moment later.
 
-**The waiting room is shown for as long as the table is a room**, rather than
-while a chair is still empty. Hiding it at zero took the link away at the moment
-it was most needed: that is precisely the window the third and fourth friend
-arrive in. It says what the table is waiting for and how many chairs are still
-going, which are two different numbers, and it carries the link and the button.
+**The room shows who is here, by name.** A line of seats in seat order and in the
+seats' own colours, the same way the players panel reads once the game starts:
+each one is a person under their name, a chair still being kept, or a house bot,
+and each person carries whether they have said they are ready. Before this the
+room said how many chairs were empty, which is not what somebody waiting wants to
+know. What they want is who has turned up and who they are still waiting for, and
+both of those are names.
+
+**A room always talks**, whatever the table was dealt with. Gathering people is a
+conversation by nature: *two minutes*, *start without me*, *who else is coming*.
+The chat setting is about the game, and a room is not the game yet, so a table
+dealt in silence is still somewhere its people can arrange themselves before the
+first move. Once it starts, the table's own setting applies again.
+
+**The room is shown for as long as the table is a room**, rather than while a
+chair is still empty. Hiding it at zero took the link away at the moment it was
+most needed: that is precisely the window the third and fourth friend arrive in.
+
+**A room nobody is at is swept.** The rule was "unstarted, and a chair still
+held", so a room whose chairs had all filled and whose people had then all closed
+their tabs sat in memory for ever: nothing had started, so there was no game to
+keep, and nobody was left to say they were ready. It is any room now, twenty
+minutes after the last request about it.
 
 **The order is still drawn once.** Settled used to mean "no chair held and
 nothing played", which stayed true for as long as nobody had moved: with bots'
@@ -2535,7 +2571,7 @@ played itself to the end while the room was empty would be a game destroyed
 rather than a game continued, and that is the whole reason this is a rule about
 the table rather than a filter over the seats.
 
-**The invitation lives in the waiting room**, because that is the first moment
+**The invitation lives in the room**, because that is the first moment
 there is a table to invite anybody to. It is the table's own address, shown in a
 field and not only behind a Copy button: this is the one control on the screen
 whose whole job is to be pasted somewhere else, and reading it back is how

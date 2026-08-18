@@ -110,7 +110,14 @@ pub(crate) fn masthead_home(links: &[(&str, &str)]) -> String {
 }
 
 fn mast(mark: &str, context: &str, links: &[(&str, &str)]) -> String {
-    let mut b = format!("<header>{mark}");
+    // Which build is serving this, beside the mark, dim and small. It was already
+    // in every payload for exactly this reason and rendered nowhere, so the one
+    // question a stale process makes somebody ask, "am I even looking at the new
+    // code", could only be answered from a terminal. An afternoon went on that.
+    let mut b = format!(
+        "<header>{mark}<span class=\"build\">{}</span>",
+        env!("CARRANTA_BUILD")
+    );
     if !context.is_empty() {
         let _ = write!(b, "<span class=\"gameName\">{}</span>", esc(context));
     }
@@ -4589,6 +4596,13 @@ header { padding: 1.1rem var(--gutter);
    stylesheets describing one header produce. */
 .mark { font: 400 22px/1 Audiowide, system-ui, sans-serif; color: var(--primary);
         text-decoration: none; margin: 0; letter-spacing: .01em; }
+/* Which build is serving this. Quiet enough to ignore and legible enough to
+   read out, which is the whole specification: it exists so that the question a
+   stale process makes somebody ask, whether they are even looking at the new
+   code, is answerable by looking. */
+header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
+                color: var(--muted-foreground); opacity: .55;
+                font-variant-numeric: tabular-nums; }
 /* What this page is about, beside the mark rather than instead of it: the body
    face and a quieter colour, so the mark stays the mark. */
 .gameName { font: 500 14px/1 Figtree, system-ui, sans-serif;

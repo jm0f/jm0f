@@ -70,11 +70,31 @@ pub struct Room {
     /// started by its host. Nothing is played while it holds, which is the
     /// window an invitation needs.
     pub lobby: bool,
-    /// Whether this reader may give the empty chairs to the bots: the host, or
-    /// whoever is sitting in seat nought if the host has gone.
-    pub host: bool,
-    /// Whether the people here may talk to each other.
-    pub chat: bool,
+    /// Whether this reader has said they are ready, and how the room stands:
+    /// how many of the people at it have said so, and how many there are.
+    ///
+    /// A count rather than a flag, because the question somebody waiting in a
+    /// room has is "who are we still waiting for", which their own button does
+    /// not answer.
+    pub you_ready: bool,
+    pub ready: usize,
+    pub of: usize,
+    /// Which seats are held for somebody who has not arrived, and which have
+    /// said they are ready: one bit per seat, seat nought lowest.
+    ///
+    /// Bits because `Room` is a `Copy` handful of scalars passed down every
+    /// render path, and a table has at most four seats. The page unpacks them
+    /// into the two lists it draws the room from, which it cannot work out on
+    /// its own: it knows which seats hold people, and a chair being kept for
+    /// somebody looks exactly like a bot's from there.
+    pub held: u8,
+    pub ready_seats: u8,
+    /// Whether the people here may talk to each other right now.
+    ///
+    /// The table's own setting once the game is under way, and always true while
+    /// it is still a room: gathering people is a conversation by nature, and the
+    /// chat setting is about the game rather than about the doorway to it.
+    pub chat_open: bool,
 }
 
 /// One thing somebody said, as the page needs it.
@@ -294,8 +314,22 @@ fn render_room(
     j.int("seatsFree", room.free as i64);
     j.int("seatsTakeable", room.takeable as i64);
     j.bool("inLobby", room.lobby);
-    j.bool("youMayStart", room.host);
-    j.bool("chat", room.chat);
+    j.ints(
+        "heldSeats",
+        (0..seats as u8)
+            .filter(|s| room.held >> s & 1 == 1)
+            .map(i64::from),
+    );
+    j.ints(
+        "readySeats",
+        (0..seats as u8)
+            .filter(|s| room.ready_seats >> s & 1 == 1)
+            .map(i64::from),
+    );
+    j.bool("youAreReady", room.you_ready);
+    j.int("ready", room.ready as i64);
+    j.int("readyOf", room.of as i64);
+    j.bool("chat", room.chat_open);
     // What has been said, oldest first. Escaped here, once, and put into the
     // page as text rather than as markup: it is somebody else's words and is
     // never anything else.

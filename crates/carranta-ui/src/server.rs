@@ -266,6 +266,18 @@ struct Table {
     seen: Vec<u64>,
     /// Whether the people here may talk to each other, as the lobby said.
     chat: bool,
+    /// Who has said they are ready, in seat order.
+    ///
+    /// Only meaningful while the table is a room. A room starts when everybody
+    /// sitting at it has said so, which is a rule the people in the room can
+    /// satisfy between them: the alternative was one person's button, and a host
+    /// who closed their tab left everybody else sitting in a room nothing could
+    /// start.
+    ///
+    /// Beside the chairs rather than inside them, like `seen`, because it is not
+    /// part of who is in the seat and is never written down: a game that has
+    /// begun has no use for it.
+    ready: Vec<bool>,
     /// Whether this table was dealt as a lobby: a room people gather in before
     /// the game begins, rather than a board that starts the moment it exists.
     ///
@@ -357,6 +369,40 @@ impl Table {
         self.chairs.iter().filter(|c| **c == Chair::Open).count()
     }
 
+    /// The seats a person is sitting in, in seat order.
+    fn people_seated(&self) -> Vec<u8> {
+        self.chairs
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c, Chair::Taken { .. }))
+            .map(|(i, _)| i as u8)
+            .collect()
+    }
+
+    /// How many people are at this table, and how many have said they are ready.
+    ///
+    /// The pair the room shows. Two numbers rather than a flag, because the
+    /// question somebody in a room actually has is "who are we still waiting
+    /// for", and a button that only says whether *you* have pressed it does not
+    /// answer it.
+    fn ready_count(&self) -> (usize, usize) {
+        let seated = self.people_seated();
+        let said = seated
+            .iter()
+            .filter(|&&s| self.ready.get(s as usize).copied().unwrap_or(false))
+            .count();
+        (said, seated.len())
+    }
+
+    /// Whether everybody sitting at this table has said they are ready.
+    ///
+    /// Nobody seated is not everybody ready: a room with no people in it is a
+    /// room waiting for its first, not a room about to start.
+    fn all_ready(&self) -> bool {
+        let (said, of) = self.ready_count();
+        of > 0 && said == of
+    }
+
     /// Whether this table is still a room rather than a game.
     ///
     /// Nothing is played while this holds: not by a person, because `api/act`
@@ -422,8 +468,16 @@ impl Table {
             free: self.waiting(),
             takeable: self.takeable(),
             lobby: self.in_lobby(),
-            host: self.may_start(player),
-            chat: self.chat,
+            you_ready: self
+                .seat_of(player)
+                .and_then(|s| self.ready.get(s as usize).copied())
+                .unwrap_or(false),
+            ready: self.ready_count().0,
+            of: self.ready_count().1,
+            held: bits(self.chairs.iter().map(|c| *c == Chair::Open)),
+            ready_seats: bits(self.ready.iter().copied()),
+            // A room always talks, whatever the table was dealt with. See `say`.
+            chat_open: self.chat || self.in_lobby(),
         };
         let talk: Vec<view::Talk<'_>> = self
             .said
@@ -480,21 +534,13 @@ impl Table {
         if here.is_empty() { seated } else { here }
     }
 
-    /// Whether this visitor may give the empty chairs to the bots.
-    ///
-    /// Whoever dealt the table, or whoever is sitting in seat nought, which is
-    /// the same person until the host stands up before the game starts. Without
-    /// the second half their table would be left with nobody able to start it,
-    /// waiting on somebody who had already gone.
-    ///
-    /// Not any seat: the others are waiting for the same person the host is, and
-    /// one of them deciding for everybody would be a different rule.
-    fn may_start(&self, player: &str) -> bool {
-        if player.is_empty() {
-            return false;
-        }
-        self.by == player || self.chairs.first().and_then(Chair::key) == Some(player)
-    }
+    // `may_start` lived here: whoever dealt the table, or whoever was in seat
+    // nought if they had gone. It decided who could give the empty chairs to the
+    // bots and begin, and it is gone because that was one person's button. A host
+    // who closed their tab left everybody else in a room nothing could start, and
+    // the fallback to seat nought only helped when a person happened to be in it.
+    // The room ends when the room agrees now, which is a condition the people in
+    // it can always satisfy between them.
 
     /// Deal the seats out again, once it is settled who is at the table.
     ///
@@ -520,6 +566,11 @@ impl Table {
             let j = (roll_below((i + 1) as u64)) as usize;
             self.chairs.swap(i, j);
             self.seen.swap(i, j);
+            // Everything held per seat moves with the seat. Nothing reads the
+            // ready flags after the draw, since the draw is what closing the
+            // room causes, but leaving them behind would make two records of who
+            // is where disagree, which is how the names came to be wrong before.
+            self.ready.swap(i, j);
         }
         self.seat_the_people();
         // Names follow their people. Cleared first, or a seat somebody moved out
@@ -759,6 +810,7 @@ impl Server {
             drawn: false,
             shut: false,
             lobby: chairs_held,
+            ready: vec![false; seats as usize],
         };
         table.seat_the_people();
         // A table of one person and three bots is settled the moment it is
@@ -802,10 +854,14 @@ impl Server {
     /// asked has no other moment to do it in.
     fn sweep(&self) {
         let cutoff = now().saturating_sub(WAITING_LIMIT);
+        // Any room nobody has been near, not only one with a chair still empty.
+        // A room whose chairs all filled and whose people then all closed their
+        // tabs used to sit here for ever: nothing had started, so there was no
+        // game to keep, and nobody was left to say they were ready.
         self.tables
             .lock()
             .unwrap()
-            .retain(|t| t.session.started() || t.waiting() == 0 || t.stirred > cutoff);
+            .retain(|t| !t.in_lobby() || t.stirred > cutoff);
     }
 
     /// Put a table at the front, and drop the ones that no longer fit.
@@ -884,6 +940,7 @@ impl Server {
                 drawn: true,
                 shut: true,
                 lobby: false,
+                ready: vec![false; self.seats as usize],
             });
             self.keep(&id);
             if finished {
@@ -979,6 +1036,7 @@ impl Server {
             // shut by its own moves.
             shut: true,
             lobby: false,
+            ready: vec![false; saved.setup.chairs.len().max(saved.seats as usize)],
         };
         table.seat_the_people();
         table.name_the_seats();
@@ -1081,7 +1139,12 @@ impl Server {
         let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
             return false;
         };
-        if !table.chat {
+        // A room always talks, whatever the table was dealt with. Gathering
+        // people is a conversation by nature: "two minutes", "start without me",
+        // "who else is coming". The chat setting is about the *game*, and a room
+        // is not the game yet, so a table dealt in silence is still somewhere its
+        // people can arrange themselves before the first move.
+        if !table.chat && !table.in_lobby() {
             return false;
         }
         let Some(seat) = table.seat_of(player) else {
@@ -1147,26 +1210,76 @@ impl Server {
         true
     }
 
-    /// Fill the open chairs with bots and let the game begin.
+    /// Say that this seat is ready, and start the game once every seat has.
     ///
-    /// The host's answer to nobody turning up. Without it a table dealt with a
-    /// seat open waits for a person who may never arrive, and there would be no
-    /// way out of it that was not "deal another table".
-    fn start(&self, id: &str, player: &str) -> bool {
+    /// The room's own way out, and it belongs to the people in it rather than to
+    /// one of them. It was the host's button: whoever dealt the table, or
+    /// whoever was in seat nought if they had gone. That left a room nothing
+    /// could start whenever the host closed their tab and a bot held seat
+    /// nought, with three people sitting in it and no way forward but to deal
+    /// another table.
+    ///
+    /// Everybody ready is the condition, so the room ends when the room agrees.
+    /// Pressing it again takes it back, because somebody who said yes and then
+    /// noticed a fourth friend arriving should be able to wait for them.
+    ///
+    /// Whatever is still empty when the last person says yes goes to the house
+    /// bot, which is what the host's button used to do and is still the only
+    /// sensible reading: a chair nobody took by the time everybody was ready is
+    /// a chair nobody is coming to.
+    fn ready(&self, id: &str, player: &str) -> bool {
         let mut tables = self.tables.lock().unwrap();
         let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
             return false;
         };
-        // Whoever dealt it. Not any seat: the other people at the table are
-        // waiting for the same person the host is, and one of them deciding for
-        // everybody is a different rule than the one this is.
-        if !table.may_start(player) || table.session.started() {
+        // Only from a seat, and only while there is a room to be ready in.
+        let Some(seat) = table.seat_of(player) else {
+            return false;
+        };
+        if !table.in_lobby() {
             return false;
         }
-        // Whatever else it does, this is the host saying the table is who it is
-        // now. It closes the door on its own, because a bot's chair is otherwise
-        // takeable until the first move and "start with bots" would not mean
-        // much if somebody could walk into one a moment later.
+        let now_ready = !table.ready.get(seat as usize).copied().unwrap_or(false);
+        if let Some(r) = table.ready.get_mut(seat as usize) {
+            *r = now_ready;
+        }
+        let name = table.session.name_of(seat).to_string();
+        let who = if name.is_empty() {
+            format!("Player {}", seat + 1)
+        } else {
+            name
+        };
+        table.session.note_to_table(if now_ready {
+            format!("{who} is ready")
+        } else {
+            format!("{who} is not ready yet")
+        });
+        table.stirred = now();
+        if !table.all_ready() {
+            return true;
+        }
+        drop(tables);
+        self.begin(id);
+        true
+    }
+
+    /// Close the room: the empty chairs go to the bots and the table may move.
+    ///
+    /// Called when everybody says they are ready. Separate from `ready` so the
+    /// two halves are readable apart: one is a person pressing a button, the
+    /// other is what happens to a table when the last of them does.
+    fn begin(&self, id: &str) -> bool {
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        if table.session.started() {
+            return false;
+        }
+        // The table is who it is now. This closes the door on its own, because a
+        // bot's chair is otherwise takeable until the first move and a started
+        // game would not mean much if somebody could walk into one a moment
+        // later.
         table.shut = true;
         let short = table.waiting();
         for c in table.chairs.iter_mut() {
@@ -1634,13 +1747,13 @@ impl Server {
                 }
                 respond(&mut stream, 200, "application/json", b"{}")
             }
-            // The host giving up on the seats nobody took.
-            ("POST", "/api/start") => {
+            // Saying you are ready. The last person to say it starts the game.
+            ("POST", "/api/ready") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
                 self.stir(&id);
-                if !self.start(&id, &player) {
-                    return respond(&mut stream, 403, "text/plain", b"not yours to start");
+                if !self.ready(&id, &player) {
+                    return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 }
                 let seat = self.seated(&id, &player);
                 let payload = {
@@ -1680,6 +1793,17 @@ impl Server {
             _ => respond(&mut stream, 404, "text/plain", b"not found"),
         }
     }
+}
+
+/// One bit per seat, seat nought lowest.
+///
+/// A table has at most four seats and the view's `Room` is a `Copy` handful of
+/// scalars, so the two per-seat facts it carries travel as bits rather than as
+/// two more allocations on every render.
+fn bits(of: impl Iterator<Item = bool>) -> u8 {
+    of.take(8)
+        .enumerate()
+        .fold(0u8, |m, (i, on)| if on { m | 1 << i } else { m })
 }
 
 /// Split a leading game id off a path.
@@ -2123,6 +2247,8 @@ mod tests {
             stirred: now(),
             drawn: true,
             shut: true,
+            lobby: false,
+            ready: Vec::new(),
         });
         server.keep(&id);
         assert!(server.store().all().is_empty(), "still nothing played");
@@ -2186,6 +2312,8 @@ mod tests {
             stirred: now(),
             drawn: true,
             shut: true,
+            lobby: false,
+            ready: Vec::new(),
         });
         for _ in 0..6 {
             let mut tables = server.tables.lock().unwrap();
@@ -2270,6 +2398,8 @@ mod tests {
             stirred: now(),
             drawn: true,
             shut: true,
+            lobby: false,
+            ready: Vec::new(),
         });
         server.keep(&done);
         server.tables.lock().unwrap().clear();
@@ -2481,9 +2611,6 @@ mod tests {
         // settling it draws the turn order.
         let sat = post(port, &format!("/{id}/api/sit"), guest, "name=Vidal");
         assert!(sat.contains("\"seat\":"), "{sat:.60}");
-        let host_seat = server.seated(&id, host).expect("still seated");
-        let guest_seat = server.seated(&id, guest).expect("the guest took a chair");
-        assert_ne!(host_seat, guest_seat, "two people, two seats");
         // Nothing has been played yet, so the two bots are two chairs somebody
         // could still walk into: sitting down settles the table and draws the
         // order, and it is a poll that plays the first move. Read off the table
@@ -2496,11 +2623,17 @@ mod tests {
             assert_eq!(t.takeable(), 2, "but there is room for two more");
         }
 
-        // The host says that is enough, before anybody polls: giving the chairs
-        // to the bots is also the decision that the table is who it is now, or
-        // "start with bots" would not mean much with somebody able to walk into
-        // one afterwards.
-        assert!(post(port, &format!("/{id}/api/start"), host, "").starts_with("HTTP/1.1 200"));
+        // Both of them say they are ready, which is what closes a room. The last
+        // one to say it also gives the chairs still empty to the bots and shuts
+        // the door, or "ready" would not mean much with somebody able to walk
+        // into one of them afterwards.
+        assert!(post(port, &format!("/{id}/api/ready"), guest, "").starts_with("HTTP/1.1 200"));
+        assert!(post(port, &format!("/{id}/api/ready"), host, "").starts_with("HTTP/1.1 200"));
+        // Which is also when the turn order is drawn, so the seats noted above
+        // are seats these two may since have been moved out of.
+        let host_seat = server.seated(&id, host).expect("still seated");
+        let guest_seat = server.seated(&id, guest).expect("still seated");
+        assert_ne!(host_seat, guest_seat, "two people, two seats");
 
         let theirs = get(port, &format!("/{id}/api/state"), guest);
         assert!(theirs.contains(&format!("\"you\":{guest_seat}")));
@@ -2654,12 +2787,23 @@ mod tests {
         assert!(server.sit(&id, "guest2key0000000", "Rui").is_some());
         assert!(server.sit(&id, "guest3key0000000", "Ada").is_some());
 
-        // The host closes the room, and only then is there a game.
+        // The room closes when the room agrees, and not before. Three people said
+        // yes and the fourth had not: one seat short is a room, not a game.
+        assert!(server.ready(&id, host), "a seat may say so");
+        assert!(server.ready(&id, "guest1key0000000"));
+        assert!(server.ready(&id, "guest2key0000000"));
         assert!(
-            !server.start(&id, "guest1key0000000"),
-            "not theirs to start"
+            !server.ready(&id, "nobodykey0000000"),
+            "and somebody with no seat may not"
         );
-        assert!(server.start(&id, host), "the host's to start");
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert_eq!(t.ready_count(), (3, 4), "three of four");
+            assert!(t.in_lobby(), "so it is still a room");
+        }
+        // The last one is what ends it.
+        assert!(server.ready(&id, "guest3key0000000"));
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
@@ -2726,7 +2870,10 @@ mod tests {
             // The order was drawn once, when the held chair filled. Drawing again
             // for each later arrival would have moved people who had already seen
             // where they were sitting.
-            assert!(t.drawn, "the order was drawn");
+            // Not drawn yet, and that is the rule: the order is settled when the
+            // room closes rather than when the chairs fill, because people can
+            // arrive right up to that moment.
+            assert!(!t.drawn, "nothing is settled while it is still a room");
             assert_eq!(
                 t.chairs
                     .iter()
@@ -2802,7 +2949,10 @@ mod tests {
         // Two chairs going, and the host's own name on theirs.
         let mine = get(port, &format!("/{id}/api/state"), host);
         assert!(mine.contains("\"seatsFree\":2"));
-        assert!(mine.contains("\"youMayStart\":true"));
+        // And the room's own state: one person in it, not yet ready.
+        assert!(mine.contains("\"ready\":0"));
+        assert!(mine.contains("\"readyOf\":1"));
+        assert!(mine.contains("\"youAreReady\":false"));
         assert!(mine.contains("Marta"));
 
         // And nobody can move while a chair is empty: the first move shuts the
@@ -2836,11 +2986,15 @@ mod tests {
         );
 
         // The host gives up on the last one, which is what starts the game.
+        // Everybody's call now, not the host's: a room nothing could start was
+        // exactly what one person's button produced whenever they closed the tab.
         assert!(
-            post(port, &format!("/{id}/api/start"), early, "").starts_with("HTTP/1.1 403"),
-            "and it is not the other players' call"
+            post(port, &format!("/{id}/api/ready"), "nobodykey0000000", "")
+                .starts_with("HTTP/1.1 403"),
+            "though somebody with no seat has nothing to be ready for"
         );
-        assert!(post(port, &format!("/{id}/api/start"), host, "").starts_with("HTTP/1.1 200"));
+        assert!(post(port, &format!("/{id}/api/ready"), early, "").starts_with("HTTP/1.1 200"));
+        assert!(post(port, &format!("/{id}/api/ready"), host, "").starts_with("HTTP/1.1 200"));
         let after = get(port, &format!("/{id}/api/state"), host);
         assert!(after.contains("\"seatsFree\":0"), "the chair went to a bot");
 
@@ -3050,7 +3204,9 @@ mod tests {
         let guest = "guestkey00000000";
         assert!(server.sit(&id, guest, "Vidal").is_some());
         assert!(server.store().all().is_empty(), "nor does sitting down");
-        assert!(server.start(&id, host));
+        // Everybody at the table said they were ready, which is what closes a
+        // room. Reached straight here rather than through four buttons.
+        assert!(server.begin(&id));
         assert!(
             server.store().all().is_empty(),
             "nor does filling the chairs"
@@ -3114,10 +3270,12 @@ mod tests {
         );
 
         // The host standing up before the start hands the table on rather than
-        // stranding it: whoever is in seat nought may start it.
-        // The host standing up before the start hands the table on rather than
-        // stranding it. Dealt with three open chairs so nothing settles and the
-        // seats stay where they were put.
+        // The host standing up before the start does not strand the table. It
+        // used to be able to: starting was the host's button, with a fallback to
+        // whoever held seat nought, so a host who left a table whose seat nought
+        // then went to a bot left a room nothing could start. Nobody is special
+        // now, so there is nothing to hand on. Dealt with three open chairs so
+        // nothing settles and the seats stay where they were put.
         let id = server.deal("seats=4&roles=you,open,open,open&name=Marta", host);
         assert_eq!(
             server.seated(&id, host),
@@ -3129,17 +3287,19 @@ mod tests {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("dealt");
             assert_eq!(t.chairs[0], Chair::Open, "seat nought is free");
-            assert!(
-                !t.may_start(guest),
-                "and it is not just any seat's to start"
-            );
+            assert_eq!(t.ready_count(), (0, 0), "and nobody is left to be ready");
         }
-        // Whoever takes seat nought may start it, so the table is not stranded.
+        // Somebody arriving into the empty room can still close it, which is the
+        // whole of not being stranded.
         assert_eq!(server.sit(&id, "fourthkey0000000", "Aleks"), Some(0));
+        assert!(
+            server.ready(&id, "fourthkey0000000"),
+            "and say they are ready"
+        );
         {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("dealt");
-            assert!(t.may_start("fourthkey0000000"), "seat nought may start it");
+            assert!(!t.in_lobby(), "which starts the game");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3155,9 +3315,15 @@ mod tests {
             "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
             host,
         );
-        let guest_seat = server.sit(&id, guest, "Vidal").expect("a chair going");
+        assert!(server.sit(&id, guest, "Vidal").is_some(), "a chair going");
+        // Everybody at the table said they were ready, which is what closes a
+        // room. Reached straight here rather than through four buttons.
+        assert!(server.begin(&id));
+        // Read after, not before: closing the room is what draws the turn order,
+        // so a seat noted before it is a seat somebody has since been moved out
+        // of.
+        let guest_seat = server.seated(&id, guest).expect("seated");
         let host_seat = server.seated(&id, host).expect("seated");
-        assert!(server.start(&id, host));
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
@@ -3215,9 +3381,15 @@ mod tests {
             "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
             host,
         );
-        let guest_seat = server.sit(&id, guest, "Vidal").expect("a chair going");
+        assert!(server.sit(&id, guest, "Vidal").is_some(), "a chair going");
+        // Everybody at the table said they were ready, which is what closes a
+        // room. Reached straight here rather than through four buttons.
+        assert!(server.begin(&id));
+        // Read after, not before: closing the room is what draws the turn order,
+        // so a seat noted before it is a seat somebody has since been moved out
+        // of.
+        let guest_seat = server.seated(&id, guest).expect("seated");
         let host_seat = server.seated(&id, host).expect("seated");
-        assert!(server.start(&id, host));
         let both = {
             let mut both = vec![host_seat, guest_seat];
             both.sort_unstable();

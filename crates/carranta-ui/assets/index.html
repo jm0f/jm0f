@@ -276,7 +276,10 @@
   .vid { font: 600 8px var(--sans); text-anchor: middle;
          dominant-baseline: central; pointer-events: none; fill: #33261B; }
   .vid.coast { fill: #1E7E96; }
-  header .build { color: var(--dim); opacity: .6; font-size: 12px; font-variant-numeric: tabular-nums; }
+  /* Quiet enough to ignore and legible enough to read out, which is the whole
+     specification. */
+  header .build { font: 400 12px/1 var(--sans); color: var(--dim); opacity: .55;
+                  font-variant-numeric: tabular-nums; }
   header .spacer { flex: 1; }
   /* The board's top right corner, mirroring the decision cards in its top left.
      It is a setting of this player's own rather than of the game, so it belongs
@@ -977,7 +980,24 @@
      is the point: what you are waiting for is a game you can already see. */
   .waitingRoom { grid-column: 2; grid-row: 2; display: flex; align-items: center;
                  justify-content: center; gap: 1em; flex-wrap: wrap; }
+  .waitingRoom { flex-direction: column; gap: .7em; }
   .waitingRoom .said { color: var(--dim); }
+  /* Who is here, in seat order and in the seats' own colours, so the room reads
+     the same way the players panel does once the game starts. Wrapping rather
+     than a fixed row: four names of unknown length in a column of unknown
+     width. */
+  .roomSeats { display: flex; flex-wrap: wrap; justify-content: center;
+               gap: .5em 1.4em; }
+  .roomSeat { display: flex; align-items: center; gap: .45em; }
+  .roomWho { font-weight: 600; }
+  .roomWho.empty { font-weight: 400; color: var(--dim); }
+  /* Said quietly, because it is a state and not a control: the only button in
+     the room is your own. */
+  .roomReady { font-size: .85em; color: var(--dim); }
+  .roomReady.is { color: var(--accent); }
+  .roomInvite, .roomGo { display: flex; align-items: center;
+                         justify-content: center; gap: .7em; flex-wrap: wrap; }
+  .roomKept { font-size: .9em; opacity: .8; }
   /* Wide enough to read a whole address without scrolling it, and allowed to
      give way before the words either side of it do. */
   .waitLink { flex: 0 1 26em; min-width: 12em; }
@@ -1304,6 +1324,11 @@
      not need one. The name links home. -->
 <header>
   <a class="mark" href="/">Carranta</a>
+  <!-- Which build is serving this page, filled in from the first payload. It was
+       already in every one of them for exactly this reason and rendered nowhere,
+       so the one question a stale process makes somebody ask could only be
+       answered from a terminal. -->
+  <span class="build" id="build"></span>
   <span class="gameName" id="gameName" hidden></span>
   <!-- The two other places to go from a board: this game's report, whose
        address is set at start-up rather than rendered since it does not change
@@ -2387,6 +2412,10 @@ function render() {
   const named = document.getElementById('gameName');
   named.textContent = v.game || '';
   named.hidden = !v.game;
+  // Set once. It cannot change without the process changing, and re-writing it
+  // on every poll would be three words a second for no reason.
+  const build = document.getElementById('build');
+  if (v.build && build.textContent !== v.build) build.textContent = v.build;
   // Before anything draws, so a card belonging to a turn that is over never
   // reaches the screen at all, and so the board and the building buttons agree
   // about what is armed in the same frame.
@@ -3742,71 +3771,124 @@ document.getElementById('talkSay').onsubmit = async (e) => {
   load(api('/api/state'));
 };
 
-// What a table waiting for people says, and the one thing its host can do.
+// The room: who is here, who is ready, and the link that brings the rest.
+//
+// It replaced a line of text and one person's button. The button belonged to the
+// host, which meant a host who closed their tab left everybody else sitting in a
+// room nothing could start; and the line said how many chairs were empty, which
+// is not what somebody waiting wants to know. What they want is who has turned
+// up and who they are still waiting for, and both of those are names.
 function renderWaiting(v) {
   const box = document.getElementById('waitingRoom');
-  box.hidden = v.started || v.seatsFree === 0;
+  // Shown for as long as the table is a room, which is not the same as "a chair
+  // is still empty". A table whose held chairs have all filled is still a room
+  // until the people in it are ready, and that is exactly the window a third and
+  // fourth friend arrive in: hiding this at zero took the link away at the
+  // moment it was most needed.
+  box.hidden = !v.inLobby;
   if (box.hidden) return;
   box.textContent = '';
-  // Two numbers, and they are not the same one. What the table is waiting for is
-  // the chairs the host held: that is what stops it starting. How many can still
-  // join counts the bots as well, because a bot's chair belongs to whoever turns
-  // up before the first move. Saying only the first made the link look like an
-  // invitation for exactly one person.
-  const said = document.createElement('span');
-  said.className = 'said';
-  const held = v.seatsFree === 0
-    ? 'Everybody you held a seat for is here.'
-    : v.seatsFree === 1
-      ? 'Waiting for one more player.'
-      : `Waiting for ${v.seatsFree} more players.`;
-  const room = v.seatsTakeable === 0
-    ? ''
-    : v.seatsTakeable === 1
-      ? ' There is one more chair, and whoever opens this link takes it.'
-      : ` There are ${v.seatsTakeable} more chairs, and whoever opens this link takes one.`;
-  said.textContent = held + room;
-  // Said out loud, because it is the one thing about this screen that happens
-  // without anybody pressing anything. Leaving the page is what starts the
-  // clock: while it is open, the table is held.
-  const kept = document.createElement('span');
-  kept.className = 'said';
-  kept.textContent = 'The table is held while this page is open, and for twenty minutes after.';
-  box.appendChild(said);
+
+  // ---- who is here -------------------------------------------------------
+  const held = new Set(v.heldSeats || []);
+  const ready = new Set(v.readySeats || []);
+  const people = new Set(v.people || []);
+  const list = document.createElement('div');
+  list.className = 'roomSeats';
+  for (let i = 0; i < v.players; i++) {
+    const row = document.createElement('span');
+    row.className = 'roomSeat';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = COLOURS[i];
+    const who = document.createElement('span');
+    who.className = 'roomWho';
+    if (people.has(i)) {
+      who.textContent = i === v.you ? 'You' : seatName(v, i);
+    } else if (held.has(i)) {
+      // A chair being kept is the one thing on this panel that is still
+      // happening, so it gets the loader the lobby uses for the same state.
+      who.className += ' empty';
+      who.appendChild(shimmer('waiting'));
+    } else {
+      who.className += ' empty';
+      who.textContent = BOT_NAMES[i];
+    }
+    row.append(dot, who);
+    // Only people can be ready. A bot is not waiting for anything and a chair
+    // nobody is in has nobody to answer for it.
+    if (people.has(i)) {
+      const tick = document.createElement('span');
+      tick.className = 'roomReady' + (ready.has(i) ? ' is' : '');
+      tick.textContent = ready.has(i) ? 'ready' : 'not ready';
+      row.appendChild(tick);
+    }
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+
+  // ---- the link ----------------------------------------------------------
   // Shown, not just copyable. A button that says it copied something is asking
   // to be trusted about what it copied, and this is the one control on the
   // screen whose whole job is to be pasted somewhere else: reading it back is
   // how somebody knows they are sending the right table. It is also the way to
   // pass it on when the clipboard is not available, which is every phone
   // handing a link to somebody sitting next to them.
-  const link = document.createElement('input');
-  link.className = 'seed waitLink';
-  link.type = 'text';
-  link.readOnly = true;
-  link.value = inviteLink();
-  link.onfocus = () => link.select();
-  box.appendChild(link);
-  const copy = document.createElement('button');
-  copy.className = 'btn';
-  copy.textContent = 'Copy link';
-  copy.onclick = (e) => copyInto(e.target, inviteLink());
-  box.appendChild(copy);
-  // Only the host's to press: everybody else at the table is waiting for the
-  // same person they are, and one of them deciding for all of them is a
-  // different rule than this one.
-  if (v.youMayStart) {
-    const go = document.createElement('button');
-    go.className = 'btn-primary';
-    // Always here, because nothing starts a lobby but this. It used to appear
-    // only while a chair was still empty, so a host whose friends had all
-    // arrived had no way to begin.
-    go.textContent = v.seatsFree === 0
-      ? 'Start the game'
-      : v.seatsFree === 1 ? 'Start with a bot' : 'Start with bots';
-    go.onclick = () => fetch(api('/api/start'), { method: 'POST' })
-      .then(() => load(api('/api/state')));
-    box.appendChild(go);
+  const invite = document.createElement('div');
+  invite.className = 'roomInvite';
+  const say = document.createElement('span');
+  say.className = 'said';
+  say.textContent = v.seatsTakeable === 0
+    ? 'Every seat is taken.'
+    : v.seatsTakeable === 1
+      ? 'One more can join:'
+      : `${v.seatsTakeable} more can join:`;
+  invite.appendChild(say);
+  if (v.seatsTakeable > 0) {
+    const link = document.createElement('input');
+    link.className = 'seed waitLink';
+    link.type = 'text';
+    link.readOnly = true;
+    link.value = inviteLink();
+    link.onfocus = () => link.select();
+    invite.appendChild(link);
+    const copy = document.createElement('button');
+    copy.className = 'btn';
+    copy.textContent = 'Copy link';
+    copy.onclick = (e) => copyInto(e.target, inviteLink());
+    invite.appendChild(copy);
   }
+  box.appendChild(invite);
+
+  // ---- the way out -------------------------------------------------------
+  // Everybody's, not the host's. The room ends when the room agrees, which is a
+  // condition the people in it can satisfy between them however the tabs fall.
+  const go = document.createElement('div');
+  go.className = 'roomGo';
+  if (v.you >= 0) {
+    const btn = document.createElement('button');
+    btn.className = v.youAreReady ? 'btn' : 'btn-primary';
+    btn.textContent = v.youAreReady ? 'Not ready' : 'I am ready';
+    btn.onclick = () => fetch(api('/api/ready'), { method: 'POST' })
+      .then(() => load(api('/api/state')));
+    go.appendChild(btn);
+  }
+  const count = document.createElement('span');
+  count.className = 'said';
+  // The count is the whole point of a ready check: your own button says what you
+  // did, and this says what everybody else did, which is the thing you are
+  // actually sitting there wondering about.
+  count.textContent = v.readyOf === 0
+    ? 'Waiting for somebody to sit down.'
+    : `${v.ready} of ${v.readyOf} ready. The game starts when everybody is.`;
+  go.appendChild(count);
+  box.appendChild(go);
+
+  // Said out loud, because it is the one thing about this screen that happens
+  // without anybody pressing anything.
+  const kept = document.createElement('span');
+  kept.className = 'said roomKept';
+  kept.textContent = 'The room is held while somebody has it open, and for twenty minutes after.';
   box.appendChild(kept);
 }
 
@@ -5096,7 +5178,16 @@ const POLL_IDLE = 3000, POLL_MOVING = 150;
     // somebody's move. So the talk is checked on its own, or a table would say
     // things nobody heard until the next time somebody built a road.
     const spoke = view && (next.talk || []).length !== (view.talk || []).length;
-    if (view && (next.version !== view.version || spoke)) { view = next; render(); }
+    // And a third. Nothing that happens in a room is a move, so none of it
+    // touches the version: people sitting down, standing up and saying they are
+    // ready all leave it exactly where it was. Without this the host watched a
+    // panel that said "0 of 1 ready" while two friends sat down beside them and
+    // pressed the button, which is the one screen in the application whose whole
+    // job is to show what other people are doing.
+    const room = (v) => v && [v.inLobby, v.ready, v.readyOf, v.seatsTakeable,
+                              (v.people || []).join(), (v.names || []).join()].join('|');
+    const gathered = view && room(next) !== room(view);
+    if (view && (next.version !== view.version || spoke || gathered)) { view = next; render(); }
     else if (view) view.botThinking = next.botThinking;
   } catch (e) {
     // The server is mid-restart. Nothing to do but ask again shortly.
