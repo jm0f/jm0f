@@ -152,12 +152,17 @@
     font-variant-numeric: tabular-nums;
     height: 100vh; height: 100dvh; overflow: hidden;
     display: flex; flex-direction: column;
-    /* Two wide, faint pools of colour rather than a flat field, so the dark
-       reads as depth instead of as absence. */
+    /* Wide, faint pools of colour rather than a flat field, so the field reads
+       as depth instead of as absence. Six of them: the same three colours by
+       the same means, once high on the right and once low on the left, so the
+       light crosses the whole window rather than treating one corner. */
     background:
       radial-gradient(1200px 620px at 85% -18%, rgba(232, 84, 47, .12), transparent 62%),
       radial-gradient(900px 520px at 96% 6%, rgba(245, 168, 28, .12), transparent 58%),
       radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%),
+      radial-gradient(1000px 680px at 6% 104%, rgba(245, 168, 28, .11), transparent 60%),
+      radial-gradient(820px 640px at -8% 58%, rgba(232, 84, 47, .09), transparent 58%),
+      radial-gradient(760px 560px at 104% 92%, rgba(49, 175, 201, .09), transparent 60%),
       var(--bg);
   }
 

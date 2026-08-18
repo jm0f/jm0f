@@ -2111,15 +2111,23 @@ honest makes this page work before anything has loaded.
   several: the button sat inside a bordered box, under a heading and a
   paragraph, third in the reading order of its own section, and the eye landed
   on the word *New game* rather than on the thing to press. Now it is the first
-  and the largest thing on the page, and the only centred thing in the
-  application, because there is no column of text here to read from its left
-  edge.
+  thing on the page, and the only centred thing in the application, because
+  there is no column of text here to read from its left edge.
+
+  It is **the application's own button at the application's own size**. It was
+  briefly scaled up to say "this is the important one", which is a thing
+  position and emptiness already say: a button alone at the top of an otherwise
+  empty page is not competing with anything, so the size was volume rather than
+  emphasis, and it made the one control on the front page the one control that
+  does not look like the rest of them.
 
   **Three lines under it**, one clause each, in the order somebody meets them:
   the game, then what the server keeps of it, then who else is at the table.
   *Settle an island, trade, and strategize. Analyze your games with advanced
   analytics. Play humans and the best AI in the world.* They replaced the lede,
-  which said one of the three at greater length.
+  which said one of the three at greater length. At the page's own body size,
+  not a size of their own: scaling them with the viewport made the front page
+  the one screen whose body text is not the body text.
 - **Tables** is somewhere to sit: every game in memory that has not been won.
   Your own are there whether or not you listed them, because you have to be able
   to get back to a game you dealt; other people's are there only if their host
@@ -2277,10 +2285,22 @@ screen, so the width this costs is width that was sitting empty beside it.
 **The same ground under all four.** The board was a warm grained table with three
 faint pools of colour washed across the top of it; the report and the home page
 were flat cream; the lobby painted a fourth wash of its own over whatever it
-covered. All four are the table now, the same three pools and the same grain at
+covered. All four are the table now, the same pools and the same grain at
 the same scale and weight. This was most of what made the screens look like
 different applications: the header was the part you could name, and the paper was
 the part you could not.
+
+**Six pools rather than three**, and the second three are the first three again:
+same colours, same technique, moved. Warm high on the right, then amber low on
+the left, orange off the left edge at the middle, teal into the bottom right
+corner. Three of them all along the top meant the colour was a corner treatment
+and everything below the first screenful was flat cream, which the home page
+made obvious as soon as it became one button on an otherwise empty page: a page
+with almost nothing on it is mostly table, so the table has to hold the whole
+window and not just its top edge. They are fixed to the viewport, so the
+percentages are of the window rather than of the document: a short page and a
+long one are lit the same way, and scrolling moves the content across the light
+instead of dragging the light with it.
 
 **The board's copy is written by hand**, in `assets/index.html`, because that page
 is one file with its own stylesheet and its own tokens. The classes and the rules

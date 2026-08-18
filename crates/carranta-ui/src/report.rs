@@ -4536,8 +4536,20 @@ pub(crate) const CSS: &str = "
 /* ---- the table these pages are laid on ----
    The board's own ground, brought here so the four screens are one place rather
    than a game with a warm grained table under it and two documents on flat
-   cream. Two things: wide faint pools of colour across the top, so the paper
-   reads as depth instead of absence, and the grain itself.
+   cream. Two things: wide faint pools of colour, so the paper reads as depth
+   instead of absence, and the grain itself.
+
+   Six pools rather than three, and the second three are the first three again.
+   Same colours, same technique, moved: warm high on the right, then amber low
+   on the left, orange off the left edge at the middle, teal into the bottom
+   right corner. Three of them all along the top meant the colour was a corner
+   treatment, and everything below the first screenful was flat cream. A page
+   with one card on it is mostly table, so the table has to hold the whole
+   window rather than its top edge.
+
+   Fixed to the viewport, so the percentages are of the window and not of the
+   document: a short page and a long one are lit the same way, and scrolling
+   moves the content across the light rather than dragging the light with it.
 
    The grain is baked into a data URI rather than run as a live `filter: url()`,
    which would be re-rasterized on every repaint; multiplied and pinned behind
@@ -4551,6 +4563,9 @@ body { margin: 0; color: var(--foreground);
          radial-gradient(1200px 620px at 85% -18%, rgba(232, 84, 47, .12), transparent 62%),
          radial-gradient(900px 520px at 96% 6%, rgba(245, 168, 28, .12), transparent 58%),
          radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%),
+         radial-gradient(1000px 680px at 6% 104%, rgba(245, 168, 28, .11), transparent 60%),
+         radial-gradient(820px 640px at -8% 58%, rgba(232, 84, 47, .09), transparent 58%),
+         radial-gradient(760px 560px at 104% 92%, rgba(49, 175, 201, .09), transparent 60%),
          var(--background);
        background-attachment: fixed; }
 body::after {
@@ -5074,11 +5089,17 @@ mod tests {
                 "header inset"
             );
         }
-        // The same table under all of them: three pools of colour and the grain.
+        // The same table under all of them: six pools of colour and the grain.
+        // Three warm and cool along the top, and the same three again low and
+        // to the left, so the light crosses the window rather than sitting in
+        // one corner with flat cream under it.
         for wash in [
             "radial-gradient(1200px 620px at 85% -18%, rgba(232, 84, 47, .12), transparent 62%)",
             "radial-gradient(900px 520px at 96% 6%, rgba(245, 168, 28, .12), transparent 58%)",
             "radial-gradient(700px 520px at 62% -12%, rgba(49, 175, 201, .10), transparent 60%)",
+            "radial-gradient(1000px 680px at 6% 104%, rgba(245, 168, 28, .11), transparent 60%)",
+            "radial-gradient(820px 640px at -8% 58%, rgba(232, 84, 47, .09), transparent 58%)",
+            "radial-gradient(760px 560px at 104% 92%, rgba(49, 175, 201, .09), transparent 60%)",
         ] {
             assert!(CSS.contains(wash), "the report is laid on the same table");
             assert!(PAGE.contains(wash), "and so is the board");

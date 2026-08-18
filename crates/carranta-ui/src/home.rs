@@ -85,8 +85,15 @@ pub fn page(open: &[Open], mine: &[Saved]) -> String {
 /// Not a card. The card is the shape this page uses for a list of things, and a
 /// list of one thing dressed as a list reads as the first of several: the button
 /// sat inside a bordered box below a heading and a paragraph, third in the
-/// reading order of its own section. Here it is the first thing on the page and
-/// the largest, which is what it is.
+/// reading order of its own section. Here it is the first thing on the page,
+/// which is what it is.
+///
+/// The application's own button, at the application's own size. It was briefly
+/// scaled up to say "this is the important one", which is a thing position and
+/// emptiness already say: a button alone at the top of an otherwise empty page
+/// is not competing with anything, so the extra size was volume rather than
+/// emphasis, and it made the one control on the front page the one control that
+/// does not look like the rest of them.
 ///
 /// It does not deal anything either: it leads to the lobby, which is where the
 /// settings live and always did. Two forms asking overlapping halves of the same
@@ -99,7 +106,7 @@ pub fn page(open: &[Open], mine: &[Saved]) -> String {
 fn deal() -> String {
     let mut b = String::from("<section class=\"hero\">");
     b.push_str(
-        "<a class=\"go big\" href=\"/lobby\">New game</a>\
+        "<a class=\"go\" href=\"/lobby\">New game</a>\
          <ul class=\"claims\">\
          <li>Settle an island, trade, and strategize.</li>\
          <li>Analyze your games with advanced analytics.</li>\
@@ -388,10 +395,14 @@ const EXTRA: &str = "
         text-align: center; }
 /* Three lines, one clause each, under the thing they are reasons for. A list
    because they are a list, without the bullets, which would make three items
-   out of what reads as three sentences. */
-.claims { list-style: none; margin: 1.75rem 0 0; padding: 0;
-          display: grid; gap: .55rem;
-          font: 400 clamp(15px, 1.4vw, 17px)/1.5 Figtree, system-ui, sans-serif;
+   out of what reads as three sentences.
+
+   The page's own size, not a size of its own. Scaling them with the viewport
+   made the front page the one screen in the application whose body text is not
+   the body text, which is a different typeface decision every time the window
+   moves. */
+.claims { list-style: none; margin: 1.6rem 0 0; padding: 0;
+          display: grid; gap: .5rem;
           color: var(--muted-foreground); }
 /* The one button on the page that starts something, in the colour the win is
    written in, and the same shape as a place badge so the family holds. */
@@ -403,10 +414,6 @@ const EXTRA: &str = "
 .go:hover { filter: brightness(1.06); }
 .go:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
 .go.small { font-size: 13px; padding: .35em .7em; }
-/* The one on the front page, sized as the thing the page is for. Everything is
-   in `em` off the font size, so one number moves the whole button. */
-.go.big { font-size: clamp(19px, 2.1vw, 25px); padding: .62em 1.5em;
-          border-radius: var(--radius-xl); }
 /* A second action beside a first is quieter: same shape, the page's own ink. */
 .go.quiet { background: var(--card); color: var(--muted-foreground);
             border-color: var(--border); }
