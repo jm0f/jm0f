@@ -986,9 +986,7 @@
                 font-size: .92em; }
   /* The talk panel while it lives in the lobby card: bounded, so a chatty
      room scrolls its talk rather than pushing the ready button off screen. */
-  .lobbyTalk { margin-top: 1.4em; }
-  .lobbyTalk .talkPanel { max-height: 300px; border: 1px solid var(--border);
-                          border-radius: var(--radius-lg); }
+
   body.waiting .dockCell { display: none; }
 
   /* ---- table talk ------------------------------------------------------- */
@@ -1045,7 +1043,15 @@
       radial-gradient(900px 500px at 50% -10%, rgba(232, 84, 47, .13), transparent 62%),
       var(--background);
   }
-  .lobbyCard { width: min(880px, 100%); padding: clamp(20px, 3vw, 32px); }
+  .lobbyCard { width: min(880px, 100%); padding: clamp(14px, 2.2vw, 32px);
+               min-height: 0; overflow: auto; }
+  /* Beside the card, at the width this panel has in the game (the right rail's
+     own clamp), so the one element that appears on both screens is the same
+     size on both. Its height is the row's, which is the card's, because the
+     two are centred together as one block. */
+  .lobbyTalk { flex: none; width: clamp(260px, 18.5vw, 400px);
+               display: flex; min-height: 0; }
+  .lobbyTalk .talkPanel { flex: 1; min-height: 0; }
   /* Two columns where there is room for two, one where there is not. The card
      is the same card either way; only the number of columns changes, so a
      narrow window gets the same fields in the same order rather than a
@@ -1080,13 +1086,32 @@
      paint over itself, and a fourth treatment on the fourth screen is the thing
      this was all for. Its grain is switched off for the same reason: the body is
      already carrying it, and two coats read as one darker coat. */
-  body.atLobby { overflow: auto; }
+  /* The lobby is a page of the application rather than a sheet over a board, so
+     it sits in the flow under the header and takes what the header leaves. It
+     does not scroll: the window is the size, and the card scales its rhythm to
+     fit rather than running off the bottom of it. */
+  body.atLobby { overflow: hidden; }
   body.atLobby .lobby {
-    position: static; inset: auto; background: none; overflow: visible;
-    padding: 0 var(--gutter) clamp(16px, 6vh, 64px);
+    position: static; inset: auto; background: none; overflow: hidden;
+    flex: 1; min-height: 0;
+    align-items: center; justify-content: center;
+    padding: clamp(6px, .8vh, 16px) var(--gutter) clamp(10px, 1.6vh, 24px);
   }
+  .lobbyPair { display: flex; align-items: stretch; min-height: 0;
+               max-height: 100%; gap: clamp(8px, .8vw, 16px); }
+  /* The vertical rhythm scales with the window's height, which is the whole of
+     making this fit without a scrollbar: at a laptop height the fields sit
+     close, at a monitor height they breathe. */
+  body.atLobby .field { margin-bottom: clamp(.5em, 1.5vh, 1.35em); }
+  body.atLobby .lobbyCols { margin-top: clamp(.4em, 1.2vh, 1.2em); }
+  body.atLobby #lobbyStart { margin-top: clamp(.6em, 1.4vh, 1.4em) !important; }
+  body.atLobby .lobbyCount { margin-top: clamp(.4em, .9vh, .8em); }
   body.atLobby .lobby::after { display: none; }
   body.atLobby main { display: none; }
+  /* Nothing in the header but the mark. The report is about a game that has not
+     happened, New game leads to the screen you are standing on, and leaving is
+     what the mark does. */
+  body.atLobby .headLinks { display: none; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
   .field { margin-bottom: 1.35em; }
   /* Sized to its words, not to the card. As a full-width block its hover area
@@ -1335,19 +1360,17 @@
   </div>
 </header>
 
-<!-- Sitting down at somebody else's table, docs/ui.md §16. Not a lobby: the
-     table is already dealt and the board is behind this. All it asks is the one
-     thing the table does not know, which is what to call you. -->
+<!-- What is said when the table this page is about has stopped existing. It was
+     also the card that asked whether you wanted a seat and what to call you,
+     over the board, before you were seated. That question is gone: opening a
+     room seats you, and your name is typed in your own row on the lobby screen.
+     A modal between somebody and the table they were invited to was one screen
+     of ceremony for a question with one answer. -->
 <div class="lobby" id="sitDown" hidden>
   <div class="lobbyCard panel" style="width: min(420px, 100%)">
-    <h1 class="lobbyTitle" id="sitTitle">Take a seat</h1>
+    <h1 class="lobbyTitle" id="sitTitle">This table is gone</h1>
     <p class="lobbyLead" id="sitLead"></p>
-    <div class="field">
-      <span class="fieldLabel">Your name</span>
-      <input id="sitName" class="seed" type="text" maxlength="24" autocomplete="nickname">
-    </div>
-    <button id="sitGo" class="btn-primary btn-block" style="margin-top:1.2em">Sit down</button>
-    <button id="sitWatch" class="btn btn-block" style="margin-top:.6em">Just watch</button>
+    <button id="sitGo" class="btn-primary btn-block" style="margin-top:1.2em">Find another</button>
   </div>
 </div>
 
@@ -1357,6 +1380,11 @@
      header keeps only whose turn it is. Seats read "bot" or "open" so the shape
      is right for people joining, though only bots sit behind them today. -->
 <div class="lobby" id="lobby" hidden>
+  <!-- The settings and the talk are one block, centred together in whatever the
+       header leaves. The pair is as tall as the settings need and no taller, so
+       the talk beside it matches that rather than both being stretched to the
+       window with the content stranded at the top of it. -->
+  <div class="lobbyPair">
   <div class="lobbyCard panel">
     <!-- No title. The header above says what this is, the card is the only thing
          on the screen, and a heading naming it was the page telling you where
@@ -1468,17 +1496,18 @@
       </div>
     </div>
 
-    <!-- Table talk sits in the lobby too: gathering people is a conversation
-         by nature, and the panel is the same element the game uses, moved here
-         while the table is a room and moved back when it starts. One panel,
-         one history, two homes. -->
-    <div class="lobbyTalk" id="lobbyTalk"></div>
-
     <!-- One button, and it is everybody's: the room ends when the room agrees.
          The way out is the mark in the header, which goes home from every page
          in the application. -->
     <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">I am ready</button>
     <p class="lobbyCount" id="lobbyCount"></p>
+  </div>
+
+  <!-- Table talk sits beside the settings rather than under them: gathering
+       people is a conversation by nature, and it is the same panel the game
+       uses, at the same width it has there, moved here while the table is a
+       room and moved back when it starts. One panel, one history, two homes. -->
+  <div class="lobbyTalk" id="lobbyTalk"></div>
   </div>
 </div>
 
@@ -2389,7 +2418,6 @@ function render() {
       ? 'The house bot plays your seat until you come back to it.'
       : 'The seat goes back to the table for somebody else.';
   }
-  offerASeat(v);
   // The lobby, or the game: one payload, two screens, and `inLobby` is the
   // switch. While the table is a room the board is not shown at all, because
   // it does not exist as far as the people gathering are concerned: the host
@@ -3498,8 +3526,28 @@ function tabs(host, options, current, pick) {
 // bar is the invitation, and this form *is* the table: the host edits and
 // everybody gathered sees the current answer on the next poll; a guest sees the
 // same controls, disabled, because saying you are ready means knowing to what.
+// Whether this page has already offered the browser's remembered name to the
+// server. Once: after that the seat's name is the server's, and re-sending
+// would overwrite a correction typed here a moment ago.
+let nameOffered = false;
+
 function renderLobby(v) {
   const mine = !!v.youAreHost;
+  // The browser remembers a name between games. If the server has none for this
+  // seat, say it: a name that only the page knows is a name nobody else at the
+  // table can see, which is exactly the bug this had. The server remembers it
+  // against the same cookie afterwards, so the next game needs no page at all.
+  if (!nameOffered && v.you >= 0 && !v.youName) {
+    nameOffered = true;
+    const kept = (localStorage.getItem('carranta.name') || '').trim();
+    if (kept) {
+      fetch(api('/api/sit'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ name: kept }),
+      }).then(() => load(api('/api/state')));
+    }
+  }
   const lock = (o) => (mine ? o : { ...o, disabled: true, tip: GUEST_NOTE });
   const send = (over) => pushSetup(over);
 
@@ -3532,8 +3580,12 @@ function renderLobby(v) {
       name.maxLength = 24;
       name.placeholder = 'your name';
       name.autocomplete = 'nickname';
-      name.value = typing !== null ? typing
-        : (v.youName || localStorage.getItem('carranta.name') || '');
+      // What the seat is actually called, never a local draft dressed as one.
+      // It used to fall back to `localStorage`, so a host who never committed
+      // the field read their own name on their own screen while everybody else
+      // read "Player 1": the one lie a form can tell that nobody can catch.
+      name.value = typing !== null ? typing : (v.youName || '');
+      name.placeholder = `Player ${i + 1}`;
       // Sitting again under a new name is how a name is changed: the server
       // has one path for "this is me, called this".
       name.onchange = (e) => {
@@ -3673,11 +3725,20 @@ function renderTalk(v) {
   const say = document.getElementById('talkSay');
   const note = document.getElementById('talkNote');
   const talk = v.talk || [];
-  // Same lines, same order: leave the box alone rather than rebuilding it under
-  // somebody who is typing. Counted off a note of its own rather than off the
-  // children, because an empty list has a child too: the line saying why.
-  if (list.dataset.lines !== String(talk.length)) {
-    list.dataset.lines = String(talk.length);
+  // Rebuilt when what it would draw has changed, which is not the same as when
+  // a line has been added. Names are read off the seats rather than carried with
+  // the lines, so somebody typing their name for the first time changes every
+  // line they have already said: counting lines alone left those reading
+  // "Player 1" on everybody else's screen until the next remark happened to
+  // arrive. The input is a sibling of this list, so nothing anybody is typing is
+  // rebuilt under them.
+  const drawn = [
+    v.you,
+    (v.names || []).join('\u0001'),
+    talk.map((t) => `${t.seat}\u0002${t.said}`).join('\u0001'),
+  ].join('\u0003');
+  if (list.dataset.drawn !== drawn) {
+    list.dataset.drawn = drawn;
     list.textContent = '';
     if (!talk.length) {
       const why = document.createElement('p');
@@ -3693,7 +3754,13 @@ function renderTalk(v) {
       const who = document.createElement('span');
       who.className = 'talkWho';
       who.style.color = COLOURS[t.seat];
-      who.textContent = t.seat === v.you ? 'You' : t.who;
+      // Read off the seat's current name rather than the one carried with the
+      // line. A line stores what its speaker was called when they said it, and
+      // somebody who had not typed a name yet was called nothing: the line then
+      // rendered with an empty name, which is a remark from nobody. This also
+      // means renaming yourself fixes what you said earlier, and `seatName` has
+      // a "Player 2" for the seat when there is still nothing else to go on.
+      who.textContent = t.seat === v.you ? 'You' : seatName(v, t.seat);
       const what = document.createElement('span');
       what.className = 'talkWhat';
       what.textContent = t.said;
@@ -4904,43 +4971,6 @@ const api = (path) => `/${GAME}${path}`;
   if (a) a.href = api('/analytics');
 }
 
-// The table is short of people, and this reader is not in a seat. Ask them once
-// whether they want one, because the door closes on the first move: after that
-// the only way into a seat is to have been in it, and a page that quietly let
-// them watch would have spent their one chance for them.
-function offerASeat(v) {
-  const box = document.getElementById('sitDown');
-  // Takeable, not free. A chair held open is one a person gets and so is a
-  // bot's, and the difference between them is the table's business rather than
-  // the arrival's: what they want to know is whether there is a seat.
-  const wanted = !v.started && v.you < 0 && v.seatsTakeable > 0 && v.winner === null;
-  if (!wanted || sitAsked) { if (!wanted) box.hidden = true; return; }
-  sitAsked = true;
-  document.getElementById('sitLead').textContent = v.seatsTakeable === 1
-    ? 'One seat at this table is still free. The game has not started yet.'
-    : `${v.seatsTakeable} seats at this table are still free. The game has not started yet.`;
-  const name = document.getElementById('sitName');
-  name.value = localStorage.getItem('carranta.name') || '';
-  box.hidden = false;
-  name.focus();
-}
-let sitAsked = false;
-
-document.getElementById('sitGo').onclick = async () => {
-  const name = (document.getElementById('sitName').value || '').trim();
-  if (name) localStorage.setItem('carranta.name', name);
-  await fetch(api('/api/sit'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ name }),
-  });
-  document.getElementById('sitDown').hidden = true;
-  load(api('/api/state'));
-};
-document.getElementById('sitWatch').onclick = () => {
-  document.getElementById('sitDown').hidden = true;
-};
-
 document.getElementById('leave').onclick = async () => {
   await fetch(api('/api/leave'), { method: 'POST' });
   // Home rather than staying to watch: leaving is a decision to be somewhere
@@ -4953,17 +4983,11 @@ document.getElementById('leave').onclick = async () => {
 // bouncing to the home page, because a tab that silently became a different
 // screen is worse than one that tells you what happened to the last one.
 function tableGone() {
-  const box = document.getElementById('sitDown');
-  document.getElementById('sitTitle').textContent = 'This table is gone';
   document.getElementById('sitLead').textContent =
     'It was waiting for people and nobody came, so it was closed. Nothing was '
     + 'played at it.';
-  document.querySelector('#sitDown .field').hidden = true;
-  const go = document.getElementById('sitGo');
-  go.textContent = 'Find another';
-  go.onclick = () => location.assign('/');
-  document.getElementById('sitWatch').hidden = true;
-  box.hidden = false;
+  document.getElementById('sitGo').onclick = () => location.assign('/');
+  document.getElementById('sitDown').hidden = false;
 }
 
 loadArt().then(() => load(api('/api/state')));

@@ -587,15 +587,33 @@ impl Table {
     fn shuffle(&mut self) {
         self.drawn = true;
         let n = self.chairs.len();
+        // Where each seat's occupant ends up, so anything already keyed to a
+        // seat can follow them. Only what was said needs it today, and it needs
+        // it badly: a remark made in the lobby is stamped with the seat its
+        // speaker was in at the time, and the draw is precisely the moment those
+        // stop being the seats they are in.
+        let mut moved: Vec<u8> = (0..n as u8).collect();
         for i in (1..n).rev() {
             let j = (roll_below((i + 1) as u64)) as usize;
             self.chairs.swap(i, j);
             self.seen.swap(i, j);
+            moved.swap(i, j);
             // Everything held per seat moves with the seat. Nothing reads the
             // ready flags after the draw, since the draw is what closing the
             // room causes, but leaving them behind would make two records of who
             // is where disagree, which is how the names came to be wrong before.
             self.ready.swap(i, j);
+        }
+        // `moved[new] = old`, so this inverts it into "the seat this speaker is
+        // in now" and re-stamps every line that is already on the table.
+        let mut now_at = vec![0u8; n];
+        for (to, &from) in moved.iter().enumerate() {
+            now_at[from as usize] = to as u8;
+        }
+        for said in self.said.iter_mut() {
+            if let Some(&to) = now_at.get(said.seat as usize) {
+                said.seat = to;
+            }
         }
         self.seat_the_people();
         // Names follow their people. Cleared first, or a seat somebody moved out
@@ -674,6 +692,22 @@ pub struct Server {
     /// so a fresh server deals the same sequence of boards every time and a
     /// game can be found again by its number.
     seed: Mutex<u64>,
+    /// What each player key last called themselves.
+    ///
+    /// A name is a fact about a person and not about a table, so remembering it
+    /// here means somebody sitting down at their second game is already called
+    /// what they were called at their first, without typing it again. The page
+    /// kept one in `localStorage`, which is the same browser and not the same
+    /// knowledge: the server could not put a name on a seat it had never been
+    /// told, so a host who never committed the field showed as "Player 1" to
+    /// everybody else while their own screen showed the name.
+    ///
+    /// Keyed by the cookie, so it is exactly as good as the cookie: one browser,
+    /// no claim about who anybody is. When there are accounts the name comes
+    /// from one and this becomes the fallback for whoever has not signed in.
+    /// Not written down, because a name is cheap to say again and a file of
+    /// them is a file of personal data this does not need to keep.
+    names: Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl Server {
@@ -688,6 +722,7 @@ impl Server {
             seats,
             mode,
             seed: Mutex::new(seed),
+            names: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1133,6 +1168,8 @@ impl Server {
             {
                 *had = name.clone();
                 table.session.name_seat(seat, &name);
+                drop(tables);
+                self.names.lock().unwrap().insert(player.to_string(), name);
             }
             return Some(seat);
         }
@@ -1140,7 +1177,20 @@ impl Server {
             return None;
         }
         let seat = table.free_seat()?;
-        let name = called(name);
+        // What they said, or what they said last time. Somebody arriving through
+        // a link has typed nothing yet, and a seat labelled "Player 2" when the
+        // server already knows they are Vidal is the application forgetting on
+        // purpose.
+        let name = match called(name) {
+            said if !said.is_empty() => said,
+            _ => self
+                .names
+                .lock()
+                .unwrap()
+                .get(player)
+                .cloned()
+                .unwrap_or_default(),
+        };
         table.chairs[seat as usize] = Chair::Taken {
             key: player.to_string(),
             name: name.clone(),
@@ -1151,7 +1201,17 @@ impl Server {
         }
         table.session.name_seat(seat, &name);
         table.seat_the_people();
-        table.session.note_to_table(format!("{name} sat down"));
+        table.session.note_to_table(if name.is_empty() {
+            format!("Player {} sat down", seat + 1)
+        } else {
+            format!("{name} sat down")
+        });
+        if !name.is_empty() {
+            self.names
+                .lock()
+                .unwrap()
+                .insert(player.to_string(), name.clone());
+        }
         // The last chair taken settles the table, and settling it is when the
         // order is drawn. Their own seat may move under them here, which is why
         // this returns the seat rather than the caller assuming one.
@@ -1713,11 +1773,18 @@ impl Server {
                 // tab left open across a restart carries on where it was.
                 self.seat(&id);
                 self.stir(&id);
-                // Which seat is theirs, if any. Looking at a table is not
-                // sitting down at it any more: a chair is taken deliberately,
-                // under a name, through `api/sit`, because with the door closing
-                // at the first move it matters that you meant to come in.
-                let seat = self.seated(&id, &player);
+                // Which seat is theirs, and opening a room takes one. The link
+                // is an invitation and following it is answering it, so a card
+                // asking whether you meant it was a question with one answer,
+                // standing between somebody and the table. The name comes from
+                // whatever the server remembers of them, and the seat's own row
+                // on the lobby screen is where it is typed or corrected.
+                //
+                // Only a room can seat anybody this way: a game under way has no
+                // takeable chair, so nobody is walked into one.
+                let seat = self
+                    .seated(&id, &player)
+                    .or_else(|| self.sit(&id, &player, ""));
                 // And that they are still there. A page asking is a person at
                 // it, which is the only evidence this server can have; the seat
                 // is re-let to the bots or taken back from them only when that
@@ -1744,8 +1811,17 @@ impl Server {
                 // A server only wakes when asked, so this poll is the whole
                 // clock: it is what lets a paced bot's wait expire, and what
                 // ends a turn whose time ran out.
-                t.session.tick();
-                t.session.enforce_clock();
+                //
+                // Not while the table is still a room. Nothing is being played
+                // and nobody's turn is running down while people are walking in,
+                // and a turn clock left running over a lobby does not merely
+                // tick: it runs out, forfeits the turn, and that forfeit is a
+                // move, so the game starts itself about a minute after it is
+                // dealt with everybody still reading the settings.
+                if !t.in_lobby() {
+                    t.session.tick();
+                    t.session.enforce_clock();
+                }
                 // Their own seat's view, or a spectator's if they have none:
                 // nobody is ever sent another seat's hand. Either way it carries
                 // how many chairs are still going, because that is the one thing
@@ -2762,23 +2838,26 @@ mod tests {
             "and is alone at it"
         );
 
-        // A second person opens the table. Looking is not sitting: they are told
-        // there is a chair going and are still in no seat.
+        // A second person opens the table, and opening a room is taking a seat
+        // in it: following an invitation is answering it, and a card asking
+        // whether you meant to come in was a question with one answer.
         let guest = "guestkey00000000";
         let looking = get(port, &format!("/{id}/api/state"), guest);
-        assert!(looking.contains("\"you\":-1"), "looking is not sitting");
         assert!(
-            looking.contains("\"seatsTakeable\":3"),
-            "but every bot's chair is offered"
+            !looking.contains("\"you\":-1"),
+            "opening a room seats you: {looking:.200}"
+        );
+        assert!(
+            looking.contains("\"seatsTakeable\":2"),
+            "and there are two chairs left behind them"
         );
         assert!(
             looking.contains("\"started\":false"),
             "and the door is open"
         );
 
-        // Taking it is its own act, and it carries a name. Which seat they end
-        // up in is the table's to decide: the last chair taken settles it, and
-        // settling it draws the turn order.
+        // A name is said by sitting again under it, which is also how one is
+        // corrected: one path for "this is me, called this".
         let sat = post(port, &format!("/{id}/api/sit"), guest, "name=Vidal");
         assert!(sat.contains("\"seat\":"), "{sat:.60}");
         // Nothing has been played yet, so the two bots are two chairs somebody
@@ -2918,6 +2997,79 @@ mod tests {
             assert_eq!(t.seat_of(host), Some(host_seat), "still the host's chair");
             assert_eq!(t.seat_of(guest), Some(guest_seat), "and still the guest's");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_remark_keeps_its_speaker_across_the_draw() {
+        // Every line is stamped with the seat its speaker was in when they said
+        // it, and the draw is exactly the moment those stop being the seats they
+        // are in. Without this, closing a room re-attributed everything said in
+        // it: the page reads the seat's colour and its current name off that
+        // number, so lines arrived under the wrong person.
+        let dir = std::env::temp_dir().join(format!("carranta-attrib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 82, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal("seats=4&name=Marta&chat=text", host);
+        assert!(server.sit(&id, guest, "Vidal").is_some());
+        assert!(server.say(&id, host, "mine"));
+        assert!(server.say(&id, guest, "theirs"));
+        assert!(server.begin(&id), "which draws the order");
+
+        let tables = server.tables.lock().unwrap();
+        let t = tables.iter().find(|t| t.id == id).expect("dealt");
+        let host_seat = t.seat_of(host).expect("seated");
+        let guest_seat = t.seat_of(guest).expect("seated");
+        let said: Vec<(u8, &str)> = t.said.iter().map(|d| (d.seat, d.text.as_str())).collect();
+        assert_eq!(
+            said,
+            vec![(host_seat, "mine"), (guest_seat, "theirs")],
+            "each line is still its speaker's"
+        );
+        drop(tables);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_room_has_no_clock_running_over_it() {
+        // The bug this is for started games on its own about a minute after they
+        // were dealt, with everybody still reading the settings. The poll is the
+        // whole clock, and a turn clock left running over a lobby does not merely
+        // tick: it runs out, forfeits the turn, and a forfeit is a move, so the
+        // room becomes a game nobody agreed to start.
+        //
+        // Asserted against the route rather than the session, because the route
+        // is where the guard lives and the guard is what went missing.
+        let dir = std::env::temp_dir().join(format!("carranta-noclock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 81, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let host = "hostkey000000000";
+        // The shortest clock the lobby allows, so this test takes a second and
+        // not a minute. Everything else is what `/lobby` deals.
+        let id = server.deal("seats=4&clock=turn&clockSecs=1&discardSecs=1", host);
+        for _ in 0..12 {
+            let answer = get(port, &format!("/{id}/api/state"), host);
+            assert!(
+                answer.contains("\"inLobby\":true"),
+                "the room stands: {answer:.200}"
+            );
+            assert!(
+                answer.contains("\"started\":false"),
+                "and nothing is played"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        // And the clock is a clock again the moment the room closes.
+        assert!(server.begin(&id));
+        let answer = get(port, &format!("/{id}/api/state"), host);
+        assert!(answer.contains("\"inLobby\":false"), "the game is on");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
