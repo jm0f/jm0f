@@ -3593,6 +3593,12 @@ function renderWaiting(v) {
   said.textContent = v.seatsFree === 1
     ? 'Waiting for one more player. Share this table\u2019s link.'
     : `Waiting for ${v.seatsFree} more players. Share this table\u2019s link.`;
+  // Said out loud, because it is the one thing about this screen that happens
+  // without anybody pressing anything. Leaving the page is what starts the
+  // clock: while it is open, the table is held.
+  const kept = document.createElement('span');
+  kept.className = 'said';
+  kept.textContent = 'The table is held while this page is open, and for twenty minutes after.';
   box.appendChild(said);
   const copy = document.createElement('button');
   copy.className = 'btn';
@@ -3610,6 +3616,7 @@ function renderWaiting(v) {
       .then(() => load(api('/api/state')));
     box.appendChild(go);
   }
+  box.appendChild(kept);
 }
 
 function openLobby() {
@@ -4738,6 +4745,10 @@ function renderTrade(v) {
 
 async function load(url, opts) {
   const r = await fetch(url, opts);
+  // A table that is no longer there. It was waiting for people, nobody came,
+  // and it has been closed: there is nothing to draw and nothing to poll, so
+  // say so once and offer the page that knows what does exist.
+  if (r.status === 404) { tableGone(); return; }
   const next = await r.json();
   // A new game is a new address, and the server says which. Going there rather
   // than redrawing, so the game you are playing is the game the page is called.
@@ -4833,6 +4844,23 @@ document.getElementById('sitWatch').onclick = () => {
   document.getElementById('sitDown').hidden = true;
 };
 
+// The table this page is about has been closed. Said on the page rather than by
+// bouncing to the home page, because a tab that silently became a different
+// screen is worse than one that tells you what happened to the last one.
+function tableGone() {
+  const box = document.getElementById('sitDown');
+  document.getElementById('sitTitle').textContent = 'This table is gone';
+  document.getElementById('sitLead').textContent =
+    'It was waiting for people and nobody came, so it was closed. Nothing was '
+    + 'played at it.';
+  document.querySelector('#sitDown .field').hidden = true;
+  const go = document.getElementById('sitGo');
+  go.textContent = 'Find another';
+  go.onclick = () => location.assign('/');
+  document.getElementById('sitWatch').hidden = true;
+  box.hidden = false;
+}
+
 // Straight to the board. A fresh board used to open the lobby on top of itself,
 // because arriving at one meant the server had dealt it for you and nobody had
 // said what they wanted. That is the home page's job now, and a table reached
@@ -4858,7 +4886,11 @@ const POLL_IDLE = 3000, POLL_MOVING = 150;
   // a game that does not exist is a 404 every three seconds.
   if (LOBBY_ONLY) return;
   try {
-    const next = await (await fetch(api('/api/state'), { cache: 'no-store' })).json();
+    const r = await fetch(api('/api/state'), { cache: 'no-store' });
+    // Closed while this page sat open. Stop asking: a 404 every three seconds
+    // for a table that is not coming back is traffic and nothing else.
+    if (r.status === 404) { tableGone(); return; }
+    const next = await r.json();
     if (view && next.build !== view.build) { location.reload(); return; }
     // The same poll enforces the clock: the server only wakes when asked, so
     // without this a turn that ran out of time would sit there until clicked.

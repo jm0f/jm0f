@@ -2374,6 +2374,29 @@ whether they want one, because their one chance closes at the first move and a
 page that quietly let them watch would have spent it for them. What it asks is
 the only thing the table does not already know: what to call them.
 
+**A table waiting for nobody is closed.** Twenty minutes after anybody last
+looked at it, an unstarted table holding an open chair stops existing. That is
+measured from the last request about it rather than from when it was dealt,
+because the page polls every three seconds: a host still at the screen holds
+their table for as long as they are there, and a host who closed the tab holds
+it for twenty minutes. The waiting room says so out loud, since it is the one
+thing on that screen that happens without anybody pressing anything.
+
+Only tables that never started, and there is nothing to write down because
+nothing happened at them: the store never had them. A game with moves in it is
+somebody's afternoon and is never swept, whatever it is short.
+
+Which turned up a rule that had been quietly broken. **A table still filling up
+is not written to disk.** Sitting down and filling the chairs both wrote the file
+straight away, which put every dealt-and-abandoned table into the store for the
+analytics to divide by. That is the same rule that has always kept a game nobody
+moved in out of it; the first move writes the file, with everybody's seat and
+name in it.
+
+A reader whose table is closed while their page is open is told on the page
+rather than bounced to the home page: a tab that silently became a different
+screen is worse than one that says what happened to the last one.
+
 **Coming back is by key, and always allowed.** A seat you were in is yours
 whatever has happened since, including the server restarting. The rule is that
 you cannot take a *new* seat in a game under way; nothing stops you returning to
@@ -2413,11 +2436,6 @@ able to say whose turn it is.
   timeout that gives a seat back to the table. A person who closes the tab
   freezes their seat until the turn clock forfeits it, which the clock will do
   move by move but not to the point of handing the seat back.
-- **A table waiting for nobody.** A host who deals a table with open chairs and
-  walks away leaves it holding a seat for a person who is not coming. Nothing
-  cleans that up: no timer fills the chairs, and only the host can. The table
-  falls off the end of the sixteen eventually, which is a way for it to stop
-  existing rather than a way for it to be resolved.
 
 ---
 

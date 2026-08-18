@@ -224,6 +224,15 @@ struct Table {
     by: String,
     /// Who is in each seat, in seat order. Seat nought is whoever dealt it.
     chairs: Vec<Chair>,
+    /// When anything last happened here: dealt, asked about, sat down at,
+    /// moved on. Unix milliseconds.
+    ///
+    /// The signal a table waiting for people is judged on. A page open on the
+    /// waiting screen polls every three seconds, so somebody who is still there
+    /// keeps their table alive without doing anything, and somebody who closed
+    /// the tab stops. That is a truer test of "is anybody coming" than a timer
+    /// from when it was dealt, and it costs nothing to collect.
+    stirred: u64,
 }
 
 impl Table {
@@ -287,6 +296,21 @@ impl Table {
     }
 }
 
+/// How long a table waiting for people is held before it is closed.
+///
+/// A host who deals a table with a chair open and walks away leaves it holding a
+/// seat for somebody who is not coming. Nothing used to resolve that: the table
+/// sat on the home page advertising a seat, and the only end it had was falling
+/// off the back of the sixteen, which is a way to stop existing rather than a
+/// way to be settled.
+///
+/// Twenty minutes, measured from the last time anybody looked at it rather than
+/// from when it was dealt, because an open page keeps asking: a host still at
+/// the screen holds their table indefinitely, and one who closed the tab holds
+/// it for twenty minutes. Long enough to make tea, short enough that the list of
+/// tables is true.
+const WAITING_LIMIT: u64 = 20 * 60 * 1000;
+
 /// Tables kept in memory at once.
 ///
 /// A table that falls off the end is not lost: every move writes the file, so it
@@ -333,6 +357,9 @@ impl Server {
     /// Everything on it is read here rather than in the page: the tables from
     /// memory, the games from the store, and which of them are this visitor's.
     fn home(&self, player: &str) -> String {
+        // The list is the one place that promises these tables exist, so it is
+        // the place to stop promising the ones that no longer should.
+        self.sweep();
         let open: Vec<crate::home::Open> = self
             .tables
             .lock()
@@ -451,6 +478,7 @@ impl Server {
             dealt: now(),
             by: player.to_string(),
             chairs: chairs_from(query, seats, player, &name),
+            stirred: now(),
         };
         table.seat_the_people();
         let id = self.add(table);
@@ -466,11 +494,43 @@ impl Server {
         mine
     }
 
+    /// Note that somebody is still there.
+    ///
+    /// Any request about a table counts, the page's own three second poll
+    /// included, which is what makes an open page hold a seat and a closed one
+    /// let it go.
+    fn stir(&self, id: &str) {
+        if let Some(t) = self.tables.lock().unwrap().iter_mut().find(|t| t.id == id) {
+            t.stirred = now();
+        }
+    }
+
+    /// Close the tables that were waiting for somebody who never came.
+    ///
+    /// Only tables that never started. A game with moves in it has a file and an
+    /// address and somebody's afternoon in it; this is for the ones where a chair
+    /// was held open, nobody arrived, and whoever dealt it went away. There is
+    /// nothing to write down, because nothing happened: the store never had them.
+    ///
+    /// Called wherever the tables are read as a list, which is the same place the
+    /// clock is wound anywhere else here. A server that only wakes when it is
+    /// asked has no other moment to do it in.
+    fn sweep(&self) {
+        let cutoff = now().saturating_sub(WAITING_LIMIT);
+        self.tables
+            .lock()
+            .unwrap()
+            .retain(|t| t.session.started() || t.waiting() == 0 || t.stirred > cutoff);
+    }
+
     /// Put a table at the front, and drop the ones that no longer fit.
     ///
     /// Finished first, then oldest, because a game somebody is still playing is
     /// the last thing to take off the table.
     fn add(&self, table: Table) -> String {
+        // Before the eviction below, so a table nobody is coming to is closed
+        // rather than pushing a game somebody is playing off the end.
+        self.sweep();
         let id = table.id.clone();
         let mut tables = self.tables.lock().unwrap();
         tables.insert(0, table);
@@ -531,6 +591,7 @@ impl Server {
                 // Nor is anybody sitting at it. It is finished by the time it
                 // gets here, so there is nothing to sit down to.
                 chairs: vec![Chair::Bot; self.seats as usize],
+                stirred: now(),
             });
             self.keep(&id);
             if finished {
@@ -606,6 +667,9 @@ impl Server {
                     },
                 })
                 .collect(),
+            // Taken up now, whenever it was dealt: what the waiting limit asks
+            // is how long since anybody looked, and somebody just did.
+            stirred: now(),
         };
         table.seat_the_people();
         table.name_the_seats();
@@ -658,9 +722,17 @@ impl Server {
         table.session.name_seat(seat, &name);
         table.seat_the_people();
         table.session.note_to_table(format!("{name} sat down"));
+        table.stirred = now();
+        let started = table.session.started();
         let saved = saved_of(table);
         drop(tables);
-        let _ = self.store.save(&saved);
+        // Only if the game is under way. A table still filling up is not a game
+        // yet and has no business on disk: that is the same rule that keeps a
+        // dealt-and-abandoned table out of the store, and writing the seating
+        // down before the first move would have put every one of them there.
+        if started {
+            let _ = self.store.save(&saved);
+        }
         Some(seat)
     }
 
@@ -695,9 +767,13 @@ impl Server {
         } else {
             format!("{short} seats went to the house bot")
         });
+        table.stirred = now();
+        let started = table.session.started();
         let saved = saved_of(table);
         drop(tables);
-        let _ = self.store.save(&saved);
+        if started {
+            let _ = self.store.save(&saved);
+        }
         true
     }
 
@@ -954,6 +1030,7 @@ impl Server {
                 // An unfinished game off a table is put back on one first, so a
                 // tab left open across a restart carries on where it was.
                 self.seat(&id);
+                self.stir(&id);
                 // Which seat is theirs, if any. Looking at a table is not
                 // sitting down at it any more: a chair is taken deliberately,
                 // under a name, through `api/sit`, because with the door closing
@@ -994,6 +1071,7 @@ impl Server {
             ("POST", "/api/act") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
+                self.stir(&id);
                 let Some(seat) = self.seated(&id, &player) else {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 };
@@ -1037,6 +1115,7 @@ impl Server {
             ("POST", "/api/cancel") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
+                self.stir(&id);
                 let Some(seat) = self.seated(&id, &player) else {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 };
@@ -1057,6 +1136,7 @@ impl Server {
             ("POST", "/api/propose") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
+                self.stir(&id);
                 let Some(seat) = self.seated(&id, &player) else {
                     return respond(&mut stream, 403, "text/plain", b"no seat of yours");
                 };
@@ -1092,6 +1172,7 @@ impl Server {
             ("POST", "/api/sit") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
+                self.stir(&id);
                 let name = decode(&param(&body, "name").unwrap_or_default());
                 let taken = self.sit(&id, &player, &name);
                 let set = if issue {
@@ -1112,6 +1193,7 @@ impl Server {
             ("POST", "/api/start") => {
                 let id = game.clone().unwrap_or_default();
                 self.seat(&id);
+                self.stir(&id);
                 if !self.start(&id, &player) {
                     return respond(&mut stream, 403, "text/plain", b"not yours to start");
                 }
@@ -1572,6 +1654,7 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            stirred: now(),
         });
         server.keep(&id);
         assert!(server.store().all().is_empty(), "still nothing played");
@@ -1629,6 +1712,7 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            stirred: now(),
         });
         for _ in 0..6 {
             let mut tables = server.tables.lock().unwrap();
@@ -1707,6 +1791,7 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            stirred: now(),
         });
         server.keep(&done);
         server.tables.lock().unwrap().clear();
@@ -2066,6 +2151,18 @@ mod tests {
         assert!(turned_away.contains("\"seat\":-1"), "{turned_away:.60}");
         assert!(get(port, &format!("/{id}/api/state"), late).contains("\"you\":-1"));
 
+        // A move, which is what makes this a game with a file: an unstarted
+        // table has nothing on disk, because nothing has happened at it.
+        assert!(server.store().load(&id).is_none(), "nothing written yet");
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            assert!(!t.session.started(), "dealt, filled, and not yet played");
+            let v = t.session.version();
+            t.session.act_as(0, 0, v).expect("the opening is playable");
+            assert!(t.session.started(), "and now it is under way");
+        }
+
         // And the two who were in seats are still in them, across a restart.
         server.keep(&id);
         server.tables.lock().unwrap().clear();
@@ -2076,18 +2173,11 @@ mod tests {
         let back = get(port, &format!("/{id}/api/state"), early);
         assert!(back.contains("Vidal"), "still under their own name");
 
-        // Filling the chairs is not the same as beginning: nothing has happened
-        // yet, so a chair that came free here would still be takeable. What
-        // shuts the door is the first move.
+        // A chair that comes free in a game already under way is not a way in:
+        // the rule is about the game having begun, not about the seat.
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
-            assert!(!t.session.started(), "dealt, filled, and not yet played");
-            let v = t.session.version();
-            t.session.act_as(0, 0, v).expect("the opening is playable");
-            assert!(t.session.started(), "and now it is under way");
-            // Free a chair, which cannot now be sat in by somebody new: the rule
-            // is about the game having begun and not about the seat being taken.
             t.chairs[3] = Chair::Open;
         }
         let too_late = post(port, &format!("/{id}/api/sit"), late, "name=Late");
@@ -2095,6 +2185,105 @@ mod tests {
             too_late.contains("\"seat\":-1"),
             "the door is shut, not the seat"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_table_waiting_for_nobody_is_closed() {
+        let dir = std::env::temp_dir().join(format!("carranta-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 44, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+
+        // Three tables: one holding a chair, one full, and one already played.
+        let waiting = server.deal("seats=4&roles=you,open,bot,bot", host);
+        let full = server.deal("seats=4&roles=you,bot,bot,bot", host);
+        let played = server.deal("seats=4&roles=you,open,bot,bot", host);
+        {
+            let mut tables = server.tables.lock().unwrap();
+            for t in tables.iter_mut() {
+                if t.id == played {
+                    let v = t.session.version();
+                    t.session.act_as(0, 0, v).expect("playable");
+                }
+                // Every one of them last looked at half an hour ago.
+                t.stirred = now().saturating_sub(30 * 60 * 1000);
+            }
+        }
+        server.keep(&played);
+
+        server.sweep();
+        let left: Vec<String> = server
+            .tables
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|t| t.id.clone())
+            .collect();
+        assert!(
+            !left.contains(&waiting),
+            "a table holding a chair nobody took is closed"
+        );
+        assert!(
+            left.contains(&full),
+            "a table with every seat settled is not: nothing is being waited for"
+        );
+        assert!(
+            left.contains(&played),
+            "and a game somebody is playing is never swept, whatever it is short"
+        );
+        // Nothing was written for the one that closed, because nothing happened
+        // at it: the store's own rule, and this is the case it was written for.
+        assert!(server.store().load(&waiting).is_none(), "and left no file");
+
+        // Somebody still looking at a table keeps it. The page's own poll is
+        // what does this in practice; here it is the same call by hand.
+        let held = server.deal("seats=4&roles=you,open,bot,bot", host);
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == held).expect("dealt");
+            t.stirred = now().saturating_sub(30 * 60 * 1000);
+        }
+        server.stir(&held);
+        server.sweep();
+        assert!(
+            server.tables.lock().unwrap().iter().any(|t| t.id == held),
+            "an open page holds its table"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_table_still_filling_up_is_not_written_down() {
+        // The store's oldest rule: a game nobody moved in is not a game. Sitting
+        // down and starting both used to write the file anyway, which put every
+        // dealt-and-abandoned table into the store for the analytics to divide
+        // by.
+        let dir = std::env::temp_dir().join(format!("carranta-unwritten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 5, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
+        assert!(server.store().all().is_empty(), "dealing writes nothing");
+        assert_eq!(server.sit(&id, "guestkey00000000", "Vidal"), Some(1));
+        assert!(server.store().all().is_empty(), "nor does sitting down");
+        assert!(server.start(&id, host));
+        assert!(
+            server.store().all().is_empty(),
+            "nor does filling the chairs"
+        );
+        // The first move writes it, with everybody's seat and name in it.
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let v = t.session.version();
+            t.session.act_as(0, 0, v).expect("playable");
+        }
+        server.keep(&id);
+        let saved = server.store().load(&id).expect("written now");
+        assert_eq!(saved.setup.chairs[0].name, "Marta");
+        assert_eq!(saved.setup.chairs[1].name, "Vidal");
+        assert_eq!(saved.setup.chairs[3].who, "bot");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
