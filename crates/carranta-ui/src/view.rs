@@ -58,6 +58,18 @@ pub fn render_with_note(session: &Session, note: &str) -> String {
 pub struct Room {
     /// Chairs nobody has taken, which is what stops the game starting.
     pub free: usize,
+    /// Chairs somebody arriving now could take: the held ones and the bots'
+    /// both, while the game has not begun.
+    ///
+    /// Not the same number as `free` and kept apart on purpose. `free` is what
+    /// the table is waiting for and what stops it starting; this is what an
+    /// arrival gets. A table with one chair held and two bots is waiting for one
+    /// person and has room for three.
+    pub takeable: usize,
+    /// Whether this table is still a room: dealt with a chair held, and not yet
+    /// started by its host. Nothing is played while it holds, which is the
+    /// window an invitation needs.
+    pub lobby: bool,
     /// Whether this reader may give the empty chairs to the bots: the host, or
     /// whoever is sitting in seat nought if the host has gone.
     pub host: bool,
@@ -280,6 +292,8 @@ fn render_room(
     // Chairs nobody is in, and whether this reader is the one who may fill them
     // with bots and get on with it.
     j.int("seatsFree", room.free as i64);
+    j.int("seatsTakeable", room.takeable as i64);
+    j.bool("inLobby", room.lobby);
     j.bool("youMayStart", room.host);
     j.bool("chat", room.chat);
     // What has been said, oldest first. Escaped here, once, and put into the

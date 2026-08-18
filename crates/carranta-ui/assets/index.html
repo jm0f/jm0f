@@ -2354,7 +2354,7 @@ function render() {
   // A table still filling up is a different screen from one being played: no
   // move can be made until the seats are settled, so the only thing on offer is
   // the one that settles them.
-  document.body.classList.toggle('waiting', !v.started && v.seatsFree > 0);
+  document.body.classList.toggle('waiting', !!v.inLobby);
   {
     const out = document.getElementById('leave');
     out.hidden = v.you < 0 || v.winner !== null;
@@ -3748,11 +3748,24 @@ function renderWaiting(v) {
   box.hidden = v.started || v.seatsFree === 0;
   if (box.hidden) return;
   box.textContent = '';
+  // Two numbers, and they are not the same one. What the table is waiting for is
+  // the chairs the host held: that is what stops it starting. How many can still
+  // join counts the bots as well, because a bot's chair belongs to whoever turns
+  // up before the first move. Saying only the first made the link look like an
+  // invitation for exactly one person.
   const said = document.createElement('span');
   said.className = 'said';
-  said.textContent = v.seatsFree === 1
-    ? 'Waiting for one more player. Share this table\u2019s link.'
-    : `Waiting for ${v.seatsFree} more players. Share this table\u2019s link.`;
+  const held = v.seatsFree === 0
+    ? 'Everybody you held a seat for is here.'
+    : v.seatsFree === 1
+      ? 'Waiting for one more player.'
+      : `Waiting for ${v.seatsFree} more players.`;
+  const room = v.seatsTakeable === 0
+    ? ''
+    : v.seatsTakeable === 1
+      ? ' There is one more chair, and whoever opens this link takes it.'
+      : ` There are ${v.seatsTakeable} more chairs, and whoever opens this link takes one.`;
+  said.textContent = held + room;
   // Said out loud, because it is the one thing about this screen that happens
   // without anybody pressing anything. Leaving the page is what starts the
   // clock: while it is open, the table is held.
@@ -3784,7 +3797,12 @@ function renderWaiting(v) {
   if (v.youMayStart) {
     const go = document.createElement('button');
     go.className = 'btn-primary';
-    go.textContent = v.seatsFree === 1 ? 'Start with a bot' : 'Start with bots';
+    // Always here, because nothing starts a lobby but this. It used to appear
+    // only while a chair was still empty, so a host whose friends had all
+    // arrived had no way to begin.
+    go.textContent = v.seatsFree === 0
+      ? 'Start the game'
+      : v.seatsFree === 1 ? 'Start with a bot' : 'Start with bots';
     go.onclick = () => fetch(api('/api/start'), { method: 'POST' })
       .then(() => load(api('/api/state')));
     box.appendChild(go);
@@ -4982,12 +5000,15 @@ const LOBBY_ONLY = GAME === 'lobby';
 // them watch would have spent their one chance for them.
 function offerASeat(v) {
   const box = document.getElementById('sitDown');
-  const wanted = !v.started && v.you < 0 && v.seatsFree > 0 && v.winner === null;
+  // Takeable, not free. A chair held open is one a person gets and so is a
+  // bot's, and the difference between them is the table's business rather than
+  // the arrival's: what they want to know is whether there is a seat.
+  const wanted = !v.started && v.you < 0 && v.seatsTakeable > 0 && v.winner === null;
   if (!wanted || sitAsked) { if (!wanted) box.hidden = true; return; }
   sitAsked = true;
-  document.getElementById('sitLead').textContent = v.seatsFree === 1
+  document.getElementById('sitLead').textContent = v.seatsTakeable === 1
     ? 'One seat at this table is still free. The game has not started yet.'
-    : `${v.seatsFree} seats at this table are still free. The game has not started yet.`;
+    : `${v.seatsTakeable} seats at this table are still free. The game has not started yet.`;
   const name = document.getElementById('sitName');
   name.value = localStorage.getItem('carranta.name') || '';
   box.hidden = false;

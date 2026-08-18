@@ -47,8 +47,10 @@ pub struct Open {
     pub age: u64,
     /// Whether the visitor asking is the one who dealt it.
     pub mine: bool,
-    /// Seats still waiting for somebody, which is what makes a table joinable.
-    pub waiting: usize,
+    /// Seats somebody arriving could take: chairs the host held open and chairs
+    /// the bots are keeping warm, while the game has not begun. Not the same as
+    /// what the table is waiting for, which is the held ones alone.
+    pub takeable: usize,
     /// Whether the visitor asking is already sitting at it.
     pub seated: bool,
 }
@@ -172,14 +174,14 @@ fn joining(open: &[Open]) -> String {
         }
         // The one that decides whether this row is an invitation. Loud rather
         // than quiet: it is the only thing on this page you can be too late for.
-        if t.waiting > 0 && !t.seated {
+        if t.takeable > 0 && !t.seated {
             let _ = write!(
                 tags,
                 "<span class=\"tag\">{}</span> ",
-                if t.waiting == 1 {
+                if t.takeable == 1 {
                     "a seat free".to_string()
                 } else {
-                    format!("{} seats free", t.waiting)
+                    format!("{} seats free", t.takeable)
                 }
             );
         }
@@ -199,12 +201,12 @@ fn joining(open: &[Open]) -> String {
             // it, and saying so twice would make the loud word meaningless.
             go = if t.seated {
                 "Back to it"
-            } else if t.waiting > 0 {
+            } else if t.takeable > 0 {
                 "Sit down"
             } else {
                 "Watch"
             },
-            quiet = if t.seated || t.waiting > 0 {
+            quiet = if t.seated || t.takeable > 0 {
                 ""
             } else {
                 " quiet"
@@ -443,7 +445,7 @@ mod tests {
             winner,
             age: 0,
             mine,
-            waiting: 0,
+            takeable: 0,
             seated: mine,
         }
     }
@@ -451,7 +453,7 @@ mod tests {
     /// A table with a chair nobody is in.
     fn waiting_table(id: &str, seated: bool) -> Open {
         Open {
-            waiting: 2,
+            takeable: 2,
             seated,
             ..table(id, true, false, None)
         }
@@ -547,7 +549,7 @@ mod tests {
         assert!(html.contains(">Sit down</a>"));
         // One reads as one.
         let one = Open {
-            waiting: 1,
+            takeable: 1,
             ..waiting_table("bbbb-bbbb-bbbb", false)
         };
         assert!(page(&[one], &[]).contains(">a seat free</span>"));
@@ -558,7 +560,7 @@ mod tests {
         assert!(!html.contains("seats free"));
         // A full table is somewhere to watch, quietly.
         let full = Open {
-            waiting: 0,
+            takeable: 0,
             seated: false,
             ..waiting_table("dddd-dddd-dddd", false)
         };
@@ -575,7 +577,7 @@ mod tests {
             public: false,
             mine: false,
             seated: true,
-            waiting: 0,
+            takeable: 0,
             ..table("eeee-eeee-eeee", false, false, None)
         };
         let html = page(&[theirs], &[]);

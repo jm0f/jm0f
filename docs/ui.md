@@ -2439,6 +2439,69 @@ empty chairs and hand them to the house bot: everybody else at the table is
 waiting for the same person they are, and one of them deciding for all of them
 would be a different rule.
 
+**A table dealt with a chair held is a room, and a room is closed by its host.**
+This is the lobby phase, and without it the rest of this section does not work.
+The held chair filling used to be the starting gun: the friend who read the
+message first took it, the next poll played the first move, and the second
+friend arrived at a game already under way. So an invitation was good for exactly
+one person, and only if they were quick.
+
+While a table is a room, nothing is played at it. `api/act` refuses, and the poll
+does not tick the session, which is what would otherwise run the bots: the poll
+is the only clock this process has, so not winding it is the whole of holding the
+table still. No turn clock runs either, because nobody's turn is running down
+while everybody is still walking in.
+
+A table of bots is not a room and never waits: holding a chair is how a host says
+they are waiting for somebody, and a solo game has said the opposite. So the
+common case is untouched, and only the case that asked to wait does.
+
+**A bot's chair is a person's chair until the game begins.** Holding seats open
+asked the host to have predicted how many friends would come, and to have been
+right: one chair held and two friends meant one of them stood outside a table
+with two bots sitting in it. A bot is what a seat holds when nobody better has
+turned up, and somebody arriving before the first move is better, so an arrival
+takes a held chair if there is one and a bot's otherwise.
+
+That is two numbers about a table and not one, and they are deliberately kept
+apart because they answer different questions:
+
+- **waiting** is the chairs the host held open. It is what stops the table
+  starting, and what *Waiting for one more player* counts.
+- **takeable** is every chair that is not a person's, while the game has not
+  begun. It is what an arrival gets, what the home page advertises, and what the
+  invitation is for.
+
+A table with one chair held and two bots is waiting for one person and has room
+for three.
+
+**Nothing happens when every seat is a person's.** There is nobody to displace,
+so the arrival watches and the page says so rather than pretending to seat them.
+
+**One button ends the room**, and it is the host's. It reads *Start with bots*
+while chairs are still held, *Start the game* once they have all filled, and it
+does three things at once: gives any chair still empty to the house bot, shuts
+the door, and lets the table move. It used to disappear the moment the count
+reached zero, which left a host whose friends had all arrived with no way to
+begin.
+
+Shutting the door is not optional extra work for that button. A bot's chair is
+takeable right up to the first move, so the one press that says the table is who
+it is now would not mean anything if a stranger could walk into one of those
+chairs a moment later.
+
+**The waiting room is shown for as long as the table is a room**, rather than
+while a chair is still empty. Hiding it at zero took the link away at the moment
+it was most needed: that is precisely the window the third and fourth friend
+arrive in. It says what the table is waiting for and how many chairs are still
+going, which are two different numbers, and it carries the link and the button.
+
+**The order is still drawn once.** Settled used to mean "no chair held and
+nothing played", which stayed true for as long as nobody had moved: with bots'
+chairs takeable, a second and third arrival would each have re-drawn the turn
+order and moved people who had already seen where they were sitting. The table
+remembers that it drew.
+
 **Sitting down is deliberate, and carries a name.** Opening the table is not
 joining it. A reader with no seat at a table still filling up is asked once
 whether they want one, because their one chance closes at the first move and a
