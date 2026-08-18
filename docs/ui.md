@@ -2556,6 +2556,26 @@ in.
   not, and it needs a layout for one column rather than a smaller gutter. Long
   standing, and measured here rather than assumed: the shared gutter costs eight
   pixels of it and did not cause it.
+- **Talking before you sit down.** Only people in seats may say anything: the
+  panel tells a watcher they are watching rather than showing them a box that
+  would refuse. That follows the same line everything else here follows, that
+  standing behind the players is not sitting at the table, and it is the line
+  worth reconsidering first. Somebody deciding whether to take the last chair
+  cannot ask about the game they are about to join, and "is anybody actually
+  playing this" is a fair question to want to ask from outside. The cost of
+  opening it is that a table's conversation becomes something anybody who can
+  reach the server can join, which is a moderation question (P-16) rather than a
+  UI one.
+- **A conversation that outlives its table.** Chat is in memory on the table, so
+  it exists only while the table does: it is not on the home page beside a listed
+  game, and asking "is this one any good" before joining has nowhere to happen.
+  Making that work means chat outliving the table it belongs to, which means
+  writing it down, which is the decision §17 deliberately did not take: the record
+  is the moves, and a transcript is the one thing in this system that carries
+  personal content rather than game content. The scoping document already settled
+  what that would cost, H-8: logs indefinite, chat ninety days, precisely so a
+  deletion request stays satisfiable without touching immutable game history.
+  Worth doing, and not worth doing by accident.
 - **Accounts.** The home page answers "show me my games" from a key in a cookie,
   which follows a browser rather than a person. The key is written into every game
   file, so an account can claim one browser's games later without touching a
