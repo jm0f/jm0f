@@ -971,6 +971,26 @@
   body:not(.waiting) .waitingRoom { display: none; }
   body.waiting .dockCell { display: none; }
 
+  /* ---- table talk ------------------------------------------------------- */
+  /* A column of what was said with the box to say it at the foot, which is the
+     shape every conversation has: the newest line sits directly above where you
+     type the next one. */
+  .talkPanel { display: flex; flex-direction: column; min-height: 0; }
+  .talkList { flex: 1; min-height: 0; overflow-y: auto; display: flex;
+              flex-direction: column; gap: .5em; margin: .8em 0; }
+  .talkLine { display: flex; gap: .5em; align-items: baseline; }
+  /* The seat's colour on the name, the same colour it is everywhere else, so
+     who said it is read the way whose piece it is is read. */
+  .talkWho { font-weight: 600; flex: none; }
+  .talkWhat { min-width: 0; overflow-wrap: anywhere; }
+  .talkSay { display: flex; gap: .4em; }
+  .talkSay input { flex: 1; min-width: 0; font: inherit; padding: 5px 8px;
+                   border: 1px solid var(--border); border-radius: var(--radius-md);
+                   background: var(--card); color: var(--ink); }
+  .talkSay input:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+  .talkNote { color: var(--dim); margin: 0; font-size: 12px; }
+  .talkNote:empty { display: none; }
+
   /* Watching, not playing. Everything private in the view is already nought,
      so nothing here is hiding information: this hides the controls for a seat
      the reader does not have, which would otherwise sit there refusing. */
@@ -1492,9 +1512,15 @@
   </div>
 
   <aside class="col right">
-    <div class="panel reserved">
+    <div class="panel talkPanel" id="talkPanel">
       <h2>Table talk</h2>
-      <p>Chat lands here once the open seats have people in them.</p>
+      <div class="talkList" id="talkList"></div>
+      <form class="talkSay" id="talkSay" hidden>
+        <input id="talkText" maxlength="240" autocomplete="off"
+               placeholder="Say something">
+        <button class="btn-primary btn-sm" type="submit">Send</button>
+      </form>
+      <p class="talkNote" id="talkNote"></p>
     </div>
   </aside>
 
@@ -2306,6 +2332,7 @@ function render() {
   }
   offerASeat(v);
   renderWaiting(v);
+  renderTalk(v);
   const dice = v.dice[0] ? ` · last roll ${v.dice[0]}+${v.dice[1]}=${v.dice[0] + v.dice[1]}` : '';
   document.title = `${turn} · Carranta`;
   document.getElementById('note').textContent = v.note || '';
@@ -2438,10 +2465,14 @@ const BOT_NAMES = ['Ada', 'Bram', 'Ines', 'Odd'];
 // else is the house bot, which does have a name.
 const seatName = (v, s) => {
   if (s === v.you) return v.youName || 'you';
-  // What the seat is called, if anybody said. A seat with nobody in it has no
-  // name of its own and gets the house bot's, which is this page's to give.
+  // What the seat is called, if anybody said so.
   const said = (v.names || [])[s];
   if (said) return said;
+  // A person who gave no name is known by their seat, which is only settled once
+  // the turn order is drawn: that is why the fallback is here and not stored.
+  if ((v.people || []).includes(s)) return `Player ${s + 1}`;
+  // And a seat with nobody in it is the house bot's, named from this page's own
+  // list, because a name invented on the server would be a second opinion.
   return BOT_NAMES[s];
 };
 // Whether anybody is at the keyboard for this page, or it is being watched.
@@ -3257,8 +3288,9 @@ const PACE_NOTE = {
 // Nothing here works yet, and none of it can until there are accounts: a table
 // of strangers needs someone to hold responsible for what is said on it.
 const CHAT_NOTE = {
-  none: 'Nobody can talk. The only option while there is nobody to be.',
-  text: 'Typed messages at the table. Needs accounts.',
+  none: 'Nobody can talk.',
+  text: 'Typed messages between the people at the table. Not kept: the record '
+      + 'is the moves, and a restart loses the conversation.',
   voice: 'Talk to the table. Needs accounts.',
   both: 'Typed and spoken together. Needs accounts.',
 };
@@ -3360,6 +3392,7 @@ function tableQuery(withName) {
     game: lobby.game,
     pace: lobby.pace,
     bank: lobby.bank,
+    chat: lobby.chat,
     // Who is in each seat, in seat order. Seat nought is whoever deals it,
     // whatever this says, so the word there is only ever read as a placeholder.
     roles: lobby.roles.join(','),
@@ -3527,7 +3560,7 @@ function renderLobby() {
 
   tabs(document.getElementById('lobbyChat'),
     [['none', 'no chat', { tip: CHAT_NOTE.none }],
-     ['text', 'text', { disabled: true, tip: CHAT_NOTE.text }],
+     ['text', 'text', { tip: CHAT_NOTE.text }],
      ['voice', 'voice', { disabled: true, tip: CHAT_NOTE.voice }],
      ['both', 'text & voice', { disabled: true, tip: CHAT_NOTE.both }]],
     lobby.chat, v => { lobby.chat = v; });
@@ -3593,6 +3626,61 @@ function renderLobby() {
     ? 'Deal, and hold a seat'
     : short ? `Deal, and hold ${short} seats` : 'Deal the board';
 }
+
+// What has been said, and whether this reader may say anything.
+//
+// Rendered with `textContent` throughout: every line is somebody else's words
+// and is never treated as markup. That is the whole of the defence and it is one
+// property to check rather than a filter to trust.
+function renderTalk(v) {
+  const panel = document.getElementById('talkPanel');
+  const list = document.getElementById('talkList');
+  const say = document.getElementById('talkSay');
+  const note = document.getElementById('talkNote');
+  const talk = v.talk || [];
+  // Same lines, same order: leave the box alone rather than rebuilding it under
+  // somebody who is typing.
+  if (list.childElementCount !== talk.length) {
+    list.textContent = '';
+    talk.forEach((t) => {
+      const line = document.createElement('div');
+      line.className = 'talkLine';
+      const who = document.createElement('span');
+      who.className = 'talkWho';
+      who.style.color = COLOURS[t.seat];
+      who.textContent = t.seat === v.you ? 'You' : t.who;
+      const what = document.createElement('span');
+      what.className = 'talkWhat';
+      what.textContent = t.said;
+      line.append(who, what);
+      list.appendChild(line);
+    });
+    list.scrollTop = list.scrollHeight;
+  }
+  // Only the people at the table talk. Somebody watching reads, the way they
+  // read the board: standing behind the players is not sitting at the table.
+  const mine = v.chat && v.you >= 0 && v.winner === null;
+  say.hidden = !mine;
+  note.textContent = !v.chat
+    ? 'This table was dealt without chat.'
+    : (v.you < 0 ? 'You are watching. Only the players talk.'
+      : (talk.length ? '' : 'Nothing said yet.'));
+  panel.hidden = false;
+}
+
+document.getElementById('talkSay').onsubmit = async (e) => {
+  e.preventDefault();
+  const box = document.getElementById('talkText');
+  const text = box.value.trim();
+  if (!text) return;
+  box.value = '';
+  await fetch(api('/api/say'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ text }),
+  });
+  load(api('/api/state'));
+};
 
 // What a table waiting for people says, and the one thing its host can do.
 function renderWaiting(v) {
@@ -4914,7 +5002,14 @@ const POLL_IDLE = 3000, POLL_MOVING = 150;
     if (view && next.build !== view.build) { location.reload(); return; }
     // The same poll enforces the clock: the server only wakes when asked, so
     // without this a turn that ran out of time would sit there until clicked.
-    if (view && next.version !== view.version) { view = next; render(); }
+    //
+    // Two things can change independently. The version counts moves, and it is
+    // deliberately not bumped by anybody speaking: it is what makes a click
+    // against a stale board refuse, and a remark is not a reason to refuse
+    // somebody's move. So the talk is checked on its own, or a table would say
+    // things nobody heard until the next time somebody built a road.
+    const spoke = view && (next.talk || []).length !== (view.talk || []).length;
+    if (view && (next.version !== view.version || spoke)) { view = next; render(); }
     else if (view) view.botThinking = next.botThinking;
   } catch (e) {
     // The server is mid-restart. Nothing to do but ask again shortly.

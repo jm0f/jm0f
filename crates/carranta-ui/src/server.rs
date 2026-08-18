@@ -172,6 +172,7 @@ fn saved_of(t: &Table) -> Saved {
             discard_secs: t.session.discard_secs(),
             bank_exact: t.session.bank_exact(),
             log: t.session.log_shown(),
+            chat: t.chat,
             chairs: t
                 .chairs
                 .iter()
@@ -214,6 +215,38 @@ impl Chair {
     }
 }
 
+/// One thing somebody said at a table.
+///
+/// Deliberately not on the `Session`, and this is the one place in this file
+/// where where a field lives is the point rather than a matter of tidiness.
+///
+/// §9.7.1 of the scoping document: free text from a player must never reach a
+/// bot's input, because "give me all your wood" is a negotiation to a person and
+/// an instruction to a model. Today's bots are heuristics that take a `&State`
+/// and could not read this if it were handed to them; the guarantee is that they
+/// are never in a position to. Chat lives on the table, the table is the
+/// server's, and nothing that decides a move can see it. Keep it that way when
+/// the bots learn to talk.
+#[derive(Clone, Debug)]
+struct Said {
+    seat: u8,
+    /// Copied rather than looked up, so a line keeps the name it was said under
+    /// even after that seat changes hands.
+    name: String,
+    text: String,
+}
+
+/// How much of a table's talk is kept.
+///
+/// In memory only, and only this much of it. A conversation is not part of the
+/// game: the record is the moves, and a game replayed from its file is the same
+/// game whatever was said over it. What that costs is that a restart loses the
+/// talk, which is the right thing to lose.
+const TALK_KEPT: usize = 200;
+
+/// The longest thing anybody can say at once.
+const TALK_LIMIT: usize = 240;
+
 /// One game in memory, and the name it answers to.
 struct Table {
     id: String,
@@ -231,6 +264,10 @@ struct Table {
     /// A restarted server has heard from nobody, which is the truth, and the
     /// people come back the moment their pages ask again.
     seen: Vec<u64>,
+    /// Whether the people here may talk to each other, as the lobby said.
+    chat: bool,
+    /// What has been said at this table, oldest first.
+    said: Vec<Said>,
     /// When anything last happened here: dealt, asked about, sat down at,
     /// moved on. Unix milliseconds.
     ///
@@ -348,6 +385,45 @@ impl Table {
             return false;
         }
         self.by == player || self.chairs.first().and_then(Chair::key) == Some(player)
+    }
+
+    /// Deal the seats out again, once it is settled who is at the table.
+    ///
+    /// Turn order is seat order, and the seats were handed out in the order
+    /// people arrived: the host at nought and therefore always first, then
+    /// whoever joined next. Going first is worth something, so giving it to
+    /// whoever pressed the button is a thumb on the scale in every game this
+    /// server deals.
+    ///
+    /// Shuffled once, when the composition is known and before anything has
+    /// happened, so nobody is moved after they have played. The chairs carry
+    /// their people and their names with them and the session is told again who
+    /// is where; the board is untouched, because the board is the seed's and has
+    /// nothing to do with who sits where.
+    ///
+    /// Not from the game's own generator. That one is the board and the dice,
+    /// and reaching into it here would mean the same seed dealt a different game
+    /// depending on how many people happened to turn up.
+    fn shuffle(&mut self) {
+        let n = self.chairs.len();
+        for i in (1..n).rev() {
+            let j = (roll_below((i + 1) as u64)) as usize;
+            self.chairs.swap(i, j);
+            self.seen.swap(i, j);
+        }
+        self.seat_the_people();
+        // Names follow their people. Cleared first, or a seat somebody moved out
+        // of keeps the name of whoever was in it.
+        for seat in 0..n as u8 {
+            self.session.name_seat(seat, "");
+        }
+        self.name_the_seats();
+    }
+
+    /// Whether the table is settled: every chair has somebody or something in it
+    /// and nothing has been played yet.
+    fn settling(&self) -> bool {
+        self.waiting() == 0 && !self.session.started()
     }
 
     /// Note that this seat's person is still there.
@@ -559,10 +635,20 @@ impl Server {
             dealt: now(),
             by: player.to_string(),
             chairs: chairs_from(query, seats, player, &name),
+            // Anything but an explicit "text" is a table that does not talk:
+            // a missing or misspelled setting should leave people quiet rather
+            // than open a channel nobody asked for.
+            chat: param(query, "chat").as_deref() == Some("text"),
+            said: Vec::new(),
             seen: vec![now(); seats as usize],
             stirred: now(),
         };
         table.seat_the_people();
+        // A table of one person and three bots is settled the moment it is
+        // dealt, so this is where its order is decided.
+        if table.settling() {
+            table.shuffle();
+        }
         let id = self.add(table);
         self.keep(&id);
         id
@@ -673,6 +759,8 @@ impl Server {
                 // Nor is anybody sitting at it. It is finished by the time it
                 // gets here, so there is nothing to sit down to.
                 chairs: vec![Chair::Bot; self.seats as usize],
+                chat: false,
+                said: Vec::new(),
                 seen: vec![0; self.seats as usize],
                 stirred: now(),
             });
@@ -753,6 +841,10 @@ impl Server {
             // Nobody has been heard from since the restart, which is the truth:
             // the bots hold the seats until their people's pages ask again, and
             // a table nobody comes back to waits rather than playing itself out.
+            chat: saved.setup.chat,
+            // A restart loses the talk. The moves are the record; a
+            // conversation is not part of the game.
+            said: Vec::new(),
             seen: vec![0; saved.setup.chairs.len().max(saved.seats as usize)],
             // Taken up now, whenever it was dealt: what the waiting limit asks
             // is how long since anybody looked, and somebody just did.
@@ -801,7 +893,7 @@ impl Server {
             return None;
         }
         let seat = table.free_seat()?;
-        let name = called(name, seat);
+        let name = called(name);
         table.chairs[seat as usize] = Chair::Taken {
             key: player.to_string(),
             name: name.clone(),
@@ -809,6 +901,13 @@ impl Server {
         table.session.name_seat(seat, &name);
         table.seat_the_people();
         table.session.note_to_table(format!("{name} sat down"));
+        // The last chair taken settles the table, and settling it is when the
+        // order is drawn. Their own seat may move under them here, which is why
+        // this returns the seat rather than the caller assuming one.
+        if table.settling() {
+            table.shuffle();
+        }
+        let seat = table.seat_of(player).unwrap_or(seat);
         table.stirred = now();
         let started = table.session.started();
         let saved = saved_of(table);
@@ -821,6 +920,44 @@ impl Server {
             let _ = self.store.save(&saved);
         }
         Some(seat)
+    }
+
+    /// Say something at a table.
+    ///
+    /// Only from a seat: watching a game is standing behind the players, and
+    /// this is the players talking. Refused when the table was dealt without
+    /// chat, so the setting means something rather than decorating the lobby.
+    ///
+    /// The text is trimmed, bounded and otherwise kept exactly as typed. It is
+    /// escaped once, where it is written into JSON, and put into the page as
+    /// text rather than as markup; nothing here tries to be clever about its
+    /// contents, because a filter that half understands somebody else's words is
+    /// worse than one that does not try.
+    fn say(&self, id: &str, player: &str, text: &str) -> bool {
+        let text: String = text.trim().chars().take(TALK_LIMIT).collect();
+        if text.is_empty() {
+            return false;
+        }
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        if !table.chat {
+            return false;
+        }
+        let Some(seat) = table.seat_of(player) else {
+            return false;
+        };
+        let name = match &table.chairs[seat as usize] {
+            Chair::Taken { name, .. } => name.clone(),
+            _ => String::new(),
+        };
+        table.said.push(Said { seat, name, text });
+        // Oldest out. A table talks for an hour and a page should not be handed
+        // all of it on every poll.
+        let over = table.said.len().saturating_sub(TALK_KEPT);
+        table.said.drain(..over);
+        true
     }
 
     /// Give up a seat.
@@ -897,6 +1034,9 @@ impl Server {
             }
         }
         table.seat_the_people();
+        if table.settling() {
+            table.shuffle();
+        }
         table.session.note_to_table(if short == 1 {
             "The last seat went to the house bot".to_string()
         } else {
@@ -1206,10 +1346,20 @@ impl Server {
                 let room = view::Room {
                     free: t.waiting(),
                     host: t.may_start(&player),
+                    chat: t.chat,
                 };
+                let talk: Vec<view::Talk<'_>> = t
+                    .said
+                    .iter()
+                    .map(|d| view::Talk {
+                        seat: d.seat,
+                        name: &d.name,
+                        text: &d.text,
+                    })
+                    .collect();
                 let payload = match seat {
-                    Some(s) => view::render_seated(&t.session, s, room),
-                    None => view::render_watching_room(&t.session, room),
+                    Some(s) => view::render_at_table(&t.session, s, room, &talk),
+                    None => view::render_watching_room(&t.session, room, &talk),
                 };
                 drop(tables);
                 self.keep(&id);
@@ -1335,6 +1485,20 @@ impl Server {
                     payload.as_bytes(),
                     &set,
                 )
+            }
+            // Saying something at a table.
+            ("POST", "/api/say") => {
+                let id = game.clone().unwrap_or_default();
+                self.seat(&id);
+                self.stir(&id);
+                if !self.say(
+                    &id,
+                    &player,
+                    &decode(&param(&body, "text").unwrap_or_default()),
+                ) {
+                    return respond(&mut stream, 403, "text/plain", b"nothing to say here");
+                }
+                respond(&mut stream, 200, "application/json", b"{}")
             }
             // Standing up from a seat.
             ("POST", "/api/leave") => {
@@ -1522,19 +1686,39 @@ fn cookie_header(key: &str) -> String {
     )
 }
 
+/// A number below `n`, from the clock and the process.
+///
+/// Not the game's generator: that one deals the board and the dice, and drawing
+/// from it to decide seating would mean the same seed produced a different game
+/// depending on how many people turned up. This has one job, once per table, and
+/// nothing downstream depends on it being reproducible.
+fn roll_below(n: u64) -> u64 {
+    if n <= 1 {
+        return 0;
+    }
+    let mut x = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64)
+        ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    // A round of mixing, because consecutive nanosecond readings differ in their
+    // low bits only and a shuffle taking them modulo four would barely move.
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+    x ^= x >> 33;
+    x % n
+}
+
 /// A name for a seat, given one somebody typed.
 ///
-/// Trimmed, bounded, and never empty: a seat at a table has to be callable
-/// something, and "Player 2" is a better answer than a blank where a name goes.
-/// The engine keeps its own bound too, so this is about what the table shows
-/// rather than about what it can hold.
-fn called(name: &str, seat: u8) -> String {
-    let name: String = name.trim().chars().take(24).collect();
-    if name.is_empty() {
-        format!("Player {}", seat + 1)
-    } else {
-        name
-    }
+/// Trimmed and bounded, and empty when they said nothing. It used to fill a
+/// blank in with "Player 2", which was a name derived from a seat number and so
+/// became a lie the moment the turn order was drawn and the seat moved. What a
+/// seat with no name is called is the page's to decide, from the seat it is
+/// actually in, and it is the only place that knows that for certain.
+fn called(name: &str) -> String {
+    name.trim().chars().take(24).collect()
 }
 
 /// Who sits in each seat, as the lobby says it.
@@ -1559,7 +1743,7 @@ fn chairs_from(query: &str, seats: u8, player: &str, name: &str) -> Vec<Chair> {
             if i == 0 {
                 Chair::Taken {
                     key: player.to_string(),
-                    name: called(name, 0),
+                    name: called(name),
                 }
             } else if word == "open" {
                 Chair::Open
@@ -1811,6 +1995,8 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            chat: true,
+            said: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
         });
@@ -1870,6 +2056,8 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            chat: true,
+            said: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
         });
@@ -1950,6 +2138,8 @@ mod tests {
                 Chair::Bot,
                 Chair::Bot,
             ],
+            chat: true,
+            said: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
         });
@@ -2043,10 +2233,6 @@ mod tests {
         assert_eq!(t.session.discard_secs(), 25);
         assert!(!t.session.bank_exact());
         assert!(!t.session.log_shown());
-        // Not the host's name: the link carries none, so the seat falls back to
-        // the blank-name default rather than sitting somebody else down under
-        // the name of the person who sent it.
-        assert_eq!(t.session.name(), "you");
         // It belongs to whoever opened it, under the key they were just handed,
         // which is the only reading that puts it on the right home page.
         let key = answer
@@ -2055,6 +2241,11 @@ mod tests {
             .and_then(|v| v.split(';').next())
             .expect("a key was handed out");
         assert_eq!(t.by, key, "theirs, not the sender's");
+        // Not the host's name: the link carries none, so the receiver's seat is
+        // named for its number rather than sitting somebody else down under the
+        // name of the person who sent it.
+        let seat = t.seat_of(key).expect("the receiver has a seat");
+        assert_eq!(t.session.name_of(seat), "", "nobody said what to call them");
         drop(tables);
 
         // A link somebody truncated still deals a table. A dead link is worse
@@ -2126,10 +2317,14 @@ mod tests {
             .to_string();
         let id = went.trim_matches('/').to_string();
 
-        // The host is in seat nought and nobody else is at the table yet.
+        // The host has a seat and is the only person at the table.
+        let host_seat = server.seated(&id, host).expect("the host has a seat");
         let mine = get(port, &format!("/{id}/api/state"), host);
-        assert!(mine.contains("\"you\":0"), "the host sits at nought");
-        assert!(mine.contains("\"people\":[0]"), "and alone");
+        assert!(mine.contains(&format!("\"you\":{host_seat}")));
+        assert!(
+            mine.contains(&format!("\"people\":[{host_seat}]")),
+            "and is alone at it"
+        );
 
         // A second person opens the table. Looking is not sitting: they are told
         // there is a chair going and are still in no seat.
@@ -2145,12 +2340,16 @@ mod tests {
             "and the door is open"
         );
 
-        // Taking it is its own act, and it carries a name.
+        // Taking it is its own act, and it carries a name. Which seat they end
+        // up in is the table's to decide: the last chair taken settles it, and
+        // settling it draws the turn order.
         let sat = post(port, &format!("/{id}/api/sit"), guest, "name=Vidal");
-        assert!(sat.contains("\"seat\":1"), "{sat:.60}");
+        assert!(sat.contains("\"seat\":"), "{sat:.60}");
+        let host_seat = server.seated(&id, host).expect("still seated");
+        let guest_seat = server.seated(&id, guest).expect("the guest took a chair");
+        assert_ne!(host_seat, guest_seat, "two people, two seats");
         let theirs = get(port, &format!("/{id}/api/state"), guest);
-        assert!(theirs.contains("\"you\":1"), "the guest is in the chair");
-        assert!(theirs.contains("\"people\":[0,1]"), "and the table knows");
+        assert!(theirs.contains(&format!("\"you\":{guest_seat}")));
         assert!(theirs.contains("Vidal"), "under the name they gave");
         assert!(theirs.contains("\"seatsFree\":0"), "and the table is full");
 
@@ -2166,12 +2365,19 @@ mod tests {
         {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("dealt");
-            assert_eq!(t.seat_of(host), Some(0));
-            assert_eq!(t.seat_of(guest), Some(1));
+            assert_eq!(t.seat_of(host), Some(host_seat));
+            assert_eq!(t.seat_of(guest), Some(guest_seat));
             assert_eq!(t.seat_of(watcher), None, "watching is not sitting");
             assert_eq!(t.waiting(), 0, "the chair is taken");
-            assert!(t.session.is_person(0) && t.session.is_person(1));
-            assert!(!t.session.is_person(2) && !t.session.is_person(3));
+            assert_eq!(
+                t.session.people(),
+                {
+                    let mut both = vec![host_seat, guest_seat];
+                    both.sort_unstable();
+                    both
+                },
+                "the two of them and nobody else"
+            );
         }
 
         // Only the seat being asked can move. The other's list is empty, so any
@@ -2196,16 +2402,35 @@ mod tests {
                 ),
             )
         };
-        let v = version(host);
-        let idle = play(guest, v);
+        // Whoever is to act can move, and the other cannot: which of them it is
+        // depends on the order the table drew. Read from one answer rather than
+        // two, because asking is also what lets the bots take their turns, and a
+        // version from before that is stale by the time it is used.
+        let acting = get(port, &format!("/{id}/api/state"), host);
+        let host_first = acting.contains("\"yourTurn\":true");
+        let v: u64 = acting
+            .rsplit("\"version\":")
+            .next()
+            .and_then(|t| t.split(&[',', '}'][..]).next())
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or_default();
+        let (mover, idler) = if host_first {
+            (host, guest)
+        } else {
+            (guest, host)
+        };
+        let idle = play(idler, v);
         assert!(
             idle.contains("no longer offered"),
             "the seat that is not being asked cannot move"
         );
-        // And the host, who is, can.
-        let moved = play(host, v);
-        assert!(moved.starts_with("HTTP/1.1 200 OK"));
-        assert!(version(host) > v, "the board moved on");
+        let moved = play(mover, v);
+        assert!(moved.starts_with("HTTP/1.1 200 OK"), "{moved:.80}");
+        assert!(
+            version(host) > v,
+            "the board moved on, but: {}",
+            &moved[moved.len().saturating_sub(300)..]
+        );
 
         // Somebody with no seat cannot act at all, whatever they send.
         let watched = play(watcher, version(host));
@@ -2214,23 +2439,16 @@ mod tests {
         // The seating is written down, so it survives the table being put away.
         server.keep(&id);
         let saved = server.store().load(&id).expect("written");
-        assert_eq!(
-            saved
-                .setup
-                .chairs
-                .iter()
-                .map(|c| c.who.as_str())
-                .collect::<Vec<_>>(),
-            vec![host, guest, "bot", "bot"]
-        );
+        let mut who: Vec<&str> = saved.setup.chairs.iter().map(|c| c.who.as_str()).collect();
+        who.sort_unstable();
+        assert_eq!(who, vec!["bot", "bot", guest, host], "everybody, somewhere");
         server.tables.lock().unwrap().clear();
         assert!(server.seat(&id), "taken up again");
         {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("back");
-            assert_eq!(t.seat_of(host), Some(0), "still the host's chair");
-            assert_eq!(t.seat_of(guest), Some(1), "and still the guest's");
-            assert!(t.session.is_person(1), "and the bots still leave it alone");
+            assert_eq!(t.seat_of(host), Some(host_seat), "still the host's chair");
+            assert_eq!(t.seat_of(guest), Some(guest_seat), "and still the guest's");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2291,7 +2509,7 @@ mod tests {
         // One person takes a chair before the game starts.
         let early = "earlykey00000000";
         assert!(
-            post(port, &format!("/{id}/api/sit"), early, "name=Vidal").contains("\"seat\":1"),
+            post(port, &format!("/{id}/api/sit"), early, "name=Vidal").contains("\"seat\":"),
             "a chair going is a chair you may take"
         );
 
@@ -2314,12 +2532,19 @@ mod tests {
         // A move, which is what makes this a game with a file: an unstarted
         // table has nothing on disk, because nothing has happened at it.
         assert!(server.store().load(&id).is_none(), "nothing written yet");
+        let (host_seat, early_seat) = (
+            server.seated(&id, host).expect("seated"),
+            server.seated(&id, early).expect("seated"),
+        );
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
             assert!(!t.session.started(), "dealt, filled, and not yet played");
+            let acting = t.session.state().decider();
             let v = t.session.version();
-            t.session.act_as(0, 0, v).expect("the opening is playable");
+            t.session
+                .act_as(acting, 0, v)
+                .expect("the opening is playable");
             assert!(t.session.started(), "and now it is under way");
         }
 
@@ -2327,8 +2552,12 @@ mod tests {
         server.keep(&id);
         server.tables.lock().unwrap().clear();
         assert!(server.seat(&id));
-        assert_eq!(server.seated(&id, host), Some(0), "rejoining is by key");
-        assert_eq!(server.seated(&id, early), Some(1));
+        assert_eq!(
+            server.seated(&id, host),
+            Some(host_seat),
+            "rejoining is by key"
+        );
+        assert_eq!(server.seated(&id, early), Some(early_seat));
         assert_eq!(server.seated(&id, late), None, "and was never a way in");
         let back = get(port, &format!("/{id}/api/state"), early);
         assert!(back.contains("Vidal"), "still under their own name");
@@ -2338,7 +2567,12 @@ mod tests {
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
-            t.chairs[3] = Chair::Open;
+            let bot = t
+                .chairs
+                .iter()
+                .position(|c| *c == Chair::Bot)
+                .expect("a bot somewhere");
+            t.chairs[bot] = Chair::Open;
         }
         let too_late = post(port, &format!("/{id}/api/sit"), late, "name=Late");
         assert!(
@@ -2425,7 +2659,8 @@ mod tests {
         let host = "hostkey000000000";
         let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
         assert!(server.store().all().is_empty(), "dealing writes nothing");
-        assert_eq!(server.sit(&id, "guestkey00000000", "Vidal"), Some(1));
+        let guest = "guestkey00000000";
+        assert!(server.sit(&id, guest, "Vidal").is_some());
         assert!(server.store().all().is_empty(), "nor does sitting down");
         assert!(server.start(&id, host));
         assert!(
@@ -2436,14 +2671,27 @@ mod tests {
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let acting = t.session.state().decider();
             let v = t.session.version();
-            t.session.act_as(0, 0, v).expect("playable");
+            t.session.act_as(acting, 0, v).expect("playable");
         }
         server.keep(&id);
         let saved = server.store().load(&id).expect("written now");
-        assert_eq!(saved.setup.chairs[0].name, "Marta");
-        assert_eq!(saved.setup.chairs[1].name, "Vidal");
-        assert_eq!(saved.setup.chairs[3].who, "bot");
+        let named = |key: &str| {
+            saved
+                .setup
+                .chairs
+                .iter()
+                .find(|c| c.who == key)
+                .map(|c| c.name.clone())
+        };
+        assert_eq!(named(host).as_deref(), Some("Marta"));
+        assert_eq!(named(guest).as_deref(), Some("Vidal"));
+        assert_eq!(
+            saved.setup.chairs.iter().filter(|c| c.who == "bot").count(),
+            2,
+            "and the two bots are still bots"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2455,7 +2703,7 @@ mod tests {
         let host = "hostkey000000000";
         let guest = "guestkey00000000";
         let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
-        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        let took = server.sit(&id, guest, "Vidal").expect("a chair going");
 
         // Nothing has happened yet, so standing up leaves nothing behind: the
         // chair is the table's again and somebody else may take it.
@@ -2463,12 +2711,15 @@ mod tests {
         {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("dealt");
-            assert_eq!(t.chairs[1], Chair::Open);
+            assert_eq!(t.chairs[took as usize], Chair::Open);
             assert_eq!(t.waiting(), 1, "and the table is short again");
             assert_eq!(t.seat_of(guest), None, "they are not at it");
-            assert_eq!(t.session.name_of(1), "", "and their name went with them");
+            assert_eq!(t.session.name_of(took), "", "and their name went with them");
         }
-        assert_eq!(server.sit(&id, "thirdkey00000000", "Nils"), Some(1));
+        // Somebody else takes it. Which chair they end up in is the table's
+        // again: filling the last seat settles it, and settling it redraws the
+        // order, which nothing has happened yet to make unfair.
+        assert!(server.sit(&id, "thirdkey00000000", "Nils").is_some());
         assert!(
             server.store().all().is_empty(),
             "and none of it was written"
@@ -2476,16 +2727,26 @@ mod tests {
 
         // The host standing up before the start hands the table on rather than
         // stranding it: whoever is in seat nought may start it.
-        let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
-        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        // The host standing up before the start hands the table on rather than
+        // stranding it. Dealt with three open chairs so nothing settles and the
+        // seats stay where they were put.
+        let id = server.deal("seats=4&roles=you,open,open,open&name=Marta", host);
+        assert_eq!(
+            server.seated(&id, host),
+            Some(0),
+            "the host deals into nought"
+        );
         assert!(server.leave(&id, host));
         {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("dealt");
-            assert!(!t.may_start(guest), "not any seat");
+            assert_eq!(t.chairs[0], Chair::Open, "seat nought is free");
+            assert!(
+                !t.may_start(guest),
+                "and it is not just any seat's to start"
+            );
         }
-        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1), "still theirs");
-        // Somebody takes the empty seat nought, and it is theirs to start.
+        // Whoever takes seat nought may start it, so the table is not stranded.
         assert_eq!(server.sit(&id, "fourthkey0000000", "Aleks"), Some(0));
         {
             let tables = server.tables.lock().unwrap();
@@ -2506,13 +2767,15 @@ mod tests {
             "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
             host,
         );
-        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        let guest_seat = server.sit(&id, guest, "Vidal").expect("a chair going");
+        let host_seat = server.seated(&id, host).expect("seated");
         assert!(server.start(&id, host));
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let acting = t.session.state().decider();
             let v = t.session.version();
-            t.session.act_as(0, 0, v).expect("playable");
+            t.session.act_as(acting, 0, v).expect("playable");
             assert!(t.session.started());
         }
 
@@ -2522,12 +2785,16 @@ mod tests {
         {
             let tables = server.tables.lock().unwrap();
             let t = tables.iter().find(|t| t.id == id).expect("dealt");
-            assert_eq!(t.seat_of(guest), Some(1), "the seat is still theirs");
+            assert_eq!(
+                t.seat_of(guest),
+                Some(guest_seat),
+                "the seat is still theirs"
+            );
             assert_eq!(t.waiting(), 0, "and is not on offer to anybody else");
-            assert!(!t.present(1), "but nobody is in it");
-            assert!(!t.session.is_person(1), "so the bots play it");
+            assert!(!t.present(guest_seat), "but nobody is in it");
+            assert!(!t.session.is_person(guest_seat), "so the bots play it");
             assert!(
-                t.session.is_person(0),
+                t.session.is_person(host_seat),
                 "and the person still there is asked"
             );
         }
@@ -2536,9 +2803,12 @@ mod tests {
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
-            assert!(t.saw(1), "their return changes who is playing");
+            assert!(t.saw(guest_seat), "their return changes who is playing");
             t.seat_the_people();
-            assert!(t.session.is_person(1), "and the seat is theirs again");
+            assert!(
+                t.session.is_person(guest_seat),
+                "and the seat is theirs again"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2557,22 +2827,28 @@ mod tests {
             "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
             host,
         );
-        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        let guest_seat = server.sit(&id, guest, "Vidal").expect("a chair going");
+        let host_seat = server.seated(&id, host).expect("seated");
         assert!(server.start(&id, host));
+        let both = {
+            let mut both = vec![host_seat, guest_seat];
+            both.sort_unstable();
+            both
+        };
 
         let mut tables = server.tables.lock().unwrap();
         let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
-        assert_eq!(t.playing(), vec![0, 1], "both here");
+        assert_eq!(t.playing(), both, "both here");
 
         // One walks away.
-        t.seen[1] = 0;
-        assert_eq!(t.playing(), vec![0], "the other carries on");
+        t.seen[guest_seat as usize] = 0;
+        assert_eq!(t.playing(), vec![host_seat], "the other carries on");
 
         // Then so does the other, and the table waits for both of them.
-        t.seen[0] = 0;
+        t.seen[host_seat as usize] = 0;
         assert_eq!(
             t.playing(),
-            vec![0, 1],
+            both,
             "an empty room waits rather than playing on"
         );
         drop(tables);
@@ -2580,14 +2856,220 @@ mod tests {
     }
 
     #[test]
-    fn a_seat_is_always_called_something() {
-        // A blank is not a name, and a table has to be able to say whose turn it
-        // is. Trimmed and bounded, because it is somebody else's text.
-        assert_eq!(called("Vidal", 1), "Vidal");
-        assert_eq!(called("  Vidal  ", 1), "Vidal");
-        assert_eq!(called("", 1), "Player 2");
-        assert_eq!(called("   ", 3), "Player 4");
-        assert_eq!(called(&"x".repeat(80), 0).chars().count(), 24);
+    fn the_turn_order_is_drawn_rather_than_handed_to_whoever_dealt() {
+        // Turn order is seat order, and the seats used to be handed out in the
+        // order people arrived: the host at nought and therefore always first.
+        // Going first is worth something, so that was a thumb on the scale in
+        // every game this server dealt.
+        let dir = std::env::temp_dir().join(format!("carranta-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 71, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let mut seen = [0usize; 4];
+        for _ in 0..80 {
+            let id = server.deal("seats=4&roles=you,bot,bot,bot&name=Marta", host);
+            let seat = server.seated(&id, host).expect("the host has a seat");
+            seen[seat as usize] += 1;
+            server.tables.lock().unwrap().clear();
+        }
+        assert_eq!(seen.iter().sum::<usize>(), 80);
+        // Every seat, and no seat most of the time. Loose bounds on purpose:
+        // this is a draw, and a test that demanded a tidy split would fail on
+        // the honest ones.
+        for (seat, &n) in seen.iter().enumerate() {
+            assert!(n > 0, "seat {seat} never came up in eighty deals: {seen:?}");
+            assert!(n < 60, "seat {seat} came up {n} times in eighty: {seen:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_order_is_drawn_once_the_table_is_settled_and_not_after() {
+        // Before anybody has played, so nobody is moved out from under a game
+        // they are in the middle of.
+        let dir = std::env::temp_dir().join(format!("carranta-order-when-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 72, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        // A chair open means the table is not settled, so the host is where they
+        // were put and the order is not drawn yet.
+        let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
+        assert_eq!(server.seated(&id, host), Some(0), "not settled, not drawn");
+        // Taking the last chair settles it, and the seats are dealt out.
+        let guest_seat = server.sit(&id, guest, "Vidal").expect("a chair going");
+        let host_seat = server.seated(&id, host).expect("still at the table");
+        assert_ne!(host_seat, guest_seat);
+        // Their names came with them rather than staying with the chairs.
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert_eq!(t.session.name_of(host_seat), "Marta");
+            assert_eq!(t.session.name_of(guest_seat), "Vidal");
+            for bot in 0..4u8 {
+                if bot != host_seat && bot != guest_seat {
+                    assert_eq!(t.session.name_of(bot), "", "a bot is nobody's name");
+                    assert!(!t.session.is_person(bot), "and is played as a bot");
+                }
+            }
+        }
+        // Once it is under way nothing moves again, however the table changes.
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let acting = t.session.state().decider();
+            let v = t.session.version();
+            t.session.act_as(acting, 0, v).expect("playable");
+        }
+        assert!(server.leave(&id, guest), "somebody leaves mid-game");
+        assert_eq!(server.seated(&id, host), Some(host_seat), "nobody moved");
+        assert_eq!(server.seated(&id, guest), Some(guest_seat));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_people_at_a_table_can_talk_at_it() {
+        let dir = std::env::temp_dir().join(format!("carranta-talk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 73, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta&chat=text", host);
+        server.sit(&id, guest, "Vidal").expect("a chair going");
+
+        assert!(server.say(&id, host, "wood for sheep?"));
+        assert!(server.say(&id, guest, "never"));
+        // Nobody else: watching a game is standing behind the players.
+        assert!(
+            !server.say(&id, "watchkey00000000", "hello"),
+            "not from a watcher"
+        );
+        assert!(!server.say(&id, "", "hello"), "nor from nobody at all");
+        // And nothing is not something to say.
+        assert!(!server.say(&id, host, "   "), "an empty line is not a line");
+
+        let tables = server.tables.lock().unwrap();
+        let t = tables.iter().find(|t| t.id == id).expect("dealt");
+        assert_eq!(t.said.len(), 2);
+        assert_eq!(t.said[0].text, "wood for sheep?");
+        assert_eq!(
+            t.said[0].name, "Marta",
+            "under the name they are sitting as"
+        );
+        assert_eq!(t.said[1].name, "Vidal");
+        drop(tables);
+
+        // A table dealt without chat has none, whoever asks.
+        let quiet = server.deal("seats=4&roles=you,bot,bot,bot&name=Marta", host);
+        assert!(
+            !server.say(&quiet, host, "hello?"),
+            "the setting means something"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_is_said_is_bounded_kept_out_of_the_game_and_never_markup() {
+        let dir = std::env::temp_dir().join(format!("carranta-talk-safe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 74, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let id = server.deal("seats=4&roles=you,bot,bot,bot&name=Marta&chat=text", host);
+
+        // Bounded, so one person cannot hand everybody else a novel.
+        assert!(server.say(&id, host, &"x".repeat(4000)));
+        for i in 0..TALK_KEPT + 40 {
+            server.say(&id, host, &format!("line {i}"));
+        }
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            assert_eq!(t.said.len(), TALK_KEPT, "the oldest fall off the front");
+            assert!(t.said.iter().all(|d| d.text.chars().count() <= TALK_LIMIT));
+            // The oldest kept is not the first said: the front was dropped.
+            assert_ne!(t.said[0].text, "line 0");
+        }
+
+        // It is escaped where it becomes JSON, once, and is never anything but
+        // text after that.
+        assert!(server.say(&id, host, "</script><b>\"hi\"</b>"));
+        let tables = server.tables.lock().unwrap();
+        let t = tables.iter().find(|t| t.id == id).expect("dealt");
+        let talk: Vec<view::Talk<'_>> = t
+            .said
+            .iter()
+            .map(|d| view::Talk {
+                seat: d.seat,
+                name: &d.name,
+                text: &d.text,
+            })
+            .collect();
+        let out = view::render_at_table(&t.session, 0, view::Room::default(), &talk);
+        // Two things make this safe and neither is a filter on the words. The
+        // payload is JSON fetched over HTTP, so what must not happen is the text
+        // breaking out of its string: the quotes are escaped.
+        assert!(
+            out.contains(r#"\"hi\""#),
+            "quotes escaped rather than closing"
+        );
+        assert!(
+            strings_are_closed(&out),
+            "and the payload is still one well-formed object"
+        );
+        // And the page writes it with `textContent`, so it is never markup on
+        // the way in either. Checked against the page's own source, because the
+        // day somebody reaches for `innerHTML` there is the day this matters.
+        const PAGE: &str = include_str!("../assets/index.html");
+        assert!(
+            PAGE.contains("what.textContent = t.said;"),
+            "the talk goes into the page as text"
+        );
+
+        // And the game itself knows nothing about any of it. §9.7.1: free text
+        // from a player must never reach a bot's input, and the way to keep that
+        // promise is to leave no path for it to travel. The talk is on the table;
+        // the bots are handed a `State`.
+        let bare = view::render_for(&t.session, 0);
+        assert!(
+            !bare.contains("wood for sheep"),
+            "not in the game's own view"
+        );
+        assert!(
+            !t.session.log().iter().any(|l| l.text.contains("script")),
+            "and not in the log the session keeps"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Whether every quote in a payload is either escaped or a delimiter.
+    ///
+    /// A whole JSON parser is not the point: what is being checked is that
+    /// somebody else's words cannot end the string they are in, which is the one
+    /// way text in this payload could become something other than text.
+    fn strings_are_closed(s: &str) -> bool {
+        let (mut inside, mut escaped) = (false, false);
+        for c in s.chars() {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                inside = !inside;
+            }
+        }
+        !inside
+    }
+
+    #[test]
+    fn a_name_is_what_somebody_said_and_nothing_else() {
+        // Trimmed and bounded, because it is somebody else's text, and empty
+        // when they said nothing: what an unnamed seat is called depends on
+        // which seat it is, which is not settled until the order is drawn.
+        assert_eq!(called("Vidal"), "Vidal");
+        assert_eq!(called("  Vidal  "), "Vidal");
+        assert_eq!(called(""), "");
+        assert_eq!(called("   "), "");
+        assert_eq!(called(&"x".repeat(80)).chars().count(), 24);
     }
 
     #[test]

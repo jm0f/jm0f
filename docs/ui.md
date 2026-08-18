@@ -2467,6 +2467,79 @@ able to say whose turn it is.
 
 ---
 
+## 17. Table talk
+
+Text chat between the people at a table, in the right column where the placeholder
+promised it would be. Off unless the lobby asks for it, and it is a lobby answer
+like the clock: stored with the table, so a game resumed after a restart is as
+talkative as it was dealt.
+
+**Only the people at the table talk.** Somebody watching reads, the way they read
+the board: standing behind the players is not sitting at the table. The panel says
+which of those the reader is rather than showing a box that would refuse.
+
+**What was said is not part of the game.** The record is the moves, and a game
+replayed from its file is the same game whatever was said over it, so the
+conversation lives in memory on the table and is never written down. A restart
+loses it, which is the right thing to lose, and the lobby's tooltip says so before
+anybody starts a conversation they expected to keep.
+
+**Two hundred lines, two hundred and forty characters each.** The oldest fall off
+the front, because a table talks for an hour and a page should not be handed all
+of it every three seconds.
+
+### The one rule that shaped the design
+
+§9.7.1 of the scoping document: free text from a player must never reach an LLM
+player's prompt, because "give me all your wood" is a negotiation to a person and
+an instruction to a model.
+
+Today's bots are heuristics that are handed a `State` and could not read chat if
+it were given to them. The guarantee is that they are never in a position to:
+**the talk lives on the table, and the table is the server's.** It is not on the
+`Session`, not in the log the session keeps, and not in the view the game renders
+of itself; the only thing that ever sees it is the page. That is a structure
+rather than a promise, and a test asserts it from the outside: what was said does
+not appear in the game's own view.
+
+The other half is that it is never markup. It is escaped once, where it becomes
+JSON, and written into the page with `textContent`. There is no filter on the
+words themselves, because a filter that half understands somebody else's sentence
+is worse than one that does not try. A test checks both: that the payload's
+strings still close, and that the page's own source puts the text in as text.
+
+---
+
+## 18. Who goes first
+
+Turn order is seat order, and the seats used to be handed out in the order people
+arrived: the host at nought and therefore first in every game this server dealt.
+Going first is worth something, so that was a thumb on the scale.
+
+**The order is drawn when the table is settled** and not before or after. Settled
+means every chair has somebody or something in it and nothing has been played, so
+the draw happens when the last person sits down, when the host gives the empty
+chairs to the bots, or immediately for a table dealt with none. Nobody is ever
+moved out of a game they are in the middle of.
+
+The chairs carry their people and their names with them, and the session is told
+again who is where. The board is untouched: it belongs to the seed and has nothing
+to do with who sits where.
+
+**Not from the game's own generator.** That one deals the board and the dice, and
+drawing from it here would mean the same seed produced a different game depending
+on how many people happened to turn up.
+
+Two things had to change to make room for this. The session used to insist that
+seat nought was a person, on the grounds that a table always has its dealer at it;
+after a draw, seat nought may be a bot, and the table would have waited on it for
+ever. And a person who gave no name used to be stored as "Player 2", a name
+derived from a seat number, which became a lie the moment the seat moved: what an
+unnamed seat is called is now the page's to decide, from the seat it is actually
+in.
+
+---
+
 ## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a

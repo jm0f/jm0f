@@ -46,6 +46,13 @@ pub struct Setup {
     pub bank_exact: bool,
     /// Whether the table keeps a log.
     pub log: bool,
+    /// Whether the people at the table can talk to each other.
+    ///
+    /// The conversation itself is not written down anywhere: the record is the
+    /// moves, and a game replayed from its file is the same game whatever was
+    /// said over it. What is written down is whether talking was allowed, which
+    /// is a lobby answer like the clock and the bank.
+    pub chat: bool,
     /// Who is in each seat, in seat order.
     ///
     /// Empty for a game written before there were chairs, and for one nobody
@@ -107,6 +114,10 @@ impl Default for Setup {
             discard_secs: crate::game::DEFAULT_DISCARD_SECS,
             bank_exact: true,
             log: true,
+            // Off, matching the lobby: a table talks because somebody chose that
+            // it should, and a game written before the setting existed was
+            // played without one.
+            chat: false,
             chairs: Vec::new(),
         }
     }
@@ -208,8 +219,10 @@ pub fn is_game_id(s: &str) -> bool {
 /// written before version 4 comes back on a table set up the way a fresh one is,
 /// and one written before version 5 comes back with its dealer alone at it.
 /// Version 6 gave each seat a line of its own so it could carry a name, and
-/// still reads version 5's single `chairs` line as seats nobody named.
-const VERSION: u32 = 6;
+/// still reads version 5's single `chairs` line as seats nobody named. Version 7
+/// added `chat`, whether the table may talk, which is a setting and not a
+/// transcript: what was said is never written down.
+const VERSION: u32 = 7;
 
 /// Times per `at` line. Forty numbers is a line you can still read.
 const TIMES_PER_LINE: usize = 40;
@@ -423,6 +436,7 @@ pub fn encode(g: &Saved) -> String {
     let _ = writeln!(out, "discard {}", s.discard_secs);
     let _ = writeln!(out, "bank {}", if s.bank_exact { "exact" } else { "rough" });
     let _ = writeln!(out, "log {}", yes_no(s.log));
+    let _ = writeln!(out, "chat {}", yes_no(s.chat));
     // One line a seat, in seat order, because a name is somebody else's text and
     // has spaces and commas in it: everything after the first word is the name,
     // so there is nothing to escape and nothing to get wrong.
@@ -503,6 +517,7 @@ pub fn decode(text: &str) -> Option<Saved> {
             "discard" => g.setup.discard_secs = rest.parse().ok()?,
             "bank" => g.setup.bank_exact = rest != "rough",
             "log" => g.setup.log = is_yes(rest),
+            "chat" => g.setup.chat = is_yes(rest),
             // Version 5 wrote them on one line and had no names in them. Read
             // rather than dropped: a table somebody is sitting at is exactly the
             // thing that must not be lost to a format change.
@@ -711,6 +726,7 @@ mod tests {
                 discard_secs: 25,
                 bank_exact: false,
                 log: false,
+                chat: true,
                 chairs: vec![
                     Chair::person("keytest0000000000", "Egon of the Long Name, and a comma"),
                     Chair::bot(),

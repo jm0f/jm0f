@@ -61,6 +61,20 @@ pub struct Room {
     /// Whether this reader may give the empty chairs to the bots: the host, or
     /// whoever is sitting in seat nought if the host has gone.
     pub host: bool,
+    /// Whether the people here may talk to each other.
+    pub chat: bool,
+}
+
+/// One thing somebody said, as the page needs it.
+///
+/// Passed in from the table rather than read off the session, because that is
+/// where it lives and where it must stay: §9.7.1 of the scoping document says
+/// free text from a player must never reach a bot's input, and the way to keep a
+/// promise like that is to leave no path for it to travel.
+pub struct Talk<'a> {
+    pub seat: u8,
+    pub name: &'a str,
+    pub text: &'a str,
 }
 
 /// The table as one seat sees it.
@@ -76,7 +90,12 @@ pub fn render_for(session: &Session, seat: u8) -> String {
 
 /// The same, for a seat at a table that may still be filling up.
 pub fn render_seated(session: &Session, seat: u8, room: Room) -> String {
-    render_room(session, seat, room, None)
+    render_room(session, seat, room, &[], None)
+}
+
+/// The same, with what has been said at the table.
+pub fn render_at_table(session: &Session, seat: u8, room: Room, talk: &[Talk<'_>]) -> String {
+    render_room(session, seat, room, talk, None)
 }
 
 /// The same, with something to tell that seat.
@@ -97,8 +116,8 @@ pub fn render_watching(session: &Session) -> String {
 
 /// The same, for somebody looking at a table that may still be filling up: they
 /// are the ones who most need to know there is a chair going.
-pub fn render_watching_room(session: &Session, room: Room) -> String {
-    render_room(session, NOBODY, room, None)
+pub fn render_watching_room(session: &Session, room: Room, talk: &[Talk<'_>]) -> String {
+    render_room(session, NOBODY, room, talk, None)
 }
 
 /// A seat number no table has, for somebody who is not sitting at one.
@@ -117,10 +136,16 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn render_inner(session: &Session, seat: u8, note: Option<&str>) -> String {
-    render_room(session, seat, Room::default(), note)
+    render_room(session, seat, Room::default(), &[], note)
 }
 
-fn render_room(session: &Session, seat: u8, room: Room, note: Option<&str>) -> String {
+fn render_room(
+    session: &Session,
+    seat: u8,
+    room: Room,
+    talk: &[Talk<'_>],
+    note: Option<&str>,
+) -> String {
     let v = if seat == NOBODY {
         session.view_watching()
     } else {
@@ -264,6 +289,15 @@ fn render_room(session: &Session, seat: u8, room: Room, note: Option<&str>) -> S
     // with bots and get on with it.
     j.int("seatsFree", room.free as i64);
     j.bool("youMayStart", room.host);
+    j.bool("chat", room.chat);
+    // What has been said, oldest first. Escaped here, once, and put into the
+    // page as text rather than as markup: it is somebody else's words and is
+    // never anything else.
+    j.array("talk", talk, |o, t| {
+        o.int("seat", t.seat as i64)
+            .str("who", t.name)
+            .str("said", t.text);
+    });
     j.bool("canPropose", session.can_propose_for(seat));
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);
@@ -286,7 +320,16 @@ fn render_room(session: &Session, seat: u8, room: Room, note: Option<&str>) -> S
     // being discarded, which is also what says the turn clock is running again.
     j.int("discardSecs", session.discard_secs() as i64);
     j.opt_int("discardLeft", session.discard_left());
-    j.str("youName", session.name());
+    // This seat's own name, not the table's. With two people there is no such
+    // thing as "the" name, and a watcher has none at all.
+    j.str(
+        "youName",
+        if seat == NOBODY {
+            ""
+        } else {
+            session.name_of(seat)
+        },
+    );
     j.str("game", session.game());
     j.int("turns", session.turn_no() as i64);
     j.ints("turnMs", session.turn_ms().iter().map(|&n| n as i64));

@@ -616,8 +616,11 @@ impl Session {
     /// Nothing lists tables yet, so nothing reads this yet either.
     /// Sit people in these seats, and bots in the rest.
     ///
-    /// The host is always one of them: a table with nobody at it is a table
-    /// nobody asked for, and every path that deals one seats its dealer.
+    /// Exactly these seats. It used to force seat nought as well, on the grounds
+    /// that a table always has its dealer at it, which stopped being true the
+    /// moment the turn order was shuffled: a bot dealt into seat nought would
+    /// have been treated as a person, and the table would have waited on it for
+    /// ever.
     pub fn with_people(mut self, seats: &[u8]) -> Self {
         self.seat_people(seats);
         self
@@ -627,7 +630,6 @@ impl Session {
     /// mid-game is.
     pub fn seat_people(&mut self, seats: &[u8]) {
         self.people = [false; SEATS];
-        self.people[HUMAN as usize] = true;
         for &s in seats {
             if (s as usize) < SEATS {
                 self.people[s as usize] = true;
