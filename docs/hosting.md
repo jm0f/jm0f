@@ -99,8 +99,20 @@ Four things to set in the dashboard, none of which belong in a file:
    them. The container writes to `/data/games`, which is what the `--games` flag
    in the `Dockerfile` points at. Confirm it is offered in the same region the
    service is in.
-2. **`CARRANTA_BUILD`** as a build argument, set to `$RAILWAY_GIT_COMMIT_SHA`, so
-   the hash in the header names the commit rather than saying `container`.
+2. **Nothing, for the build stamp.** It used to be a `CARRANTA_BUILD` build
+   argument set to `$RAILWAY_GIT_COMMIT_SHA`, and that is now a fallback rather
+   than a requirement: the process reads `RAILWAY_GIT_COMMIT_SHA` out of its own
+   environment at startup, which the platform injects into every deploy that
+   came from a repository. Set `CARRANTA_BUILD` in the environment to override
+   it with a label of your own; otherwise there is nothing to do.
+
+   Worth knowing why it moved, because the old arrangement failed silently and
+   cost an evening. Five deploys landed correctly while every page read
+   `unknown`, and `unknown` was being treated as proof that no deploy had
+   happened, so the diagnosis went hunting for a broken trigger that was never
+   broken. **A check that cannot distinguish "it did not happen" from "I was
+   not configured to see it" is worse than no check at all.** The reading now
+   depends on the running process and not on three settings being right.
 3. **`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `PUBLIC_ORIGIN`**, if you
    want people to be able to sign in. All three or none: without them the button
    is not shown and the routes are not there, which is a whole application that

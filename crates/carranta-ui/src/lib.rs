@@ -19,6 +19,7 @@ pub mod people;
 pub mod report;
 pub mod server;
 pub mod signin;
+pub mod stamp;
 pub mod store;
 pub mod view;
 

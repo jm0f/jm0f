@@ -93,7 +93,7 @@ fn main() {
     };
     println!(
         "Carranta {}, listening on {host}:{port}",
-        env!("CARRANTA_BUILD")
+        carranta_ui::stamp::build()
     );
     println!("  {seats} seats, {mode:?} market, seed {seed}");
     let mut server = Server::new(seats, seed, mode, &games);

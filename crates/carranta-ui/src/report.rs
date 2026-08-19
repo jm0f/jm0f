@@ -124,7 +124,7 @@ fn mast(mark: &str, context: &str, links: &[(&str, &str)], tail: &str) -> String
     // code", could only be answered from a terminal. An afternoon went on that.
     let mut b = format!(
         "<header>{mark}<span class=\"build\">{}</span>",
-        env!("CARRANTA_BUILD")
+        crate::stamp::build()
     );
     if !context.is_empty() {
         let _ = write!(b, "<span class=\"gameName\">{}</span>", esc(context));

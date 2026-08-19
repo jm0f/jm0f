@@ -64,7 +64,7 @@ fn page_served() -> &'static str {
             "<span class=\"build\" id=\"build\"></span>",
             &format!(
                 "<span class=\"build\" id=\"build\">{}</span>",
-                env!("CARRANTA_BUILD")
+                crate::stamp::build()
             ),
         )
     })

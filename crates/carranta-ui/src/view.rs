@@ -195,7 +195,7 @@ fn render_room(
     j.str("seed", &crate::game::seed_code(session.seed()));
     // Which build is serving this, so a stale process is visible rather than
     // mistaken for a change that did not work.
-    j.str("build", env!("CARRANTA_BUILD"));
+    j.str("build", crate::stamp::build());
     // Minus one for somebody watching, which the page reads as "no seat of
     // mine": no hand, no turn, nothing to press.
     j.int("you", if seat == NOBODY { -1 } else { seat as i64 });

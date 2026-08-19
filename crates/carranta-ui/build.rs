@@ -5,6 +5,14 @@
 //! an hour ago?" is a question that comes up every single time, and a
 //! rebuilt page and a stale one look alike until you know what changed.
 //! Putting the commit in the page answers it at a glance.
+//!
+//! This is the *fallback* rather than the whole story, and only since it let
+//! everybody down: see `src/stamp.rs`. A container build has no repository to
+//! read and depends on the platform passing one in here, which is a chain of
+//! three things that all have to be right and reports nothing when they are
+//! not. The running process asks its own environment first, which needs no
+//! configuration at all; what is baked in here is what a laptop build knows
+//! and what a container falls back to.
 
 use std::process::Command;
 
