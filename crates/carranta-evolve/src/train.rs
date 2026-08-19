@@ -223,6 +223,7 @@ impl Trainer {
         let arena = Arena {
             mode: cfg.mode,
             cap: 20_000,
+            ..Arena::default()
         };
         self.generation += 1;
         // Derived, not carried: see `Trainer::run_seed`.

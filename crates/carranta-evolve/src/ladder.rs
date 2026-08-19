@@ -33,19 +33,23 @@ use crate::genome::Genome;
 pub const ANCHOR: u64 = 0;
 
 /// A genome that has been given a durable identity.
+///
+/// Generic over what a genome *is*, because two phases of E-1 share one
+/// ladder design: phase one's genome is a weight vector, phase two's is a
+/// NEAT topology, and the rating arithmetic could not care less.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Versioned {
+pub struct Versioned<G = Genome> {
     pub id: u64,
     pub generation: u32,
     pub label: String,
-    pub genome: Genome,
+    pub genome: G,
 }
 
 /// Every version ever kept, and what they are worth.
 #[derive(Clone, Debug)]
-pub struct Ladder {
+pub struct Ladder<G = Genome> {
     pool: Pool,
-    members: HashMap<u64, Versioned>,
+    members: HashMap<u64, Versioned<G>>,
     /// Games each version has played against the anchor, which is what makes
     /// its rating comparable to every other version's.
     anchored: HashMap<u64, u32>,
@@ -61,14 +65,25 @@ impl Default for Ladder {
 impl Ladder {
     /// A fresh ladder holding only the pinned heuristic.
     pub fn new(model: Model) -> Self {
+        Ladder::with_anchor(model, Genome::default(), "heuristic-v1")
+    }
+}
+
+impl<G: Clone> Ladder<G> {
+    /// A fresh ladder holding only the pinned anchor.
+    ///
+    /// For phase two the anchor's genome slot holds an empty placeholder: the
+    /// anchor is the heuristic, not a network, and the trainer seats it as
+    /// itself rather than reading a genome from here.
+    pub fn with_anchor(model: Model, genome: G, label: &str) -> Self {
         let mut members = HashMap::new();
         members.insert(
             ANCHOR,
             Versioned {
                 id: ANCHOR,
                 generation: 0,
-                label: "heuristic-v1".to_string(),
-                genome: Genome::default(),
+                label: label.to_string(),
+                genome,
             },
         );
         let mut pool = Pool::new(model);
@@ -86,14 +101,14 @@ impl Ladder {
         }
     }
 
-    /// The pinned heuristic: generation zero, and the thing every version is
+    /// The pinned anchor: generation zero, and the thing every version is
     /// measured against.
-    pub fn anchor(&self) -> &Versioned {
+    pub fn anchor(&self) -> &Versioned<G> {
         &self.members[&ANCHOR]
     }
 
     /// Give a genome an identity and add it to the ladder.
-    pub fn enrol(&mut self, genome: Genome, generation: u32) -> u64 {
+    pub fn enrol(&mut self, genome: G, generation: u32) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.members.insert(
@@ -108,7 +123,7 @@ impl Ladder {
         id
     }
 
-    pub fn get(&self, id: u64) -> Option<&Versioned> {
+    pub fn get(&self, id: u64) -> Option<&Versioned<G>> {
         self.members.get(&id)
     }
 
@@ -163,8 +178,8 @@ impl Ladder {
     }
 
     /// Every rated version, best first.
-    pub fn standings(&self, min_games: u32) -> Vec<(&Versioned, Rating, u32)> {
-        let mut rows: Vec<(&Versioned, Rating, u32)> = self
+    pub fn standings(&self, min_games: u32) -> Vec<(&Versioned<G>, Rating, u32)> {
+        let mut rows: Vec<(&Versioned<G>, Rating, u32)> = self
             .members
             .values()
             .map(|v| (v, self.rating(v.id), self.games_played(v.id)))
@@ -208,7 +223,7 @@ impl Ladder {
     ///
     /// The anchor stays pinned when restored, or a resumed run would silently
     /// lose the fixed origin every cross-generation comparison rests on.
-    pub fn restore(&mut self, version: Versioned, rating: Rating, games: u32, anchored: u32) {
+    pub fn restore(&mut self, version: Versioned<G>, rating: Rating, games: u32, anchored: u32) {
         let id = version.id;
         self.next_id = self.next_id.max(id + 1);
         self.members.insert(id, version);
@@ -228,7 +243,9 @@ impl Ladder {
     pub fn is_empty(&self) -> bool {
         self.members.is_empty()
     }
+}
 
+impl Ladder<Genome> {
     /// Write the ladder as text, one version per line.
     ///
     /// Deliberately plain: a run that dies overnight should be resumable, and

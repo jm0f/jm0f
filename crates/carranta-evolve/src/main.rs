@@ -1,19 +1,24 @@
-//! `carranta-train`, run an evolution strategy over the heuristic's weights.
+//! `carranta-train`, run the training loop: an evolution strategy over the
+//! heuristic's weights (phase one) or NEAT over network topologies in the
+//! mixed-offer market (phase two).
 //!
 //! Built to be started and left alone. It checkpoints after every generation,
-//! resumes exactly, and writes a history you can chart afterwards.
+//! resumes exactly, and writes a history you can chart afterwards. A NEAT run
+//! also exports the current champion as `champion.net` each generation, which
+//! is the file `carranta-play --trained` deploys.
 //!
 //! ```text
 //! cargo run --release -p carranta-evolve -- --out runs/first
 //! cargo run --release -p carranta-evolve -- --out runs/first --resume
+//! cargo run --release -p carranta-evolve -- --method neat --out runs/neat-1
 //! ```
 //!
-//! To stop it cleanly, create a file called `stop` in the output directory, //! it finishes the generation in flight, checkpoints, and exits. Interrupting
+//! To stop it cleanly, create a file called `stop` in the output directory:
+//! it finishes the generation in flight, checkpoints, and exits. Interrupting
 //! it instead costs at most the generation in progress.
 //!
-//! Options: `--out DIR --resume --generations N --population N --survivors N
-//! --trials N --validation N --sample N --threads N --mutation F --seed N
-//! --mode disabled|restricted|full`
+//! See the `USAGE` string below for the full option list, and
+//! `docs/training.md` for the laptop runbook.
 
 use std::path::PathBuf;
 
@@ -21,14 +26,25 @@ use carranta_core::state::TradeMode;
 use carranta_evolve::checkpoint;
 use carranta_evolve::genome::{Genome, NAMES};
 use carranta_evolve::ladder::ANCHOR;
+use carranta_evolve::train_neat::{NeatConfig, NeatReport, NeatTrainer};
 use carranta_evolve::{Config, Report, Trainer};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Method {
+    /// Phase one: an evolution strategy over the heuristic's weights.
+    Es,
+    /// Phase two: NEAT proper, in the full mixed-offer market.
+    Neat,
+}
 
 struct Args {
     out: PathBuf,
     resume: bool,
     generations: u32,
     seed: u64,
+    method: Method,
     config: Config,
+    neat: NeatConfig,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -41,7 +57,9 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         resume: false,
         generations: 20,
         seed: 20_260_813,
+        method: Method::Es,
         config: Config::default(),
+        neat: NeatConfig::default(),
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -52,37 +70,67 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                 args.generations = value()?.parse().map_err(|_| "bad --generations")?
             }
             "--seed" => args.seed = value()?.parse().map_err(|_| "bad --seed")?,
+            "--method" => {
+                args.method = match value()?.as_str() {
+                    "es" => Method::Es,
+                    "neat" => Method::Neat,
+                    other => return Err(format!("unknown --method `{other}`")),
+                }
+            }
             "--population" => {
-                args.config.population = value()?.parse().map_err(|_| "bad --population")?
+                args.config.population = value()?.parse().map_err(|_| "bad --population")?;
+                args.neat.population = args.config.population;
             }
             "--survivors" => {
                 args.config.survivors = value()?.parse().map_err(|_| "bad --survivors")?
             }
             "--trials" => {
                 args.config.trials = value()?.parse().map_err(|_| "bad --trials")?;
+                args.neat.trials = args.config.trials;
             }
             "--validation" => {
-                args.config.validation = value()?.parse().map_err(|_| "bad --validation")?
+                args.config.validation = value()?.parse().map_err(|_| "bad --validation")?;
+                args.neat.validation = args.config.validation;
             }
-            "--sample" => args.config.sample = value()?.parse().map_err(|_| "bad --sample")?,
-            "--threads" => args.config.threads = value()?.parse().map_err(|_| "bad --threads")?,
+            "--sample" => {
+                args.config.sample = value()?.parse().map_err(|_| "bad --sample")?;
+                args.neat.sample = args.config.sample;
+            }
+            "--threads" => {
+                args.config.threads = value()?.parse().map_err(|_| "bad --threads")?;
+                args.neat.threads = args.config.threads;
+            }
             "--mutation" => {
                 args.config.mutation = value()?.parse().map_err(|_| "bad --mutation")?
             }
+            "--give-cap" => {
+                let v = value()?;
+                args.neat.give_cap = if v == "hand" {
+                    None
+                } else {
+                    Some(v.parse().map_err(|_| "bad --give-cap")?)
+                };
+            }
+            "--want-cap" => args.neat.want_cap = value()?.parse().map_err(|_| "bad --want-cap")?,
             "--mode" => {
-                args.config.mode = match value()?.as_str() {
+                let mode = match value()?.as_str() {
                     "disabled" => TradeMode::Disabled,
                     "restricted" => TradeMode::Restricted,
                     "full" => TradeMode::Full,
                     other => return Err(format!("unknown --mode `{other}`")),
-                }
+                };
+                args.config.mode = mode;
+                args.neat.mode = mode;
             }
             "--help" | "-h" => return Err("help".to_string()),
             other => return Err(format!("unknown option `{other}`")),
         }
     }
-    if args.config.survivors >= args.config.population {
+    if args.method == Method::Es && args.config.survivors >= args.config.population {
         return Err("--survivors must be below --population".to_string());
+    }
+    if args.neat.want_cap == 0 {
+        return Err("--want-cap must be at least 1".to_string());
     }
     Ok(args)
 }
@@ -90,18 +138,23 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
 const USAGE: &str = "\
 carranta-evolve
 
+  --method M           es | neat (es). Phase one tunes the heuristic's
+                       weights; neat evolves network topologies in the full
+                       mixed-offer market and exports champion.net
   --out DIR            where checkpoints and history are written (runs/latest)
   --resume             continue the run in --out rather than starting one
   --generations N      generations to run this session; 0 runs until stopped (20)
   --seed N             run seed; ignored when resuming
-  --population N       genomes per generation (48)
-  --survivors N        genomes that breed the next generation (12)
+  --population N       genomes per generation (48 es, 96 neat)
+  --survivors N        es only: genomes that breed the next generation (12)
   --trials N           starting games per genome; adapts as the run converges
   --validation N       held-out games the champion is rated on (96)
   --sample N           validation games recorded and analysed (8; 0 to skip)
   --threads N          workers (all cores)
-  --mutation F         mutation step, in per-gene scale units (1.0)
-  --mode MODE          disabled | restricted | full (restricted)
+  --mutation F         es only: mutation step, in per-gene scale units (1.0)
+  --give-cap N|hand    neat only: cards an offer may give (2; hand = no cap)
+  --want-cap N         neat only: cards an offer may ask (2)
+  --mode MODE          disabled | restricted | full (restricted es, full neat)
 
 Create a file named `stop` in --out to finish the current generation and exit.";
 
@@ -139,6 +192,189 @@ const CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,no
 above_anchor,champion_sigma,connectivity,seconds,sampled,turns,trades,offers,supply_trades,settlements,cities,roads,\
 dev_bought,militia,production\n";
 
+/// One row of a phase-two run's history.
+fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
+    let b = &r.behaviour;
+    format!(
+        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{:.6},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        r.generation,
+        r.trials,
+        r.games,
+        r.best_fitness,
+        r.median_fitness,
+        r.noise,
+        r.species,
+        r.champion_nodes,
+        r.champion_genes,
+        r.above_anchor,
+        r.champion_sigma,
+        connectivity,
+        r.seconds,
+        b.games,
+        b.turns,
+        b.trades,
+        b.offers_made,
+        b.supply_trades,
+        b.settlements_built,
+        b.cities_built,
+        b.roads_built,
+        b.dev_bought,
+        b.militia_played,
+        b.production,
+    )
+}
+
+const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
+species,champion_nodes,champion_genes,above_anchor,champion_sigma,connectivity,seconds,\
+sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
+
+/// The phase-two loop: the same rhythm as phase one, plus a champion export.
+fn run_neat(args: Args) {
+    let ckpt = args.out.join("checkpoint.txt");
+    let history = args.out.join("history.csv");
+    let champion_file = args.out.join("champion.net");
+    let stop = args.out.join("stop");
+
+    let mut trainer = if args.resume {
+        match checkpoint::load_neat(&ckpt) {
+            Ok(Ok(mut t)) => {
+                t.config.threads = args.neat.threads;
+                println!(
+                    "resumed {} at generation {}",
+                    ckpt.display(),
+                    t.generation()
+                );
+                t
+            }
+            Ok(Err(e)) => {
+                eprintln!("{}: {e}", ckpt.display());
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("cannot read {}: {e}", ckpt.display());
+                std::process::exit(1);
+            }
+        }
+    } else {
+        if ckpt.exists() {
+            eprintln!(
+                "{} already exists, pass --resume to continue it, or choose another --out",
+                ckpt.display()
+            );
+            std::process::exit(1);
+        }
+        let _ = std::fs::write(&history, NEAT_CSV_HEADER);
+        NeatTrainer::new(args.neat, args.seed)
+    };
+
+    let c = &trainer.config;
+    println!(
+        "neat: population {}   market {:?} (give {}, want {})   workers {}   target species {}",
+        c.population,
+        c.mode,
+        c.give_cap.map_or("hand".to_string(), |n| n.to_string()),
+        c.want_cap,
+        c.threads,
+        c.params.target_species,
+    );
+    println!("writing to {}", args.out.display());
+    println!("  fitness is mean finishing position, lower is better (2.5 = average)");
+    println!("  read +anchor against its sigma: a gap inside it is noise, not progress\n");
+    println!(
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes      +anchor   trades   secs"
+    );
+
+    let started = std::time::Instant::now();
+    let mut total_games = 0u64;
+    let mut done = 0u32;
+    while args.generations == 0 || done < args.generations {
+        if stop.exists() {
+            println!("\nstop file found, finishing here");
+            break;
+        }
+        done += 1;
+        let r = trainer.step();
+        total_games += r.games as u64;
+        let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
+        println!(
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>+6.2} +-{:>4.1}  {:>6.1}  {:>5.1}",
+            r.generation,
+            r.trials,
+            r.games,
+            r.best_fitness,
+            r.median_fitness,
+            r.noise,
+            if separated { "yes" } else { "NO" },
+            r.species,
+            r.champion_nodes,
+            r.champion_genes,
+            r.above_anchor,
+            r.champion_sigma,
+            r.behaviour.trades,
+            r.seconds,
+        );
+
+        if let Err(e) = checkpoint::save_neat(&trainer, &ckpt) {
+            eprintln!("warning: could not write {}: {e}", ckpt.display());
+        }
+        // The reigning champion, as a file a server can be handed. Written
+        // beside the checkpoint every generation, so "deploy the latest" is a
+        // copy of one small text file at any moment of a run.
+        if let Some(g) = trainer.champion_genome() {
+            let text = g.compile().show(r.generation);
+            let temp = champion_file.with_extension("tmp");
+            if std::fs::write(&temp, text)
+                .and_then(|_| std::fs::rename(&temp, &champion_file))
+                .is_err()
+            {
+                eprintln!("warning: could not write {}", champion_file.display());
+            }
+        }
+        let connectivity = trainer.ladder.connectivity(1);
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&history) {
+            use std::io::Write;
+            let _ = f.write_all(neat_csv_row(&r, connectivity).as_bytes());
+        }
+    }
+
+    let elapsed = started.elapsed().as_secs_f64();
+    if total_games > 0 {
+        println!(
+            "\n  {total_games} games in {:.1} s   ({:.0} games/s)",
+            elapsed,
+            total_games as f64 / elapsed
+        );
+    }
+
+    println!("\n== ladder ==");
+    println!(
+        "  connectivity {:.0}% of versions have played the anchor directly\n",
+        trainer.ladder.connectivity(1) * 100.0
+    );
+    println!("  version        games      mu   sigma   shown   +anchor");
+    let anchor_mu = trainer.ladder.rating(ANCHOR).mu;
+    for (v, r, n) in trainer.ladder.standings(1).iter().take(10) {
+        println!(
+            "  {:<13} {:>5}  {:>6.2}  {:>5.2}  {:>6.2}  {:>+7.2}{}",
+            v.label,
+            n,
+            r.mu,
+            r.sigma,
+            r.conservative(),
+            r.mu - anchor_mu,
+            if v.id == ANCHOR { "   <- pinned" } else { "" },
+        );
+    }
+
+    println!("\n  checkpoint  {}", ckpt.display());
+    println!("  champion    {}", champion_file.display());
+    println!("  history     {}", history.display());
+    println!(
+        "  resume with --method neat --out {} --resume",
+        args.out.display()
+    );
+}
+
 fn main() {
     let args = match parse_args() {
         Ok(a) => a,
@@ -154,6 +390,9 @@ fn main() {
     if let Err(e) = std::fs::create_dir_all(&args.out) {
         eprintln!("cannot use {}: {e}", args.out.display());
         std::process::exit(1);
+    }
+    if args.method == Method::Neat {
+        return run_neat(args);
     }
     let ckpt = args.out.join("checkpoint.txt");
     let history = args.out.join("history.csv");
@@ -360,6 +599,48 @@ mod tests {
         // length guessed up front. The loop reads it as unbounded.
         let a = parse("--generations 0").expect("zero is allowed");
         assert_eq!(a.generations, 0);
+    }
+
+    #[test]
+    fn neat_flags_reach_the_configuration() {
+        let a = parse("--method neat --give-cap hand --want-cap 3 --population 32 --mode full")
+            .expect("every flag is known");
+        assert_eq!(a.method, Method::Neat);
+        assert_eq!(a.neat.give_cap, None, "hand means bounded by the hand");
+        assert_eq!(a.neat.want_cap, 3);
+        assert_eq!(a.neat.population, 32);
+        assert_eq!(a.neat.mode, TradeMode::Full);
+        let b = parse("--method neat --give-cap 2").expect("a number is a cap");
+        assert_eq!(b.neat.give_cap, Some(2));
+        assert!(parse("--method neither").is_err());
+        assert!(parse("--give-cap x").is_err());
+        assert!(
+            parse("--want-cap 0").is_err(),
+            "an offer that may ask for nothing is not an offer"
+        );
+    }
+
+    #[test]
+    fn a_neat_csv_row_matches_its_header() {
+        let cfg = NeatConfig {
+            population: 6,
+            trials: 4,
+            validation: 4,
+            trials_min: 4,
+            sample: 0,
+            threads: 2,
+            cap: 400,
+            mode: TradeMode::Disabled,
+            ..NeatConfig::default()
+        };
+        let report = NeatTrainer::new(cfg, 3).step();
+        let row = neat_csv_row(&report, 1.0);
+        assert_eq!(
+            row.matches(',').count(),
+            NEAT_CSV_HEADER.matches(',').count(),
+            "history.csv would be unreadable if the row drifted from its header"
+        );
+        assert!(row.ends_with('\n'));
     }
 
     #[test]

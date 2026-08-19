@@ -21,10 +21,16 @@ use carranta_core::state::TradeMode;
 
 use crate::genome::Genome;
 use crate::ladder::{ANCHOR, Ladder, Versioned};
+use crate::neat::{Innovations, NeatGenome, Params, Species};
 use crate::train::{Config, Trainer};
+use crate::train_neat::{NeatConfig, NeatTrainer};
 
 /// Bumped when the format changes in a way an older reader would misread.
 pub const FORMAT: u32 = 1;
+
+/// Phase two writes its own format: the genomes are multi-line, the species
+/// carry state, and reading one as the other must fail loudly, not weirdly.
+pub const NEAT_FORMAT: u32 = 2;
 
 /// Why a checkpoint could not be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,6 +261,342 @@ pub fn decode(text: &str) -> Result<Trainer, LoadError> {
     ))
 }
 
+/// Render a phase-two run as text.
+pub fn encode_neat(trainer: &NeatTrainer) -> String {
+    let c = &trainer.config;
+    let p = &c.params;
+    let mut out = String::new();
+    let _ = writeln!(out, "carranta-evolve {NEAT_FORMAT}");
+    let _ = writeln!(out, "method neat");
+    let _ = writeln!(out, "run_seed {}", trainer.run_seed);
+    let _ = writeln!(out, "generation {}", trainer.generation);
+    let _ = writeln!(out, "trials {}", trainer.trials);
+    let _ = writeln!(out, "population {}", c.population);
+    let _ = writeln!(out, "validation {}", c.validation);
+    let _ = writeln!(out, "trials_min {}", c.trials_min);
+    let _ = writeln!(out, "trials_max {}", c.trials_max);
+    let _ = writeln!(out, "hall_seats {}", c.hall_seats);
+    let _ = writeln!(out, "hall_size {}", c.hall_size);
+    let _ = writeln!(out, "sample {}", c.sample);
+    let _ = writeln!(
+        out,
+        "give_cap {}",
+        c.give_cap.map_or("hand".to_string(), |n| n.to_string())
+    );
+    let _ = writeln!(out, "want_cap {}", c.want_cap);
+    let _ = writeln!(out, "cap {}", c.cap);
+    let _ = writeln!(out, "mode {}", mode_name(c.mode));
+    // Display for f64 emits the shortest string that parses back to the same
+    // value, so every one of these survives the round trip exactly.
+    let _ = writeln!(out, "delta {}", trainer.delta);
+    let _ = writeln!(out, "champion {}", trainer.champion);
+    let _ = writeln!(out, "next_innov {}", trainer.inn.next_innov);
+    let _ = writeln!(out, "next_node {}", trainer.inn.next_node);
+    for (k, v) in [
+        ("weight_p", p.weight_p),
+        ("perturb_p", p.perturb_p),
+        ("power", p.power),
+        ("fresh", p.fresh),
+        ("add_conn_p", p.add_conn_p),
+        ("add_node_p", p.add_node_p),
+        ("c1", p.c1),
+        ("c2", p.c2),
+        ("c3", p.c3),
+        ("delta_start", p.delta_start),
+        ("delta_step", p.delta_step),
+        ("delta_floor", p.delta_floor),
+        ("keep_disabled_p", p.keep_disabled_p),
+    ] {
+        let _ = writeln!(out, "{k} {v}");
+    }
+    let _ = writeln!(out, "target_species {}", p.target_species);
+    let _ = writeln!(out, "stagnation {}", p.stagnation);
+
+    let _ = writeln!(out, "\n# population: one genome block each");
+    let _ = writeln!(out, "genomes {}", trainer.population.len());
+    for g in &trainer.population {
+        let _ = writeln!(out, "genome");
+        out.push_str(&g.show());
+        let _ = writeln!(out, "end");
+    }
+
+    let _ = writeln!(out, "\n# species: representative, best-ever, staleness");
+    let _ = writeln!(out, "species {}", trainer.species.len());
+    for s in &trainer.species {
+        let _ = writeln!(out, "rep {} {}", s.best, s.stale);
+        out.push_str(&s.rep.show());
+        let _ = writeln!(out, "end");
+    }
+
+    let _ = writeln!(out, "\n# hall of fame: ladder ids, oldest first");
+    let _ = writeln!(out, "hall {}", trainer.hall.len());
+    for id in &trainer.hall {
+        let _ = writeln!(out, "{id}");
+    }
+
+    let _ = writeln!(out, "\n# ladder: one version block each");
+    let mut ids = trainer.ladder.ids();
+    ids.sort_unstable();
+    let _ = writeln!(out, "ladder {}", ids.len());
+    for id in ids {
+        let v = trainer.ladder.get(id).expect("id came from the ladder");
+        let r = trainer.ladder.rating(id);
+        let _ = writeln!(
+            out,
+            "version {} {} {} {} {} {} {}",
+            v.id,
+            v.generation,
+            trainer.ladder.games_played(id),
+            r.mu,
+            r.sigma,
+            trainer.ladder.anchored_games(id),
+            v.label,
+        );
+        out.push_str(&v.genome.show());
+        let _ = writeln!(out, "end");
+    }
+    out
+}
+
+/// Read a phase-two run back.
+pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
+    let mut lines = text
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l.trim()))
+        .filter(|(_, l)| !l.is_empty() && !l.starts_with('#'));
+
+    let bad = |line: usize, what: &str| LoadError::Malformed {
+        line,
+        what: what.to_string(),
+    };
+
+    let (line, header) = lines.next().ok_or(LoadError::Missing("header"))?;
+    let version: u32 = header
+        .strip_prefix("carranta-evolve ")
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| bad(line, "not a carranta-evolve checkpoint"))?;
+    if version != NEAT_FORMAT {
+        return Err(LoadError::Version(version));
+    }
+    let (line, method) = lines.next().ok_or(LoadError::Missing("method"))?;
+    if method != "method neat" {
+        return Err(bad(line, "format 2 requires `method neat`"));
+    }
+
+    let mut scalar = |key: &'static str| -> Result<(usize, String), LoadError> {
+        let (line, text) = lines.next().ok_or(LoadError::Missing(key))?;
+        let value = text
+            .strip_prefix(key)
+            .and_then(|v| v.strip_prefix(' '))
+            .ok_or_else(|| bad(line, &format!("expected `{key} <value>`, got `{text}`")))?;
+        Ok((line, value.to_string()))
+    };
+    macro_rules! num {
+        ($key:literal) => {{
+            let (line, v) = scalar($key)?;
+            v.parse()
+                .map_err(|_| bad(line, &format!("`{}` is not a number for {}", v, $key)))?
+        }};
+    }
+
+    let run_seed: u64 = num!("run_seed");
+    let generation: u32 = num!("generation");
+    let trials: u32 = num!("trials");
+    let population_n: usize = num!("population");
+    let validation: u32 = num!("validation");
+    let trials_min: u32 = num!("trials_min");
+    let trials_max: u32 = num!("trials_max");
+    let hall_seats: usize = num!("hall_seats");
+    let hall_size: usize = num!("hall_size");
+    let sample: u32 = num!("sample");
+    let give_cap = {
+        let (line, v) = scalar("give_cap")?;
+        if v == "hand" {
+            None
+        } else {
+            Some(v.parse().map_err(|_| bad(line, "bad give_cap"))?)
+        }
+    };
+    let want_cap: u8 = num!("want_cap");
+    let cap: usize = num!("cap");
+    let mode = {
+        let (line, v) = scalar("mode")?;
+        mode_from(&v).ok_or_else(|| bad(line, &format!("unknown trade mode `{v}`")))?
+    };
+    let delta: f64 = num!("delta");
+    let champion: u64 = num!("champion");
+    let next_innov: u32 = num!("next_innov");
+    let next_node: u32 = num!("next_node");
+    let params = Params {
+        weight_p: num!("weight_p"),
+        perturb_p: num!("perturb_p"),
+        power: num!("power"),
+        fresh: num!("fresh"),
+        add_conn_p: num!("add_conn_p"),
+        add_node_p: num!("add_node_p"),
+        c1: num!("c1"),
+        c2: num!("c2"),
+        c3: num!("c3"),
+        delta_start: num!("delta_start"),
+        delta_step: num!("delta_step"),
+        delta_floor: num!("delta_floor"),
+        keep_disabled_p: num!("keep_disabled_p"),
+        target_species: num!("target_species"),
+        stagnation: num!("stagnation"),
+    };
+    let config = NeatConfig {
+        population: population_n,
+        trials,
+        validation,
+        trials_min,
+        trials_max,
+        hall_seats,
+        hall_size,
+        sample,
+        threads: NeatConfig::default().threads,
+        give_cap,
+        want_cap,
+        cap,
+        mode,
+        params,
+    };
+
+    // A genome block: `gene` lines up to `end`.
+    let genome_block =
+        |lines: &mut dyn Iterator<Item = (usize, &str)>| -> Result<NeatGenome, LoadError> {
+            let mut genes = Vec::new();
+            loop {
+                let (line, text) = lines.next().ok_or(LoadError::Missing("end of genome"))?;
+                if text == "end" {
+                    break;
+                }
+                let rest = text
+                    .strip_prefix("gene ")
+                    .ok_or_else(|| bad(line, "expected a gene line"))?;
+                genes.push(NeatGenome::parse_gene(rest).ok_or_else(|| bad(line, "bad gene"))?);
+            }
+            Ok(NeatGenome { genes })
+        };
+
+    let count = |lines: &mut dyn Iterator<Item = (usize, &str)>,
+                 key: &'static str|
+     -> Result<usize, LoadError> {
+        let (line, text) = lines.next().ok_or(LoadError::Missing(key))?;
+        text.strip_prefix(key)
+            .and_then(|v| v.strip_prefix(' '))
+            .and_then(|v| v.parse().ok())
+            .ok_or_else(|| bad(line, &format!("expected `{key} <count>`, got `{text}`")))
+    };
+
+    let n = count(&mut lines, "genomes")?;
+    let mut population = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (line, text) = lines.next().ok_or(LoadError::Missing("genome"))?;
+        if text != "genome" {
+            return Err(bad(line, "expected `genome`"));
+        }
+        population.push(genome_block(&mut lines)?);
+    }
+
+    let n = count(&mut lines, "species")?;
+    let mut species = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (line, text) = lines.next().ok_or(LoadError::Missing("species"))?;
+        let rest = text
+            .strip_prefix("rep ")
+            .ok_or_else(|| bad(line, "expected `rep <best> <stale>`"))?;
+        let mut p = rest.split_whitespace();
+        let best: f64 = p
+            .next()
+            .and_then(|v| v.parse().ok())
+            .ok_or_else(|| bad(line, "bad species best"))?;
+        let stale: u32 = p
+            .next()
+            .and_then(|v| v.parse().ok())
+            .ok_or_else(|| bad(line, "bad species staleness"))?;
+        let rep = genome_block(&mut lines)?;
+        species.push(Species {
+            rep,
+            members: Vec::new(),
+            best,
+            stale,
+        });
+    }
+
+    let n = count(&mut lines, "hall")?;
+    let mut hall = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (line, text) = lines.next().ok_or(LoadError::Missing("hall entry"))?;
+        hall.push(
+            text.parse::<u64>()
+                .map_err(|_| bad(line, "not a ladder id"))?,
+        );
+    }
+
+    let n = count(&mut lines, "ladder")?;
+    let mut ladder = Ladder::with_anchor(
+        carranta_analytics::rating::Model::default(),
+        NeatGenome::default(),
+        "heuristic-v1",
+    );
+    for _ in 0..n {
+        let (line, text) = lines.next().ok_or(LoadError::Missing("ladder entry"))?;
+        let rest = text
+            .strip_prefix("version ")
+            .ok_or_else(|| bad(line, "expected a version line"))?;
+        let f: Vec<&str> = rest.split_whitespace().collect();
+        if f.len() < 7 {
+            return Err(bad(line, "version line is too short"));
+        }
+        let genome = genome_block(&mut lines)?;
+        let id: u64 = f[0].parse().map_err(|_| bad(line, "bad id"))?;
+        ladder.restore(
+            Versioned {
+                id,
+                generation: f[1].parse().map_err(|_| bad(line, "bad generation"))?,
+                label: f[6].to_string(),
+                genome,
+            },
+            Rating {
+                mu: f[3].parse().map_err(|_| bad(line, "bad mu"))?,
+                sigma: f[4].parse().map_err(|_| bad(line, "bad sigma"))?,
+            },
+            f[2].parse().map_err(|_| bad(line, "bad game count"))?,
+            f[5].parse().map_err(|_| bad(line, "bad anchored count"))?,
+        );
+    }
+    if ladder.get(ANCHOR).is_none() {
+        return Err(LoadError::Missing("anchor"));
+    }
+
+    Ok(NeatTrainer::restore(
+        config,
+        ladder,
+        population,
+        species,
+        delta,
+        Innovations::restore(next_innov, next_node),
+        hall,
+        generation,
+        trials,
+        run_seed,
+        champion,
+    ))
+}
+
+/// Write a phase-two checkpoint atomically, like [`save`].
+pub fn save_neat(trainer: &NeatTrainer, path: &Path) -> std::io::Result<()> {
+    let temp = path.with_extension("tmp");
+    std::fs::write(&temp, encode_neat(trainer))?;
+    std::fs::rename(&temp, path)
+}
+
+/// Read a phase-two checkpoint from disk.
+pub fn load_neat(path: &Path) -> std::io::Result<Result<NeatTrainer, LoadError>> {
+    Ok(decode_neat(&std::fs::read_to_string(path)?))
+}
+
 /// Write a checkpoint, replacing any previous one atomically.
 ///
 /// Via a temporary file and a rename: a crash during the write leaves the
@@ -287,6 +629,108 @@ mod tests {
             threads: 2,
             ..Config::default()
         }
+    }
+
+    fn quick_neat() -> crate::train_neat::NeatConfig {
+        crate::train_neat::NeatConfig {
+            population: 6,
+            trials: 4,
+            validation: 4,
+            trials_min: 4,
+            trials_max: 16,
+            hall_size: 4,
+            sample: 0,
+            threads: 2,
+            cap: 400,
+            mode: TradeMode::Disabled,
+            ..crate::train_neat::NeatConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_resumed_neat_run_continues_exactly_as_if_it_had_not_stopped() {
+        // The same promise phase one makes, and harder to keep: a NEAT
+        // checkpoint carries topologies, species state and the innovation
+        // counters, and losing any of them shows up as a silent divergence
+        // generations later rather than as an error.
+        let mut straight = NeatTrainer::new(quick_neat(), 4_242);
+        let mut interrupted = NeatTrainer::new(quick_neat(), 4_242);
+
+        for _ in 0..3 {
+            straight.step();
+            interrupted.step();
+        }
+        let text = encode_neat(&interrupted);
+        let Ok(mut resumed) = decode_neat(&text) else {
+            panic!("decode failed")
+        };
+
+        for _ in 0..3 {
+            let a = straight.step();
+            let b = resumed.step();
+            assert_eq!(a.generation, b.generation);
+            assert_eq!(
+                a.best_fitness, b.best_fitness,
+                "generation {}",
+                a.generation
+            );
+            assert_eq!(a.games, b.games);
+            assert_eq!(a.above_anchor, b.above_anchor);
+            assert_eq!(a.species, b.species);
+            assert_eq!(a.champion_genes, b.champion_genes);
+        }
+        assert_eq!(straight.population, resumed.population);
+    }
+
+    #[test]
+    fn a_neat_checkpoint_round_trips_every_field() {
+        let mut t = NeatTrainer::new(quick_neat(), 7);
+        t.step();
+        t.step();
+        let Ok(restored) = decode_neat(&encode_neat(&t)) else {
+            panic!("decode failed")
+        };
+        assert_eq!(restored.run_seed, t.run_seed);
+        assert_eq!(restored.generation(), t.generation());
+        assert_eq!(restored.population, t.population);
+        assert_eq!(restored.hall, t.hall);
+        assert_eq!(restored.delta, t.delta);
+        assert_eq!(restored.champion, t.champion);
+        assert_eq!(restored.inn.next_innov, t.inn.next_innov);
+        assert_eq!(restored.inn.next_node, t.inn.next_node);
+        assert_eq!(restored.species.len(), t.species.len());
+        for (a, b) in restored.species.iter().zip(&t.species) {
+            assert_eq!(a.rep, b.rep);
+            assert_eq!(a.best, b.best);
+            assert_eq!(a.stale, b.stale);
+        }
+        for id in t.ladder.ids() {
+            assert_eq!(restored.ladder.rating(id), t.ladder.rating(id), "id {id}");
+            assert_eq!(
+                restored.ladder.get(id).map(|v| &v.genome),
+                t.ladder.get(id).map(|v| &v.genome)
+            );
+        }
+        // And the champion is exportable after a resume, which is the file a
+        // deployment reads.
+        assert!(restored.champion_genome().is_some());
+    }
+
+    #[test]
+    fn the_two_formats_refuse_each_other() {
+        // A phase-one checkpoint read as phase two, or the reverse, must be a
+        // version error, never a half-parsed trainer.
+        let es = Trainer::new(quick(), 1);
+        assert!(matches!(
+            decode_neat(&encode(&es)),
+            Err(LoadError::Version(1))
+        ));
+        let mut neat = NeatTrainer::new(quick_neat(), 1);
+        neat.step();
+        assert!(matches!(
+            decode(&encode_neat(&neat)),
+            Err(LoadError::Version(2))
+        ));
     }
 
     #[test]

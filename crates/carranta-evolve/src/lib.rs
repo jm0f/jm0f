@@ -1,26 +1,32 @@
 //! Population training for Carranta (§9.5).
 //!
-//! Phase one of E-1: an evolution strategy over the fifteen weights the
-//! heuristic already carries. They were hand-set and never tuned, so this is
-//! the step that is certain to pay, and it exercises the whole harness
-//! (parallel paired evaluation, versioned agents, a rating anchor) before
-//! topology search is asked to rely on it.
+//! Both phases of E-1. Phase one, [`genome`] and [`train`]: an evolution
+//! strategy over the sixteen weights the heuristic already carries,
+//! hand-set and never tuned, the step that was certain to pay and that
+//! exercised the whole harness before topology search was asked to rely on
+//! it. Phase two, [`neat`] and [`train_neat`]: NEAT proper, minimal networks
+//! growing structure over the engineered observation, trained in the full
+//! mixed-offer market.
 //!
 //! | Module | What it holds |
 //! |---|---|
-//! | [`genome`] | What is optimised, and how it mutates |
+//! | [`genome`] | Phase one's genome: the heuristic's weights, and how they mutate |
+//! | [`neat`] | Phase two's genome: topology, innovation history, speciation |
 //! | [`checkpoint`] | Saving a run and resuming it exactly |
 //! | [`behaviour`] | How the population plays, from a sample of recorded games |
 //! | [`arena`] | Where genomes are measured, trading on, common random numbers, deterministic under parallelism |
 //! | [`ladder`] | Versioned agents on one rating scale, anchored to the pinned heuristic |
-//! | [`train`] | The generation loop and its adaptive budget |
+//! | [`train`] | Phase one's generation loop and the adaptive budget |
+//! | [`train_neat`] | Phase two's generation loop, species and all |
 
 pub mod arena;
 pub mod behaviour;
 pub mod checkpoint;
 pub mod genome;
 pub mod ladder;
+pub mod neat;
 pub mod train;
+pub mod train_neat;
 
 pub use arena::{Arena, Job, Outcome};
 pub use behaviour::{Behaviour, Sampler};

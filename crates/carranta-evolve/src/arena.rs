@@ -21,9 +21,11 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use carranta_bot::net::Net;
+use carranta_bot::policy_net::NetPolicy;
 use carranta_bot::{Heuristic, Policy, settle_market};
 use carranta_core::Action;
-use carranta_core::state::{MAX_PLAYERS, Phase, State, TradeMode};
+use carranta_core::state::{MAX_PLAYERS, OfferShapes, Phase, State, TradeMode};
 use carranta_record::{Log, Recorder, SeatId};
 
 use crate::genome::Genome;
@@ -51,6 +53,10 @@ pub struct Outcome {
 #[derive(Clone, Copy, Debug)]
 pub struct Arena {
     pub mode: TradeMode,
+    /// What proposals the market enumerates. Phase one trained under the
+    /// single-type default; NEAT trains in the full mixed market, capped 2 a
+    /// side unless a run says otherwise.
+    pub shapes: OfferShapes,
     /// Actions before a game is abandoned. Reached only by a pathological
     /// genome, which then simply scores badly.
     pub cap: usize,
@@ -60,9 +66,32 @@ impl Default for Arena {
     fn default() -> Self {
         Arena {
             mode: TradeMode::Restricted,
+            shapes: OfferShapes::SingleType,
             cap: 20_000,
         }
     }
+}
+
+/// Who plays a seat in a network game.
+///
+/// The anchor is not a network and never will be: it is the pinned heuristic,
+/// the origin of the rating scale, so it appears in the roster as itself
+/// rather than as some approximation of itself.
+#[derive(Clone, Debug)]
+pub enum Brain {
+    Anchor,
+    Net(Net),
+}
+
+/// One network game to play: a board seed and four roster indices.
+///
+/// Indices rather than networks so a job stays tiny and `Copy`, and a
+/// thousand jobs sharing one hall-of-fame champion share its compiled network
+/// rather than carrying a thousand clones of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetJob {
+    pub seed: u64,
+    pub seats: [u32; MAX_PLAYERS],
 }
 
 impl Arena {
@@ -77,8 +106,24 @@ impl Arena {
         let mut c = seat_bot(job, 2);
         let mut d = seat_bot(job, 3);
         let mut policies: Vec<&mut dyn Policy> = vec![&mut a, &mut b, &mut c, &mut d];
+        self.drive(job.seed, &mut policies)
+    }
 
-        let mut state = State::new(MAX_PLAYERS as u8, job.seed).with_trade_mode(self.mode);
+    /// Play one network game.
+    pub fn play_net(&self, roster: &[Brain], job: &NetJob) -> Outcome {
+        let mut seats = net_seats(self, roster, job);
+        let mut policies: Vec<&mut dyn Policy> = seats
+            .iter_mut()
+            .map(|p| p.as_mut() as &mut dyn Policy)
+            .collect();
+        self.drive(job.seed, &mut policies)
+    }
+
+    /// The game loop every kind of seat shares.
+    fn drive(&self, seed: u64, policies: &mut Vec<&mut dyn Policy>) -> Outcome {
+        let mut state = State::new(MAX_PLAYERS as u8, seed)
+            .with_trade_mode(self.mode)
+            .with_offer_shapes(self.shapes);
         let mut buf = Vec::new();
         let mut actions = 0u32;
 
@@ -98,7 +143,7 @@ impl Arena {
             actions += 1;
             // Offers are worthless unless somebody is asked, and opponents
             // never reach `choose` during another seat's turn.
-            settle_market(&mut state, &mut policies);
+            settle_market(&mut state, policies);
         }
 
         let winner = match state.phase {
@@ -119,42 +164,12 @@ impl Arena {
     /// Work is taken dynamically rather than split up front: game length varies
     /// several-fold, so a static split leaves workers idle at the end.
     pub fn play_all(&self, jobs: &[Job], threads: usize) -> Vec<Outcome> {
-        if jobs.is_empty() {
-            return Vec::new();
-        }
-        let threads = threads.max(1).min(jobs.len());
-        if threads == 1 {
-            return jobs.iter().map(|j| self.play(j)).collect();
-        }
+        play_many(jobs, threads, |j| self.play(j))
+    }
 
-        let next = AtomicUsize::new(0);
-        let mut out = vec![Outcome::default(); jobs.len()];
-        let collected: Vec<Vec<(usize, Outcome)>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..threads)
-                .map(|_| {
-                    let next = &next;
-                    scope.spawn(move || {
-                        let mut mine = Vec::new();
-                        loop {
-                            let i = next.fetch_add(1, Ordering::Relaxed);
-                            if i >= jobs.len() {
-                                break;
-                            }
-                            mine.push((i, self.play(&jobs[i])));
-                        }
-                        mine
-                    })
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        });
-
-        for batch in collected {
-            for (i, outcome) in batch {
-                out[i] = outcome;
-            }
-        }
-        out
+    /// Play many network games across `threads` workers.
+    pub fn play_net_all(&self, roster: &[Brain], jobs: &[NetJob], threads: usize) -> Vec<Outcome> {
+        play_many(jobs, threads, |j| self.play_net(roster, j))
     }
 
     /// Play one game and keep a full record of it (§7).
@@ -168,11 +183,26 @@ impl Arena {
         let mut c = seat_bot(job, 2);
         let mut d = seat_bot(job, 3);
         let mut policies: Vec<&mut dyn Policy> = vec![&mut a, &mut b, &mut c, &mut d];
+        self.drive_recorded(job.seed, &mut policies)
+    }
 
+    /// Play one network game and keep a full record of it.
+    pub fn play_net_recorded(&self, roster: &[Brain], job: &NetJob) -> (Outcome, Log) {
+        let mut seats = net_seats(self, roster, job);
+        let mut policies: Vec<&mut dyn Policy> = seats
+            .iter_mut()
+            .map(|p| p.as_mut() as &mut dyn Policy)
+            .collect();
+        self.drive_recorded(job.seed, &mut policies)
+    }
+
+    fn drive_recorded(&self, seed: u64, policies: &mut Vec<&mut dyn Policy>) -> (Outcome, Log) {
         let mut rec = Recorder::new(
-            job.seed,
-            job.seed,
-            State::new(MAX_PLAYERS as u8, job.seed).with_trade_mode(self.mode),
+            seed,
+            seed,
+            State::new(MAX_PLAYERS as u8, seed)
+                .with_trade_mode(self.mode)
+                .with_offer_shapes(self.shapes),
             (0..MAX_PLAYERS)
                 .map(|s| SeatId::agent(s as u64, "evolve", 1))
                 .collect(),
@@ -194,7 +224,7 @@ impl Arena {
                 break;
             }
             actions += 1;
-            settle_recorded(&mut rec, &mut policies);
+            settle_recorded(&mut rec, policies);
         }
 
         let winner = match rec.state().phase {
@@ -210,6 +240,71 @@ impl Arena {
         };
         (outcome, rec.finish_into(winner))
     }
+}
+
+/// The dynamic worker pool every batch shares.
+///
+/// Work is taken dynamically rather than split up front: game length varies
+/// several-fold, so a static split leaves workers idle at the end. A game's
+/// result depends only on its job, never on which worker ran it, so results
+/// cannot shift with core count or scheduling.
+fn play_many<J: Sync>(
+    jobs: &[J],
+    threads: usize,
+    play: impl Fn(&J) -> Outcome + Sync,
+) -> Vec<Outcome> {
+    if jobs.is_empty() {
+        return Vec::new();
+    }
+    let threads = threads.max(1).min(jobs.len());
+    if threads == 1 {
+        return jobs.iter().map(&play).collect();
+    }
+
+    let next = AtomicUsize::new(0);
+    let mut out = vec![Outcome::default(); jobs.len()];
+    let play = &play;
+    let collected: Vec<Vec<(usize, Outcome)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let next = &next;
+                scope.spawn(move || {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= jobs.len() {
+                            break;
+                        }
+                        mine.push((i, play(&jobs[i])));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    for batch in collected {
+        for (i, outcome) in batch {
+            out[i] = outcome;
+        }
+    }
+    out
+}
+
+/// The four policies of one network game, boxed because two kinds of brain
+/// sit at one table.
+fn net_seats(arena: &Arena, roster: &[Brain], job: &NetJob) -> Vec<Box<dyn Policy>> {
+    let _ = arena;
+    (0..MAX_PLAYERS)
+        .map(|s| {
+            let seed = job.seed.wrapping_mul(31).wrapping_add(s as u64 + 1);
+            match &roster[job.seats[s] as usize] {
+                Brain::Anchor => Box::new(Heuristic::new(seed)) as Box<dyn Policy>,
+                Brain::Net(n) => Box::new(NetPolicy::new(n.clone(), seed)) as Box<dyn Policy>,
+            }
+        })
+        .collect()
 }
 
 /// Settle the market through the recorder, so completed trades reach the log.
