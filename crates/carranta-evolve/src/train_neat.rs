@@ -189,6 +189,49 @@ impl NeatTrainer {
         self.ladder.get(self.champion).map(|v| &v.genome)
     }
 
+    /// Every champion this run has enrolled, best rated first, as
+    /// `(label, generation, mu, sigma, games)`.
+    ///
+    /// The exported `champion.net` is overwritten every generation, so on disk
+    /// only the newest survives. The ladder keeps all of them, which is what
+    /// makes a past champion recoverable at all: this is the list you choose
+    /// from. The pinned anchor is left out, being the heuristic rather than a
+    /// network, and having no genome anybody could export.
+    pub fn roster(&self) -> Vec<(String, u32, f64, f64, u32)> {
+        self.ladder
+            .standings(0)
+            .into_iter()
+            .filter(|(v, _, _)| v.id != ANCHOR)
+            .map(|(v, r, games)| (v.label.clone(), v.generation, r.mu, r.sigma, games))
+            .collect()
+    }
+
+    /// One past champion as a network file, chosen by label (`g042-0017`), by
+    /// generation number (`42`), or by `best`.
+    ///
+    /// Answers the text of the file and the label it came from. A generation
+    /// picks the champion enrolled *at* that generation, which is the number
+    /// on the row of `history.csv` you were reading, and `best` picks by
+    /// conservative rating rather than by recency, because the newest champion
+    /// is not reliably the strongest one.
+    pub fn export(&self, which: &str) -> Option<(String, String)> {
+        let which = which.trim();
+        let rows = self.ladder.standings(0);
+        let mut mine = rows.iter().filter(|(v, _, _)| v.id != ANCHOR);
+        // `standings` is sorted best first, so `best` is simply the first.
+        let (v, _, _) = if which == "best" {
+            mine.next()?
+        } else {
+            mine.find(|(v, _, _)| {
+                v.label == which
+                    || which
+                        .parse::<u32>()
+                        .is_ok_and(|generation| v.generation == generation)
+            })?
+        };
+        Some((v.label.clone(), v.genome.compile().show(v.generation)))
+    }
+
     /// Run one generation.
     pub fn step(&mut self) -> NeatReport {
         let started = std::time::Instant::now();
@@ -553,6 +596,7 @@ impl NeatTrainer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use carranta_bot::net::Net;
 
     /// Tiny and quick: a truncated cap and no market, because these tests
     /// assert the mechanics of the loop, not the quality of play. The market
@@ -584,6 +628,42 @@ mod tests {
         assert!(r.species >= 1);
         assert!(r.champion_genes >= crate::neat::INPUTS);
         assert_eq!(t.population.len(), 6, "the population count is preserved");
+    }
+
+    #[test]
+    fn any_past_champion_can_be_taken_back_out_of_the_run() {
+        // The run overwrites one `champion.net`, so a champion from an earlier
+        // generation exists only in the ladder. Getting it back has to work
+        // from there or those generations are gone the moment they pass.
+        let mut t = NeatTrainer::new(quick(), 5);
+        for _ in 0..3 {
+            t.step();
+        }
+        let roster = t.roster();
+        assert_eq!(roster.len(), 3, "one champion enrolled per generation");
+        // Best rated first, and the anchor is not in the list: it is the
+        // heuristic, and has no network to write down.
+        for pair in roster.windows(2) {
+            assert!(pair[0].2 >= pair[1].2, "sorted by rating");
+        }
+
+        // By generation, by label, and by rating, all naming a real network.
+        for which in ["2", &roster[0].0.clone(), "best"] {
+            let (label, text) = t.export(which).expect("a champion by {which}");
+            assert!(roster.iter().any(|(l, ..)| *l == label));
+            let (net, generation) = Net::parse(&text).expect("a readable network");
+            assert_eq!(net.inputs(), crate::neat::INPUTS);
+            assert!((1..=3).contains(&generation), "stamped with its own age");
+        }
+        // A generation picks that generation, not merely something.
+        let (label, text) = t.export("2").expect("generation two");
+        assert!(label.starts_with("g002"));
+        assert_eq!(Net::parse(&text).expect("readable").1, 2);
+        // And asking for what is not there answers nothing rather than
+        // something near it, because a champion silently substituted is a
+        // rating attached to the wrong player.
+        assert!(t.export("99").is_none());
+        assert!(t.export("g999-0001").is_none());
     }
 
     #[test]

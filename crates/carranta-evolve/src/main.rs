@@ -45,6 +45,14 @@ struct Args {
     method: Method,
     config: Config,
     neat: NeatConfig,
+    /// Take a past champion out of the run's checkpoint instead of training:
+    /// a label, a generation number, or `best`. `list` names what is there.
+    export: Option<String>,
+    /// Where an export is written. Defaults beside the checkpoint, named for
+    /// the champion, so exporting twice does not overwrite the first answer
+    /// and `champion.net` (the newest, rewritten every generation) is left
+    /// exactly as the run left it.
+    export_to: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -60,12 +68,16 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         method: Method::Es,
         config: Config::default(),
         neat: NeatConfig::default(),
+        export: None,
+        export_to: None,
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--resume" => args.resume = true,
             "--out" => args.out = PathBuf::from(value()?),
+            "--export" => args.export = Some(value()?),
+            "--export-to" => args.export_to = Some(PathBuf::from(value()?)),
             "--generations" => {
                 args.generations = value()?.parse().map_err(|_| "bad --generations")?
             }
@@ -154,6 +166,12 @@ carranta-evolve
   --mutation F         es only: mutation step, in per-gene scale units (1.0)
   --give-cap N|hand    neat only: cards an offer may give (2; hand = no cap)
   --want-cap N         neat only: cards an offer may ask (2)
+  --export WHICH       neat only: write a past champion out of --out's
+                       checkpoint instead of training. WHICH is a label
+                       (g042-0017), a generation number (42), `best` by
+                       rating, or `list` to see what the run has
+  --export-to FILE     where --export writes (default: beside the checkpoint,
+                       named for the champion)
   --mode MODE          disabled | restricted | full (restricted es, full neat)
 
 Create a file named `stop` in --out to finish the current generation and exit.";
@@ -228,12 +246,76 @@ const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitne
 species,champion_nodes,champion_genes,above_anchor,champion_sigma,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
+/// Take one past champion out of a run and write it as a network file.
+///
+/// A run exports only its newest champion, overwriting `champion.net` every
+/// generation, so by morning the good one from generation forty is not on
+/// disk. It is not lost either: the checkpoint carries the whole ladder, every
+/// champion with its genome and its rating, which is what this reads. Training
+/// is not started and nothing in the run directory is disturbed, so this is
+/// safe to run against a run that is still going.
+fn export_champion(ckpt: &std::path::Path, which: &str, to: Option<&std::path::Path>) {
+    let trainer = match checkpoint::load_neat(ckpt) {
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => {
+            eprintln!("{}: {e}", ckpt.display());
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("cannot read {}: {e}", ckpt.display());
+            std::process::exit(1);
+        }
+    };
+    let roster = trainer.roster();
+    if roster.is_empty() {
+        eprintln!("{} has no champions yet", ckpt.display());
+        std::process::exit(1);
+    }
+    // Listing is the other half of choosing: a label cannot be guessed, and a
+    // generation number is only useful once you know which ones are there.
+    if which == "list" {
+        println!("  champion    generation    mu   sigma   games");
+        for (label, generation, mu, sigma, games) in roster {
+            println!("  {label:<12}{generation:>10}{mu:>7.2}{sigma:>8.2}{games:>8}");
+        }
+        println!("\n  export one with --export <champion|generation|best>");
+        return;
+    }
+    let Some((label, text)) = trainer.export(which) else {
+        eprintln!(
+            "no champion `{which}` in {}; --export list names them",
+            ckpt.display()
+        );
+        std::process::exit(1);
+    };
+    // Named for the champion rather than `champion.net`, so an export never
+    // stands on the run's own file and two exports never stand on each other.
+    let path = to.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+        ckpt.with_file_name(format!("champion-{label}.net"))
+            .to_path_buf()
+    });
+    if let Err(e) = std::fs::write(&path, text) {
+        eprintln!("cannot write {}: {e}", path.display());
+        std::process::exit(1);
+    }
+    println!("wrote {} ({label})", path.display());
+    println!(
+        "  play it: cargo run --release -p carranta-ui -- --trained {}",
+        path.display()
+    );
+}
+
 /// The phase-two loop: the same rhythm as phase one, plus a champion export.
 fn run_neat(args: Args) {
     let ckpt = args.out.join("checkpoint.txt");
     let history = args.out.join("history.csv");
     let champion_file = args.out.join("champion.net");
     let stop = args.out.join("stop");
+
+    if let Some(which) = &args.export {
+        export_champion(&ckpt, which, args.export_to.as_deref());
+        return;
+    }
 
     let mut trainer = if args.resume {
         match checkpoint::load_neat(&ckpt) {
@@ -618,6 +700,26 @@ mod tests {
             parse("--want-cap 0").is_err(),
             "an offer that may ask for nothing is not an offer"
         );
+    }
+
+    #[test]
+    fn an_export_is_asked_for_by_name_and_never_by_accident() {
+        let a = parse("--method neat --out runs/x --export g042-0017").expect("known flags");
+        assert_eq!(a.export.as_deref(), Some("g042-0017"));
+        assert_eq!(a.export_to, None, "defaulted beside the checkpoint");
+        let b = parse("--method neat --export best --export-to /tmp/champ.net").expect("known");
+        assert_eq!(b.export.as_deref(), Some("best"));
+        assert_eq!(
+            b.export_to.as_deref(),
+            Some(std::path::Path::new("/tmp/champ.net"))
+        );
+        // An ordinary run must never be read as an export: this decides
+        // between training for hours and writing one file and exiting.
+        assert_eq!(
+            parse("--method neat --out runs/x").expect("known").export,
+            None
+        );
+        assert!(parse("--export").is_err(), "a name is required");
     }
 
     #[test]
