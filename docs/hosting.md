@@ -136,6 +136,16 @@ into a Dockerfile build, because "Docker isolates the build from the host
 environment by design". A variable reaches the build only if the `Dockerfile`
 declares an `ARG` of that name, which this one does.
 
+And there is a second half to it. `CARRANTA_BUILD` is set to
+`${{RAILWAY_GIT_COMMIT_SHA}}`, which is **not among the variables a service has
+unless the deploy came from a GitHub trigger**. Listing them shows
+`RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_NAME` and their like, and no git ones at
+all. So until the app above is installed, that reference resolves to an empty
+string, the empty string overrides the `ARG` default, and the page reads
+`unknown`, which the build script means literally: nobody told it, and there is
+no repository in the container to ask. The setting is right for the end state
+and honest before it.
+
 **A push is not a deploy until the GitHub App is installed.** This was assumed
 here and was wrong: the first deploy worked, the next push was ignored, and the
 service said why when asked, `reason: "NO_INSTALLATION"`. OAuth between Railway
