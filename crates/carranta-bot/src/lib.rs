@@ -141,6 +141,29 @@ impl Default for Weights {
     }
 }
 
+/// What the house bot is called wherever a game is written down.
+///
+/// A name and a number, together, because a rating is a claim about a player
+/// and a program whose play has changed is a different player. Two builds
+/// sharing one identity pool their results and the pool then describes neither
+/// of them: the newer one is dragged towards the older one's record and the
+/// older one's record is quietly overwritten by a program nobody measured.
+///
+/// So the pair goes into every game file, and a seat identity is built from it
+/// rather than from "a bot". Raise the number whenever the play changes, which
+/// includes the weights: a rating earned by one set of numbers is not evidence
+/// about another. Nothing merges the two afterwards, and that is the point.
+/// Comparing them is a matter of reading two rows rather than of trusting that
+/// one row means one thing.
+///
+/// A second kind of bot is a second name. `llm-<model>` and `trained` are the
+/// two the scoping doc expects (§8.2), and neither needs anything here beyond
+/// its own pair of constants.
+pub const HOUSE: &str = "house";
+
+/// The house bot's build number. See [`HOUSE`].
+pub const HOUSE_VERSION: u32 = 1;
+
 /// The heuristic policy.
 ///
 /// Deterministic: the same position yields the same move. Exact ties break on

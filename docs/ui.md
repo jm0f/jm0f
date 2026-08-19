@@ -2094,10 +2094,51 @@ still to come. That page's brief, and everything else the analytics do not answe
 yet, is written down in `analytics-backlog.md` rather than carried around in
 somebody's head.
 
-**Each seat is a rated player, not "the bot".** The three heuristics are the
-same player underneath, so their ratings should converge on each other, but a
-ranking cannot list one player three times and per-seat identities are also
-what make the seat-order balance mean anything.
+**Who is in a seat comes from the chair, not from the seat number.** This was
+the analytics' worst bug and it was silent. Seat nought was "the person" and
+seats one to three were bots called Ada, Bram, Ines and Odd, which was true of a
+server where one person dealt themselves seat nought and had been false twice
+over since: the draw shuffles the seats, so a solo player sits wherever chance
+puts them, and a table holds four people. A real file out of the store had its
+only person at seat two, so the pool credited their game to Ines and rated a
+house bot under their name. Every human on the server also shared one rating,
+because they all shared the number nought.
+
+Identity now comes from the chair lines the game was written down with, which
+already held the truth: a person is the fold of their key, so they are the same
+player in every game they play and a different one from everybody else.
+
+**A build of a bot is its own player.** A rating is a claim about a player, and a
+program whose play has changed is a different player: two builds under one
+identity pool their results and the pool then describes neither of them, since
+the newer one is dragged towards the older one's record and the older one's
+record is overwritten by a program nobody measured. So a bot's chair line names
+its build (`chair bot house@1`, format 8), the seat identity is built from that
+pair, and nothing merges two builds afterwards. A second kind of bot is a second
+name, which is what `llm-<model>` and `trained` will be.
+
+**Each copy at a table is still its own competitor.** Four house bots in one game
+are one program, and Plackett-Luce ranks competitors rather than programs: it
+cannot rank the same competitor three times. So they enter as copies, named in
+the order they are sitting rather than by seat number, and a table with one
+person at it reads Ada, Bram, Ines wherever the draw put the person. They are the
+same program, so their ratings converge on each other, and that convergence is
+itself a check that the model is behaving.
+
+**Rated games are finished games somebody was at.** A game nobody won has no
+finishing order and is evidence about nobody, which `Pool::record` already
+refused. The other half is new: a game the house bot finished on everybody's
+behalf is nobody's result, so the chair line of a person who was away when the
+file was last written is written `gone` rather than `chair`, and the last write
+of a finished game is who was there at the end.
+
+What is deliberately not a rule: **a game somebody walked out of counts against
+them, at the place they finished.** §8.3 of the scoping doc proposed excluding
+substituted games, which is right for a statistics table and wrong for a live
+server. It makes leaving free, so the correct play when losing would be to close
+the tab, and it throws away the game of everyone who stayed. How often somebody
+walks out is worth publishing, as a count of its own rather than through a number
+that is supposed to mean skill.
 
 **The report is a document, not an application.** Everything on it settled the
 moment the game ended, so it is rendered on the server and carries no script.

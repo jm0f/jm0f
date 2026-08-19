@@ -215,10 +215,22 @@ fn saved_of(t: &Table) -> Saved {
             chairs: t
                 .chairs
                 .iter()
-                .map(|c| match c {
+                .enumerate()
+                .map(|(seat, c)| match c {
                     Chair::Bot => SavedChair::bot(),
                     Chair::Open => SavedChair::open(),
-                    Chair::Taken { key, name } => SavedChair::person(key, name),
+                    Chair::Taken { key, name } => {
+                        let mut chair = SavedChair::person(key, name);
+                        // Whether they were at the table at this moment. Every
+                        // move writes the file, so the last write is the end of
+                        // the game and this is who was there for it, which is
+                        // the one thing the rating needs that the moves cannot
+                        // say. A person who steps out and comes back is written
+                        // gone and then written back, and only the last write
+                        // is read.
+                        chair.left = !t.present(seat as u8);
+                        chair
+                    }
                 })
                 .collect(),
         },
@@ -3405,6 +3417,63 @@ mod tests {
         assert!(
             began.elapsed() < std::time::Duration::from_secs(2),
             "an unfamiliar mark is answered, not held"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_game_writes_down_who_was_still_at_it() {
+        // The one thing the rating needs that the moves cannot say. Every move
+        // writes the file, so the last write is the end of the game and this is
+        // who was there for it: a game the house bot finished on everybody's
+        // behalf is nobody's result.
+        let dir = std::env::temp_dir().join(format!("carranta-here-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 31, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal("seats=4&name=Marta&pace=instant", host);
+        assert!(server.sit(&id, guest, "Vidal").is_some());
+        assert!(server.begin(&id));
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let acting = t.session.state().decider();
+            let v = t.session.version();
+            t.session.act_as(acting, 0, v).expect("playable");
+            // The host shut their laptop five minutes ago. The guest is still
+            // at the screen, which is what a page polling looks like.
+            let seat = t.seat_of(host).expect("seated");
+            t.seen[seat as usize] = now().saturating_sub(5 * 60 * 1000);
+            let seat = t.seat_of(guest).expect("seated");
+            t.seen[seat as usize] = now();
+        }
+        server.keep(&id);
+        let saved = server.store().load(&id).expect("written");
+        let gone: Vec<&str> = saved
+            .setup
+            .chairs
+            .iter()
+            .filter(|c| c.left)
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(gone, ["Marta"], "the one who is not there");
+        assert!(
+            crate::store::encode(&saved).contains("gone hostkey000000000 Marta"),
+            "and the file says so in words"
+        );
+        // Somebody was still at it, so it is somebody's result. Both of them:
+        // walking out costs you the place you finished in rather than voiding
+        // the game for everyone who stayed.
+        let mut finished = saved.clone();
+        finished.winner = Some(0);
+        assert!(crate::analysis::rated(&finished));
+        for c in finished.setup.chairs.iter_mut() {
+            c.left = true;
+        }
+        assert!(
+            !crate::analysis::rated(&finished),
+            "and a game the bots finished alone is nobody's"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

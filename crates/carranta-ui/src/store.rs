@@ -72,20 +72,43 @@ pub struct Setup {
 pub struct Chair {
     pub who: String,
     pub name: String,
+    /// Which software played this seat, as `name@version`, when `who` is `bot`.
+    ///
+    /// Empty for a person, and for a file written before version 8, which had
+    /// only the word `bot` and meant the one build that existed then. A rating
+    /// is a claim about a player and two builds of a program are two players
+    /// (see `carranta_bot::HOUSE`), so the seat identity is built from this
+    /// rather than from the fact that something automatic was sitting here.
+    pub agent: String,
+    /// Whether this seat's person was away when the file was last written.
+    ///
+    /// Every move writes the file, so the last write is the end of the game and
+    /// this is who was still at the table for it. That is the one thing the
+    /// rating needs that the moves cannot say: a game finished by the house bot
+    /// on everybody's behalf is not a game anybody played (P-2).
+    ///
+    /// Always false for a bot and for a held chair, and for a file written
+    /// before version 8, which is the right reading of a file that does not
+    /// say: those were all written under a rule that stops a table dead as soon
+    /// as nobody is at it, so every game in them was finished by somebody.
+    pub left: bool,
 }
 
 impl Chair {
+    /// A seat played by software, under the build that is playing it.
     pub fn bot() -> Self {
         Chair {
             who: "bot".to_string(),
             name: String::new(),
+            agent: format!("{}@{}", carranta_bot::HOUSE, carranta_bot::HOUSE_VERSION),
+            left: false,
         }
     }
 
     pub fn open() -> Self {
         Chair {
             who: "open".to_string(),
-            name: String::new(),
+            ..Default::default()
         }
     }
 
@@ -93,7 +116,30 @@ impl Chair {
         Chair {
             who: key.to_string(),
             name: name.to_string(),
+            ..Default::default()
         }
+    }
+
+    /// Whether a person is in this chair, as opposed to a bot or nobody.
+    pub fn is_person(&self) -> bool {
+        self.who != "bot" && self.who != "open" && !self.who.is_empty()
+    }
+
+    /// The agent's name and build, for a bot's chair.
+    ///
+    /// Falls back to the house bot as it was when the word `bot` meant only one
+    /// thing, which is what every file before version 8 says.
+    pub fn agent_id(&self) -> (String, u32) {
+        let (name, version) = self.agent.split_once('@').unwrap_or((&self.agent, ""));
+        let name = if name.is_empty() {
+            carranta_bot::HOUSE
+        } else {
+            name
+        };
+        (
+            name.to_string(),
+            version.parse().unwrap_or(carranta_bot::HOUSE_VERSION),
+        )
     }
 }
 
@@ -222,7 +268,19 @@ pub fn is_game_id(s: &str) -> bool {
 /// still reads version 5's single `chairs` line as seats nobody named. Version 7
 /// added `chat`, whether the table may talk, which is a setting and not a
 /// transcript: what was said is never written down.
-const VERSION: u32 = 7;
+///
+/// Version 8 made the chair lines say two more things, both of which the rating
+/// needs and neither of which the moves can carry. A bot's line names the build
+/// that played the seat, because two builds of a program are two players and a
+/// rating that pools them describes neither. And a person's line is written as
+/// `gone` rather than `chair` when they were away at the time, which for the
+/// last write of a finished game is who was not there at the end. Version 8 also
+/// writes the chairs for every table rather than only for one with somebody at
+/// it: four lines of `bot` said nothing worth the space until the day they named
+/// a version, and a self-play corpus is exactly where that is the question.
+/// Older files read as the one build there was, with nobody having left, which
+/// is what they meant.
+const VERSION: u32 = 8;
 
 /// Times per `at` line. Forty numbers is a line you can still read.
 const TIMES_PER_LINE: usize = 40;
@@ -441,12 +499,22 @@ pub fn encode(g: &Saved) -> String {
     // has spaces and commas in it: everything after the first word is the name,
     // so there is nothing to escape and nothing to get wrong.
     //
-    // Only when somebody is at the table. A game the server played itself has
-    // nobody in any seat, and four lines of `bot` say the same thing as no lines
-    // at all in more words.
-    if s.chairs.iter().any(|c| c.who != "bot") {
-        for c in &s.chairs {
-            let _ = writeln!(out, "chair {} {}", c.who, c.name);
+    // Written for every table now, including one the server played itself. Four
+    // lines of `bot` used to say the same thing as no lines at all in more
+    // words, and stopped the day the line named a build: a self-play corpus is
+    // precisely where "which version played this" is the question.
+    //
+    // `gone` rather than `chair` for somebody who was not at the table when this
+    // was written, which for the last write of a finished game is who was not
+    // there at the end. A second keyword rather than a fourth field because the
+    // name runs to the end of the line and there is nowhere after it to put
+    // anything.
+    for c in &s.chairs {
+        let word = if c.left { "gone" } else { "chair" };
+        if c.who == "bot" {
+            let _ = writeln!(out, "{word} bot {}", c.agent);
+        } else {
+            let _ = writeln!(out, "{word} {} {}", c.who, c.name);
         }
     }
     for step in &g.moves {
@@ -526,15 +594,23 @@ pub fn decode(text: &str) -> Option<Saved> {
                     .split(',')
                     .map(|w| Chair {
                         who: w.to_string(),
-                        name: String::new(),
+                        ..Default::default()
                     })
                     .collect();
             }
-            "chair" => {
-                let (who, name) = rest.split_once(' ').unwrap_or((rest, ""));
+            // A person who was at the table when this was written, and one who
+            // was not. Otherwise the same line.
+            "chair" | "gone" => {
+                let (who, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+                // A bot's line carries its build where a person's carries their
+                // name. Before version 8 it carried nothing, which meant the one
+                // build there was, and `agent_id` reads an empty string as that.
+                let bot = who == "bot";
                 g.setup.chairs.push(Chair {
                     who: who.to_string(),
-                    name: name.to_string(),
+                    name: if bot { String::new() } else { rest.to_string() },
+                    agent: if bot { rest.to_string() } else { String::new() },
+                    left: head == "gone",
                 });
             }
             "at" => {
@@ -752,6 +828,70 @@ mod tests {
         ] {
             assert!(text.contains(line), "the file says `{line}`");
         }
+    }
+
+    #[test]
+    fn a_chair_says_which_build_played_it_and_who_was_still_there() {
+        // The two things version 8 added, both of which the rating needs and
+        // neither of which the moves can carry.
+        let g = Saved {
+            id: game_id(11),
+            seats: 4,
+            seed: 3,
+            mode: TradeMode::Full,
+            name: "Marta".to_string(),
+            by: "keytest0000000000".to_string(),
+            dealt: 9,
+            winner: Some(2),
+            setup: Setup {
+                chairs: vec![
+                    Chair::bot(),
+                    Chair {
+                        left: true,
+                        ..Chair::person("keytest0000000000", "Marta")
+                    },
+                    Chair::person("otherkey00000000", "Vidal"),
+                    Chair {
+                        agent: "llm-fable@3".to_string(),
+                        ..Chair::bot()
+                    },
+                ],
+                ..Default::default()
+            },
+            moves: vec![Step::Move(Action::Roll)],
+            times: vec![4],
+        };
+        let text = encode(&g);
+        assert_eq!(decode(&text).expect("a whole game"), g);
+        for line in [
+            "chair bot house@1",
+            "gone keytest0000000000 Marta",
+            "chair otherkey00000000 Vidal",
+            "chair bot llm-fable@3",
+        ] {
+            assert!(text.contains(line), "the file says `{line}`:\n{text}");
+        }
+    }
+
+    #[test]
+    fn a_file_from_before_the_builds_were_named_reads_as_the_one_there_was() {
+        // Every file before version 8 wrote the bare word `bot`, at a time when
+        // there was exactly one thing it could mean. Reading it as anything else
+        // would silently split the house bot's record in two.
+        let text = "carranta 7\nid 9222-2222-2222\nseats 4\nseed 3\nmode full\n\
+                    name Egon\ndealt 1\nchair bot \nchair sd2v5zlwmnmgxdfw Egon\n\
+                    chair bot \nchair bot \n";
+        let g = decode(text).expect("an older file");
+        assert_eq!(g.setup.chairs[0].agent_id(), ("house".to_string(), 1));
+        assert!(!g.setup.chairs[0].is_person(), "a bot");
+        assert!(g.setup.chairs[1].is_person(), "and a person at seat two");
+        assert_eq!(g.setup.chairs[1].name, "Egon");
+        assert!(
+            g.setup.chairs.iter().all(|c| !c.left),
+            "and nobody left, which is what a file that does not say meant: it \
+             was written under a rule that stops a table as soon as nobody is at \
+             it, so every game in one was finished by somebody"
+        );
     }
 
     #[test]

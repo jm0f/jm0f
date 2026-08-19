@@ -16,7 +16,7 @@ use carranta_core::state::MAX_PLAYERS;
 
 use carranta_core::state::PORT_KINDS;
 
-use crate::analysis::{Study, Trades, seat_name};
+use crate::analysis::{Study, Trades, seat_names};
 use crate::store::Saved;
 
 const RESOURCE_NAMES: [&str; 5] = ["brick", "wood", "wool", "wheat", "ore"];
@@ -433,8 +433,15 @@ fn scored(s: crate::analysis::Scored) -> String {
 }
 
 /// Everybody at the table, in seat order, named.
+///
+/// From the chairs, which is the only record of who was actually in them. It
+/// used to be "seat nought is the person and the rest are bots", which the draw
+/// and the second human both made untrue: a report would name the winner Ines
+/// while a house bot answered to the reader's own name.
 fn names(saved: &Saved, seats: usize) -> Vec<String> {
-    (0..seats).map(|s| seat_name(s, &saved.name)).collect()
+    let mut named = seat_names(saved);
+    named.resize(seats, String::new());
+    named
 }
 
 /// A name with where it finished, as plain text.
@@ -5018,8 +5025,23 @@ mod tests {
     use super::*;
     use crate::analysis::study;
     use crate::game::Session;
-    use crate::store::{Setup, game_id};
+    use crate::store::{Chair, Setup, game_id};
     use carranta_core::state::TradeMode;
+
+    /// One person and three bots, which is what a solo table is written down as.
+    /// Names on this page come from the chairs, so a fixture without them is a
+    /// game nobody was at.
+    fn sat(name: &str) -> Setup {
+        Setup {
+            chairs: vec![
+                Chair::person("egonkey000000000", name),
+                Chair::bot(),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        }
+    }
 
     fn played(seed: u64) -> Saved {
         let mut s = Session::new(4, seed, TradeMode::Full);
@@ -5039,7 +5061,7 @@ mod tests {
             by: String::new(),
             dealt: seed,
             winner: s.winner(),
-            setup: Setup::default(),
+            setup: sat("Egon"),
             moves: s.moves().to_vec(),
             times: s.times().to_vec(),
         }
@@ -5177,10 +5199,11 @@ mod tests {
         let html = page(&history[1], &s);
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.ends_with("</html>"));
-        // Everybody at the table is named, and the board is a click away.
-        // Seat 0 is the person, so the bots are the names from seat 1 on, which
-        // is what the board calls them too.
-        for name in ["Egon", "Bram", "Ines", "Odd"] {
+        // Everybody at the table is named, and the board is a click away. The
+        // bots are named in the order they are sitting rather than by seat
+        // number, so a table with one person at it reads Ada, Bram, Ines
+        // wherever the draw happened to put the person.
+        for name in ["Egon", "Ada", "Bram", "Ines"] {
             assert!(html.contains(name), "{name} is on the page");
         }
         assert!(html.contains(&format!("/{}/", history[1].id)));
@@ -5557,7 +5580,9 @@ mod tests {
     #[test]
     fn a_name_with_markup_in_it_is_text_on_the_page() {
         let mut g = played(5);
-        g.name = "<script>alert(1)</script>".to_string();
+        // In the chair, which is where a name on this page comes from: it is
+        // what its owner typed into their own seat and is somebody else's text.
+        g.setup = sat("<script>alert(1)</script>");
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
         let html = page(&g, &s);
         assert!(!html.contains("<script>alert"), "the name is escaped");

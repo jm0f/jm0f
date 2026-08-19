@@ -294,10 +294,18 @@ impl Pool {
 
     /// Apply a recorded game.
     ///
-    /// Returns `false` for a game that did not finish, an unfinished game
-    /// ranks nobody. Games where a bot substituted for a departed human (P-2)
-    /// must also be excluded, but nothing in the log marks them yet, so that
-    /// remains the caller's filter rather than something checked here.
+    /// Returns `false` for a game that did not finish, since an unfinished game
+    /// ranks nobody.
+    ///
+    /// Whether a bot substituted for a departed human (P-2) is still the
+    /// caller's filter, because nothing in the log marks it. What the caller
+    /// should filter on has moved, though, and it is worth saying here since
+    /// this is where somebody looks. A game where *somebody* played to the end
+    /// is that person's result and is rated, with anybody who walked out ranked
+    /// where they finished: excluding it would make leaving free, so the correct
+    /// play when losing would be to close the tab, and it would throw away the
+    /// game of everyone who stayed. A game finished by bots on everybody's
+    /// behalf is nobody's result and is the one to drop.
     pub fn record(&mut self, log: &Log) -> bool {
         let Some(Payload::Ended { winner, vp }) = log.events.last().map(|e| &e.payload) else {
             return false;

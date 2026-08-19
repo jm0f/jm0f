@@ -18,35 +18,124 @@ use carranta_record::{Log, Recorder, SeatId};
 use crate::game::Step;
 use crate::store::Saved;
 
-/// The names the bots answer to, which are also who the ratings are about.
+/// The names the bots answer to, one per copy of the program at a table.
 ///
-/// One identity per seat rather than one for "the heuristic". They are the same
-/// player underneath, so their ratings should converge on each other, but a
-/// ranking cannot list the same player three times and a per-seat identity is
-/// also what makes the corpus's seat-order balance mean anything.
+/// The house bot is one player and these are not four players: they are four
+/// instances of it in one game, which a ranking has to be able to tell apart
+/// because Plackett-Luce ranks competitors and cannot rank the same competitor
+/// three times. They are the same program, so their ratings converge on each
+/// other, and that convergence is itself the check that the model is behaving.
+///
+/// Which name goes with which seat follows the order the bots sit in rather
+/// than the seat number, so a table reads Ada, Bram, Ines whether the draw put
+/// the person first or last.
 pub const BOT_NAMES: [&str; 4] = ["Ada", "Bram", "Ines", "Odd"];
 
-/// Who is in a seat, for the rating pool.
+/// A durable player number from a piece of text.
 ///
-/// The person is one player across every game on this server; each bot seat is
-/// another. Small fixed numbers rather than hashes: this is one local server
-/// with five participants, and a number you can read in a file is worth more
-/// here than one you cannot.
-pub fn seat_player(seat: usize) -> u64 {
-    seat as u64
+/// FNV-1a, the same fold `game_number` uses. It has to be a hash now rather
+/// than a small readable number: the seats used to be the identities, which was
+/// true of a local server where one person always sat at seat nought and stopped
+/// being true twice over. The draw shuffles the seats, so a solo player is at a
+/// random one; and a table holds four people, so seats one to three are as
+/// likely to be a person as a bot.
+///
+/// What it folds is what the game file already says (format 6): a person's key,
+/// or an agent's name, build and which copy of it this was.
+fn player_number(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
-pub fn seat_name(seat: usize, human: &str) -> String {
-    if seat == 0 {
-        let name = human.trim();
-        if name.is_empty() {
-            "you".to_string()
-        } else {
-            name.to_string()
-        }
-    } else {
-        BOT_NAMES[seat.min(BOT_NAMES.len() - 1)].to_string()
-    }
+/// Who was in each seat, as the rating pool sees them.
+///
+/// Read from the chairs the game was written down with, in seat order, which is
+/// the only record of who actually played it. A file with no chairs in it at all
+/// was written before there were any (before version 5) or by the server playing
+/// itself, and is read as the house bot throughout, which is what it was.
+pub fn seat_ids(saved: &Saved) -> Vec<SeatId> {
+    let seats = saved.seats as usize;
+    let mut copies = 0usize;
+    (0..seats)
+        .map(|s| match saved.setup.chairs.get(s) {
+            Some(c) if c.is_person() => SeatId::human(player_number(&c.who)),
+            other => {
+                // A bot's chair, a chair nobody took, or a file that does not
+                // say: all three are the house bot by the time a game is played,
+                // because closing a room gives every empty chair to it.
+                let (name, version) = match other {
+                    Some(c) => c.agent_id(),
+                    None => (carranta_bot::HOUSE.to_string(), carranta_bot::HOUSE_VERSION),
+                };
+                let copy = copies;
+                copies += 1;
+                SeatId::agent(
+                    player_number(&format!("{name}@{version}#{copy}")),
+                    &name,
+                    version,
+                )
+            }
+        })
+        .collect()
+}
+
+/// Whether this game says anything about anybody's rating.
+///
+/// Two conditions, and both of them are about whether there is a result to read
+/// rather than about who won.
+///
+/// **It finished.** A game nobody won has no finishing order, and a rating is
+/// built from finishing order alone. `Pool::record` refuses one anyway; this is
+/// the same rule said where it can also be read.
+///
+/// **Somebody was still at the table.** A game the house bot finished on
+/// everybody's behalf is not a game anybody played (P-2), and rating it would
+/// hand people results they were not present for. One person is enough: a table
+/// where three walked out and one played to the end is a game that person won or
+/// lost, and voiding it would punish the one who stayed.
+///
+/// Note what is deliberately *not* here. A game somebody walked out of **counts**
+/// against them, at the place they finished. §8.3 of the scoping doc proposed
+/// excluding substituted games, which is right for a statistics table and wrong
+/// for a live server: it makes leaving free, so the correct play when losing is
+/// to close the tab, and it throws away the game of everyone who stayed. How
+/// often somebody walks out is worth publishing, but as a count of its own
+/// rather than through a number that is supposed to mean skill.
+pub fn rated(saved: &Saved) -> bool {
+    saved.winner.is_some() && saved.setup.chairs.iter().any(|c| c.is_person() && !c.left)
+}
+
+/// What to call each seat, in seat order.
+///
+/// A person's own name, the bots' in the order they are sitting, and a build
+/// suffix on any bot that is not the one playing today, since two builds under
+/// one name on the same page is the confusion the versioning exists to prevent.
+pub fn seat_names(saved: &Saved) -> Vec<String> {
+    let seats = saved.seats as usize;
+    let mut copies = 0usize;
+    (0..seats)
+        .map(|s| match saved.setup.chairs.get(s) {
+            Some(c) if c.is_person() => match c.name.trim() {
+                "" => format!("Player {}", s + 1),
+                name => name.to_string(),
+            },
+            other => {
+                let copy = copies;
+                copies += 1;
+                let name = BOT_NAMES[copy.min(BOT_NAMES.len() - 1)];
+                match other.map(|c| c.agent_id()) {
+                    Some((agent, version))
+                        if agent != carranta_bot::HOUSE
+                            || version != carranta_bot::HOUSE_VERSION =>
+                    {
+                        format!("{name} ({agent} v{version})")
+                    }
+                    _ => name.to_string(),
+                }
+            }
+        })
+        .collect()
 }
 
 /// Replay a saved game into the record the analytics were built to read.
@@ -55,16 +144,7 @@ pub fn seat_name(seat: usize, human: &str) -> String {
 /// same answer `Session::resume` gives and for the same reason.
 pub fn to_log(saved: &Saved) -> Option<Log> {
     let state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
-    let seats = (0..state.players as usize)
-        .map(|s| {
-            if s == 0 {
-                SeatId::human(seat_player(s))
-            } else {
-                SeatId::agent(seat_player(s), BOT_NAMES[s], 1)
-            }
-        })
-        .collect();
-    let mut rec = Recorder::new(game_number(&saved.id), saved.seed, state, seats);
+    let mut rec = Recorder::new(game_number(&saved.id), saved.seed, state, seat_ids(saved));
     for step in &saved.moves {
         match *step {
             Step::Move(action) => {
@@ -111,10 +191,10 @@ pub struct Movement {
 /// `None` until they have played, since an unrated player is not last, they
 /// are absent. Ranked on the conservative estimate, which is the figure the
 /// page shows, so a rank and the number beside it cannot disagree.
-fn rank_of(pool: &Pool, seat: usize) -> Option<usize> {
+fn rank_of(pool: &Pool, player: u64) -> Option<usize> {
     pool.leaderboard(0)
         .iter()
-        .position(|(p, _, _)| *p == seat_player(seat))
+        .position(|(p, _, _)| *p == player)
         .map(|i| i + 1)
 }
 
@@ -2077,31 +2157,46 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
 
     // Ratings, in the order the games were played, stopping either side of this
     // one so the movement is this game's and nobody else's.
+    //
+    // Who is in each seat comes from the chairs the game was written down with,
+    // so a person is the same player in every game they played and a build of
+    // the house bot is the same player in every game it played. It used to come
+    // from the seat number, which was true of a server where one person always
+    // dealt themselves seat nought and had been false twice over since: the draw
+    // shuffles the seats, and a table holds four people.
     let mut pool = Pool::new(Model::default());
     let mut movement = [None; MAX_PLAYERS];
     for g in history {
         if g.id == saved.id {
+            if !rated(saved) {
+                break;
+            }
             let seats = report.players as usize;
-            let before: Vec<Rating> = (0..seats).map(|s| pool.rating(seat_player(s))).collect();
-            let games: Vec<u32> = (0..seats)
-                .map(|s| pool.games_played(seat_player(s)))
-                .collect();
-            let ranked: Vec<Option<usize>> = (0..seats).map(|s| rank_of(&pool, s)).collect();
+            let ids: Vec<u64> = seat_ids(saved).iter().map(|s| s.player).collect();
+            let before: Vec<Rating> = ids.iter().map(|&p| pool.rating(p)).collect();
+            let games: Vec<u32> = ids.iter().map(|&p| pool.games_played(p)).collect();
+            let ranked: Vec<Option<usize>> = ids.iter().map(|&p| rank_of(&pool, p)).collect();
             if !pool.record(&log) {
                 break;
             }
             for s in 0..seats {
                 movement[s] = Some(Movement {
                     before: before[s],
-                    after: pool.rating(seat_player(s)),
+                    after: pool.rating(ids[s]),
                     games: games[s],
                     rank_before: ranked[s],
-                    rank_after: rank_of(&pool, s),
+                    rank_after: rank_of(&pool, ids[s]),
                 });
             }
             continue;
         }
-        if let Some(l) = to_log(g) {
+        // Every other game that says something about somebody, in the order they
+        // were played. A game nobody won has no finishing order, and one the
+        // house bot finished on everybody's behalf was not played by the people
+        // it would rate.
+        if rated(g)
+            && let Some(l) = to_log(g)
+        {
             pool.record(&l);
         }
     }
@@ -2142,8 +2237,25 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
 mod tests {
     use super::*;
     use crate::game::Session;
-    use crate::store::{Setup, game_id};
+    use crate::store::{Chair, Setup, game_id};
     use carranta_core::state::TradeMode;
+
+    /// One person and three bots, which is what a solo table is written down as.
+    ///
+    /// Spelled out rather than defaulted: who was in which chair is where the
+    /// identities come from now, so a fixture with no chairs in it is a game the
+    /// server played itself and is deliberately rated as nothing at all.
+    fn sat(name: &str) -> Setup {
+        Setup {
+            chairs: vec![
+                Chair::person("egonkey000000000", name),
+                Chair::bot(),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        }
+    }
 
     /// Play one out and save it, the way the server would.
     fn played(seed: u64) -> Saved {
@@ -2164,7 +2276,7 @@ mod tests {
             by: String::new(),
             dealt: seed,
             winner: s.winner(),
-            setup: Setup::default(),
+            setup: sat("Egon"),
             moves: s.moves().to_vec(),
             times: s.times().to_vec(),
         }
@@ -2340,6 +2452,150 @@ mod tests {
         // believe the number, and it counts the games before this one.
         assert_eq!(study.movement[0].unwrap().games, 2);
         assert_eq!(study.corpus_games, 3);
+    }
+
+    #[test]
+    fn who_is_in_a_seat_comes_from_the_chair_and_not_from_the_seat_number() {
+        // The bug this replaced: seat nought was "the human" and the rest were
+        // bots, which was true of a server where one person dealt themselves
+        // seat nought and had been false twice over since. The draw shuffles the
+        // seats, and a table holds four people. A real file out of the store had
+        // its only person at seat two, so the pool credited their game to a bot
+        // and rated a bot as them.
+        let mut g = played(3);
+        g.setup = Setup {
+            chairs: vec![
+                Chair::bot(),
+                Chair::bot(),
+                Chair::person("egonkey000000000", "Egon"),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        let ids = seat_ids(&g);
+        assert!(ids[2].agent.is_none(), "the person is a person");
+        for seat in [0, 1, 3] {
+            assert!(ids[seat].agent.is_some(), "and the bots are bots");
+        }
+        assert_eq!(seat_names(&g)[2], "Egon");
+
+        // Two people at one table are two players, not one player twice.
+        let mut two = played(4);
+        two.setup = Setup {
+            chairs: vec![
+                Chair::person("egonkey000000000", "Egon"),
+                Chair::person("martakey00000000", "Marta"),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        let ids = seat_ids(&two);
+        assert_ne!(ids[0].player, ids[1].player, "two people, two players");
+        // And the same person in another game is the same player, wherever the
+        // draw put them. That is the whole point of keying off the chair.
+        let mut again = played(5);
+        again.setup = Setup {
+            chairs: vec![
+                Chair::bot(),
+                Chair::person("egonkey000000000", "Egon under another name"),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            seat_ids(&again)[1].player,
+            ids[0].player,
+            "the key is the person, not the name and not the seat"
+        );
+    }
+
+    #[test]
+    fn a_build_of_the_bot_is_its_own_player() {
+        // A rating is a claim about a player, and a program whose play has
+        // changed is a different player. Two builds under one identity pool
+        // their results and the pool describes neither of them.
+        let mut g = played(6);
+        g.setup = Setup {
+            chairs: vec![
+                Chair::person("egonkey000000000", "Egon"),
+                Chair::bot(),
+                Chair {
+                    agent: "house@2".to_string(),
+                    ..Chair::bot()
+                },
+                Chair {
+                    agent: "llm-fable@3".to_string(),
+                    ..Chair::bot()
+                },
+            ],
+            ..Default::default()
+        };
+        let ids = seat_ids(&g);
+        let players: std::collections::HashSet<u64> = ids.iter().map(|s| s.player).collect();
+        assert_eq!(players.len(), 4, "four players, none of them each other");
+        assert_eq!(ids[2].agent.as_ref().map(|a| a.version), Some(2));
+        assert_eq!(
+            ids[3].agent.as_ref().map(|a| a.name.as_str()),
+            Some("llm-fable")
+        );
+        // And a build that is not the one playing today says so where it is
+        // named, since two builds under one name on a page is the confusion the
+        // versioning exists to prevent.
+        let named = seat_names(&g);
+        assert_eq!(named[1], "Ada", "today's build is just its name");
+        assert_eq!(named[2], "Bram (house v2)");
+        assert_eq!(named[3], "Ines (llm-fable v3)");
+    }
+
+    #[test]
+    fn a_game_the_bots_finished_alone_says_nothing_about_anybody() {
+        // The rule the user asked for: a finished game counts, and a game the
+        // house bot finished on everybody's behalf does not. Walking out costs
+        // you the place you finished in rather than voiding the game, because
+        // voiding it makes leaving free and throws away the game of everyone who
+        // stayed.
+        let mut g = played(7);
+        assert!(g.winner.is_some(), "the fixture plays to a winner");
+        let people = vec![
+            Chair::person("egonkey000000000", "Egon"),
+            Chair::person("martakey00000000", "Marta"),
+            Chair::bot(),
+            Chair::bot(),
+        ];
+        g.setup = Setup {
+            chairs: people.clone(),
+            ..Default::default()
+        };
+        assert!(rated(&g), "two people finished it");
+
+        // One of them walked out. Still rated, and still rated for both of them:
+        // Marta played it and Egon is answerable for where he finished.
+        let mut one_left = people.clone();
+        one_left[0].left = true;
+        g.setup.chairs = one_left;
+        assert!(rated(&g), "one of them finished it");
+
+        // Both walked out, and the house bot played it to the end. Nobody was
+        // there for the result, so it is nobody's result.
+        let mut both_left = people;
+        for c in both_left.iter_mut() {
+            c.left = true;
+        }
+        g.setup.chairs = both_left;
+        assert!(!rated(&g), "nobody was there for it");
+
+        // As is a game the server played against itself, which was quietly
+        // moving a rating before: it had no chairs, and no chairs used to read
+        // as one person at seat nought.
+        let mut self_play = played(8);
+        self_play.setup = Setup::default();
+        assert!(self_play.winner.is_some(), "it finished");
+        assert!(!rated(&self_play), "but nobody was at it");
+        let mut unfinished = played(9);
+        unfinished.winner = None;
+        assert!(!rated(&unfinished), "and one nobody won");
     }
 
     #[test]
