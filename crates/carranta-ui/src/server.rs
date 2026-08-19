@@ -31,6 +31,23 @@ use crate::view;
 
 const PAGE: &str = include_str!("../assets/index.html");
 
+/// How long a state request may be held before answering anyway.
+///
+/// Under every proxy timeout worth worrying about: Railway and Cloudflare both
+/// allow far longer, but a held request that a proxy kills looks to the page
+/// like a network error rather than like nothing having happened. Twenty
+/// seconds is short enough to be safe everywhere and long enough that an idle
+/// table costs three answers a minute instead of twenty.
+const HOLD: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How often a held request looks again.
+///
+/// This is the latency of a move reaching the other screens, so it wants to be
+/// small; it is also a lock acquisition per connection per interval, so it does
+/// not want to be tiny. A tenth of a second is imperceptible to a person and
+/// nothing to the machine.
+const WAKE: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// The board page as served: the raw asset with the build stamped into its
 /// header.
 ///
@@ -288,6 +305,18 @@ struct Table {
     seen: Vec<u64>,
     /// Whether the people here may talk to each other, as the lobby said.
     chat: bool,
+    /// Bumped whenever anything a page draws has changed.
+    ///
+    /// The version counts moves and deliberately does not count anything else:
+    /// it is what makes a click against a stale board refuse, and a remark is
+    /// not a reason to refuse somebody's move. But a held request has to wake for
+    /// every kind of change, not only for moves, so this counts all of them:
+    /// somebody sitting down, standing up, saying they are ready, saying
+    /// anything at all, the host changing a setting, the room closing.
+    ///
+    /// One counter rather than a signature of the state, because the question is
+    /// only ever "is this different from what that page last saw".
+    pulse: u64,
     /// Who has said they are ready, in seat order.
     ///
     /// Only meaningful while the table is a room. A room starts when everybody
@@ -391,6 +420,28 @@ impl Table {
     /// what a solo game is.
     fn waiting(&self) -> usize {
         self.chairs.iter().filter(|c| **c == Chair::Open).count()
+    }
+
+    /// Note that something a page draws has changed.
+    ///
+    /// Paired with `stirred` everywhere: one says the table is alive so the
+    /// sweep leaves it be, the other says a held request should answer. They are
+    /// different questions and a request that only looked can bump one without
+    /// the other.
+    fn moved(&mut self) {
+        self.pulse = self.pulse.wrapping_add(1);
+        self.stirred = now();
+    }
+
+    /// What a page has seen, as one number.
+    ///
+    /// The version and the pulse together, because a move bumps the version
+    /// through the session without going near the table.
+    fn seen_mark(&self) -> u64 {
+        self.session
+            .version()
+            .wrapping_mul(1_000_003)
+            .wrapping_add(self.pulse)
     }
 
     /// The seats a person is sitting in, in seat order.
@@ -503,6 +554,7 @@ impl Table {
             ready_seats: bits(self.ready.iter().copied()),
             // A room always talks, whatever the table was dealt with. See `say`.
             chat_open: self.chat || self.in_lobby(),
+            mark: self.seen_mark(),
         };
         let talk: Vec<view::Talk<'_>> = self
             .said
@@ -864,6 +916,7 @@ impl Server {
             said: Vec::new(),
             seen: vec![now(); seats as usize],
             stirred: now(),
+            pulse: 0,
             drawn: false,
             shut: false,
             // Every dealt table is a room. It used to be only tables with a
@@ -1011,6 +1064,7 @@ impl Server {
                 seen: vec![0; self.seats as usize],
                 stirred: now(),
                 // Played out before it got here, so there is nothing to draw.
+                pulse: 0,
                 drawn: true,
                 shut: true,
                 lobby: false,
@@ -1105,6 +1159,7 @@ impl Server {
             // has happened whether or not this process is the one that did it.
             // Drawing again on resume would move people between the game they
             // left and the game they came back to.
+            pulse: 0,
             drawn: true,
             // Off disk is a game that has begun, and a game that has begun is
             // shut by its own moves.
@@ -1219,7 +1274,7 @@ impl Server {
             table.shuffle();
         }
         let seat = table.seat_of(player).unwrap_or(seat);
-        table.stirred = now();
+        table.moved();
         let started = table.session.started();
         let saved = saved_of(table);
         drop(tables);
@@ -1269,6 +1324,7 @@ impl Server {
             _ => String::new(),
         };
         table.said.push(Said { seat, name, text });
+        table.moved();
         // Oldest out. A table talks for an hour and a page should not be handed
         // all of it on every poll.
         let over = table.said.len().saturating_sub(TALK_KEPT);
@@ -1323,6 +1379,7 @@ impl Server {
                 .note_to_table(format!("{name} left, and the seat is free again"));
         }
         table.seat_the_people();
+        table.moved();
         // Leaving can be the thing everybody else was waiting for. Two ready and
         // one not, and the one who was not walks out: the two who pressed the
         // button have nothing left to press, so the room would stand agreed and
@@ -1426,7 +1483,7 @@ impl Server {
             table.session.name_seat(seat, "");
         }
         table.name_the_seats();
-        table.stirred = now();
+        table.moved();
         Ok(())
     }
 
@@ -1457,7 +1514,7 @@ impl Server {
         } else {
             format!("{who} is not ready yet")
         });
-        table.stirred = now();
+        table.moved();
         if !table.all_ready() {
             return true;
         }
@@ -1505,7 +1562,7 @@ impl Server {
                 format!("{short} seats went to the house bot")
             });
         }
-        table.stirred = now();
+        table.moved();
         let started = table.session.started();
         let saved = saved_of(table);
         drop(tables);
@@ -1562,18 +1619,72 @@ impl Server {
         }
     }
 
+    /// How long a connection may take to send its request.
+    ///
+    /// A client that opens a socket and says nothing used to hold the server for
+    /// ever, which on one thread meant everybody. It is trivial to do by
+    /// accident on a bad network and trivial to do on purpose, so the socket
+    /// gives up on a request that has not arrived in ten seconds.
+    ///
+    /// Generous on purpose: this bounds how long a *request* may dribble in, not
+    /// how long the answer may take, and a phone on a train is slow rather than
+    /// hostile.
+    const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// Connections served at once.
+    ///
+    /// A thread apiece, which is the shape this server wants: a held state
+    /// request sleeps for most of its life and a move is microseconds of work,
+    /// so threads here are mostly waiting rather than running. The cap is what
+    /// stops an unbounded number of them, and it is high because each one is
+    /// cheap and a table of four is four of them.
+    const MAX_CONNECTIONS: usize = 512;
+
     /// Serve until the process is stopped.
-    pub fn serve(&self, listener: TcpListener) {
+    ///
+    /// A thread per connection. It was one at a time, on the grounds that there
+    /// was one game and one player, and both halves of that stopped being true:
+    /// with four people at a table and a held request each, serialising them
+    /// means three people wait on the fourth's network. One slow client blocked
+    /// everybody, which is a denial of service anybody could commit by accident.
+    pub fn serve(&'static self, listener: TcpListener) {
+        let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for stream in listener.incoming() {
-            match stream {
-                Ok(s) => {
-                    // One connection at a time: there is one game and one
-                    // player, and a thread pool would be pretending otherwise.
+            let s = match stream {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("accept: {e}");
+                    continue;
+                }
+            };
+            // Counted rather than pooled: a pool would queue behind busy workers,
+            // and what this needs is to refuse rather than to queue. Over the cap
+            // the connection is dropped, which is the honest answer and is what a
+            // proxy in front will report as a failure rather than a hang.
+            use std::sync::atomic::Ordering;
+            if live.load(Ordering::Relaxed) >= Self::MAX_CONNECTIONS {
+                eprintln!("refused: {} connections already", Self::MAX_CONNECTIONS);
+                continue;
+            }
+            live.fetch_add(1, Ordering::Relaxed);
+            let mine = live.clone();
+            let spawned = std::thread::Builder::new()
+                .name("carranta-conn".to_string())
+                // Small on purpose: this stack holds a request and a response,
+                // not a recursion. The default eight megabytes times five
+                // hundred connections is address space for nothing.
+                .stack_size(256 * 1024)
+                .spawn(move || {
+                    let _ = s.set_read_timeout(Some(Self::READ_TIMEOUT));
+                    let _ = s.set_write_timeout(Some(Self::READ_TIMEOUT));
                     if let Err(e) = self.handle(s) {
                         eprintln!("connection: {e}");
                     }
-                }
-                Err(e) => eprintln!("accept: {e}"),
+                    mine.fetch_sub(1, Ordering::Relaxed);
+                });
+            if spawned.is_err() {
+                live.fetch_sub(1, Ordering::Relaxed);
+                eprintln!("could not spawn a thread for a connection");
             }
         }
     }
@@ -1742,28 +1853,28 @@ impl Server {
             ("GET", p) if p.starts_with("/art/") && p.ends_with(".jpg") => {
                 let name = p.trim_start_matches("/art/").trim_end_matches(".jpg");
                 match PHOTOS.iter().find(|(n, _)| *n == name) {
-                    Some((_, bytes)) => respond(&mut stream, 200, "image/jpeg", bytes),
+                    Some((_, bytes)) => respond_kept(&mut stream, "image/jpeg", bytes),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
             }
             ("GET", p) if p.starts_with("/art/") => {
                 let name = p.trim_start_matches("/art/").trim_end_matches(".svg");
                 match ART.iter().find(|(n, _)| *n == name) {
-                    Some((_, body)) => respond(&mut stream, 200, "image/svg+xml", body.as_bytes()),
+                    Some((_, body)) => respond_kept(&mut stream, "image/svg+xml", body.as_bytes()),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
             }
             ("GET", p) if p.starts_with("/font/") => {
                 let name = p.trim_start_matches("/font/").trim_end_matches(".woff2");
                 match FONTS.iter().find(|(n, _)| *n == name) {
-                    Some((_, bytes)) => respond(&mut stream, 200, "font/woff2", bytes),
+                    Some((_, bytes)) => respond_kept(&mut stream, "font/woff2", bytes),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
             }
             ("GET", p) if p.starts_with("/sound/") => {
                 let name = p.trim_start_matches("/sound/").trim_end_matches(".mp3");
                 match SOUNDS.iter().find(|(n, _)| *n == name) {
-                    Some((_, bytes)) => respond(&mut stream, 200, "audio/mpeg", bytes),
+                    Some((_, bytes)) => respond_kept(&mut stream, "audio/mpeg", bytes),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
             }
@@ -1797,37 +1908,58 @@ impl Server {
                         t.seat_the_people();
                     }
                 }
-                let mut tables = self.tables.lock().unwrap();
-                let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
-                    // What is left is a finished game, which is read rather than
-                    // played: hand it back as it stands. Nothing ticks, because
-                    // nothing is waiting.
-                    drop(tables);
-                    return match self.stored(&id) {
-                        Some(p) => respond(&mut stream, 200, "application/json", p.as_bytes()),
-                        None => respond(&mut stream, 404, "text/plain", b"no such game"),
+                // What the asking page last drew, if it says. A request that
+                // names one is held until the table looks different from it, so
+                // a move reaches the other screens in the time it takes to send
+                // it rather than at the next tick of a three second poll, and a
+                // table nobody is touching costs one held socket instead of
+                // twelve hundred answers an hour.
+                let since: Option<u64> = param(query, "since").and_then(|v| v.parse().ok());
+                let until = std::time::Instant::now() + HOLD;
+                let payload = loop {
+                    let mut tables = self.tables.lock().unwrap();
+                    let Some(t) = tables.iter_mut().find(|t| t.id == id) else {
+                        // What is left is a finished game, which is read rather
+                        // than played: hand it back as it stands. Nothing ticks,
+                        // because nothing is waiting.
+                        drop(tables);
+                        return match self.stored(&id) {
+                            Some(p) => respond(&mut stream, 200, "application/json", p.as_bytes()),
+                            None => respond(&mut stream, 404, "text/plain", b"no such game"),
+                        };
                     };
+                    // A server only wakes when asked, so this poll is the whole
+                    // clock: it is what lets a paced bot's wait expire, and what
+                    // ends a turn whose time ran out. Inside the hold rather
+                    // than before it, because a held request is the only thing
+                    // asking for as long as it is held: without this a paced
+                    // bot's move would wait for the hold to expire.
+                    //
+                    // Not while the table is still a room. Nothing is being
+                    // played and nobody's turn is running down while people are
+                    // walking in, and a turn clock left running over a lobby
+                    // does not merely tick: it runs out, forfeits the turn, and
+                    // that forfeit is a move, so the game starts itself about a
+                    // minute after it is dealt with everybody still reading the
+                    // settings.
+                    if !t.in_lobby() {
+                        t.session.tick();
+                        t.session.enforce_clock();
+                    }
+                    let mark = t.seen_mark();
+                    // Their own seat's view, or a spectator's if they have none:
+                    // nobody is ever sent another seat's hand. Either way it
+                    // carries how many chairs are still going, because that is
+                    // the one thing about this table you can be too late for.
+                    if since != Some(mark) || std::time::Instant::now() >= until {
+                        break t.seen_by(seat, &player, None);
+                    }
+                    // Nothing has changed and there is time left. The lock is
+                    // dropped first, because sleeping on it would stop the very
+                    // moves this is waiting for.
+                    drop(tables);
+                    std::thread::sleep(WAKE);
                 };
-                // A server only wakes when asked, so this poll is the whole
-                // clock: it is what lets a paced bot's wait expire, and what
-                // ends a turn whose time ran out.
-                //
-                // Not while the table is still a room. Nothing is being played
-                // and nobody's turn is running down while people are walking in,
-                // and a turn clock left running over a lobby does not merely
-                // tick: it runs out, forfeits the turn, and that forfeit is a
-                // move, so the game starts itself about a minute after it is
-                // dealt with everybody still reading the settings.
-                if !t.in_lobby() {
-                    t.session.tick();
-                    t.session.enforce_clock();
-                }
-                // Their own seat's view, or a spectator's if they have none:
-                // nobody is ever sent another seat's hand. Either way it carries
-                // how many chairs are still going, because that is the one thing
-                // about this table you can be too late for.
-                let payload = t.seen_by(seat, &player, None);
-                drop(tables);
                 self.keep(&id);
                 respond(&mut stream, 200, "application/json", payload.as_bytes())
             }
@@ -2325,12 +2457,44 @@ fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &[u8]) -> std:
 /// Which is only ever the cookie that hands a visitor their key, and only on the
 /// two pages a visitor can arrive at. Threading it through rather than setting it
 /// on every response keeps it out of the api answers, where nothing needs it.
+/// A response for something that will never change.
+///
+/// The art, the fonts and the sounds are compiled into the binary and are the
+/// same bytes for the life of the build, so they may be held for a year by
+/// anything between here and the reader. That is what lets a cache in front of
+/// this server, which is where compression is coming from, do the other half of
+/// its job: a returning player fetches the board's markup and nothing else.
+///
+/// Everything else stays `no-store`. A board is different every few seconds and
+/// a cached one is a lie.
+fn respond_kept(stream: &mut TcpStream, kind: &str, body: &[u8]) -> std::io::Result<()> {
+    respond_with_cache(
+        stream,
+        200,
+        kind,
+        body,
+        "",
+        "public, max-age=31536000, immutable",
+    )
+}
+
 fn respond_with(
     stream: &mut TcpStream,
     status: u16,
     kind: &str,
     body: &[u8],
     extra: &str,
+) -> std::io::Result<()> {
+    respond_with_cache(stream, status, kind, body, extra, "no-store")
+}
+
+fn respond_with_cache(
+    stream: &mut TcpStream,
+    status: u16,
+    kind: &str,
+    body: &[u8],
+    extra: &str,
+    cache: &str,
 ) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
@@ -2345,7 +2509,7 @@ fn respond_with(
         "HTTP/1.1 {status} {reason}\r\n\
          Content-Type: {kind}\r\n\
          Content-Length: {}\r\n\
-         Cache-Control: no-store\r\n\
+         Cache-Control: {cache}\r\n\
          {extra}\
          Connection: close\r\n\r\n",
         body.len()
@@ -2490,6 +2654,7 @@ mod tests {
             said: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
+            pulse: 0,
             drawn: true,
             shut: true,
             lobby: false,
@@ -2555,6 +2720,7 @@ mod tests {
             said: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
+            pulse: 0,
             drawn: true,
             shut: true,
             lobby: false,
@@ -2641,6 +2807,7 @@ mod tests {
             said: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
+            pulse: 0,
             drawn: true,
             shut: true,
             lobby: false,
@@ -3033,6 +3200,72 @@ mod tests {
     }
 
     #[test]
+    fn a_state_request_is_held_until_the_table_looks_different() {
+        // The page used to ask every three seconds and be told nothing had
+        // changed almost every time: twelve hundred answers an hour per open
+        // page, and a move reaching the other screens up to three seconds late.
+        // A request that says what it last saw is held until that stops being
+        // true, so an answer means something happened.
+        let dir = std::env::temp_dir().join(format!("carranta-hold-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 91, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let host = "hostkey000000000";
+        let id = server.deal("seats=4&name=Marta&chat=text", host);
+        let mark_of = |body: &str| -> u64 {
+            body.rsplit("\"mark\":")
+                .next()
+                .and_then(|t| t.split(&[',', '}'][..]).next())
+                .and_then(|t| t.trim().parse().ok())
+                .expect("a mark")
+        };
+        let first = get(port, &format!("/{id}/api/state"), host);
+        let mark = mark_of(&first);
+
+        // Asking again with that mark is held: nothing has happened, so the
+        // request waits rather than answering the same board over again.
+        let held = {
+            let id = id.clone();
+            std::thread::spawn(move || {
+                let began = std::time::Instant::now();
+                let body = get(port, &format!("/{id}/api/state?since={mark}"), host);
+                (began.elapsed(), body)
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            !held.is_finished(),
+            "still waiting, because nothing has changed"
+        );
+
+        // Somebody says something, which is not a move and does not touch the
+        // version: the hold has to wake for it anyway.
+        assert!(server.say(&id, host, "anybody there"));
+        let (took, body) = held.join().expect("the held request finished");
+        assert!(
+            took < std::time::Duration::from_secs(5),
+            "answered when the table changed, not when the hold expired: {took:?}"
+        );
+        assert!(body.contains("anybody there"), "and carries the change");
+        assert_ne!(mark_of(&body), mark, "under a new mark");
+
+        // And a mark nobody recognises answers at once rather than waiting,
+        // which is what a page reloading after a restart sends.
+        let began = std::time::Instant::now();
+        let fresh = get(port, &format!("/{id}/api/state?since=999999999"), host);
+        assert!(fresh.starts_with("HTTP/1.1 200 OK"));
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(2),
+            "an unfamiliar mark is answered, not held"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_room_has_no_clock_running_over_it() {
         // The bug this is for started games on its own about a minute after they
         // were dealt, with everybody still reading the settings. The poll is the
@@ -3307,7 +3540,7 @@ mod tests {
         );
         assert!(post(port, &format!("/{id}/api/ready"), early, "").starts_with("HTTP/1.1 200"));
         assert!(post(port, &format!("/{id}/api/ready"), host, "").starts_with("HTTP/1.1 200"));
-        let after = get(port, &format!("/{id}/api/state"), host);
+        let _ = get(port, &format!("/{id}/api/state"), host);
 
         // Now the door is shut. Somebody arriving is a watcher, whatever they
         // ask for and however many bots are sitting where they might have been.

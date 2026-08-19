@@ -29,6 +29,20 @@ fn main() {
             .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
 
+    // Said from outside, if anybody is saying it. A container build has no
+    // repository to read: the sources are copied in without `.git`, so every
+    // git command here fails and the stamp would be "unknown" on exactly the
+    // builds whose identity is hardest to check by other means. A platform that
+    // knows the commit passes it in this variable, and it wins outright, because
+    // something that was told is better than something that was guessed.
+    if let Ok(said) = std::env::var("CARRANTA_BUILD")
+        && !said.trim().is_empty()
+    {
+        println!("cargo:rerun-if-env-changed=CARRANTA_BUILD");
+        println!("cargo:rustc-env=CARRANTA_BUILD={}", said.trim());
+        return;
+    }
+    println!("cargo:rerun-if-env-changed=CARRANTA_BUILD");
     // A tarball with no repository still has to build.
     let commit = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into());
     // A "+" means the working tree had uncommitted changes, so the commit

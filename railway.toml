@@ -1,0 +1,26 @@
+# Railway, for a server that must be exactly one process.
+#
+# The tables live in this process's memory: lobbies, seats, ready marks and what
+# has been said at each table. Two replicas would be two different servers with
+# two different lists, and a player would reach whichever one the router picked,
+# so half the time it would not know about their game. `numReplicas = 1` is not
+# a cost decision, it is the only correct value until that state moves out of
+# the process.
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+numReplicas = 1
+# The process is the source of truth for every table in memory, and a restart
+# loses every lobby, so restarting is for a process that has actually died
+# rather than for one that returned an error to somebody.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# Finished games are written here as one small text file each, and this is the
+# only thing on disk worth keeping: a game is a few hundred bytes, so a gigabyte
+# is thousands of them. Without the volume they would not survive a deploy.
+#
+# Railway mounts volumes through the dashboard rather than from this file; the
+# path to give it is `/data`, which is what the Dockerfile's command points at.

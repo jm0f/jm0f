@@ -5028,44 +5028,43 @@ loadArt().then(() => load(api('/api/state')));
 // beat between moves into a beat between polls. While the table is moving the
 // page asks often; while it is waiting on a person it goes back to idling,
 // because a fast poll against a board nobody is touching is just traffic.
-const POLL_IDLE = 3000, POLL_MOVING = 150;
+// The page asks and the server answers when there is something to say.
+//
+// It used to ask every three seconds and be told nothing had changed almost
+// every time: twelve hundred answers an hour per open page, each one the whole
+// board, and a move reaching the other screens up to three seconds after it was
+// made. Now the request carries the mark the last answer came with and the
+// server holds it until the table stops matching, so an answer means something
+// happened and a move lands as fast as it can be sent.
+//
+// The mark is opaque here on purpose. The page hands back what it was given;
+// what counts as a change is the server's business, and it counts more than the
+// version does, because nothing that happens in a room is a move.
+//
+// No back-off and no interval: the loop asks again the moment it is answered,
+// and an idle table's request simply sits there.
+const RETRY = 1500;
 (async function poll() {
+  let wait = 0;
   try {
-    const r = await fetch(api('/api/state'), { cache: 'no-store' });
-    // Closed while this page sat open. Stop asking: a 404 every three seconds
+    const since = view && view.mark !== undefined ? `?since=${view.mark}` : '';
+    const r = await fetch(api('/api/state') + since, { cache: 'no-store' });
+    // Closed while this page sat open. Stop asking: a request every few seconds
     // for a table that is not coming back is traffic and nothing else.
     if (r.status === 404) { tableGone(); return; }
     const next = await r.json();
     if (view && next.build !== view.build) { location.reload(); return; }
-    // The same poll enforces the clock: the server only wakes when asked, so
-    // without this a turn that ran out of time would sit there until clicked.
-    //
-    // Two things can change independently. The version counts moves, and it is
-    // deliberately not bumped by anybody speaking: it is what makes a click
-    // against a stale board refuse, and a remark is not a reason to refuse
-    // somebody's move. So the talk is checked on its own, or a table would say
-    // things nobody heard until the next time somebody built a road.
-    const spoke = view && (next.talk || []).length !== (view.talk || []).length;
-    // And a third. Nothing that happens in a room is a move, so none of it
-    // touches the version: people sitting down, standing up and saying they are
-    // ready all leave it exactly where it was. Without this the host watched a
-    // panel that said "0 of 1 ready" while two friends sat down beside them and
-    // pressed the button, which is the one screen in the application whose whole
-    // job is to show what other people are doing.
-    const room = (v) => v && [v.inLobby, v.ready, v.readyOf, v.seatsTakeable,
-                              (v.people || []).join(), (v.names || []).join()].join('|');
-    const gathered = view && room(next) !== room(view);
-    if (view && (next.version !== view.version || spoke || gathered)) { view = next; render(); }
-    else if (view) view.botThinking = next.botThinking;
+    // An answer arrived, so something changed: the server does not answer a
+    // held request for any other reason, except the hold expiring, and drawing
+    // the same thing twice costs nothing.
+    view = next;
+    render();
   } catch (e) {
-    // The server is mid-restart. Nothing to do but ask again shortly.
+    // The server is mid-restart, or the connection was cut mid-hold. Neither is
+    // a reason to hammer it.
+    wait = RETRY;
   }
-  // A discard on a clock is the other case where the server has something to do
-  // that no click will prompt: when the allowance runs out it picks the cards
-  // itself, and it only wakes when asked. Without this the forced discard
-  // landed up to an idle poll late, with the card sitting at zero meanwhile.
-  const waiting = view && (view.botThinking || view.discardLeft !== null);
-  setTimeout(poll, waiting ? POLL_MOVING : POLL_IDLE);
+  setTimeout(poll, wait);
 })();
 </script>
 </body>

@@ -1,0 +1,11 @@
+# The build directory is gigabytes and the container rebuilds from source
+# anyway; copying it in would be the slowest possible way to ignore it.
+target
+# Games played on somebody's laptop are not part of the image. The container
+# writes to a mounted volume instead.
+games
+.games
+# No repository is copied, which is why the build stamp is passed in as an
+# environment variable rather than read from here.
+.git
+runs

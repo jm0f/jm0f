@@ -20,7 +20,9 @@ carranta-play, play Carranta locally in a browser
   --games DIR    where games are kept (./games)
   --demo N       have at least N finished games to look at (plays what is missing)
 
-Binds 127.0.0.1 only: the game is local and stays local.";
+Binds 127.0.0.1 by default: on a laptop the game is local and stays local.
+Set PORT (as every host does) to bind 0.0.0.0 on that port instead, or HOST to
+say exactly which address.";
 
 fn main() {
     let mut port: u16 = 8181;
@@ -59,27 +61,46 @@ fn main() {
         }
     }
 
-    // Loopback only. This has no authentication and keeps its games in a
-    // directory beside it; it is a local tool, and binding it wider would be a
-    // mistake rather than a feature.
-    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+    // Loopback unless something asks otherwise, and the something is a platform
+    // rather than a flag: `PORT` is how every host here says which port it has
+    // routed to this process, and its presence is a reliable sign of being one
+    // of them. On a laptop neither is set and this stays what it has always
+    // been, a local tool bound to loopback.
+    //
+    // `HOST` overrides both, for the case neither of those covers.
+    let hosted = std::env::var("PORT").ok().and_then(|v| v.parse().ok());
+    if let Some(p) = hosted {
+        port = p;
+    }
+    let host = std::env::var("HOST").unwrap_or_else(|_| {
+        if hosted.is_some() {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        }
+        .to_string()
+    });
+    let listener = match TcpListener::bind((host.as_str(), port)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("cannot listen on 127.0.0.1:{port}: {e}");
+            eprintln!("cannot listen on {host}:{port}: {e}");
             std::process::exit(1);
         }
     };
     println!(
-        "Carranta {}, open http://127.0.0.1:{port}",
+        "Carranta {}, listening on {host}:{port}",
         env!("CARRANTA_BUILD")
     );
     println!("  {seats} seats, {mode:?} market, seed {seed}");
-    let server = Server::new(seats, seed, mode, &games);
+    // Leaked on purpose: this server lives until the process ends, and the
+    // connection threads borrow it for as long as they run. A leak with the
+    // lifetime of the program is the honest way to say so.
+    let server: &'static Server = Box::leak(Box::new(Server::new(seats, seed, mode, &games)));
     println!("  games in {}", server.store().dir().display());
     // Played before the door opens, so the addresses are printed beside the
     // one you would open anyway.
     for id in server.demo(demo) {
-        println!("  played http://127.0.0.1:{port}/{id}/analytics");
+        println!("  played /{id}/analytics");
     }
     server.serve(listener);
 }

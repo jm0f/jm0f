@@ -97,6 +97,13 @@ pub struct Room {
     /// it is still a room: gathering people is a conversation by nature, and the
     /// chat setting is about the game rather than about the doorway to it.
     pub chat_open: bool,
+    /// What this table looked like when the payload was made.
+    ///
+    /// Sent to the page and handed straight back on the next request, which is
+    /// held until the table stops matching it. Opaque on purpose: the page never
+    /// reads it, only returns it, so what counts as a change stays the server's
+    /// business.
+    pub mark: u64,
 }
 
 /// One thing somebody said, as the page needs it.
@@ -327,6 +334,7 @@ fn render_room(
             .filter(|s| room.ready_seats >> s & 1 == 1)
             .map(i64::from),
     );
+    j.int("mark", room.mark as i64);
     j.bool("youAreReady", room.you_ready);
     j.bool("youAreHost", room.host);
     j.bool("chatSetting", room.chat_setting);
