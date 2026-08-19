@@ -70,6 +70,19 @@ What is in the repository for it:
 - **`.dockerignore`**, so the build does not copy `target/` or anybody's games.
 - **`railway.toml`**, pinning one replica in Amsterdam and naming the health
   check, with the reasons written down.
+- **`champion.net`, when there is one.** A trained bot ships as a file at the
+  repository root: the image copies it in and the container starts with
+  `--trained` pointed at it, so the seats nobody is sitting in are played by
+  that champion and every game file records them as `trained@<generation>`.
+  With no such file the house heuristic plays, which is what every deploy did
+  before there was anything trained. Deploying a new champion is committing a
+  different file; see `training.md`.
+
+**Which branch deploys.** Not `main`. The work lives on the working branch and
+so does the running commit, and `main` still sits at the first commit in the
+repository, so a reader who assumes the default branch is the deployed one has
+it exactly backwards. Whatever branch the service is pointed at is the one a
+push has to land on for auto-deploy to see it.
 
 Four things to set in the dashboard, none of which belong in a file:
 
