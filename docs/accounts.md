@@ -41,64 +41,104 @@ including the named one.
 | What it buys | Crates | Async runtime |
 |---|---|---|
 | *Nothing. Today.* | **0** | no |
-| Signed tokens and real entropy (`hmac`, `sha2`, `getrandom`) | 14 | no |
 | Password hashing (`argon2`, RustCrypto) | 14 | no |
-| A TLS client (`rustls` + `webpki-roots`) | 21 | no |
+| Signed tokens and real entropy (`hmac`, `sha2`, `getrandom`) | 14 | no |
+| A blocking HTTPS client (`ureq` 3, rustls) | **26** | no |
+| A TLS client on its own (`rustls` + `webpki-roots`) | 21 | no |
 | Verifying Google's ID tokens (`jsonwebtoken`) | 36 | no |
 | Sending mail (`lettre`, SMTP, rustls, blocking) | 60 | no |
-| OAuth2 (`oauth2` v5, default features) | 110 | **yes** |
-| OAuth2 with `default-features = false` | 67 | no |
+| Passkeys (`webauthn-rs`) | 99 | no |
+| `oauth2` v5, `default-features = false` | 67 | no |
+| `oauth2` v5, default features | 110 | **yes** |
+| `google-oauth`, `features = ["blocking"]` | 120 | **yes** |
+| `google-oauth`, default | 133 | **yes** |
 
-And the two bundles that are actual decisions rather than parts:
+And the bundles that are actual decisions rather than parts:
 
-| Bundle | Crates | Async runtime |
-|---|---|---|
-| **A.** Emailed sign-in links and passwords | **74** | no |
-| **B.** A, plus Google sign-in | **135** | **yes** |
+| Bundle | Crates | Async | Sends email |
+|---|---|---|---|
+| **A.** Google sign-in, code flow, `ureq` | **26** | no | **no** |
+| **B.** Passwords, no email at all | 14 | no | no, and no recovery either |
+| **C.** Passwords with reset and verification | 74 | no | yes |
+| **D.** C plus Google via `google-oauth` | 180 | **yes** | yes |
 
-Three things those numbers say that the individual rows do not.
+## What the numbers say
 
-**Password hashing is cheap and safe to take.** `argon2` is RustCrypto, pure
-Rust, no async, no TLS, fourteen crates of hashing primitives. This is the one
-piece §8.6 flags as security-sensitive code we would otherwise write, and it is
-the piece with the smallest possible cost to not write. Hand-rolling Argon2 is
-not a thing to do.
+**Passwords are what create the email.** This is the point the first draft of
+this document missed, and it inverts its recommendation. Hashing a password is
+cheap and safe (`argon2`, fourteen crates of arithmetic). What is *not* cheap is
+everything a password drags behind it: somebody will forget one, so there is a
+reset flow, so there is an address to send it to, so there is an address to
+verify, so there is `lettre` and a TLS stack and sixty crates and a deliverability
+problem and a mailbox somebody has to own. Bundle C is bundle B plus an outbox.
 
-**Sending email is where the weight is, not authentication.** Sixty of bundle
-A's seventy-four crates are `lettre` and the TLS stack under it. Any flow with
-an email in it (a magic link, a password reset, a verification) pays that, and
-none of the alternatives are cheaper: an HTTP mail API needs the same TLS client
-plus JSON.
+**Delegating sign-in removes the outbox rather than adding to it.** Nobody resets
+a password we never held; Google owns recovery, and owning recovery is the
+expensive part of owning identity. Bundle A is the cheapest row in the table
+*and* the one with the least security-sensitive code we wrote.
 
-**Google sign-in brings tokio.** `oauth2` v5 defaults to a `reqwest` client,
-which is `hyper` on `tokio` on `rustls`. Turning default features off drops it to
-67 and hands us the HTTP calls to make ourselves, against a server that has no
-HTTP client and no async anything. This is the row that changes the shape of the
-program rather than its size.
+**The Google client is not the way to talk to Google.** `google-oauth` is
+maintained and points the right way, and it costs 120 crates and an async runtime
+even with `features = ["blocking"]`, because that feature is `reqwest`'s blocking
+wrapper and spins a tokio runtime inside itself:
+
+```
+tokio → hyper → hyper-util → reqwest → google-oauth
+```
+
+**The server-side code flow needs no signature check at all.** Google's own
+documentation says so: "since you are communicating directly with Google over an
+intermediary-free HTTPS channel and using your client secret to authenticate
+yourself to Google, you can be confident that the token you receive really comes
+from Google and is valid." The caveat is that any component the token is *passed*
+to must validate it, and it is passed nowhere. So there is no JWT crate, no OAuth
+crate, and no key fetching: one POST, one JSON body, one base64 payload, and
+`json.rs` already exists.
+
+That is also why the *browser-side* variant is worse on two counts. Verifying an
+ID token means the page loaded Google Identity Services from `accounts.google.com`,
+which puts a third-party script on a page that is currently self-contained, and
+it is the variant that needs `jsonwebtoken` and Google's rotating keys.
 
 ## Recommendation
 
-**Take `argon2`, `hmac`, `sha2` and `getrandom`. Leave the rest until there is a
-reason.** That is fourteen to twenty crates, no async, no TLS, no network client,
-and it is enough for a real account: an email address, a password hashed
-properly, a signed session, and the claim flow that already exists.
+**Google sign-in over the server-side code flow, `ureq` and nothing else, and no
+passwords.** Twenty-six crates, no async runtime, no outbox, and the guest path
+stays exactly as it is.
 
-What it defers is the two expensive halves, and both defer cleanly:
+Four properties worth having on purpose rather than by accident:
 
-- **Verification email.** Without it, an address is unproven, which matters for
-  password reset and not much else at this stage. It is a bounded piece of work
-  to add, and it is the same work whenever it happens.
-- **Google sign-in.** §8.6 leans on it precisely to keep password code off the
-  critical path, and taking `argon2` removes that argument: the password path is
-  a library call rather than security-sensitive code we wrote. Google becomes a
-  convenience to add when somebody asks for it, and it is a *second credential
-  kind on the same principal*, which is exactly the shape `people.rs` already
-  has.
+- **Guests are the default and stay the default.** Signing in is not how you play,
+  it is how you carry your history to a second machine. Somebody with no Google
+  account is not shut out of anything, which is the only thing that makes a
+  single-provider decision defensible.
+- **Store `sub` and nothing else.** Google will offer an email address, a name and
+  a picture. The stable identifier is `sub`, which is what a credential should key
+  on anyway because an email address can change hands and `sub` cannot. Taking
+  only `sub` means the account system holds no personal data at all: H-8 retention
+  becomes trivially satisfiable, and there is no address to leak or to send
+  anything to even if somebody later wants to.
+- **Keep the exchange behind a seam.** "Trade this code for a subject" must be a
+  trait with a fake, or the test suite starts needing the internet and Google's
+  uptime. Cheap to do first, tedious to retrofit.
+- **A second provider is the same code again.** `people.rs` already holds several
+  credentials per principal, so Apple or GitHub later is another redirect and
+  another POST, not another design.
 
-The one thing worth deciding early rather than late is whether a session is a
-cookie in this server's own table or a signed token. It should be the table: a
-row that can be deleted is a session that can be revoked, and the table is
-already there.
+Two costs, both accepted deliberately:
+
+- **`ring` enters the tree**, through rustls, because any outbound HTTPS needs a
+  TLS stack. It is assembly and C, and it is the first dependency here that is not
+  pure Rust. `unsafe_code = "forbid"` governs our crates rather than our
+  dependencies, so nothing fails; this is a decision rather than an accident.
+- **A client secret and a registered redirect**, per environment, which is the
+  first secret this program has ever needed and one more thing to set in Railway
+  beside the volume.
+
+**Passkeys were the other email-free route and are not worth it here.** No
+passwords, no email, no third party, and ninety-nine crates. Worse, the recovery
+story is that losing your device loses your account unless you offer a fallback,
+and the usual fallback is email, which is the thing being avoided.
 
 ## Where this leaves P-15
 
