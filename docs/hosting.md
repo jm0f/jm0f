@@ -39,26 +39,44 @@ inactivity, which is most of them.
 
 ## Railway
 
-The choice, on the free plan while it fits, at a few dollars a month after.
+The choice, at **$5 a month**, on Hobby.
 
 Railway bills actual per-second consumption rather than a reserved size, and
-this process consumes almost nothing: about six megabytes of memory and CPU only
-while somebody is moving. The free plan's `$1` monthly credit covers a table of
-friends indefinitely. A custom domain is included, one per service on the free
-plan, with the certificate issued and renewed automatically.
+this process consumes almost nothing: a few megabytes of memory and CPU only
+while somebody is moving. So the plan fee is the bill, and the `$5` of usage it
+includes is not going to be touched by a table of friends. A custom domain is
+included, with the certificate issued and renewed automatically.
+
+**The free plan is not the plan.** It was, when this document was first written,
+and it has since become a `$1` monthly credit with one project, half a gigabyte
+of memory and half a gigabyte of volume, which is a shape you would be fighting
+rather than using. Hobby is `$5` a month with `$5` of usage included, five
+gigabytes of volume, and the region choice below. Pro is `$20` and buys
+collaboration features nothing here needs.
+
+**Region: EU West Metal, Amsterdam**, `europe-west4-drams3a`, set in
+`railway.toml`. It used to be a Pro-only choice and is not any more: the Metal
+regions opened to Hobby, EU West among them. The one thing to confirm in the
+dashboard rather than take on trust is that the **volume** can live in the same
+region as the service, because Metal regions lacked volume support when they
+first opened and a volume in another region is either refused or a latency
+nobody planned.
 
 What is in the repository for it:
 
 - **`Dockerfile`**, two stages, ending in `debian:stable-slim` plus one binary.
   Everything the server serves is compiled into it.
 - **`.dockerignore`**, so the build does not copy `target/` or anybody's games.
-- **`railway.toml`**, pinning one replica, with the reason written down.
+- **`railway.toml`**, pinning one replica in Amsterdam and naming the health
+  check, with the reasons written down.
 
-Three things to set in the dashboard, none of which belong in a file:
+Four things to set in the dashboard, none of which belong in a file:
 
 1. **A volume mounted at `/data`.** One gigabyte is thousands of games. Without
-   it the history vanishes on every deploy. The container writes to
-   `/data/games`, which is what the `--games` flag in the `Dockerfile` points at.
+   it the history vanishes on every deploy, and so does the roster of who played
+   them. The container writes to `/data/games`, which is what the `--games` flag
+   in the `Dockerfile` points at. Confirm it is offered in the same region the
+   service is in.
 2. **`CARRANTA_BUILD`** as a build argument, set to `$RAILWAY_GIT_COMMIT_SHA`, so
    the hash in the header names the commit rather than saying `container`.
 3. **`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `PUBLIC_ORIGIN`**, if you
@@ -67,8 +85,19 @@ Three things to set in the dashboard, none of which belong in a file:
    happens not to offer accounts rather than a broken one. `PUBLIC_ORIGIN` is
    `https://your.domain` with no trailing path, and the redirect Google must have
    registered is that plus `/signin/done`. See `accounts.md`.
-4. **Nothing else.** `PORT` is set by Railway, and the binary treats its presence
+4. **Which branch to deploy from.** Railway builds a branch and redeploys on
+   every push to it, so this is the one setting that decides what "live" means.
+5. **Nothing else.** `PORT` is set by Railway, and the binary treats its presence
    as the signal to bind `0.0.0.0` rather than loopback.
+
+**The toolchain pin has to match the manifest.** `rust-version` in the workspace
+manifest and the `FROM rust:` tag in the `Dockerfile` are the same number said
+twice, and they once disagreed with reality rather than with each other: both
+said 1.87, the code had grown let chains, which are stable from 1.88, and nothing
+built with 1.87 to notice. The container would have been the first thing to try,
+on the first deploy, which is the worst place to learn it. If the local
+toolchain is newer than the pin, `cargo +<pin> build --release` is the check, and
+it is worth running before any release that touches dependencies.
 
 ## Cloudflare in front
 

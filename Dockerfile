@@ -6,9 +6,14 @@
 # `include_bytes!`, so the runtime layer is a base image and one file.
 #
 # Pinned to a Rust version rather than `latest`: the workspace declares an MSRV
-# of 1.87 and a build that silently moves under it is a build that fails on a
-# Tuesday for no reason anybody changed.
-FROM rust:1.87-slim-bookworm AS build
+# and a build that silently moves under it is a build that fails on a Tuesday for
+# no reason anybody changed.
+#
+# It has to match `rust-version` in the workspace manifest, and once did not:
+# both said 1.87, the code had since grown let chains, which are stable from
+# 1.88, and nothing built with 1.87 to notice. This image would have been the
+# first thing to try, on the first deploy.
+FROM rust:1.88-slim-bookworm AS build
 WORKDIR /src
 
 # The manifests first, so a change to the source does not re-fetch the registry.

@@ -2018,8 +2018,14 @@ impl Server {
         // without this it was about thirty visitors and thirty rewrites of a
         // file that had just grown by thirty.
         let carried = cookie(&cookies, PLAYER_COOKIE).unwrap_or_default();
-        let anonymous =
-            path.starts_with("/art/") || path.starts_with("/font/") || path.starts_with("/sound/");
+        let anonymous = path.starts_with("/art/")
+            || path.starts_with("/font/")
+            || path.starts_with("/sound/")
+            // And the health check, which is the same argument turned up: a
+            // host asks it every few seconds for the life of the deployment, so
+            // enrolling on it would mean a new person every few seconds for
+            // ever, from the one caller that is definitely not a person.
+            || path == "/health";
         let arrival = if anonymous {
             crate::people::Arrival {
                 principal: String::new(),
@@ -2153,6 +2159,15 @@ impl Server {
                 // form that answers with a body leaves somebody looking at it.
                 redirect_with(&mut stream, "/", &cookie_cleared())
             }
+            // Is this process alive. For whatever is watching it from outside,
+            // which on a host is how a deploy knows it may take over and how a
+            // restart is decided.
+            //
+            // Deliberately the cheapest route here: no store, no lock, no
+            // sweep. The home page would have answered, and answering with it
+            // would mean listing a directory and rendering everybody's games
+            // every few seconds for ever, to learn one bit.
+            ("GET", "/health") => respond(&mut stream, 200, "text/plain", b"ok"),
             ("GET", "/lobby") => {
                 let id = self.deal("seats=4&clock=turn&clockSecs=60&discardSecs=10", &player);
                 let set = if issue {
@@ -5325,6 +5340,33 @@ mod tests {
             me,
             "a copy of that cookie taken from anywhere now proves nothing"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn there_is_a_cheap_way_to_ask_whether_this_is_alive() {
+        // What a host polls to decide a deploy is live and a process is well.
+        // The home page would have answered, and answering with it would mean
+        // listing a directory and rendering everybody's games every few seconds
+        // for ever, to learn one bit.
+        let dir = std::env::temp_dir().join(format!("carranta-health-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 11, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let answer = ask(
+            port,
+            "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer:.40}");
+        assert!(answer.trim_end().ends_with("ok"));
+        // It costs nothing: no cookie handed out, so a health check every few
+        // seconds does not enrol a visitor every few seconds.
+        assert!(!answer.contains("Set-Cookie"), "and nobody is enrolled");
+        assert!(server.people.all().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

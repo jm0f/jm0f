@@ -3,9 +3,9 @@
 # The tables live in this process's memory: lobbies, seats, ready marks and what
 # has been said at each table. Two replicas would be two different servers with
 # two different lists, and a player would reach whichever one the router picked,
-# so half the time it would not know about their game. `numReplicas = 1` is not
-# a cost decision, it is the only correct value until that state moves out of
-# the process.
+# so half the time it would not know about their game. One replica is not a cost
+# decision, it is the only correct value until that state moves out of the
+# process, and moving it is a rewrite rather than a setting.
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
@@ -17,10 +17,33 @@ numReplicas = 1
 # rather than for one that returned an error to somebody.
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
+# The cheapest route this server has, and the reason it is cheap: whatever is
+# watching asks every few seconds for the life of the deployment. The home page
+# would have answered, and would have listed a directory and rendered everybody's
+# games to do it.
+healthcheckPath = "/health"
 
-# Finished games are written here as one small text file each, and this is the
-# only thing on disk worth keeping: a game is a few hundred bytes, so a gigabyte
-# is thousands of them. Without the volume they would not survive a deploy.
+# Amsterdam, by identifier rather than by name, because the identifier is what
+# the platform reads. `europe-west4-drams3a` is Railway's EU West Metal.
 #
-# Railway mounts volumes through the dashboard rather than from this file; the
-# path to give it is `/data`, which is what the Dockerfile's command points at.
+# A one-region `multiRegionConfig` rather than a scalar setting, because that is
+# the shape the schema has: one entry with one replica says "here, once". A
+# second entry would be a second server with its own list of tables, which is
+# the one thing this program cannot survive, so the note at the top applies to
+# this block more than to any other.
+#
+# Must come after the plain `[deploy]` keys above: it is a sub-table of the same
+# table, and TOML reads everything after a header as belonging to it.
+[deploy.multiRegionConfig."europe-west4-drams3a"]
+numReplicas = 1
+
+# Finished games are written as one small text file each, beside the roster of
+# who has played them, and that is the whole of what is worth keeping: a game is
+# a few hundred bytes, so a gigabyte is thousands of them. Without a volume they
+# would not survive a deploy.
+#
+# Railway mounts volumes through the dashboard rather than from this file. The
+# path to give it is `/data`, which is what the `--games` flag in the Dockerfile
+# points at. Check when creating it that the region offering the volume is the
+# same one this file asks for: a volume and a service in different places is
+# either a refusal or a latency nobody planned.

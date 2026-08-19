@@ -4,9 +4,13 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-# `u64::is_multiple_of`, used throughout, landed in 1.87; edition 2024 alone
-# would only need 1.85, so this is the binding constraint.
-rust-version = "1.87"
+# Let chains, `if let ... && ...`, which are stable only from 1.88 and are used
+# in every file that reads an optional thing and then checks it. This said 1.87,
+# which was the constraint before them (`u64::is_multiple_of`) and had quietly
+# stopped being true: the workspace does not build on 1.87 at all, and nothing
+# noticed because nothing built it with one. The container did, on its first
+# deploy, which is the worst place to find out.
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 
 [profile.release]
