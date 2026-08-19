@@ -39,7 +39,8 @@ inactivity, which is most of them.
 
 ## Railway
 
-The choice, at **$5 a month**, on Hobby.
+The choice, at **$5 a month**, on Hobby. Live at
+`carranta-production.up.railway.app`.
 
 Railway bills actual per-second consumption rather than a reserved size, and
 this process consumes almost nothing: a few megabytes of memory and CPU only
@@ -98,6 +99,42 @@ built with 1.87 to notice. The container would have been the first thing to try,
 on the first deploy, which is the worst place to learn it. If the local
 toolchain is newer than the pin, `cargo +<pin> build --release` is the check, and
 it is worth running before any release that touches dependencies.
+
+### What the first deployment showed
+
+It is up, in Amsterdam, and three things are worth writing down because they are
+not what the configuration file appears to say.
+
+**`railway.toml` is read, and the service's stored settings are not the whole
+truth.** Asked for its configuration, the service answers `builder: RAILPACK`,
+which is the default it was created with. The build log says otherwise:
+
+```
+[build 7/7] RUN cargo build --release -p carranta-ui --bin carranta-play
+[stage-1 3/3] COPY --from=build /src/target/release/carranta-play ...
+```
+
+Config as code wins at build time. Believe the log rather than the settings.
+
+**The region came from the file.** `europe-west4-drams3a` is stored as
+`multiRegionConfig: {"ams": {"numReplicas": 1}}`, so the identifier is
+normalised and the intent survives. Nothing had to be clicked for it.
+
+**A build argument has to exist before the build that reads it.** Setting
+`CARRANTA_BUILD` after the first deploy was triggered left that image stamped
+`container`, which is the `ARG` default in the `Dockerfile` and is at least
+honest about not knowing. Re-running a deployment does not fix it either, since
+that reuses the existing image; the fix is another build, which any push causes.
+
+**What the API cannot do, and therefore what is left to a person.** The
+deployment tools cover projects, services, variables, domains, logs, status and
+config. They do not cover **volumes**, and they say outright that **regions and
+replicas** are not theirs either, which is exactly why those two live in
+`railway.toml` and why the volume does not. So:
+
+- **The volume is the one manual step.** Until it is mounted at `/data`, every
+  deploy starts with an empty games directory and an empty roster: nothing
+  breaks, and nothing is remembered.
 
 ## Cloudflare in front
 
