@@ -78,19 +78,29 @@ What is in the repository for it:
   before there was anything trained. Deploying a new champion is committing a
   different file; see `training.md`.
 
-**Which branch deploys: `main`.** It is the branch the service watches, and it
-was watching it through a long stretch where every commit went somewhere else:
-`main` sat at the first commit in the repository while the work piled up on a
-working branch, so pushes were delivered to nobody and the silence looked
-exactly like a broken webhook. That is the failure to recognise here, because
-nothing reports it: the service is configured correctly, the pushes succeed,
-and no deployment ever starts.
+**Which branch deploys: `main`**, as
+`railway service source connect --repo <owner>/<repo> --branch main`, which
+answers with what it stored and is the only way to know rather than assume:
 
-`main` has since been fast-forwarded onto the work and is the trunk. Development
-continues on a working branch, and **`main` moves only when a release is
-wanted**, which is what makes a deploy deliberate rather than a side effect of
-saving something. So the sequence for putting a change live is to push the
-working branch as usual and then fast-forward `main` onto it.
+```json
+{ "name": "carranta", "repo": "…", "branch": "main", "disconnected": false }
+```
+
+`main` is the trunk and moves only when a release is wanted, so development
+happens on a working branch that deploys nothing and putting a change live is
+a deliberate fast-forward of `main` onto it. That is a choice about when
+things go live, not a fact about git: before it was set, the service deployed
+whatever branch was pushed, and a commit went to production straight from a
+working branch while its author believed `main` was the gate.
+
+**Do not infer this setting from what deploys.** Two ways of being wrong about
+it were both on display in one evening. `main` spent months at the first
+commit in the repository while the work piled up elsewhere, so it was
+perfectly possible to be watching the right branch and receive nothing, which
+looks exactly like a broken webhook. Then, once every branch was deploying, a
+push that was never meant to be a release became one. Neither state announces
+itself, and both are read in a second from the command above or from Settings
+→ Source.
 
 Four things to set in the dashboard, none of which belong in a file:
 
@@ -196,7 +206,24 @@ replicas** are not theirs either, which is exactly why those two live in
 
 - **The volume is the one manual step.** Until it is mounted at `/data`, every
   deploy starts with an empty games directory and an empty roster: nothing
-  breaks, and nothing is remembered.
+  breaks, and nothing is remembered. It is mounted now, and the proof to want
+  is not the dashboard saying so: play a move, redeploy, and see the game still
+  listed. The container says it too, in its own first lines, `Mounting volume
+  on: …` and `games in /data/games`.
+
+**The CLI reads what the dashboard shows, which is the whole point.** `npm i -g
+@railway/cli`, then `railway login --browserless` for a machine with no browser
+of its own: it prints a code to approve from any other device, so no token is
+pasted anywhere. After `railway link` it answers the questions this document
+had previously been reduced to inferring, `railway status --json` giving the
+running deployment's branch, commit hash and message outright, and `railway
+api` reaching the GraphQL schema behind it.
+
+That is worth more than the convenience. Every wrong turn recorded above came
+from reading a *symptom* and guessing at the configuration behind it: a page
+that said `unknown`, a push that seemed ignored. The configuration can simply
+be read, and a minute of reading it would have replaced an evening of
+inference.
 
 ## Cloudflare in front
 
