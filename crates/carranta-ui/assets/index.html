@@ -1166,10 +1166,21 @@
      member, which stops the name field's right edge moving from row to row. */
   .seatSlot { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto;
               align-items: center; column-gap: 16px; }
-  .seatCtl { display: flex; justify-content: flex-end; min-width: 5.8em; }
+  .seatCtl { display: flex; align-items: center; justify-content: flex-end;
+             min-width: 5.8em; gap: .5em; }
   /* What a bot's seat is, said quietly beside its name: a placeholder, not a
      decision. The row used to carry a button here. */
   .slotUntil { color: var(--dim); font-size: .85em; }
+  /* The host taking a seat back. Dim until it is pointed at, because it is the
+     one control on this screen that happens to another person and a row of
+     bright crosses reads as an invitation to press them. Its hit area is
+     larger than the glyph, which is the part that matters on a phone. */
+  .seatDrop { appearance: none; background: none; border: 0; cursor: pointer;
+              color: var(--muted-foreground); font-size: 1.1em; line-height: 1;
+              padding: .25em .35em; margin: -.25em -.35em; border-radius: 6px;
+              transition: color .12s ease, background .12s ease; }
+  .seatDrop:hover, .seatDrop:focus-visible {
+    color: var(--destructive); background: var(--muted); }
   .seatSlot .dot { width: 1.05em; height: 1.05em; border-radius: 50%; flex: none; }
   .seatSlot .slotName { flex: 1; font-weight: 500; }
   .seatSlot .slotName.empty { color: var(--muted-foreground); font-weight: 400; }
@@ -1511,6 +1522,7 @@
          The way out is the mark in the header, which goes home from every page
          in the application. -->
     <button id="lobbyStart" class="btn-primary btn-block" style="margin-top:1.4em">I am ready</button>
+    <button id="lobbyNow" class="btn btn-block" style="margin-top:.6em" hidden>Start without waiting</button>
     <p class="lobbyCount" id="lobbyCount"></p>
   </div>
 
@@ -3635,6 +3647,24 @@ function renderLobby(v) {
       state.className = 'roomReady' + (readySet.has(i) ? ' is' : '');
       state.textContent = readySet.has(i) ? 'ready' : 'not ready';
       cell.appendChild(state);
+      // The host may take a seat back, and only in a room. Somebody else's
+      // seat only: the host's own is the Leave control, which already does the
+      // right thing. Shown as a quiet cross rather than a button, because it is
+      // the one thing on this screen that happens to another person.
+      if (mine && i !== v.you) {
+        const drop = document.createElement('button');
+        drop.className = 'seatDrop';
+        drop.type = 'button';
+        drop.textContent = '×';
+        drop.title = `Take ${seatName(v, i)}'s seat back`;
+        drop.setAttribute('aria-label', drop.title);
+        drop.onclick = () => fetch(api('/api/unseat'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ seat: i }),
+        }).then(() => load(api('/api/state')));
+        cell.appendChild(drop);
+      }
     } else {
       const until = document.createElement('span');
       until.className = 'slotUntil';
@@ -3732,6 +3762,16 @@ function renderLobby(v) {
   } else {
     start.hidden = true;
   }
+  // And the host's way past a wait that is not going to end. Unanimous ready
+  // cannot reach somebody who sat down, left the tab open and never pressed
+  // anything: they are present, so nothing frees their chair. Only when there
+  // is somebody to overrule, so a solo host sees one button rather than two
+  // that do the same thing.
+  const now = document.getElementById('lobbyNow');
+  const waiting = v.readyOf > 1 && v.ready < v.readyOf;
+  now.hidden = !(mine && waiting);
+  now.onclick = () => fetch(api('/api/begin'), { method: 'POST' })
+    .then(() => load(api('/api/state')));
   count.textContent = v.readyOf === 0
     ? 'Waiting for somebody to sit down.'
     : v.readyOf === 1 && v.you >= 0

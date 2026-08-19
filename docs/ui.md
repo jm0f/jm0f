@@ -2564,6 +2564,46 @@ is takeable right up to the first move, so the press that says the table is who
 it is now would not mean anything if a stranger could walk into one of those
 chairs a moment later.
 
+**The room never waits for a chair, only for a person.** Worth saying because it
+reads the other way round: everybody ready means everybody *sitting*, not every
+seat. Bots and held chairs are not counted, and whatever is still empty when the
+last person presses goes to the house bot. One person at a table of three bots
+presses once and plays, which is why their button reads *Start the game* rather
+than *I am ready*.
+
+**The host has two powers over a room the room does not have over itself.** They
+exist for the one failure unanimous ready cannot reach, which is not the one it
+looks like: somebody sits down, leaves the tab open, and never presses anything.
+They are present, so nothing frees their chair, and everybody else is waiting on
+a person who is not looking at the screen. The two-minute rule only reaches a tab
+that has *closed*.
+
+- **Start without waiting**, which begins the game with everybody still in their
+  seats. Starting without somebody is not removing them: they are dealt in and
+  play. Shown only when there is somebody to overrule, so a host alone sees one
+  button rather than two that do the same thing.
+- **Take a seat back**, the quiet cross on somebody else's row. Their chair
+  becomes a bot's and they may watch. Never the host's own row, because that is
+  Leave and it already does the right thing, and never once the game has begun: a
+  game owes every seat an opponent rather than a gap, and a host who could unseat
+  a player at the first sign of losing would be dealing themselves a table of
+  bots.
+
+**Taking a seat back has to be remembered, or it does nothing at all.** The
+removed page asks for the state a hundred milliseconds later, the room has a
+chair free, and the state route seats whoever asks. That auto-seating is the
+whole of how an invitation works, so the room keeps the keys it has taken seats
+from and refuses them a chair. They are told why wherever they look, rather than
+finding themselves watching a room they were sitting in with no explanation. The
+control has no undo: a misclick costs a new table.
+
+**A held request answers with the seat you have now.** A request waits up to
+twenty seconds, and a seat can move under it in that time, by the host taking it
+back or by the draw shuffling everybody when the room closes. The seat used to be
+read once before the hold, so the answer described whichever chair the asker held
+when they asked. Everything private in the view is keyed off that number, so it
+is the one thing here that must not be stale.
+
 **The room is the lobby screen, and it shows who is here by name.** The seat
 rows are the roster: each one is a person under their name, or a house bot
 marked *plays until somebody joins*, and each person carries whether they have

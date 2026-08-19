@@ -341,6 +341,18 @@ struct Table {
     /// part of who is in the seat and is never written down: a game that has
     /// begun has no use for it.
     ready: Vec<bool>,
+    /// Whose keys the host has taken a seat back from.
+    ///
+    /// Without it, removing somebody does nothing at all: their page asks for
+    /// the state a hundred milliseconds later, the room still has the chair
+    /// free, and the state route seats whoever asks. That auto-seating is the
+    /// whole of how an invitation works, so the room has to remember the one
+    /// case where somebody asking is not somebody arriving.
+    ///
+    /// Keys rather than seats, because the point is the person and the seats
+    /// move under them at the draw. Never written down: a room is not, and by
+    /// the time there is a game to write, this has done its work.
+    removed: Vec<String>,
     /// Whether this table was dealt as a room: somewhere people gather before
     /// the game begins, rather than a board that starts the moment it exists.
     ///
@@ -551,6 +563,17 @@ impl Table {
     /// there: free text from a player must never reach a bot's input, so it is
     /// carried to the page beside the game rather than through it.
     fn seen_by(&self, seat: Option<u8>, player: &str, note: Option<&str>) -> String {
+        // Said wherever they look, rather than only in answer to the request
+        // that did it. Somebody whose seat was taken back finds themselves
+        // watching a room they were sitting in, and a screen that changes under
+        // you without saying why is the worst version of this.
+        let taken =
+            seat.is_none() && !player.is_empty() && self.removed.iter().any(|k| k == player);
+        let note = match note {
+            Some(n) => Some(n),
+            None if taken => Some("The host took your seat back. You can still watch."),
+            None => None,
+        };
         let room = view::Room {
             takeable: self.takeable(),
             lobby: self.in_lobby(),
@@ -992,6 +1015,7 @@ impl Server {
             // link. The cost is one press for solo play, the ready button, and
             // it buys every table the same first screen.
             lobby: true,
+            removed: Vec::new(),
             ready: vec![false; seats as usize],
         };
         table.seat_the_people();
@@ -1149,6 +1173,7 @@ impl Server {
                 drawn: true,
                 shut: true,
                 lobby: false,
+                removed: Vec::new(),
                 ready: vec![false; self.seats as usize],
             });
             self.keep(&id);
@@ -1246,6 +1271,7 @@ impl Server {
             // shut by its own moves.
             shut: true,
             lobby: false,
+            removed: Vec::new(),
             ready: vec![false; saved.setup.chairs.len().max(saved.seats as usize)],
         };
         table.seat_the_people();
@@ -1310,6 +1336,13 @@ impl Server {
             return Some(seat);
         }
         if player.is_empty() || table.session.started() || table.session.winner().is_some() {
+            return None;
+        }
+        // Somebody the host took a seat back from. They may still watch, which
+        // is what anybody without a seat may do; what they may not do is sit
+        // straight back down, which is what would otherwise happen on their very
+        // next poll and would make the host's control do nothing.
+        if table.removed.iter().any(|k| k == player) {
             return None;
         }
         let seat = table.free_seat()?;
@@ -1565,6 +1598,68 @@ impl Server {
         }
         table.name_the_seats();
         table.moved();
+        Ok(())
+    }
+
+    /// Take a seat back from somebody, which is the host's alone to do.
+    ///
+    /// The room's exit belongs to the room and its composition belongs to the
+    /// host, and those are different powers. Unanimous ready is the right rule
+    /// for "are we all here", and it has one failure the presence rule cannot
+    /// reach: somebody sits down, leaves the tab open, and never presses
+    /// anything. They are present, so nothing frees their chair, and everybody
+    /// else waits on a person who is not coming back to the screen.
+    ///
+    /// Only in a room. A game under way owes every seat an opponent rather than
+    /// a gap, and a host who could unseat a player mid-game could hand
+    /// themselves a table of bots at the first sign of losing.
+    ///
+    /// Never their own seat: that is Leave, which already does the right thing
+    /// and does not need a second way in.
+    fn unseat(&self, id: &str, player: &str, seat: u8) -> Result<(), &'static str> {
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return Err("that game is over");
+        };
+        if player.is_empty() || table.by != player {
+            return Err("only the host changes the table");
+        }
+        if !table.in_lobby() {
+            return Err("the game has started");
+        }
+        if table.seat_of(player) == Some(seat) {
+            return Err("that is your own seat");
+        }
+        let Some(Chair::Taken { key, name }) = table.chairs.get(seat as usize).cloned() else {
+            return Err("nobody is in that seat");
+        };
+        // Remembered before the chair is freed, or this does nothing at all:
+        // their page asks for the state a hundred milliseconds later, the room
+        // has a chair free, and the state route seats whoever asks. That
+        // auto-seating is the whole of how an invitation works, so the room has
+        // to remember the one case where asking is not arriving.
+        if !table.removed.contains(&key) {
+            table.removed.push(key);
+        }
+        table.chairs[seat as usize] = Chair::Bot;
+        table.session.name_seat(seat, "");
+        if let Some(r) = table.ready.get_mut(seat as usize) {
+            *r = false;
+        }
+        table.session.note_to_table(if name.is_empty() {
+            format!("Player {} was taken off the table", seat + 1)
+        } else {
+            format!("{name} was taken off the table")
+        });
+        table.seat_the_people();
+        table.moved();
+        // Which can be the thing everybody else was waiting for, exactly as
+        // walking out and going quiet already are.
+        let agreed = table.all_ready();
+        drop(tables);
+        if agreed {
+            self.begin(id);
+        }
         Ok(())
     }
 
@@ -2055,8 +2150,17 @@ impl Server {
                     // nobody is ever sent another seat's hand. Either way it
                     // carries how many chairs are still going, because that is
                     // the one thing about this table you can be too late for.
+                    //
+                    // Read again here rather than reused from above. A request
+                    // is held for up to twenty seconds and a seat can move under
+                    // it in that time: the host takes it back, or the room
+                    // closes and the draw shuffles everybody. Answering with the
+                    // seat somebody had when they asked would hand them a view
+                    // of a chair that is no longer theirs, and the whole of the
+                    // redaction is keyed off this number.
+                    let now_seat = t.seat_of(&player);
                     if since != Some(mark) || std::time::Instant::now() >= until {
-                        break t.seen_by(seat, &player, None);
+                        break t.seen_by(now_seat, &player, None);
                     }
                     // Nothing has changed and there is time left. The lock is
                     // dropped first, because sleeping on it would stop the very
@@ -2235,6 +2339,59 @@ impl Server {
                     let tables = self.tables.lock().unwrap();
                     match tables.iter().find(|t| t.id == id) {
                         Some(t) => t.seen_by(seat, &player, None),
+                        None => String::from("{}"),
+                    }
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
+            // The host, not waiting any longer. Unanimous ready is the right
+            // rule for "are we all here" and cannot reach one case: somebody
+            // sits down, leaves the tab open, and never presses anything. They
+            // are present, so nothing frees their chair, and everybody else
+            // waits on a person who is not looking at the screen.
+            ("POST", "/api/begin") => {
+                let id = game.clone().unwrap_or_default();
+                self.stir(&id);
+                {
+                    let tables = self.tables.lock().unwrap();
+                    let Some(t) = tables.iter().find(|t| t.id == id) else {
+                        return respond(&mut stream, 409, "text/plain", b"that game is over");
+                    };
+                    if player.is_empty() || t.by != player {
+                        return respond(&mut stream, 403, "text/plain", b"only the host starts");
+                    }
+                    if !t.in_lobby() {
+                        return respond(&mut stream, 409, "text/plain", b"already started");
+                    }
+                }
+                self.begin(&id);
+                let seat = self.seated(&id, &player);
+                let payload = {
+                    let tables = self.tables.lock().unwrap();
+                    match tables.iter().find(|t| t.id == id) {
+                        Some(t) => t.seen_by(seat, &player, None),
+                        None => String::from("{}"),
+                    }
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
+            // The host, taking a seat back. The other half of the same power:
+            // one says the table is who it is now, the other says who that is.
+            ("POST", "/api/unseat") => {
+                let id = game.clone().unwrap_or_default();
+                self.stir(&id);
+                let seat: u8 = match param(&body, "seat").and_then(|v| v.parse().ok()) {
+                    Some(s) => s,
+                    None => return respond(&mut stream, 400, "text/plain", b"which seat"),
+                };
+                if let Err(why) = self.unseat(&id, &player, seat) {
+                    return respond(&mut stream, 403, "text/plain", why.as_bytes());
+                }
+                let mine = self.seated(&id, &player);
+                let payload = {
+                    let tables = self.tables.lock().unwrap();
+                    match tables.iter().find(|t| t.id == id) {
+                        Some(t) => t.seen_by(mine, &player, None),
                         None => String::from("{}"),
                     }
                 };
@@ -2756,6 +2913,7 @@ mod tests {
             ],
             chat: true,
             said: Vec::new(),
+            removed: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
             pulse: 0,
@@ -2822,6 +2980,7 @@ mod tests {
             ],
             chat: true,
             said: Vec::new(),
+            removed: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
             pulse: 0,
@@ -2909,6 +3068,7 @@ mod tests {
             ],
             chat: true,
             said: Vec::new(),
+            removed: Vec::new(),
             seen: vec![now(); 4],
             stirred: now(),
             pulse: 0,
@@ -3417,6 +3577,160 @@ mod tests {
         assert!(
             began.elapsed() < std::time::Duration::from_secs(2),
             "an unfamiliar mark is answered, not held"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_host_can_start_over_somebody_who_never_pressed_anything() {
+        // Unanimous ready is the right rule for "are we all here" and has one
+        // failure the presence rule cannot reach: somebody sits down, leaves the
+        // tab open, and never presses anything. They are present, so nothing
+        // frees their chair, and the room waits on a person who is not looking.
+        let dir = std::env::temp_dir().join(format!("carranta-host-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 17, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let idler = "idlerkey00000000";
+        let id = server.deal("seats=4&name=Marta&pace=instant", host);
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
+        assert_eq!(server.sit(&id, idler, "Nuria"), Some(2));
+
+        // Nobody else may do this, whatever they think of the wait.
+        assert_eq!(
+            server.unseat(&id, guest, 2),
+            Err("only the host changes the table")
+        );
+        assert_eq!(
+            server.unseat(&id, host, 0),
+            Err("that is your own seat"),
+            "leaving is its own control and does the right thing"
+        );
+
+        // Taking a seat back has to stick. Without the room remembering, the
+        // removed page asks for the state a hundred milliseconds later and the
+        // route seats whoever asks, so the control did nothing at all. This is
+        // the case a browser caught and this file could not: nothing here polls
+        // on its own.
+        assert!(server.unseat(&id, host, 2).is_ok());
+        assert_eq!(
+            server.sit(&id, idler, "Nuria"),
+            None,
+            "and they cannot sit straight back down"
+        );
+        assert!(
+            server.seated(&id, idler).is_none(),
+            "so they are watching, not playing"
+        );
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("still there");
+            assert!(
+                t.seen_by(None, idler, None).contains("took your seat back"),
+                "and are told why, wherever they look"
+            );
+        }
+        // Somebody else arriving is unaffected: the room remembers a person,
+        // not a closed chair.
+        let late = "latekey000000000";
+        assert_eq!(server.sit(&id, late, "Bea"), Some(2), "the chair is open");
+
+        // And taking the last seat back is the thing the other two are waiting
+        // for: the room stands agreed and starts on its own.
+        assert!(server.ready(&id, host));
+        assert!(server.ready(&id, guest));
+        assert!(server.unseat(&id, host, 2).is_ok());
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("still there");
+            assert!(!t.in_lobby(), "the room closed behind them");
+            assert!(t.seat_of(late).is_none(), "and the seat is a bot's");
+        }
+        // Mid-game the power is gone. A game owes every seat an opponent rather
+        // than a gap, and a host who could unseat a player at the first sign of
+        // losing would be dealing themselves a table of bots.
+        assert_eq!(server.unseat(&id, host, 1), Err("the game has started"));
+
+        // And the plain case: two people, one of them silent, and the host
+        // starting without them rather than taking their seat.
+        let other = server.deal("seats=4&name=Marta&pace=instant", host);
+        assert_eq!(server.sit(&other, guest, "Vidal"), Some(1));
+        assert!(server.ready(&other, host));
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == other).expect("dealt");
+            assert_eq!(t.ready_count(), (1, 2), "one of two, and stuck there");
+        }
+        assert!(server.begin(&other));
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == other).expect("dealt");
+            assert!(!t.in_lobby(), "started");
+            assert!(
+                t.seat_of(guest).is_some(),
+                "and the one who never pressed is still playing: starting \
+                 without them is not removing them"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_held_request_answers_with_the_seat_you_have_now() {
+        // A request is held for up to twenty seconds, and the seat it was asked
+        // from can move under it in that time: the host takes it back, or the
+        // room closes and the draw shuffles everybody. The seat used to be read
+        // once, before the hold, so the answer described whichever chair the
+        // asker had when they asked. That is the number the whole redaction is
+        // keyed off, so it is the one thing here that must not be stale.
+        let dir = std::env::temp_dir().join(format!("carranta-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 63, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal("seats=4&name=Marta", host);
+        let seat_of = |body: &str| -> i64 {
+            body.rsplit("\"you\":")
+                .next()
+                .and_then(|t| t.split(&[',', '}'][..]).next())
+                .and_then(|t| t.trim().parse().ok())
+                .expect("a seat")
+        };
+        let first = get(port, &format!("/{id}/api/state"), guest);
+        assert_eq!(seat_of(&first), 1, "the guest walked into the free chair");
+        let mark: u64 = first
+            .rsplit("\"mark\":")
+            .next()
+            .and_then(|t| t.split(&[',', '}'][..]).next())
+            .and_then(|t| t.trim().parse().ok())
+            .expect("a mark");
+
+        // Their page asks again and is held, because nothing has changed yet.
+        let held = {
+            let id = id.clone();
+            std::thread::spawn(move || get(port, &format!("/{id}/api/state?since={mark}"), guest))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!held.is_finished(), "still waiting");
+
+        // And while it waits, the host takes their seat back.
+        assert!(server.unseat(&id, host, 1).is_ok());
+        let body = held.join().expect("the held request finished");
+        assert_eq!(
+            seat_of(&body),
+            -1,
+            "answered as somebody watching, not as the chair they used to be in"
+        );
+        assert!(
+            body.contains("took your seat back"),
+            "and said so: a screen that changes under you without saying why is \
+             the worst version of this"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
