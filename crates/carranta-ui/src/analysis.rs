@@ -119,6 +119,77 @@ pub fn rated(saved: &Saved) -> bool {
     saved.winner.is_some() && saved.setup.chairs.iter().any(|c| c.is_person() && !c.left)
 }
 
+/// Whether somebody stays at the tables they sit down at.
+///
+/// The number the rating deliberately does not carry. A game somebody walked out
+/// of counts against them at the place they finished, because voiding it would
+/// make leaving free and would throw away the game of everyone who stayed; but
+/// "how often do they walk out" is a different question from "how well do they
+/// play", and answering both with one number answers neither. So it is a count,
+/// beside the rating and not inside it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Finishing {
+    /// Games they were still at when it last moved.
+    pub stayed: u32,
+    /// Games they were not.
+    pub left: u32,
+}
+
+impl Finishing {
+    pub fn played(&self) -> u32 {
+        self.stayed + self.left
+    }
+
+    /// The share they stayed for, or `None` before there is anything to divide.
+    pub fn rate(&self) -> Option<f64> {
+        (self.played() > 0).then(|| self.stayed as f64 / self.played() as f64)
+    }
+}
+
+/// How reliably one person finishes what they sit down to.
+///
+/// Read from the chair lines, which say who was at the table when the file was
+/// last written (format 8). Every move writes the file, so for a finished game
+/// that is who was there at the end, and for an abandoned one it is who was
+/// there the last time anything happened. Both are the same question and neither
+/// needs the game to have a winner.
+///
+/// **Unfinished games count.** They have to: a rule that only looked at finished
+/// games would make walking out free as long as you did it before somebody won,
+/// which is exactly when people walk out. The cost is that in a game everybody
+/// drifted away from, whoever happened to move last is recorded as present.
+/// That is arbitrary at the edge and true in substance: they were there when the
+/// game last moved.
+///
+/// **Games with no moves do not count.** A room that never started is not a game
+/// anybody left.
+///
+/// Resolved through the claims (P-1), so a guest's record follows them to their
+/// account like everything else of theirs.
+pub fn finishing(history: &[Saved], principal: &str, who: &dyn Aliases) -> Finishing {
+    let mine = who.resolve(principal);
+    let mut out = Finishing::default();
+    for g in history {
+        if g.moves.is_empty() {
+            continue;
+        }
+        let Some(chair) = g
+            .setup
+            .chairs
+            .iter()
+            .find(|c| c.is_person() && who.resolve(&c.who) == mine)
+        else {
+            continue;
+        };
+        if chair.left {
+            out.left += 1;
+        } else {
+            out.stayed += 1;
+        }
+    }
+    out
+}
+
 /// What to call each seat, in seat order.
 ///
 /// A person's own name, the bots' in the order they are sitting, and a build
@@ -2623,6 +2694,106 @@ mod tests {
         assert_eq!(named[1], "Ada", "today's build is just its name");
         assert_eq!(named[2], "Bram (house v2)");
         assert_eq!(named[3], "Ines (llm-fable v3)");
+    }
+
+    #[test]
+    fn whether_somebody_stays_is_counted_beside_the_rating_and_not_inside_it() {
+        // The number the rating deliberately does not carry. Walking out costs
+        // you the place you finished in; how often you do it is a different
+        // question, and one number cannot answer both.
+        let me = "egonkey000000000";
+        let them = "martakey00000000";
+        let seated = |mine_left: bool, theirs_left: bool| Setup {
+            chairs: vec![
+                Chair {
+                    left: mine_left,
+                    ..Chair::person(me, "Egon")
+                },
+                Chair {
+                    left: theirs_left,
+                    ..Chair::person(them, "Marta")
+                },
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        let mut stayed = played(20);
+        stayed.setup = seated(false, true);
+        let mut walked = played(21);
+        walked.setup = seated(true, false);
+        // A game nobody won still counts. A rule that only looked at finished
+        // games would make walking out free as long as you did it before
+        // somebody won, which is exactly when people walk out.
+        let mut abandoned = played(22);
+        abandoned.winner = None;
+        abandoned.setup = seated(true, false);
+        // A room that never started is not a game anybody left.
+        let mut unplayed = played(23);
+        unplayed.moves.clear();
+        unplayed.setup = seated(true, true);
+
+        let history = vec![stayed, walked, abandoned, unplayed];
+        let mine = finishing(&history, me, &crate::people::NoAliases);
+        assert_eq!(mine.stayed, 1);
+        assert_eq!(mine.left, 2, "one finished without them, one abandoned");
+        assert_eq!(mine.played(), 3, "and the room does not count");
+        assert!((mine.rate().expect("some games") - 1.0 / 3.0).abs() < 1e-9);
+
+        let theirs = finishing(&history, them, &crate::people::NoAliases);
+        assert_eq!((theirs.stayed, theirs.left), (2, 1));
+
+        // Somebody with no games has no record, which is not a bad one.
+        let nobody = finishing(&history, "nobodyatall00000", &crate::people::NoAliases);
+        assert_eq!(nobody.played(), 0);
+        assert_eq!(nobody.rate(), None, "an unrecorded record is not zero");
+    }
+
+    #[test]
+    fn a_record_of_staying_follows_a_claim() {
+        // Like everything else of theirs (P-1). The games still name the guest,
+        // because they do; whose record they count towards is resolved when
+        // somebody reads.
+        let d = std::env::temp_dir().join(format!("carranta-staying-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let people = crate::people::People::open(&d);
+        let guest = people.arrive("").principal;
+        let account = people.arrive("").principal;
+
+        let mut here = played(24);
+        here.setup = Setup {
+            chairs: vec![
+                Chair::person(&guest, "Egon"),
+                Chair::bot(),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        let mut there = played(25);
+        there.setup = Setup {
+            chairs: vec![
+                Chair {
+                    left: true,
+                    ..Chair::person(&account, "Egon")
+                },
+                Chair::bot(),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        let history = vec![here, there];
+        assert_eq!(finishing(&history, &account, &people).played(), 1, "apart");
+        assert!(people.claim(&guest, &account).is_ok());
+        let both = finishing(&history, &account, &people);
+        assert_eq!((both.stayed, both.left), (1, 1), "and together after");
+        assert_eq!(
+            finishing(&history, &guest, &people),
+            both,
+            "asked either way round, since the guest is the account now"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

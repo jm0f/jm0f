@@ -974,14 +974,28 @@ impl Server {
         // Theirs means played in, not dealt: a game somebody invited you to is
         // one of your games, and the chairs are what say so. Before people could
         // join, the two were the same question.
+        //
+        // Through the claims, or signing in would be a promise this page breaks
+        // on the very next load: the games a guest played still name the guest,
+        // for ever, and "these are yours now" is a thing resolved when somebody
+        // reads rather than a thing written back into a file (P-1).
+        let me = crate::people::Aliases::resolve(&self.people, player);
         let mine: Vec<Saved> = self
             .store
             .all()
             .into_iter()
             .filter(|g| {
-                !live.contains(&g.id)
-                    && !player.is_empty()
-                    && (g.by == player || g.setup.chairs.iter().any(|c| c.who == player))
+                if live.contains(&g.id) || player.is_empty() {
+                    return false;
+                }
+                let is_mine = |key: &str| {
+                    !key.is_empty() && crate::people::Aliases::resolve(&self.people, key) == me
+                };
+                is_mine(&g.by)
+                    || g.setup
+                        .chairs
+                        .iter()
+                        .any(|c| c.is_person() && is_mine(&c.who))
             })
             .collect();
         crate::home::page(
@@ -992,6 +1006,11 @@ impl Server {
                 signed_in: self.people.has_account(player),
                 name: self.people.name(player),
             },
+            // Whether they stay at the tables they sit down at, which is the
+            // number the rating deliberately does not carry. Read over the same
+            // list the section below it shows, and through the claims, so a
+            // guest's record follows them to their account.
+            crate::analysis::finishing(&mine, player, &self.people),
         )
     }
 

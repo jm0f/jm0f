@@ -2136,9 +2136,26 @@ What is deliberately not a rule: **a game somebody walked out of counts against
 them, at the place they finished.** §8.3 of the scoping doc proposed excluding
 substituted games, which is right for a statistics table and wrong for a live
 server. It makes leaving free, so the correct play when losing would be to close
-the tab, and it throws away the game of everyone who stayed. How often somebody
-walks out is worth publishing, as a count of its own rather than through a number
-that is supposed to mean skill.
+the tab, and it throws away the game of everyone who stayed.
+
+**How often somebody walks out is a count of its own, beside the rating and not
+inside it.** "How well do they play" and "do they stay" are two questions, and
+one number answers neither. So there is a second number, read off the chair lines
+that already say who was at the table when the file was last written.
+
+- **Unfinished games count.** They have to. A rule that only looked at finished
+  games would make walking out free as long as it happened before somebody won,
+  which is exactly when people walk out. The cost is that in a game everybody
+  drifted away from, whoever moved last is recorded as present: arbitrary at the
+  edge, true in substance.
+- **Games with no moves do not.** A room nobody started is not a game anybody
+  left.
+- **It follows a claim**, like everything else of theirs.
+- **It is yours alone.** It would be easy to put beside every name at a table and
+  much harder to undo: a number about somebody else's reliability, on a screen
+  they cannot see, is a thing people would use on each other. If it ever goes
+  public that should be a decision rather than a side effect of showing it to its
+  owner.
 
 **The report is a document, not an application.** Everything on it settled the
 moment the game ended, so it is rendered on the server and carries no script.
@@ -2171,6 +2188,21 @@ opened the lobby because there was no home to go to.
 **One button, and then whatever there is.** The page opens with **New game**,
 centred, and three lines under it saying what is behind it; below that come the
 tables and the history, each present only when it has something in it.
+
+**Your games follow a claim, and the blurb above them stops apologising once
+you have signed in.** The list resolves through the alias table (§19), so an
+account sees what it played as a guest without a byte of any game having moved.
+Under it, once there are at least three games to divide, a line saying whether
+you stay at the tables you sit down at: *You were at the table at the end of 4 of
+your 6 games*, or *You finished all 3 of your games* when there is nothing to
+divide. Three, because one abandoned first game should not brand anybody and
+"0 of 1" reports a coin toss as a habit. §12 says why it is a count of its own
+rather than part of the rating.
+
+**The account strip is the only place accounts appear**, at the top right: a
+single **Sign in** link, or your name beside **Sign out**. Sign out is a form
+rather than a link, because it changes something and a link that changes
+something is one a prefetcher can press. Nothing about it needs script (§20).
 
 Like the report (§12), it is **a document rather than an application**: server
 rendered, and with **no script at all**. Nothing on it changes without a request,
