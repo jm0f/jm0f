@@ -2228,6 +2228,10 @@ const SOUNDS = {
   offer: '/sound/drop-002.mp3',
   accept: '/sound/confirmation-001.mp3',
   deny: '/sound/error-008.mp3',
+  // Each of the last five seconds of your own turn. The same short note as
+  // "you are up", which is the right relation between them: one says the turn
+  // is yours, and five of them say it is about to stop being.
+  countdown: '/sound/confirmation-001.mp3',
 };
 // What each sound is for, as a test against a line of the log.
 //
@@ -3314,12 +3318,19 @@ function mmss(t) {
 function tickClock() {
   const el = document.getElementById('clock');
   if (!el) return;
-  const gone = Math.floor((Date.now() - clockAt) / 1000);
+  // A finished game has no time passing in it. Both clocks here count locally
+  // between payloads, so without this the turn clock went on counting down
+  // under the winner's dialog and the game timer went on climbing for as long
+  // as the tab stayed open. They freeze rather than blank: how long the game
+  // took is worth reading afterwards.
+  const over = !!view && view.winner !== null && view.winner !== undefined;
+  const gone = over ? 0 : Math.floor((Date.now() - clockAt) / 1000);
   // Only a running clock counts down. A seat waiting its turn is showing what
   // it will get, which does not shrink while it waits.
-  const running = clockDown && clockWho && clockWho.running;
+  const running = clockDown && clockWho && clockWho.running && !over;
   const t = clockDown ? (clockWho ? clockWho.left - (running ? gone : 0) : 0)
     : clockBase + gone;
+  countdownBeep(running && view && clockWho.seat === view.you ? t : null);
   el.classList.toggle('low', running && t > 0 && t <= 15);
   el.classList.toggle('over', clockDown && t <= 0);
   setDigits(el, clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t)));
@@ -3336,6 +3347,25 @@ function tickClock() {
   const game = document.getElementById('gameTime');
   if (game) setDigits(game, mmss(clockGame + gone));
   tickDiscard();
+}
+
+// The last five seconds of your own turn, out loud.
+//
+// Your clock only, not whoever is on it: this is a warning to move, and a
+// warning about somebody else's clock is just noise on their turn. Read from
+// the same second the digits are drawn on, so what you hear and what you see
+// cannot disagree.
+//
+// `t` is the seconds left, or null when there is nothing to warn about. The
+// last value spoken is remembered so a beat sounds once however often this
+// runs, and cleared whenever the countdown is not on, so the next turn to run
+// low beeps again from five.
+let lastBeat = null;
+function countdownBeep(t) {
+  if (t === null || t > 5 || t < 1) { lastBeat = null; return; }
+  if (t === lastBeat) return;
+  lastBeat = t;
+  playSound('countdown');
 }
 
 // The seven's clock, counted down on this same second rather than on the

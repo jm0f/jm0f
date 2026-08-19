@@ -304,11 +304,10 @@ pub struct Session {
     /// What each seat is called, empty where nobody has said. A seat's name is
     /// the seat's, not the table's: two people means two answers.
     names: [String; SEATS],
+    /// Who plays each seat a person does not, and which player that is. The
+    /// identity lives on the brain rather than beside it, so a seat and the
+    /// name written into its chair cannot drift apart.
     bots: Vec<Brain>,
-    /// The training generation of the champion playing the bot seats, when one
-    /// is. `None` is the house heuristic, which is what every table was before
-    /// there was anything trained to seat.
-    trained: Option<u32>,
     /// Bumped on every applied action, so a click made against a stale board is
     /// refused rather than applied to a different position.
     version: u64,
@@ -399,6 +398,17 @@ pub struct Session {
     /// Its own generator rather than the game's, so forfeits never disturb the
     /// dice or the deck.
     forfeit: Rng,
+    /// When the game ended, once it has.
+    ///
+    /// Every clock on the page is a subtraction from *now*, which keeps being
+    /// true of a finished game and keeps producing a different answer: the
+    /// turn clock counted down under the winner's own dialog and the game
+    /// timer went on climbing for as long as the tab stayed open. Nobody is
+    /// thinking any more, so there is nothing left to measure. This is the
+    /// moment every reading is taken against once it exists, which freezes the
+    /// clocks at the values they held when the game was won rather than
+    /// blanking them: how long the game took is worth reading afterwards.
+    ended: Option<std::time::Instant>,
 }
 
 /// The software behind a seat nobody is sitting in.
@@ -410,21 +420,24 @@ pub struct Session {
 /// could not.
 enum Brain {
     House(Heuristic),
-    Trained(NetPolicy),
+    /// A trained champion, carrying the generation it came from. The number is
+    /// the player's identity rather than a label: two generations of one run
+    /// are two players, and the chair records which one sat here.
+    Trained(NetPolicy, u32),
 }
 
 impl Brain {
     fn choose(&mut self, state: &State, legal: &[Action]) -> Action {
         match self {
             Brain::House(h) => h.choose(state, legal),
-            Brain::Trained(n) => n.choose(state, legal),
+            Brain::Trained(n, _) => n.choose(state, legal),
         }
     }
 
     fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
         match self {
             Brain::House(h) => h.accepts(state, seat, offer),
-            Brain::Trained(n) => n.accepts(state, seat, offer),
+            Brain::Trained(n, _) => n.accepts(state, seat, offer),
         }
     }
 }
@@ -453,7 +466,6 @@ impl Session {
             bots: (0..seats)
                 .map(|s| Brain::House(Heuristic::new(seat_seed(seed, s))))
                 .collect(),
-            trained: None,
             version: 0,
             log: vec![LogLine {
                 turn: 0,
@@ -496,7 +508,25 @@ impl Session {
             // boundary into it.
             was_placing: true,
             forfeit: Rng::new(seed ^ 0x5EED_C10C_C0FF_EE01),
+            ended: None,
         }
+    }
+
+    /// The moment every clock reading is taken against: now, or the moment the
+    /// game ended, whichever came first.
+    ///
+    /// A finished game has no time passing in it. Routing every elapsed
+    /// calculation through here is what makes that true everywhere at once,
+    /// rather than in each place somebody remembered to ask whether the game
+    /// was over.
+    fn measured_at(&self) -> std::time::Instant {
+        self.ended.unwrap_or_else(std::time::Instant::now)
+    }
+
+    /// How long a moment in the past has been going, with a finished game's
+    /// clocks stopped at the end.
+    fn since(&self, mark: std::time::Instant) -> std::time::Duration {
+        self.measured_at().saturating_duration_since(mark)
     }
 
     /// Put this game on a clock.
@@ -537,7 +567,7 @@ impl Session {
         if self.discard_secs == 0 {
             return None;
         }
-        Some(self.discard_secs as i64 - at.elapsed().as_secs() as i64)
+        Some(self.discard_secs as i64 - self.since(at).as_secs() as i64)
     }
 
     /// Whether a discard is being waited on right now.
@@ -550,7 +580,7 @@ impl Session {
         self.turn_paused
             + self
                 .discard_at
-                .map_or(std::time::Duration::ZERO, |t| t.elapsed())
+                .map_or(std::time::Duration::ZERO, |t| self.since(t))
     }
 
     /// Of that, how much has not yet been taken off anybody's account.
@@ -575,40 +605,81 @@ impl Session {
         }
     }
 
-    /// Hand every bot seat to a trained champion.
+    /// Hand one seat to a trained champion.
     ///
-    /// All of them rather than one, because a seat nobody sits in is "the
-    /// bot's" and a table has one bot: the identity written into the game file
-    /// is per chair but the software behind every bot chair is the same, and
-    /// seating two different programs would need two identities the file can
-    /// already carry but nothing else here can yet.
+    /// Per seat rather than per table, because two champions at one table is
+    /// the only way to ask which is better and get an answer that means
+    /// anything: they play the same board, from different chairs, and the game
+    /// file names each of them separately, so the ratings compare them
+    /// directly rather than through a third party. A generation is a player
+    /// (E-8), and the chair records which one.
     ///
-    /// The market's *enumeration* is switched to the mixed shapes the champion
-    /// trained under (up to two cards a side, the training default), because a
-    /// policy chooses from what the engine generates, and a champion that
-    /// learned to offer wood-and-brick for ore would have that repertoire
-    /// silently amputated at a table that only generates one-type offers.
-    /// Nothing about *legality* moves: people compose whatever they like
-    /// through the form, exactly as before.
-    pub fn with_trained(mut self, net: &Net, generation: u32) -> Self {
-        self.bots = (0..self.seats)
-            .map(|s| Brain::Trained(NetPolicy::new(net.clone(), seat_seed(self.seed, s))))
-            .collect();
-        self.trained = Some(generation);
+    /// The market's *enumeration* switches to the mixed shapes champions train
+    /// under (up to two cards a side, the training default) as soon as any seat
+    /// is a champion's, because a policy chooses from what the engine
+    /// generates, and one that learned to offer wood-and-brick for ore would
+    /// have that repertoire silently amputated at a table that only generates
+    /// one-type offers. It is a property of the table rather than of the seat,
+    /// so one champion is enough to set it, and the same shapes then apply to
+    /// everybody, which is what keeps the comparison fair. Nothing about
+    /// *legality* moves: people compose whatever they like through the form.
+    pub fn seat_trained(&mut self, seat: u8, net: &Net, generation: u32) {
+        let Some(slot) = self.bots.get_mut(seat as usize) else {
+            return;
+        };
+        *slot = Brain::Trained(
+            NetPolicy::new(net.clone(), seat_seed(self.seed, seat)),
+            generation,
+        );
         self.state.offer_shapes = OfferShapes::Mixed {
             give: Some(2),
             want: 2,
         };
+    }
+
+    /// Deal champions round the bot seats, repeating if there are fewer
+    /// champions than seats.
+    ///
+    /// Two champions at a four seat table is one each on two chairs, which is
+    /// the pairing worth running: seats differ in value, so a champion that
+    /// only ever played one of them would be rated partly on its luck of the
+    /// draw.
+    pub fn with_trained(mut self, champions: &[(Net, u32)]) -> Self {
+        if champions.is_empty() {
+            return self;
+        }
+        for seat in 0..self.seats {
+            let (net, generation) = &champions[seat as usize % champions.len()];
+            self.seat_trained(seat, net, *generation);
+        }
         self
     }
 
-    /// Which software plays this table's bot seats, as `name@version`: the
-    /// identity a game file writes into every bot chair.
-    pub fn agent(&self) -> String {
-        match self.trained {
-            Some(generation) => format!("{}@{generation}", carranta_bot::TRAINED),
-            None => format!("{}@{}", carranta_bot::HOUSE, carranta_bot::HOUSE_VERSION),
+    /// Which software plays one seat, as `name@version`: the identity a game
+    /// file writes into that chair, and the player a rating is about.
+    pub fn agent_of(&self, seat: u8) -> String {
+        match self.bots.get(seat as usize) {
+            Some(Brain::Trained(_, generation)) => {
+                format!("{}@{generation}", carranta_bot::TRAINED)
+            }
+            _ => format!("{}@{}", carranta_bot::HOUSE, carranta_bot::HOUSE_VERSION),
         }
+    }
+
+    /// Every champion generation seated here, lowest first, for saying who is
+    /// at the table without asking seat by seat.
+    pub fn champions(&self) -> Vec<u32> {
+        let mut seen: Vec<u32> = self
+            .bots
+            .iter()
+            .filter_map(|b| match b {
+                Brain::Trained(_, generation) => Some(*generation),
+                Brain::House(_) => None,
+            })
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen
     }
 
     /// Name the person at this browser. Empty falls back rather than showing a
@@ -752,9 +823,9 @@ impl Session {
         self.public
     }
 
-    /// Whole seconds since the game was dealt.
+    /// Whole seconds the game has been going, and no longer than it went.
     pub fn elapsed_secs(&self) -> u64 {
-        self.started.elapsed().as_secs()
+        self.since(self.started).as_secs()
     }
 
     pub fn clock(&self) -> Clock {
@@ -967,8 +1038,7 @@ impl Session {
         let mut d = self.spent[seat as usize];
         if seat == self.turn_holder {
             d += self
-                .last_settle
-                .elapsed()
+                .since(self.last_settle)
                 .saturating_sub(self.paused_unsettled());
         }
         d
@@ -985,7 +1055,7 @@ impl Session {
             Clock::PerTurn(n) => Some(if seat == self.turn_holder {
                 // Less the time held for a discard: a seven interrupts the turn
                 // holder, who did nothing to deserve it but roll.
-                let spent = self.turn_began.elapsed().saturating_sub(self.paused());
+                let spent = self.since(self.turn_began).saturating_sub(self.paused());
                 n as i64 - spent.as_secs() as i64
             } else {
                 n as i64
@@ -1355,6 +1425,13 @@ impl Session {
     /// The line that closes a finished game, wherever the game finished.
     fn note_winner(&mut self) {
         if let Phase::GameOver { winner } = self.state.phase {
+            // Stop the clocks, once, at the first moment anybody noticed the
+            // game was over. Every path that can finish a game comes through
+            // here, which is why the stamp lives here and not beside each of
+            // them. `get_or_insert_with` rather than a plain assignment
+            // because this is called again on every later poll, and a stamp
+            // that moved would be a stopped clock that crept.
+            self.ended.get_or_insert_with(std::time::Instant::now);
             // One person at the table and they won: "You win" is addressed to
             // the only reader there is. With two, the log is shared and read
             // from two seats at once, so the line has to name the winner rather
@@ -2699,22 +2776,75 @@ mod tests {
     /// A small champion for the tests: every input wired straight to the
     /// output, the shape a minimal NEAT start has.
     fn tiny_champion() -> Net {
+        champion_like(7)
+    }
+
+    /// A small distinct network per seed, so two champions in one test are two
+    /// different players rather than one twice.
+    fn champion_like(spread: u32) -> Net {
         let out = Net::output_id(carranta_bot::features::FEATURES);
         let links: Vec<(u32, u32, f64)> = (0..=carranta_bot::features::FEATURES as u32)
-            .map(|i| (i, out, ((i % 7) as f64 - 3.0) / 10.0))
+            .map(|i| (i, out, ((i % spread) as f64 - 3.0) / 10.0))
             .collect();
         Net::assemble(carranta_bot::features::FEATURES, &links).expect("acyclic")
     }
 
     #[test]
-    fn a_trained_champion_plays_every_bot_seat_and_says_so() {
+    fn the_clocks_stop_when_the_game_does() {
+        // A finished game has no time passing in it. Before this the turn
+        // clock counted down under the winner's own dialog and the game timer
+        // climbed for as long as the tab stayed open.
         let mut s = Session::new(4, 5, TradeMode::Full)
-            .with_trained(&tiny_champion(), 7)
+            .with_clock(Clock::PerTurn(60))
             .with_pace(Pace::Instant);
-        // The identity the game file will carry, and the market the champion
-        // trained in: both come with the builder or the deployment lies about
-        // who played and what they were allowed to offer.
-        assert_eq!(s.agent(), "trained@7");
+        assert!(s.ended.is_none(), "nothing has ended yet");
+        // While it runs, time passes: the control for the assertion below.
+        let a = s.since(s.started);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(s.since(s.started) > a, "a live game keeps time");
+
+        s.play_out();
+        assert!(s.winner().is_some(), "need a finished game");
+        let stopped = s.ended.expect("the end was stamped");
+
+        // Every reading is taken against the same frozen moment, so they are
+        // equal however long the page is left open.
+        let game = s.since(s.started);
+        let turn = s.time_left(s.on_clock());
+        let spent = s.used(s.on_clock());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert_eq!(s.since(s.started), game, "the game timer stopped");
+        assert_eq!(s.time_left(s.on_clock()), turn, "the turn clock stopped");
+        assert_eq!(
+            s.used(s.on_clock()),
+            spent,
+            "and nobody is still being charged"
+        );
+        assert_eq!(s.elapsed_secs(), game.as_secs());
+
+        // Frozen rather than blanked: how long the game took is worth reading
+        // afterwards. And the stamp is the first end, not the latest poll.
+        s.note_winner();
+        assert_eq!(s.ended, Some(stopped), "the end does not creep");
+    }
+
+    #[test]
+    fn two_champions_share_a_table_and_are_told_apart() {
+        // The whole point of seating champions per seat: they play the same
+        // board from different chairs, and each chair names its own player, so
+        // the ratings compare them directly rather than through a third party.
+        let mut s = Session::new(4, 11, TradeMode::Full)
+            .with_trained(&[(champion_like(5), 12), (champion_like(9), 40)])
+            .with_pace(Pace::Instant);
+        // Dealt round the seats, so neither champion is stuck with one chair's
+        // luck of the draw.
+        assert_eq!(s.agent_of(0), "trained@12");
+        assert_eq!(s.agent_of(1), "trained@40");
+        assert_eq!(s.agent_of(2), "trained@12");
+        assert_eq!(s.agent_of(3), "trained@40");
+        assert_eq!(s.champions(), vec![12, 40]);
+        // One champion is enough to open the market up, and it stays open for
+        // everybody, which is what keeps the comparison fair.
         assert_eq!(
             s.state().offer_shapes,
             OfferShapes::Mixed {
@@ -2722,7 +2852,35 @@ mod tests {
                 want: 2
             }
         );
-        assert_eq!(Session::new(4, 5, TradeMode::Full).agent(), "house@1");
+        s.play_out();
+        assert!(s.moves().len() > 50, "a real game happened");
+
+        // A mixed table: one champion, and the house in the other chairs.
+        let mut mixed = Session::new(4, 12, TradeMode::Full);
+        mixed.seat_trained(2, &champion_like(5), 12);
+        assert_eq!(mixed.agent_of(2), "trained@12");
+        assert_eq!(mixed.agent_of(0), "house@1");
+        assert_eq!(mixed.champions(), vec![12]);
+    }
+
+    #[test]
+    fn a_trained_champion_plays_every_bot_seat_and_says_so() {
+        let mut s = Session::new(4, 5, TradeMode::Full)
+            .with_trained(&[(tiny_champion(), 7)])
+            .with_pace(Pace::Instant);
+        // The identity the game file will carry, and the market the champion
+        // trained in: both come with the builder or the deployment lies about
+        // who played and what they were allowed to offer.
+        assert_eq!(s.agent_of(0), "trained@7");
+        assert_eq!(s.agent_of(3), "trained@7");
+        assert_eq!(
+            s.state().offer_shapes,
+            OfferShapes::Mixed {
+                give: Some(2),
+                want: 2
+            }
+        );
+        assert_eq!(Session::new(4, 5, TradeMode::Full).agent_of(0), "house@1");
         // And it can actually hold a table: a whole game, every seat the
         // champion's, without the engine refusing a move.
         s.play_out();

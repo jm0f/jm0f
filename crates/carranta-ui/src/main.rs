@@ -20,7 +20,9 @@ carranta-play, play Carranta locally in a browser
   --games DIR    where games are kept (./games)
   --demo N       have at least N finished games to look at (plays what is missing)
   --trained FILE seat a trained champion (a champion.net from carranta-evolve)
-                 at every bot chair; games record it as trained@<generation>
+                 at the bot chairs; games record it as trained@<generation>.
+                 Repeat the flag to deal several champions round the chairs,
+                 which is how two of them play each other at one table
 
 Binds 127.0.0.1 by default: on a laptop the game is local and stays local.
 Set PORT (as every host does) to bind 0.0.0.0 on that port instead, or HOST to
@@ -35,7 +37,7 @@ fn main() {
     // tomorrow without anyone having to say where to put it.
     let mut games = std::path::PathBuf::from("games");
     let mut demo: u32 = 0;
-    let mut trained: Option<std::path::PathBuf> = None;
+    let mut trained: Vec<std::path::PathBuf> = Vec::new();
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -46,7 +48,7 @@ fn main() {
             "--seed" => seed = value().parse().unwrap_or(seed),
             "--games" => games = std::path::PathBuf::from(value()),
             "--demo" => demo = value().parse().unwrap_or(demo),
-            "--trained" => trained = Some(std::path::PathBuf::from(value())),
+            "--trained" => trained.push(std::path::PathBuf::from(value())),
             "--mode" => {
                 mode = match value().as_str() {
                     "disabled" => TradeMode::Disabled,
@@ -100,20 +102,39 @@ fn main() {
     // A champion that cannot be loaded stops the server rather than quietly
     // seating the house bot: whoever passed `--trained` wanted the champion,
     // and a wrong player that looks right is the worst of the outcomes.
-    if let Some(path) = &trained {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(e) => {
-                eprintln!("cannot read {}: {e}", path.display());
+    if !trained.is_empty() {
+        let mut champions = Vec::new();
+        for path in &trained {
+            let text = match std::fs::read_to_string(path) {
+                Ok(text) => text,
+                Err(e) => {
+                    eprintln!("cannot read {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            };
+            let Some((net, generation)) = carranta_bot::net::Net::parse(&text) else {
+                eprintln!("{} is not a champion network file", path.display());
+                std::process::exit(1);
+            };
+            // Two files exported from the same generation are one player named
+            // twice, and seating it against itself would produce games that
+            // look like a comparison and are not one.
+            if champions.iter().any(|(_, g)| *g == generation) {
+                eprintln!(
+                    "{} is trained@{generation}, which is already seated: champions are told \
+                     apart by their generation, so two of one are not two players",
+                    path.display()
+                );
                 std::process::exit(1);
             }
-        };
-        let Some((net, generation)) = carranta_bot::net::Net::parse(&text) else {
-            eprintln!("{} is not a champion network file", path.display());
-            std::process::exit(1);
-        };
-        println!("  bot seats played by trained@{generation}");
-        server = server.with_trained(net, generation);
+            champions.push((net, generation));
+        }
+        let named: Vec<String> = champions
+            .iter()
+            .map(|(_, g)| format!("trained@{g}"))
+            .collect();
+        println!("  bot seats played by {}", named.join(", "));
+        server = server.with_trained(champions);
     }
     // Leaked on purpose: this server lives until the process ends, and the
     // connection threads borrow it for as long as they run. A leak with the

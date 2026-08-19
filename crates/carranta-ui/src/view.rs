@@ -290,7 +290,14 @@ fn render_room(
             // Whose clock is running, which is not always whose turn it is:
             // an unanswered offer stops the game on the human.
             o.int("timeLeft", left)
-                .bool("onClock", session.on_clock() == p as u8);
+                // Nobody is on the clock once the game is over. The page
+                // counts down locally between payloads, so a seat still
+                // marked as thinking would go on losing seconds under the
+                // winner's own dialog however still the server held it.
+                .bool(
+                    "onClock",
+                    session.on_clock() == p as u8 && session.winner().is_none(),
+                );
         }
     });
     // Somebody watching holds nothing, so the private half of the view is
