@@ -2857,6 +2857,65 @@ decides whether they arrive at all.
 
 ---
 
+## 19. Who somebody is
+
+There is still no way to sign in. What there is, is the shape a sign-in attaches
+to, built before any account exists because §13 of the scoping document says
+plainly that it cannot be added afterwards: a game file is written once and never
+edited, so whatever it records as the player is the player for ever.
+
+**Three concepts, and conflating them is what makes accounts impossible later**
+(§8.2). A **principal** is the durable identity, ours rather than any auth
+provider's, and is what a game records. A **credential** is how a principal
+proves it is itself; there is one kind today, a device token in a cookie, and
+later there is a password and a Google account, and one principal may have
+several. A **seat** is a position in one game and is nobody's identity at all.
+
+**The cookie value was the identity, and that identity was written into every
+game file.** So each finished game carried a bearer token: anybody who could read
+the games directory could set that cookie and be that person. No page ever
+emitted one, so it was not a live hole, but it was one page away from being one,
+and a backup away from being one on somebody else's disk. A principal identifies
+and is public; a token proves and is a secret. They are different strings now.
+
+**Claiming an account points at history rather than moving it** (P-1). The games
+a guest played name the guest for ever, because logs are immutable and rewriting
+them breaks every checksum over them along with the append-only property that
+makes a replay worth trusting. So a claim is an alias, `guest → account`, and the
+analytics resolve through it when they read: the rating moves to the account and
+not one byte of any game does.
+
+**The table is a file you can open**, `people.roster` beside the games, with its
+own extension rather than theirs. The store lists a directory for `*.carranta`
+and decodes what it finds, and this file being skipped because it fails that
+decode would be luck rather than design.
+
+**Migrating the games that already exist opens a window, once, and it is written
+down rather than glossed.** Every game on disk names its players by the string
+that used to be a cookie, so those people are known to history under something
+their browser is still carrying. Minting them a fresh principal would orphan
+every game they have played; accepting any unknown string as an identity would
+make a principal read off disk into a credential, which is the whole thing being
+fixed. So the rule is narrow: a string is adoptable only if a game file already
+names it, and only until one browser presents it, after which it is inert. For as
+long as an entry is unclaimed, somebody who can read the games directory could
+present it and become that person. It closes the first time the owner visits, and
+a server that starts empty has nothing to migrate.
+
+**A name is a property of a person, not of a seat.** It used to be a map beside
+the server, keyed by cookie, that died with the process: one browser rather than
+one person, and gone on every restart. Somebody who has typed their name once has
+typed it for every table they will sit at, and the migration carries the name
+their games already call them by.
+
+**The age declaration has a field and no flow.** P-11 puts the minimum at
+sixteen, self-declared, with chat as the trigger rather than the account. The
+column is here so the flow has somewhere to write, and so that *we never asked*
+is a value in the table rather than an absence whose meaning has to be
+remembered. Nothing asks yet.
+
+---
+
 ## 11. Still open
 
 - **Bank and port trades.** Rate-based against the supply rather than a
@@ -2893,10 +2952,8 @@ decides whether they arrive at all.
   what that would cost, H-8: logs indefinite, chat ninety days, precisely so a
   deletion request stays satisfiable without touching immutable game history.
   Worth doing, and not worth doing by accident.
-- **Accounts.** The home page answers "show me my games" from a key in a cookie,
-  which follows a browser rather than a person. The key is written into every game
-  file, so an account can claim one browser's games later without touching a
-  single recorded game; nothing claims anything today.
+- **Accounts.** There is no way to sign in. What there is, is the shape one
+  attaches to: see §19.
 - **Bot names.** Invented and placeholder until told otherwise.
 - **The endgame.** Neither the study nor these decisions say what winning
   looks like.

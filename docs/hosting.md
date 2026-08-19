@@ -165,9 +165,28 @@ hostile.
 - **No rate limiting.** Anybody may deal tables in a loop. The sixteen-table
   ceiling and the twenty-minute sweep bound the damage, and Cloudflare bounds
   the rest, but there is nothing in the program.
-- **No authentication.** A player is a cookie. It is enough to answer "show me
-  mine" on one machine and nothing more, and the pages say so rather than
-  implying an account.
+
+  The roster is the one thing here with no ceiling of its own: a request with no
+  cookie is a new visitor, a new visitor is a row, and the file is rewritten
+  whole, so a flood of cookieless requests is quadratic work on a growing file.
+  Art, fonts and sounds are exempt, which takes about twenty-nine of every thirty
+  requests in a page load out of it. The rest is the same answer as everything
+  else in this list, and worth a ceiling of its own the day this list gets
+  shorter.
+- **No authentication.** A cookie proves a player. It is enough to answer "show
+  me mine" on one machine and nothing more, and the pages say so rather than
+  implying an account. What the cookie carries is now a *device token* rather
+  than the identity itself, and the identity it resolves to is what a game
+  records: see `ui.md` §19. That split is what accounts attach to later, and it
+  closed something worth naming on its own.
+
+  **A game file used to contain a bearer token.** The cookie value was the
+  identity, and the identity was written into every game as the chair's key, so
+  anybody who could read the games directory could set that cookie and be that
+  person. No page ever emitted one, so it was not a live hole, but it was one
+  page away from being one and a backup away from being one on somebody else's
+  disk. Principals go in files; tokens go in cookies and in the roster and
+  nowhere else.
 - **One process, one machine.** Everything above keeps that shape, and it stays
   right for a surprisingly long time. The determinism that already lets a game
   be rebuilt from its seed and its moves is most of what a distributed version

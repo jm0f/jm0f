@@ -843,12 +843,11 @@ pub struct Server {
     /// told, so a host who never committed the field showed as "Player 1" to
     /// everybody else while their own screen showed the name.
     ///
-    /// Keyed by the cookie, so it is exactly as good as the cookie: one browser,
-    /// no claim about who anybody is. When there are accounts the name comes
-    /// from one and this becomes the fallback for whoever has not signed in.
-    /// Not written down, because a name is cheap to say again and a file of
-    /// them is a file of personal data this does not need to keep.
-    names: Mutex<std::collections::HashMap<String, String>>,
+    /// Kept on the principal rather than beside the server (`people.rs`), so it
+    /// survives a restart and follows the person to every table they sit at. It
+    /// used to be a map keyed by the cookie value, which died with the process
+    /// and meant one browser rather than one person.
+    people: crate::people::People,
 }
 
 impl Server {
@@ -857,18 +856,57 @@ impl Server {
         // and there had to be one to show; the root is the home page now, every
         // table is dealt from it or from the lobby, and a table nobody asked for
         // is a row on that page for a game nobody is playing.
+        let store = Store::new(dir);
+        // The migration, once, for a directory that has games in it and no
+        // table beside them: the games already name their players by the string
+        // that used to be a cookie, and those people have to stay themselves.
+        let people = crate::people::People::open(store.dir());
+        // Asked first, because gathering the argument reads every game on disk
+        // and a server that has run this build before has nothing to migrate.
+        // Newest game first, which `Store::all` already answers in, so the name
+        // that sticks to a person is the last one they chose.
+        if people.is_new() {
+            people.adopt_the_games(
+                &store
+                    .all()
+                    .iter()
+                    .flat_map(|g| g.setup.chairs.iter())
+                    .filter(|c| c.is_person())
+                    .map(|c| (c.who.clone(), c.name.clone()))
+                    .collect::<Vec<_>>(),
+            );
+        }
         Server {
             tables: Mutex::new(Vec::new()),
-            store: Store::new(dir),
+            store,
             seats,
             mode,
             seed: Mutex::new(seed),
-            names: Mutex::new(std::collections::HashMap::new()),
+            people,
         }
+    }
+
+    /// Who is asking, and what their cookie should say.
+    ///
+    /// The seam between a credential and an identity (§8.2). Everything past
+    /// here deals in principals; the token is a secret this is the only reader
+    /// of.
+    pub fn people(&self) -> &crate::people::People {
+        &self.people
     }
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Say that a cookie value proves a principal, so a test can drive this
+    /// server over HTTP as a named person.
+    ///
+    /// The two used to be one string and every test wrote them as one. They are
+    /// a secret and an identity now, so a test that wants both has to say so.
+    #[cfg(test)]
+    fn knows(&self, key: &str) {
+        self.people.bind(key, key);
     }
 
     /// The home page, for whoever is asking.
@@ -1331,7 +1369,7 @@ impl Server {
                 *had = name.clone();
                 table.session.name_seat(seat, &name);
                 drop(tables);
-                self.names.lock().unwrap().insert(player.to_string(), name);
+                self.people.rename(player, &name);
             }
             return Some(seat);
         }
@@ -1352,13 +1390,7 @@ impl Server {
         // purpose.
         let name = match called(name) {
             said if !said.is_empty() => said,
-            _ => self
-                .names
-                .lock()
-                .unwrap()
-                .get(player)
-                .cloned()
-                .unwrap_or_default(),
+            _ => self.people.name(player),
         };
         table.chairs[seat as usize] = Chair::Taken {
             key: player.to_string(),
@@ -1376,10 +1408,7 @@ impl Server {
             format!("{name} sat down")
         });
         if !name.is_empty() {
-            self.names
-                .lock()
-                .unwrap()
-                .insert(player.to_string(), name.clone());
+            self.people.rename(player, &name);
         }
         // The last chair taken settles the table, and settling it is when the
         // order is drawn. Their own seat may move under them here, which is why
@@ -1920,23 +1949,52 @@ impl Server {
         // tab would drive somebody else's board.
         let (game, path) = split_game(path);
 
-        // Who is asking, as far as this server can tell: a key it handed this
-        // browser on a first visit and nothing more. Not a login, not a name.
-        // When there are accounts this is where one is looked up, and the cookie
-        // becomes one way of proving which account you are rather than the whole
-        // of the identity.
-        let known = cookie(&cookies, PLAYER_COOKIE);
-        let player = known.clone().unwrap_or_else(mint_key);
+        // Who is asking. The cookie is a *device token*, which is a secret and
+        // proves nothing about who anybody is beyond "the browser we handed this
+        // to"; the principal it resolves to is the identity, and is what every
+        // line past here means by `player`.
+        //
+        // The two used to be one string, and that string was written into every
+        // game file as the chair's key. So each finished game carried a bearer
+        // token: anybody who could read the directory could set that cookie and
+        // be that person. It never reached a page, so it was not a live hole,
+        // but it was one page away from being one. See `people.rs`.
+        //
+        // When there are passwords and Google accounts, they are further
+        // credential kinds resolving to the same principals, and nothing past
+        // this line changes.
+        //
+        // Not for the art, the fonts or the sounds. Those are the same bytes for
+        // everybody and no route serving one has ever looked at who is asking,
+        // and enrolling on them is expensive in a way the old scheme was not:
+        // minting a key was free and forgotten, while a principal is written
+        // down. One page load is about thirty requests and one visitor, so
+        // without this it was about thirty visitors and thirty rewrites of a
+        // file that had just grown by thirty.
+        let carried = cookie(&cookies, PLAYER_COOKIE).unwrap_or_default();
+        let anonymous =
+            path.starts_with("/art/") || path.starts_with("/font/") || path.starts_with("/sound/");
+        let arrival = if anonymous {
+            crate::people::Arrival {
+                principal: String::new(),
+                token: carried,
+                fresh_token: false,
+            }
+        } else {
+            self.people.arrive(&carried)
+        };
+        let player = arrival.principal;
         // Handed back only when it is new, so an ordinary request carries no
         // header nobody needed.
-        let issue = known.is_none();
+        let issue = arrival.fresh_token;
+        let token = arrival.token;
 
         match (method.as_str(), path) {
             // The root is not a game, it is where you go to get one.
             ("GET", "/") if game.is_none() => {
                 let page = self.home(&player);
                 let set = if issue {
-                    cookie_header(&player)
+                    cookie_header(&token)
                 } else {
                     String::new()
                 };
@@ -1964,7 +2022,7 @@ impl Server {
             ("GET", "/lobby") => {
                 let id = self.deal("seats=4&clock=turn&clockSecs=60&discardSecs=10", &player);
                 let set = if issue {
-                    cookie_header(&player)
+                    cookie_header(&token)
                 } else {
                     String::new()
                 };
@@ -1986,7 +2044,7 @@ impl Server {
                         // from a link, so the key is handed out here too or their
                         // first game would belong to nobody.
                         &if issue {
-                            cookie_header(&player)
+                            cookie_header(&token)
                         } else {
                             String::new()
                         },
@@ -2011,7 +2069,10 @@ impl Server {
                 if !history.iter().any(|g| g.id == saved.id) {
                     history.push(saved.clone());
                 }
-                match crate::analysis::study(&saved, &history) {
+                // Through the claims: a guest who has since signed up reads
+                // their old games as the account's, without a byte of those
+                // games having moved (P-1).
+                match crate::analysis::study_as(&saved, &history, &self.people) {
                     Some(study) => respond(
                         &mut stream,
                         200,
@@ -2273,7 +2334,7 @@ impl Server {
                 let name = decode(&param(&body, "name").unwrap_or_default());
                 let taken = self.sit(&id, &player, &name);
                 let set = if issue {
-                    cookie_header(&player)
+                    cookie_header(&token)
                 } else {
                     String::new()
                 };
@@ -2416,7 +2477,7 @@ impl Server {
             ("GET", "/join") => {
                 let id = self.deal(query, &player);
                 let set = if issue {
-                    cookie_header(&player)
+                    cookie_header(&token)
                 } else {
                     String::new()
                 };
@@ -2526,31 +2587,14 @@ fn cookie(header: &str, name: &str) -> Option<String> {
     })
 }
 
-/// Length of a visitor key. Sixteen of thirty-six characters is eighty-two bits,
-/// which is far more than a local server needs and costs nothing.
-const KEY_LEN: usize = 16;
-
-/// A fresh key for a visitor nobody has seen before.
+/// Length of a device token. Sixteen of thirty-six characters is eighty-two
+/// bits, which is far more than this needs and costs nothing.
 ///
-/// From the clock and the process, like the game addresses, because this server
-/// has no other source of noise and does not need one: the key is a name for a
-/// browser, not a secret that guards anything. When this becomes a login it will
-/// be issued by whatever holds the accounts.
-fn mint_key() -> String {
-    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let mut n = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as u64)
-        ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    let mut out = String::with_capacity(KEY_LEN);
-    for _ in 0..KEY_LEN {
-        out.push(ALPHABET[(n % ALPHABET.len() as u64) as usize] as char);
-        // A different multiplier from the one above, so the two do not walk in
-        // step and give a key that reads like the game address beside it.
-        n = (n / ALPHABET.len() as u64) ^ n.wrapping_mul(0x2545_F491_4F6C_DD1D);
-    }
-    out
-}
+/// Minting them lives in `people.rs`, with the table that knows which are taken.
+/// It stopped being "a name for a browser" the day it stopped being written into
+/// the game files: this is now the only thing standing between somebody and
+/// being you on this server, and it is spent rather than published.
+const KEY_LEN: usize = 16;
 
 /// The header that hands a new visitor their key.
 ///
@@ -3167,14 +3211,18 @@ mod tests {
         assert_eq!(t.session.discard_secs(), 25);
         assert!(!t.session.bank_exact());
         assert!(!t.session.log_shown());
-        // It belongs to whoever opened it, under the key they were just handed,
-        // which is the only reading that puts it on the right home page.
-        let key = answer
+        // It belongs to whoever opened it, which is the only reading that puts
+        // it on the right home page. Through the principal table: the cookie
+        // carries a device token and the table records a principal, and the two
+        // being different strings is the point of `people.rs`.
+        let token = answer
             .lines()
             .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
             .and_then(|v| v.split(';').next())
-            .expect("a key was handed out");
-        assert_eq!(t.by, key, "theirs, not the sender's");
+            .expect("a token was handed out");
+        let key = &server.people.arrive(token).principal;
+        assert_ne!(key, token, "an identity is not the secret that proves it");
+        assert_eq!(&t.by, key, "theirs, not the sender's");
         // Not the host's name: the link carries none, so the receiver's seat is
         // named for its number rather than sitting somebody else down under the
         // name of the person who sent it.
@@ -3251,6 +3299,7 @@ mod tests {
         // nought, bots behind them, and the whole thing a room until its people
         // are ready.
         let host = "hostkey000000000";
+        server.knows(host);
         let dealt = get(port, "/join?seats=4&pace=instant", host);
         let went = dealt
             .lines()
@@ -3273,6 +3322,7 @@ mod tests {
         // in it: following an invitation is answering it, and a card asking
         // whether you meant to come in was a question with one answer.
         let guest = "guestkey00000000";
+        server.knows(guest);
         let looking = get(port, &format!("/{id}/api/state"), guest);
         assert!(
             !looking.contains("\"you\":-1"),
@@ -3323,6 +3373,7 @@ mod tests {
         // A third finds it closed and watches: a seat of nobody's, an empty
         // hand, and nothing to press.
         let watcher = "watchkey00000000";
+        server.knows(watcher);
         let looking = get(port, &format!("/{id}/api/state"), watcher);
         assert!(looking.contains("\"you\":-1"), "no seat");
         assert!(looking.contains("\"choices\":[]"), "and nothing to do");
@@ -3442,7 +3493,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 82, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal("seats=4&name=Marta&chat=text", host);
         assert!(server.sit(&id, guest, "Vidal").is_some());
         assert!(server.say(&id, host, "mine"));
@@ -3474,6 +3527,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 92, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let room = server.deal("seats=4&name=Marta", host);
         let game = server.deal("seats=4&name=Marta&pace=instant", host);
         assert!(server.begin(&game));
@@ -3531,6 +3585,7 @@ mod tests {
         std::thread::spawn(move || server.serve(listener));
 
         let host = "hostkey000000000";
+        server.knows(host);
         let id = server.deal("seats=4&name=Marta&chat=text", host);
         let mark_of = |body: &str| -> u64 {
             body.rsplit("\"mark\":")
@@ -3591,8 +3646,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 17, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let idler = "idlerkey00000000";
+        server.knows(idler);
         let id = server.deal("seats=4&name=Marta&pace=instant", host);
         assert_eq!(server.sit(&id, guest, "Vidal"), Some(1));
         assert_eq!(server.sit(&id, idler, "Nuria"), Some(2));
@@ -3634,6 +3692,7 @@ mod tests {
         // Somebody else arriving is unaffected: the room remembers a person,
         // not a closed chair.
         let late = "latekey000000000";
+        server.knows(late);
         assert_eq!(server.sit(&id, late, "Bea"), Some(2), "the chair is open");
 
         // And taking the last seat back is the thing the other two are waiting
@@ -3693,7 +3752,9 @@ mod tests {
         std::thread::spawn(move || server.serve(listener));
 
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal("seats=4&name=Marta", host);
         let seat_of = |body: &str| -> i64 {
             body.rsplit("\"you\":")
@@ -3745,7 +3806,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 31, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal("seats=4&name=Marta&pace=instant", host);
         assert!(server.sit(&id, guest, "Vidal").is_some());
         assert!(server.begin(&id));
@@ -3808,7 +3871,9 @@ mod tests {
         std::thread::spawn(move || server.serve(listener));
 
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal("seats=4&name=Marta&pace=instant", host);
         assert_eq!(server.sit(&id, guest, "Vidal"), Some(1), "the guest sits");
         // The guest is ready. The host is not, and never will be: their tab has
@@ -3855,6 +3920,7 @@ mod tests {
         std::thread::spawn(move || server.serve(listener));
 
         let host = "hostkey000000000";
+        server.knows(host);
         // The shortest clock the lobby allows, so this test takes a second and
         // not a minute. Everything else is what `/lobby` deals.
         let id = server.deal("seats=4&clock=turn&clockSecs=1&discardSecs=1", host);
@@ -3888,6 +3954,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 71, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let id = server.deal("seats=4&roles=you,open,bot,bot&pace=instant", host);
 
         // One friend takes the held chair. That used to be the starting gun.
@@ -3954,6 +4021,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 63, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let id = server.deal("seats=4&pace=instant", host);
         {
             let tables = server.tables.lock().unwrap();
@@ -4012,6 +4080,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 64, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         // Nothing held. Until somebody moves, the three bots' chairs are three
         // chairs a person could have, which is the point: a table dealt for one
         // is a table three friends can still walk into.
@@ -4053,6 +4122,7 @@ mod tests {
         std::thread::spawn(move || server.serve(listener));
 
         let host = "hostkey000000000";
+        server.knows(host);
         let dealt = get(port, "/join?seats=4&name=Marta&pace=instant", host);
         let went = dealt
             .lines()
@@ -4096,6 +4166,7 @@ mod tests {
 
         // One person takes a chair before the game starts.
         let early = "earlykey00000000";
+        server.knows(early);
         assert!(
             post(port, &format!("/{id}/api/sit"), early, "name=Vidal").contains("\"seat\":"),
             "a chair going is a chair you may take"
@@ -4116,6 +4187,7 @@ mod tests {
         // Now the door is shut. Somebody arriving is a watcher, whatever they
         // ask for and however many bots are sitting where they might have been.
         let late = "latekey000000000";
+        server.knows(late);
         let turned_away = post(port, &format!("/{id}/api/sit"), late, "name=Late");
         assert!(turned_away.contains("\"seat\":-1"), "{turned_away:.60}");
         assert!(get(port, &format!("/{id}/api/state"), late).contains("\"you\":-1"));
@@ -4192,6 +4264,7 @@ mod tests {
         std::thread::spawn(move || server.serve(listener));
 
         let host = "hostkey000000000";
+        server.knows(host);
         let id = server.deal(
             "seats=4&roles=you,bot,bot,bot&name=Marta&chat=text&pace=instant",
             host,
@@ -4245,6 +4318,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 44, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
 
         // Three tables: two rooms nobody stayed in, and one already played.
         let waiting = server.deal("seats=4", host);
@@ -4319,9 +4393,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 5, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let id = server.deal("seats=4&roles=you,open,bot,bot&name=Marta", host);
         assert!(server.store().all().is_empty(), "dealing writes nothing");
         let guest = "guestkey00000000";
+        server.knows(guest);
         assert!(server.sit(&id, guest, "Vidal").is_some());
         assert!(server.store().all().is_empty(), "nor does sitting down");
         // Everybody at the table said they were ready, which is what closes a
@@ -4365,7 +4441,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 61, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal("seats=4&name=Marta", host);
         let took = server.sit(&id, guest, "Vidal").expect("a chair going");
         assert!(
@@ -4438,7 +4516,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 62, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal(
             "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
             host,
@@ -4504,7 +4584,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 63, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal(
             "seats=4&roles=you,open,bot,bot&name=Marta&pace=instant",
             host,
@@ -4553,6 +4635,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 71, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let mut seen = [0usize; 4];
         for _ in 0..80 {
             let id = server.deal("seats=4&name=Marta", host);
@@ -4583,7 +4666,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 72, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         // A room is not settled, so the host is where they were put and the
         // order is not drawn yet, however many people arrive.
         let id = server.deal("seats=4&name=Marta", host);
@@ -4628,7 +4713,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 73, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let guest = "guestkey00000000";
+        server.knows(guest);
         let id = server.deal("seats=4&name=Marta&chat=text", host);
         server.sit(&id, guest, "Vidal").expect("a chair going");
 
@@ -4673,6 +4760,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let server = Server::new(4, 74, TradeMode::Full, &dir);
         let host = "hostkey000000000";
+        server.knows(host);
         let id = server.deal("seats=4&roles=you,bot,bot,bot&name=Marta&chat=text", host);
 
         // Bounded, so one person cannot hand everybody else a novel.
@@ -4885,16 +4973,60 @@ mod tests {
     }
 
     #[test]
-    fn a_minted_key_is_the_shape_the_reader_accepts() {
+    fn asking_for_the_art_does_not_make_you_a_person() {
+        // A page load is about thirty requests and one visitor. Minting a key
+        // used to be free and forgotten; a principal is written down, so a
+        // route that never looks at who is asking must not enrol them, or one
+        // visitor becomes thirty rows and thirty rewrites of a file that has
+        // just grown by thirty.
+        let dir = std::env::temp_dir().join(format!("carranta-anon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server = Box::leak(Box::new(Server::new(4, 5, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let art = ART.first().map(|(n, _)| *n).expect("some art");
+        for _ in 0..5 {
+            let answer = ask(
+                port,
+                &format!("GET /art/{art}.svg HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+            );
+            assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer:.40}");
+            assert!(
+                !answer.contains("Set-Cookie"),
+                "and hands out no identity either"
+            );
+        }
+        assert!(server.people.all().is_empty(), "nobody has been enrolled");
+
+        // The page is a different matter: somebody looking at it is somebody.
+        let answer = ask(
+            port,
+            "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        assert!(answer.contains("Set-Cookie: carranta="));
+        assert_eq!(server.people.all().len(), 1, "one visitor, one person");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_minted_token_is_the_shape_the_reader_accepts() {
         // The two halves of this have to agree or every visitor is a new one on
         // every request, and nothing would say so: the page would simply never
-        // show anybody their games.
-        let key = mint_key();
-        assert_eq!(key.len(), KEY_LEN);
+        // show anybody their games. Minting moved to the principal table, which
+        // is the only thing that knows which tokens are taken, so the agreement
+        // now spans two files and is worth a test more than it was.
+        let dir = std::env::temp_dir().join(format!("carranta-token-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let people = crate::people::People::open(&dir);
+        let token = people.arrive("").token;
+        assert_eq!(token.len(), KEY_LEN);
         assert_eq!(
-            cookie(&format!("carranta={key}"), PLAYER_COOKIE).as_deref(),
-            Some(key.as_str())
+            cookie(&format!("carranta={token}"), PLAYER_COOKIE).as_deref(),
+            Some(token.as_str())
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

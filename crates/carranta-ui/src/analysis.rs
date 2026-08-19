@@ -16,6 +16,7 @@ use carranta_core::state::MAX_PLAYERS;
 use carranta_record::{Log, Recorder, SeatId};
 
 use crate::game::Step;
+use crate::people::{Aliases, NoAliases};
 use crate::store::Saved;
 
 /// The names the bots answer to, one per copy of the program at a table.
@@ -55,11 +56,23 @@ fn player_number(text: &str) -> u64 {
 /// was written before there were any (before version 5) or by the server playing
 /// itself, and is read as the house bot throughout, which is what it was.
 pub fn seat_ids(saved: &Saved) -> Vec<SeatId> {
+    seat_ids_as(saved, &NoAliases)
+}
+
+/// The same, following whatever guests have since claimed an account (P-1).
+///
+/// A claim is an alias resolved when the analytics read, never a rewrite of
+/// what was written: logs are immutable, so the games a guest played keep
+/// naming the guest for ever, and this is where that becomes "and the guest is
+/// this account now". Handed in rather than looked up, because this file has no
+/// business knowing where the principal table lives, and because a corpus with
+/// no table beside it is a corpus where nobody has claimed anything.
+pub fn seat_ids_as(saved: &Saved, who: &dyn Aliases) -> Vec<SeatId> {
     let seats = saved.seats as usize;
     let mut copies = 0usize;
     (0..seats)
         .map(|s| match saved.setup.chairs.get(s) {
-            Some(c) if c.is_person() => SeatId::human(player_number(&c.who)),
+            Some(c) if c.is_person() => SeatId::human(player_number(&who.resolve(&c.who))),
             other => {
                 // A bot's chair, a chair nobody took, or a file that does not
                 // say: all three are the house bot by the time a game is played,
@@ -2099,6 +2112,11 @@ const SIMS: u32 = 10_000;
 /// of this one, which is the only honest way to say what a result did: a rating
 /// is a function of everything before it.
 pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
+    study_as(saved, history, &NoAliases)
+}
+
+/// The same, reading the ratings through whoever has claimed an account (P-1).
+pub fn study_as(saved: &Saved, history: &[Saved], who: &dyn Aliases) -> Option<Study> {
     let log = to_log(saved)?;
     let report = game::analyse(&log).ok()?;
     let end = log.replay().ok()?;
@@ -2172,7 +2190,7 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
                 break;
             }
             let seats = report.players as usize;
-            let ids: Vec<u64> = seat_ids(saved).iter().map(|s| s.player).collect();
+            let ids: Vec<u64> = seat_ids_as(saved, who).iter().map(|s| s.player).collect();
             let before: Vec<Rating> = ids.iter().map(|&p| pool.rating(p)).collect();
             let games: Vec<u32> = ids.iter().map(|&p| pool.games_played(p)).collect();
             let ranked: Vec<Option<usize>> = ids.iter().map(|&p| rank_of(&pool, p)).collect();
@@ -2195,8 +2213,13 @@ pub fn study(saved: &Saved, history: &[Saved]) -> Option<Study> {
         // house bot finished on everybody's behalf was not played by the people
         // it would rate.
         if rated(g)
-            && let Some(l) = to_log(g)
+            && let Some(mut l) = to_log(g)
         {
+            // The seats the log was replayed with are the chairs as written;
+            // whose record they count towards is those chairs resolved through
+            // the claims. Two different questions, and only the second one moves
+            // when somebody signs up.
+            l.created.seats = seat_ids_as(g, who);
             pool.record(&l);
         }
     }
@@ -2509,6 +2532,59 @@ mod tests {
             ids[0].player,
             "the key is the person, not the name and not the seat"
         );
+    }
+
+    #[test]
+    fn claiming_an_account_moves_a_rating_without_moving_a_game() {
+        // P-1, and the reason the principal table had to exist before any
+        // account does. Logs are immutable: the games a guest played name the
+        // guest for ever, and signing up cannot rewrite them. So the claim is an
+        // alias, and this is where the analytics follow it.
+        let dir =
+            std::env::temp_dir().join(format!("carranta-analysis-claim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let people = crate::people::People::open(&dir);
+        let guest = people.arrive("").principal;
+        let account = people.arrive("").principal;
+
+        let mut g = played(12);
+        g.setup = Setup {
+            chairs: vec![
+                Chair::person(&guest, "Egon"),
+                Chair::bot(),
+                Chair::bot(),
+                Chair::bot(),
+            ],
+            ..Default::default()
+        };
+        let before = seat_ids_as(&g, &crate::people::NoAliases)[0].player;
+        assert!(people.claim(&guest, &account).is_ok());
+        let after = seat_ids_as(&g, &people)[0].player;
+        assert_ne!(before, after, "the rating follows them to the account");
+        assert_eq!(
+            after,
+            seat_ids_as(
+                &Saved {
+                    setup: Setup {
+                        chairs: vec![
+                            Chair::person(&account, "Egon"),
+                            Chair::bot(),
+                            Chair::bot(),
+                            Chair::bot(),
+                        ],
+                        ..Default::default()
+                    },
+                    ..g.clone()
+                },
+                &crate::people::NoAliases
+            )[0]
+            .player,
+            "and is exactly the account's, not a third thing"
+        );
+        // And the game itself has not moved a byte: it still says the guest
+        // played it, because that is what happened.
+        assert_eq!(g.setup.chairs[0].who, guest);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
