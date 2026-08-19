@@ -86,8 +86,13 @@ Four things to set in the dashboard, none of which belong in a file:
    happens not to offer accounts rather than a broken one. `PUBLIC_ORIGIN` is
    `https://your.domain` with no trailing path, and the redirect Google must have
    registered is that plus `/signin/done`. See `accounts.md`.
-4. **Which branch to deploy from.** Railway builds a branch and redeploys on
-   every push to it, so this is the one setting that decides what "live" means.
+4. **Install the Railway GitHub App on the repository**, which is the only way
+   a push becomes a deploy. Connecting Railway to GitHub through OAuth is enough
+   to *read* a repo and build it once; it is not enough for webhooks. Without the
+   app the service reports `autoDeploy: { enabled: false, canEnable: false,
+   reason: "NO_INSTALLATION" }`, and every push after the first is invisible to
+   it. Install at `github.com/apps/railway`, grant the repository, then refresh
+   the GitHub list on Railway's side.
 5. **Nothing else.** `PORT` is set by Railway, and the binary treats its presence
    as the signal to bind `0.0.0.0` rather than loopback.
 
@@ -124,7 +129,18 @@ normalised and the intent survives. Nothing had to be clicked for it.
 `CARRANTA_BUILD` after the first deploy was triggered left that image stamped
 `container`, which is the `ARG` default in the `Dockerfile` and is at least
 honest about not knowing. Re-running a deployment does not fix it either, since
-that reuses the existing image; the fix is another build, which any push causes.
+that reuses the existing image. Only another *build* does.
+
+The opt-in matters and is easy to miss: Railway does not inject its variables
+into a Dockerfile build, because "Docker isolates the build from the host
+environment by design". A variable reaches the build only if the `Dockerfile`
+declares an `ARG` of that name, which this one does.
+
+**A push is not a deploy until the GitHub App is installed.** This was assumed
+here and was wrong: the first deploy worked, the next push was ignored, and the
+service said why when asked, `reason: "NO_INSTALLATION"`. OAuth between Railway
+and GitHub is enough to read a repository and build it on demand; webhooks need
+the app on the repository itself.
 
 **What the API cannot do, and therefore what is left to a person.** The
 deployment tools cover projects, services, variables, domains, logs, status and
