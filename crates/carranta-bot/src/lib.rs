@@ -30,6 +30,10 @@
 use carranta_core::action::{Action, CITY_COST, DEV_COST, ROAD_COST, SETTLEMENT_COST};
 use carranta_core::rng::{Rng, Stream};
 use carranta_core::state::{MAX_PLAYERS, Phase, State, TradeMode};
+
+pub mod features;
+pub mod net;
+pub mod policy_net;
 use carranta_core::topology::hex_vertices;
 
 /// Anything that can take a seat: human, heuristic, LLM, trained agent.
@@ -163,6 +167,15 @@ pub const HOUSE: &str = "house";
 
 /// The house bot's build number. See [`HOUSE`].
 pub const HOUSE_VERSION: u32 = 1;
+
+/// What an evolved champion is called wherever a game is written down.
+///
+/// The same contract as [`HOUSE`]: name and number together are the player.
+/// The number is the training generation the champion was exported from, so
+/// it comes from the champion file rather than from a constant here, and two
+/// checkpoints of one run are two players, which is exactly what a ladder
+/// needs them to be.
+pub const TRAINED: &str = "trained";
 
 /// The heuristic policy.
 ///
