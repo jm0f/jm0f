@@ -773,7 +773,7 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 
 | # | Question | Decision |
 |---|---|---|
-| E-1 | Method | **Evolution strategy over the existing weights first, then NEAT.** The cheap step de-risks the expensive one and shares its whole harness |
+| E-1 | Method | **Evolution strategy over the existing weights first, then NEAT.** The cheap step de-risks the expensive one and shares its whole harness. *Phase one done and plateaued (+2 to +4 μ); phase two, classic NEAT with innovation numbers, speciation and complexifying topology, is built and training* |
 | E-2 | Hardware | **One machine, every core, no accelerator.** Evaluation is embarrassingly parallel and the networks are small enough that a GPU would idle |
 | E-3 | Network inputs | **Engineered features, not raw board.** NEAT complexifies badly with hundreds of inputs |
 | E-4 | Evaluation | **Paired trials on common random numbers**, variants mirrored across seat pairs |
@@ -781,7 +781,7 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-6 | Fitness | **Mean finishing position**, not win rate, the full order, for the same reason §10.5 uses it |
 | E-7 | Opponents | **Fixed anchor plus a hall of fame.** The current heuristic, pinned, and past champions |
 | E-8 | Progress measure | **The §10.5 rating, with the heuristic's μ frozen** as an absolute reference |
-| E-9 | Trade mode | **Restricted.** The cheapest setting a strategy can transfer out of; measured at ~3.5× the cost of trading off |
+| E-9 | Trade mode | ~~Restricted~~ **Revised: Full, with configurable mixed-offer enumeration.** The original decision existed to keep the generated action space enumerable; that concern is now answered by per-side caps instead (`OfferShapes::Mixed`, up to N cards a side, 2 v 2 the training default, the give side optionally bounded by the hand alone). A trading repertoire is most of what a trained policy could hold over the heuristic, and a policy that never saw a mixed offer in training cannot have one |
 | E-10 | Champion rating | **Held-out games.** A champion is never rated on the games that selected it |
 | E-11 | Anchor rating | **μ pinned, σ free.** The reference defines the scale rather than moving on it |
 | E-12 | Rating configuration | **Rate where people play.** An agent trains in `Restricted` and is rated in the human pool, or its rating is not comparable to a person's (§10.8) |
@@ -1041,7 +1041,7 @@ The rating system is what turns human play into a benchmark, and most of the mac
 
 Three things stand between that and a trustworthy number.
 
-**The pools would have kept them apart.** Training runs `Restricted` (E-9) and human play will run `Full`, and A-2 puts each configuration in its own pool, so an agent's rating and a person's would never have been comparable at all. The fix is a separation the design did not previously make: **an agent trains in one configuration and is rated in another.** Nothing stops a weights- or feature-based agent from *playing* the open market; the restriction exists to keep the generated action space enumerable while training, which is a training concern only. Registered as E-12.
+**The pools would have kept them apart.** Training originally ran `Restricted` (E-9) while human play runs `Full`, and A-2 puts each configuration in its own pool, so an agent's rating and a person's would never have been comparable at all. The fix is a separation the design did not previously make: **an agent trains in one configuration and is rated in another.** Nothing stops a weights- or feature-based agent from *playing* the open market; the restriction existed to keep the generated action space enumerable while training, which is a training concern only. Registered as E-12. *(E-9 has since been revised: NEAT trains in `Full` with capped mixed-offer enumeration, so the gap this separation bridges is now the enumeration caps rather than the whole market, and the principle stands unchanged.)*
 
 **The obvious bridge is the wrong games.** P-2's disconnect takeover will produce human-versus-bot games in quantity, and §10.5's design point 6 excludes substituted games from rated updates, because neither the departed human nor the bot that finished for them played a whole game. So the games that arrive for free are precisely the ones that must be thrown away. The bridge has to be **deliberate**: bots seated in lobbies from the start, under their version identity, marked rated.
 
@@ -1219,11 +1219,14 @@ Items struck through are **built**; see `engine-performance.md` for what each wa
 
 20. ~~`carranta-evolve`: population loop, work-stealing evaluation across cores, versioned ladder.~~ Deterministic under any worker count; checkpoints are plain text.
 21. ~~Evolution strategy over the fifteen existing weights (E-1).~~ Champions land +2 to +4 μ above the anchor and then plateau.
-22. Feature encoder (E-3), the observation NEAT actually sees. Reuse the heuristic's features as the starting set; this is the piece most likely to decide whether the whole track works.
+22. ~~Feature encoder (E-3), the observation NEAT actually sees.~~ 32 engineered features with fixed divisors; the heuristic's information-safety rules carried over as two pending-consequence channels.
 23. ~~Pin the heuristic as an immutable rating anchor (E-8, E-11).~~
-24. ~~Resume from a checkpoint.~~ Exact, atomic, plain text; a `stop` file ends a run cleanly.
+24. ~~Resume from a checkpoint.~~ Exact, atomic, plain text; a `stop` file ends a run cleanly. NEAT checkpoints are format 2 of the same file, and resume is exact there too.
 25. **Seat rated bots in human lobbies deliberately** (§10.8), and mark disconnect-takeover games unrated. ~400 bridge games make an agent's standing against people meaningful; games the agent plays against other agents contribute nothing to it.
-26. Population and mutation tuning. The current settings plateau within a handful of generations, which may be the landscape or may be the settings, the two are not yet distinguished.
+26. Population and mutation tuning. The current settings plateau within a handful of generations, which may be the landscape or may be the settings, the two are not yet distinguished. *(That was the ES phase; whether NEAT's complexification escapes the same plateau is exactly what the phase-two run measures.)*
+26a. ~~Classic NEAT (E-1 phase two).~~ Innovation numbers, speciation with fitness sharing, stagnation culling, aligned crossover; networks evaluate identically across architectures (softsign only, no `libm`, sums in fixed order), so a champion trained on ARM plays the same moves on x86.
+26b. ~~Mixed-offer enumeration (E-9 revised).~~ `OfferShapes::Mixed` in the engine, per-side caps configurable, 2 v 2 the training default; legality was never restricted, only generation.
+26c. ~~Champion deployment.~~ `carranta-evolve` exports `champion.net` every generation; `carranta-play --trained champion.net` seats it at every bot chair, the table enumerates the mixed shapes it trained under, and game files record the seat as `trained@<generation>`, a distinct player per E-8.
 
 **Analytics**, ~~27–29 built~~
 
