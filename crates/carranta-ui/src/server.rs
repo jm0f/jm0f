@@ -694,6 +694,60 @@ impl Table {
         }
         before != self.playing()
     }
+
+    /// Give up the chairs of people who are not there any more.
+    ///
+    /// Only in a room, and it does exactly what the leave button does on
+    /// purpose: a chair whose person has not been heard from in two minutes goes
+    /// back to being a bot's, and whatever they last said about being ready goes
+    /// with it. Returns whether anything changed, so the caller can wake the
+    /// other screens and check whether the room can now start.
+    ///
+    /// Without this a closed tab stops a room dead. Every seated person counts
+    /// towards the ready check, so one who has gone is one the room can never
+    /// have, and everybody else is left pressing a button that cannot be enough.
+    /// The only end such a room had was the twenty minute sweep, which closes it
+    /// under the people still sitting in it rather than letting them play.
+    ///
+    /// Mid-game the rule is the opposite and stays so: there the seat is theirs,
+    /// the house bot plays it, and they can come back to a game in progress. A
+    /// room has nothing to come back to, and holding a chair in one costs
+    /// somebody else the game.
+    fn let_go_of_the_gone(&mut self) -> bool {
+        if !self.in_lobby() {
+            return false;
+        }
+        let gone: Vec<u8> = self
+            .people_seated()
+            .into_iter()
+            .filter(|&s| !self.present(s))
+            .collect();
+        for seat in &gone {
+            let name = match &self.chairs[*seat as usize] {
+                Chair::Taken { name, .. } => name.clone(),
+                _ => String::new(),
+            };
+            self.chairs[*seat as usize] = Chair::Bot;
+            self.session.name_seat(*seat, "");
+            if let Some(r) = self.ready.get_mut(*seat as usize) {
+                *r = false;
+            }
+            self.session.note_to_table(if name.is_empty() {
+                format!(
+                    "Player {} is no longer here, and the seat is free again",
+                    seat + 1
+                )
+            } else {
+                format!("{name} is no longer here, and the seat is free again")
+            });
+        }
+        if gone.is_empty() {
+            return false;
+        }
+        self.seat_the_people();
+        self.moved();
+        true
+    }
 }
 
 /// How long a seat is held for somebody who has stopped asking about it.
@@ -981,14 +1035,29 @@ impl Server {
     /// asked has no other moment to do it in.
     fn sweep(&self) {
         let cutoff = now().saturating_sub(WAITING_LIMIT);
-        // Any room nobody has been near, not only one with a chair still empty.
-        // A room whose chairs all filled and whose people then all closed their
-        // tabs used to sit here for ever: nothing had started, so there was no
-        // game to keep, and nobody was left to say they were ready.
+        // Anything nobody has been near for twenty minutes, which is two
+        // different mercies depending on what it is.
+        //
+        // A room is closed: nothing was played at it, there is nothing on disk
+        // and nothing to come back to. It began as "a room with a chair still
+        // empty", which left a room whose chairs had all filled and whose people
+        // had then all closed their tabs sitting here for ever.
+        //
+        // A game is only taken off the table, and that is not the same as being
+        // closed: every move writes the file, so asking for it again puts it
+        // back on a table exactly as it was. What this frees is the memory, and
+        // what it costs is the conversation, which is not part of the game and
+        // is lost on a restart anyway.
+        //
+        // A game with no moves in it has no file to come back from. There should
+        // be none: a table is written the moment anything is played at it, and
+        // one with nothing played is a room. The check is here because "it is
+        // safe to drop this" is the actual condition, and saying so is cheaper
+        // than trusting the two rules elsewhere that make it true.
         self.tables
             .lock()
             .unwrap()
-            .retain(|t| !t.in_lobby() || t.stirred > cutoff);
+            .retain(|t| t.stirred > cutoff || (!t.in_lobby() && t.session.moves().is_empty()));
     }
 
     /// Put a table at the front, and drop the ones that no longer fit.
@@ -1884,6 +1953,12 @@ impl Server {
                 // tab left open across a restart carries on where it was.
                 self.seat(&id);
                 self.stir(&id);
+                // And here rather than only when somebody looks at the home
+                // page. The limit used to be real only if a visitor happened to
+                // arrive: a server whose players all reach their games by link
+                // never swept anything. This table was just stirred, so it is
+                // never the one that goes.
+                self.sweep();
                 // Which seat is theirs, and opening a room takes one. The link
                 // is an invitation and following it is answering it, so a card
                 // asking whether you meant it was a question with one answer,
@@ -1907,6 +1982,23 @@ impl Server {
                     {
                         t.seat_the_people();
                     }
+                }
+                // And that the others still are. A room is the one place where
+                // somebody who has gone holds everybody else up, so their chair
+                // is let go of here. After the stamp above, or a page would hand
+                // back the seat it just took.
+                let emptied = {
+                    let mut tables = self.tables.lock().unwrap();
+                    tables
+                        .iter_mut()
+                        .find(|t| t.id == id)
+                        .is_some_and(|t| t.let_go_of_the_gone() && t.all_ready())
+                };
+                // Losing somebody can be the thing everybody else was waiting
+                // for, exactly as walking out is: two ready and one gone quiet
+                // leaves two people who have nothing left to press.
+                if emptied {
+                    self.begin(&id);
                 }
                 // What the asking page last drew, if it says. A request that
                 // names one is held until the table looks different from it, so
@@ -3200,6 +3292,58 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_game_leaves_the_table_but_not_the_store() {
+        // Two different mercies. A room nobody has been near is closed, because
+        // nothing was played at it and there is nothing to come back to. A game
+        // is only taken off the table: every move writes the file, so asking for
+        // it again puts it back exactly as it was, and what the sweep frees is
+        // the memory rather than the game.
+        let dir = std::env::temp_dir().join(format!("carranta-idle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 92, TradeMode::Full, &dir);
+        let host = "hostkey000000000";
+        let room = server.deal("seats=4&name=Marta", host);
+        let game = server.deal("seats=4&name=Marta&pace=instant", host);
+        assert!(server.begin(&game));
+        {
+            let mut tables = server.tables.lock().unwrap();
+            for t in tables.iter_mut() {
+                if t.id == game {
+                    let acting = t.session.state().decider();
+                    let v = t.session.version();
+                    t.session.act_as(acting, 0, v).expect("playable");
+                }
+                // Both last looked at half an hour ago.
+                t.stirred = now().saturating_sub(30 * 60 * 1000);
+            }
+        }
+        server.keep(&game);
+
+        server.sweep();
+        {
+            let tables = server.tables.lock().unwrap();
+            assert!(!tables.iter().any(|t| t.id == room), "the room is closed");
+            assert!(
+                !tables.iter().any(|t| t.id == game),
+                "and the game is off the table"
+            );
+        }
+        // But only the room is gone. The game is on disk and comes back the
+        // moment anybody asks for it.
+        assert!(
+            server.store().load(&room).is_none(),
+            "a room leaves no file"
+        );
+        assert!(server.store().load(&game).is_some(), "a game does");
+        assert!(server.seat(&game), "and is taken up again");
+        {
+            let tables = server.tables.lock().unwrap();
+            assert!(tables.iter().any(|t| t.id == game), "back on a table");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_state_request_is_held_until_the_table_looks_different() {
         // The page used to ask every three seconds and be told nothing had
         // changed almost every time: twelve hundred answers an hour per open
@@ -3262,6 +3406,50 @@ mod tests {
             began.elapsed() < std::time::Duration::from_secs(2),
             "an unfamiliar mark is answered, not held"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_room_lets_go_of_somebody_who_closed_the_tab() {
+        // The case the ready check could not survive. Everybody seated counts
+        // towards it, so somebody who shut their laptop was somebody the room
+        // could never have, and the people still in it were left pressing a
+        // button that could not be enough. Its only end was the twenty minute
+        // sweep, which closes the room under them.
+        let dir = std::env::temp_dir().join(format!("carranta-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server =
+            Box::leak(Box::new(Server::new(4, 71, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let host = "hostkey000000000";
+        let guest = "guestkey00000000";
+        let id = server.deal("seats=4&name=Marta&pace=instant", host);
+        assert_eq!(server.sit(&id, guest, "Vidal"), Some(1), "the guest sits");
+        // The guest is ready. The host is not, and never will be: their tab has
+        // been shut for five minutes.
+        assert!(server.ready(&id, guest));
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let host_seat = t.seat_of(host).expect("seated");
+            t.seen[host_seat as usize] = now().saturating_sub(5 * 60 * 1000);
+            assert!(t.in_lobby(), "still a room");
+            assert_eq!(t.ready_count(), (1, 2), "one of two, and stuck there");
+        }
+
+        // The guest's own page asks for the state, which is the only thing that
+        // happens: no button, no second person, just the room being looked at.
+        let body = get(port, &format!("/{id}/api/state"), guest);
+        assert!(body.starts_with("HTTP/1.1 200 OK"), "{body:.40}");
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("still there");
+            assert!(t.seat_of(host).is_none(), "the host's chair was let go of");
+            assert!(!t.in_lobby(), "and the room, being agreed, started");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3712,8 +3900,10 @@ mod tests {
              there is nothing to keep"
         );
         assert!(
-            left.contains(&played),
-            "and a game somebody is playing is never swept, whatever it is short"
+            !left.contains(&played),
+            "and a game nobody has been near for twenty minutes leaves the table \
+             too, which is not the same as being closed: see \
+             an_idle_game_leaves_the_table_but_not_the_store"
         );
         // Nothing was written for the one that closed, because nothing happened
         // at it: the store's own rule, and this is the case it was written for.

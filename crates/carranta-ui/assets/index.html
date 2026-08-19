@@ -5044,8 +5044,14 @@ loadArt().then(() => load(api('/api/state')));
 // No back-off and no interval: the loop asks again the moment it is answered,
 // and an idle table's request simply sits there.
 const RETRY = 1500;
+// A floor under the loop. Every answer this expects means something changed, so
+// asking again at once is right; but a path that answers immediately and always
+// would spin, and one exists: a finished game that has fallen off the table list
+// is read from its file and handed back without being held. A tenth of a second
+// is nothing to a person and the difference between a loop and a flood.
+const FLOOR = 100;
 (async function poll() {
-  let wait = 0;
+  let wait = FLOOR;
   try {
     const since = view && view.mark !== undefined ? `?since=${view.mark}` : '';
     const r = await fetch(api('/api/state') + since, { cache: 'no-store' });
@@ -5059,6 +5065,12 @@ const RETRY = 1500;
     // the same thing twice costs nothing.
     view = next;
     render();
+    // A game with a winner will never change again, so there is nothing left to
+    // ask about. Stopping matters more than it sounds: a held request occupies
+    // a connection for twenty seconds at a time, and a tab left open on a
+    // finished game would hold one for ever, and would put the game back on the
+    // table list on every request while it did.
+    if (next.winner !== null && next.winner !== undefined) return;
   } catch (e) {
     // The server is mid-restart, or the connection was cut mid-hold. Neither is
     // a reason to hammer it.

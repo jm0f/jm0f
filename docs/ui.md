@@ -2570,11 +2570,20 @@ because the other players are owed an opponent rather than a gap. It stays
 theirs, the house bot plays it, and they can come back to it. The control says
 which of the two it will do.
 
-**Going away without saying so is the same thing.** The page asks for the state
-every three seconds, so a seat that has not been heard from for two minutes has
-had its tab closed rather than its owner thinking. That seat is played by the
-house bot until its person's page asks again, at which point it is theirs once
-more: coming back is the ordinary path and not a second kind of joining.
+**Going away without saying so is the same thing.** A seat that has not been
+heard from for two minutes has had its tab closed rather than its owner thinking,
+and it is treated exactly as if they had pressed the control. In a game that
+means the house bot plays it until its person's page asks again, at which point
+it is theirs once more: coming back is the ordinary path and not a second kind of
+joining. In a room it means the chair goes back to the table.
+
+The room half of that was missing, and it was the one case the ready check could
+not survive. Everybody seated counts towards it, so somebody who shut their
+laptop was somebody the room could never have, and the people still in it were
+left pressing a button that could not be enough. The room's only end was the
+twenty minute sweep, which closes it under them. Now the chair is let go of, the
+ready mark goes with it, and losing somebody can be the thing that starts the
+game, exactly as walking out already was.
 
 Presence is not stored anywhere and is never written down. A seat is present
 because somebody just asked about it, which is as direct a measure as this server
@@ -2601,9 +2610,18 @@ their table for as long as they are there, and a host who closed the tab holds
 it for twenty minutes. The waiting room says so out loud, since it is the one
 thing on that screen that happens without anybody pressing anything.
 
-Only tables that never started, and there is nothing to write down because
-nothing happened at them: the store never had them. A game with moves in it is
-somebody's afternoon and is never swept, whatever it is short.
+**A game nobody has been near leaves the table but is not closed**, which is the
+same twenty minutes and a different thing at the end of it. A room is closed:
+nothing was played at it, the store never had it, and there is nothing to come
+back to. A game is only taken off the table, because every move writes the file,
+so asking for its address again puts it back exactly as it was. What that frees
+is the memory; what it costs is the conversation, which is not part of the game
+and does not survive a restart either.
+
+The sweep runs whenever anybody asks a table for its state, not only when
+somebody looks at the home page. The limit used to be real only if a visitor
+happened to arrive, so a server whose players all reach their games by link never
+swept anything at all.
 
 Which turned up a rule that had been quietly broken. **A table still filling up
 is not written to disk.** Sitting down and filling the chairs both wrote the file

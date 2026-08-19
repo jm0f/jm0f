@@ -108,6 +108,38 @@ happened, and a move lands as fast as it can be sent.
 - **An unfamiliar mark answers at once.** A page that reloads, or one whose
   server restarted, sends something the table has never had and is answered
   immediately rather than held.
+- **A finished game stops the loop.** There is nothing left to ask about, and a
+  tab left open on one would otherwise hold a connection for twenty seconds at a
+  time for ever. Worse, it would put the game back on the table list on every
+  request while it did, so the one thing that made memory bounded would be
+  undone by anybody who forgot to close a tab.
+
+## When a table is let go of
+
+Three different clocks, because "nobody is here" means three different things.
+
+| | After | What happens | What it costs |
+|---|---|---|---|
+| A seat in a game | 2 minutes | The house bot plays it | Your position, until you come back |
+| A seat in a room | 2 minutes | The chair goes back to the table | The seat; the room can start without you |
+| A room | 20 minutes | Closed | Nothing: no moves, no file |
+| A game | 20 minutes | Off the table, still on disk | The conversation; the game comes back on request |
+
+All four are measured from the last request about the thing, which for a seat is
+that seat's own page and for a table is anybody's. An open page therefore holds
+what it is looking at indefinitely, which is correct: somebody is there.
+
+Two cases are deliberately not clocks. **A game where everybody has gone waits
+for all of them** rather than playing itself out, because a game finished by
+four house bots while the room was empty is a game destroyed. And **coming back
+is always allowed**: a seat you were in is yours whatever has happened since,
+including a restart. The rule is that you cannot take a *new* seat in a game
+under way.
+
+Above all of it sits the ceiling of sixteen tables, which evicts finished games
+first and then the oldest. It is a bound rather than a policy: nothing that
+falls off it is lost, and by the time it does any work the sweep has usually
+done the work already.
 
 ## Concurrency
 
