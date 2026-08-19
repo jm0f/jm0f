@@ -848,6 +848,12 @@ pub struct Server {
     /// used to be a map keyed by the cookie value, which died with the process
     /// and meant one browser rather than one person.
     people: crate::people::People,
+    /// Where somebody proves they are the same person on another machine, or
+    /// `None`, which is a server with no sign-in configured and is the ordinary
+    /// state of a checkout. See `signin.rs`.
+    provider: Option<Box<dyn crate::signin::Exchange>>,
+    /// Sign-ins begun and not yet come back.
+    pending: crate::signin::Pending,
 }
 
 impl Server {
@@ -883,7 +889,20 @@ impl Server {
             mode,
             seed: Mutex::new(seed),
             people,
+            provider: crate::signin::Google::from_env()
+                .map(|g| Box::new(g) as Box<dyn crate::signin::Exchange>),
+            pending: crate::signin::Pending::new(),
         }
+    }
+
+    /// The same, signing people in through something other than Google.
+    ///
+    /// The seam the tests use, so nothing in the suite needs the internet or
+    /// Google's uptime to check that the flow itself is right.
+    #[cfg(test)]
+    fn with_provider(mut self, provider: Box<dyn crate::signin::Exchange>) -> Self {
+        self.provider = Some(provider);
+        self
     }
 
     /// Who is asking, and what their cookie should say.
@@ -965,7 +984,15 @@ impl Server {
                     && (g.by == player || g.setup.chairs.iter().any(|c| c.who == player))
             })
             .collect();
-        crate::home::page(&open, &mine)
+        crate::home::page(
+            &open,
+            &mine,
+            &crate::home::Who {
+                offered: self.provider.is_some(),
+                signed_in: self.people.has_account(player),
+                name: self.people.name(player),
+            },
+        )
     }
 
     /// Deal a table from a lobby's query.
@@ -2019,6 +2046,94 @@ impl Server {
             // the settings the form starts from, and sends the visitor to it.
             // Everything after that happens at the table's own address, host
             // and guests on the same screen.
+            // Off to the provider. Nothing has happened yet: a state is set
+            // aside for this browser and they are sent away with it.
+            ("GET", "/signin") => {
+                let Some(provider) = self.provider.as_ref() else {
+                    return respond(&mut stream, 404, "text/plain", b"no way to sign in here");
+                };
+                // Their token, not their principal: the sign-in belongs to the
+                // browser that started it, and the browser is what comes back.
+                let state = self.pending.begin(&token);
+                let set = if issue {
+                    cookie_header(&token)
+                } else {
+                    String::new()
+                };
+                redirect_with(&mut stream, &provider.away(&state), &set)
+            }
+            // And back again, with a code to trade.
+            ("GET", "/signin/done") => {
+                let Some(provider) = self.provider.as_ref() else {
+                    return respond(&mut stream, 404, "text/plain", b"no way to sign in here");
+                };
+                // The state first, and before anything is spent on the code: it
+                // is the whole of the defence against being walked into
+                // somebody else's account, and a callback nobody here started is
+                // not a callback to act on.
+                let Some(state) = param(query, "state") else {
+                    return respond(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"that sign-in did not start here",
+                    );
+                };
+                let Some(browser) = self.pending.finish(&decode(&state)) else {
+                    return respond(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"that sign-in did not start here",
+                    );
+                };
+                // The browser that set out, which is not necessarily the one
+                // holding the cookie now.
+                let began_as = self.people.arrive(&browser).principal;
+                let Some(code) = param(query, "code") else {
+                    // Google says no when somebody presses cancel, which is an
+                    // answer rather than a failure.
+                    return redirect_with(&mut stream, "/", "");
+                };
+                let subject = match provider.subject(&decode(&code)) {
+                    Ok(s) => s,
+                    Err(why) => {
+                        eprintln!("sign-in failed: {why}");
+                        return respond(
+                            &mut stream,
+                            502,
+                            "text/plain",
+                            b"the sign-in service could not be reached",
+                        );
+                    }
+                };
+                // Whether the guest they have been has anything worth carrying
+                // over. A principal that has never played is not a history, and
+                // aliasing every empty visitor would fill the table with rows
+                // that point at nothing.
+                let claimable = self
+                    .store
+                    .all()
+                    .iter()
+                    .any(|g| g.setup.chairs.iter().any(|c| c.who == began_as));
+                let credential = format!("{}:{}", provider.provider(), subject);
+                let signed = self.people.sign_in(&credential, &began_as, claimable);
+                // The token they set out with is spent either way: a session
+                // that survives signing in is a session that survived whatever
+                // came before it.
+                self.people.sign_out(&browser);
+                redirect_with(&mut stream, "/", &cookie_header(&signed.token))
+            }
+            ("POST", "/signout") => {
+                self.people.sign_out(&token);
+                // Cleared in the browser as well as removed from the table. The
+                // row going is what matters: a copy of this cookie taken from
+                // somewhere else now proves nothing either.
+                //
+                // Back to the page they were on, because this is a form and a
+                // form that answers with a body leaves somebody looking at it.
+                redirect_with(&mut stream, "/", &cookie_cleared())
+            }
             ("GET", "/lobby") => {
                 let id = self.deal("seats=4&clock=turn&clockSecs=60&discardSecs=10", &player);
                 let set = if issue {
@@ -2606,6 +2721,14 @@ fn cookie_header(key: &str) -> String {
     format!(
         "Set-Cookie: {PLAYER_COOKIE}={key}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax\r\n"
     )
+}
+
+/// The header that takes it away again.
+///
+/// The same attributes, because a browser matches a cookie to delete by path and
+/// name and will happily keep one that differs in either.
+fn cookie_cleared() -> String {
+    format!("Set-Cookie: {PLAYER_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax\r\n")
 }
 
 /// A number below `n`, from the clock and the process.
@@ -4970,6 +5093,248 @@ mod tests {
         assert_eq!(cookie("carrantaX=abc123def456ghi7", "carranta"), None);
         assert_eq!(cookie("", "carranta"), None);
         assert_eq!(cookie("carranta", "carranta"), None);
+    }
+
+    #[test]
+    fn signing_in_carries_a_guest_s_games_to_their_account() {
+        // The whole of P-1, over HTTP, with a provider that answers from a
+        // table rather than from the internet. What is being checked is not that
+        // Google works: it is that the state is honoured, that the guest's games
+        // follow them, and that not one byte of those games moves.
+        struct Fake;
+        impl crate::signin::Exchange for Fake {
+            fn provider(&self) -> &str {
+                "fake"
+            }
+            fn away(&self, state: &str) -> String {
+                format!("https://example.invalid/auth?state={state}")
+            }
+            fn subject(&self, code: &str) -> Result<String, String> {
+                match code {
+                    "egon" => Ok("subject-egon".to_string()),
+                    _ => Err("no such code".to_string()),
+                }
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("carranta-signin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server = Box::leak(Box::new(
+            Server::new(4, 29, TradeMode::Full, &dir).with_provider(Box::new(Fake)),
+        ));
+        std::thread::spawn(move || server.serve(listener));
+
+        // A guest turns up, is given a cookie, and plays a game to the end.
+        let home = ask(
+            port,
+            "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        let guest_token = home
+            .lines()
+            .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
+            .and_then(|v| v.split(';').next())
+            .expect("a token")
+            .to_string();
+        assert!(home.contains(">Sign in</a>"), "and is offered a way in");
+        let guest = server.people.arrive(&guest_token).principal;
+        let id = server.deal("seats=4&name=Egon&pace=instant", &guest);
+        assert!(server.begin(&id));
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let acting = t.session.state().decider();
+            let v = t.session.version();
+            t.session.act_as(acting, 0, v).expect("playable");
+        }
+        server.keep(&id);
+        let played = server.store().load(&id).expect("written");
+        assert!(
+            played.setup.chairs.iter().any(|c| c.who == guest),
+            "the game names the guest"
+        );
+
+        // The callback is refused without a state that this server handed out.
+        // It is the whole of the defence against being walked into somebody
+        // else's account, so it is checked before anything else.
+        for forged in [
+            "/signin/done?code=egon".to_string(),
+            "/signin/done?code=egon&state=madeup".to_string(),
+        ] {
+            let answer = get(port, &forged, &guest_token);
+            assert!(
+                answer.starts_with("HTTP/1.1 400"),
+                "a callback nobody here started is refused: {answer:.60}"
+            );
+        }
+
+        // Properly, now: away to the provider, and back with the code.
+        let away = get(port, "/signin", &guest_token);
+        assert!(away.starts_with("HTTP/1.1 303"), "{away:.60}");
+        let state = away
+            .lines()
+            .find_map(|l| l.strip_prefix("Location: "))
+            .and_then(|l| l.split("state=").nth(1))
+            .expect("a state")
+            .trim()
+            .to_string();
+        let back = get(
+            port,
+            &format!("/signin/done?code=egon&state={state}"),
+            &guest_token,
+        );
+        assert!(back.starts_with("HTTP/1.1 303"), "{back:.60}");
+        let account_token = back
+            .lines()
+            .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
+            .and_then(|v| v.split(';').next())
+            .expect("a new token")
+            .to_string();
+        assert_ne!(
+            account_token, guest_token,
+            "a session that survives signing in survived whatever came before it"
+        );
+
+        // The state is spent. Replaying the callback is not a second sign-in.
+        let replay = get(
+            port,
+            &format!("/signin/done?code=egon&state={state}"),
+            &guest_token,
+        );
+        assert!(replay.starts_with("HTTP/1.1 400"), "{replay:.60}");
+        // And so is the old cookie: it was signed out as part of signing in.
+        assert_ne!(
+            server.people.arrive(&guest_token).principal,
+            guest,
+            "the token they set out with no longer proves them"
+        );
+
+        // Their games are theirs. The guest principal *is* the account here,
+        // because they had no account before, so nothing needed claiming.
+        let me = server.people.arrive(&account_token).principal;
+        assert_eq!(me, guest, "the guest they were became the account");
+        assert!(server.people.has_account(&me));
+        // Not one byte of the game moved.
+        assert_eq!(
+            server.store().load(&id).expect("still there").setup.chairs,
+            played.setup.chairs,
+            "logs are immutable: the claim is an alias, never a rewrite"
+        );
+
+        // On another machine, the same person signs in as a guest with games of
+        // their own, and those games follow them to the account (P-1).
+        let other = ask(
+            port,
+            "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        let second_token = other
+            .lines()
+            .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
+            .and_then(|v| v.split(';').next())
+            .expect("a token")
+            .to_string();
+        let second = server.people.arrive(&second_token).principal;
+        assert_ne!(second, me, "a different browser is a different guest");
+        let elsewhere = server.deal("seats=4&name=Egon&pace=instant", &second);
+        assert!(server.begin(&elsewhere));
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables
+                .iter_mut()
+                .find(|t| t.id == elsewhere)
+                .expect("dealt");
+            let acting = t.session.state().decider();
+            let v = t.session.version();
+            t.session.act_as(acting, 0, v).expect("playable");
+        }
+        server.keep(&elsewhere);
+
+        let away = get(port, "/signin", &second_token);
+        let state = away
+            .lines()
+            .find_map(|l| l.strip_prefix("Location: "))
+            .and_then(|l| l.split("state=").nth(1))
+            .expect("a state")
+            .trim()
+            .to_string();
+        let back = get(
+            port,
+            &format!("/signin/done?code=egon&state={state}"),
+            &second_token,
+        );
+        assert!(back.starts_with("HTTP/1.1 303"), "{back:.60}");
+        let third_token = back
+            .lines()
+            .find_map(|l| l.strip_prefix("Set-Cookie: carranta="))
+            .and_then(|v| v.split(';').next())
+            .expect("a token")
+            .to_string();
+        assert_eq!(
+            server.people.arrive(&third_token).principal,
+            me,
+            "the same subject is the same person, on any machine"
+        );
+        assert_eq!(
+            crate::people::Aliases::resolve(&server.people, &second),
+            me,
+            "and the guest they were here now points at that account"
+        );
+        // Again: the game still says the guest played it, because it did.
+        assert!(
+            server
+                .store()
+                .load(&elsewhere)
+                .expect("still there")
+                .setup
+                .chairs
+                .iter()
+                .any(|c| c.who == second)
+        );
+
+        // Signing out ends the session on the server, not only in the browser.
+        let out = ask(
+            port,
+            &format!(
+                "POST /signout HTTP/1.1\r\nHost: x\r\nCookie: carranta={third_token}\r\n\
+                 Content-Length: 0\r\nConnection: close\r\n\r\n"
+            ),
+        );
+        assert!(out.starts_with("HTTP/1.1 303"), "{out:.60}");
+        assert!(out.contains("Max-Age=0"), "and clears the cookie");
+        assert_ne!(
+            server.people.arrive(&third_token).principal,
+            me,
+            "a copy of that cookie taken from anywhere now proves nothing"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_server_with_no_provider_offers_no_way_in() {
+        // The ordinary state of a checkout, and it has to look like a whole
+        // application rather than a broken one.
+        let dir = std::env::temp_dir().join(format!("carranta-nosignin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
+        let port = listener.local_addr().expect("bound").port();
+        let server: &'static Server = Box::leak(Box::new(Server::new(4, 3, TradeMode::Full, &dir)));
+        std::thread::spawn(move || server.serve(listener));
+
+        let home = ask(
+            port,
+            "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        assert!(home.starts_with("HTTP/1.1 200 OK"));
+        assert!(!home.contains("Sign in"), "nothing is offered");
+        assert!(!home.contains("Sign out"));
+        for path in ["/signin", "/signin/done?code=x&state=y"] {
+            let answer = get(port, path, "");
+            assert!(
+                answer.starts_with("HTTP/1.1 404"),
+                "and the routes are not there: {path} gave {answer:.40}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

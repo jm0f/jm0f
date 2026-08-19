@@ -97,7 +97,12 @@ pub(crate) const ICON: &str = "<link rel=\"icon\" href=\"data:image/svg+xml,\
      %3C/svg%3E\">";
 
 pub(crate) fn masthead(context: &str, links: &[(&str, &str)]) -> String {
-    mast("<a class=\"mark\" href=\"/\">Carranta</a>", context, links)
+    mast(
+        "<a class=\"mark\" href=\"/\">Carranta</a>",
+        context,
+        links,
+        "",
+    )
 }
 
 /// The same header for the page it would lead to.
@@ -105,11 +110,14 @@ pub(crate) fn masthead(context: &str, links: &[(&str, &str)]) -> String {
 /// Home is the one page whose title is the name of the thing, so there the mark
 /// is the heading rather than a link: a link to the page you are already on is
 /// an offer of nothing, and a page needs a heading more than it needs that.
-pub(crate) fn masthead_home(links: &[(&str, &str)]) -> String {
-    mast("<h1 class=\"mark\">Carranta</h1>", "", links)
+/// Takes the account strip as well as its links, because the home page is the
+/// one place accounts appear: the board and the report are about a game and have
+/// no business asking anybody to sign in.
+pub(crate) fn masthead_home(links: &[(&str, &str)], account: &str) -> String {
+    mast("<h1 class=\"mark\">Carranta</h1>", "", links, account)
 }
 
-fn mast(mark: &str, context: &str, links: &[(&str, &str)]) -> String {
+fn mast(mark: &str, context: &str, links: &[(&str, &str)], tail: &str) -> String {
     // Which build is serving this, beside the mark, dim and small. It was already
     // in every payload for exactly this reason and rendered nowhere, so the one
     // question a stale process makes somebody ask, "am I even looking at the new
@@ -121,11 +129,12 @@ fn mast(mark: &str, context: &str, links: &[(&str, &str)]) -> String {
     if !context.is_empty() {
         let _ = write!(b, "<span class=\"gameName\">{}</span>", esc(context));
     }
-    if !links.is_empty() {
+    if !links.is_empty() || !tail.is_empty() {
         b.push_str("<div class=\"headLinks\">");
         for (href, label) in links {
             let _ = write!(b, "<a class=\"headLink\" href=\"{href}\">{label}</a>");
         }
+        b.push_str(tail);
         b.push_str("</div>");
     }
     b.push_str("</header>");
@@ -4626,6 +4635,18 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
             text-decoration: none; padding-bottom: 1px;
             border-bottom: 1px solid var(--border); }
 .headLink:hover { color: var(--primary); border-color: var(--primary); }
+/* Who is reading, beside the way to stop being them. Quiet: an account is not
+   what this page is for, and a name in the corner that shouts is a name that
+   reads as a notification. */
+.headWho { color: var(--dim); font: 500 13px/1 Figtree, system-ui, sans-serif;
+           max-width: 12rem; overflow: hidden; text-overflow: ellipsis;
+           white-space: nowrap; }
+/* A button that reads as the links beside it, because it does the same kind of
+   thing and only needs to be a button so that pressing it is a POST. */
+.headOut { display: flex; margin: 0; }
+.headOut .headLink { appearance: none; background: none; cursor: pointer;
+                     border: 0; border-bottom: 1px solid var(--border);
+                     padding: 0 0 1px; }
 main { max-width: 62rem; margin: 0 auto; padding: 0 var(--gutter) 5rem;
        display: flex; flex-direction: column; gap: 1.5rem; }
 /* Tight tracking on a big heading, which is the one typographic tic of the
@@ -5074,7 +5095,7 @@ mod tests {
         // look alike until one of them is edited.
         const PAGE: &str = include_str!("../assets/index.html");
         let report = masthead("", &[("/abcd-efgh-ijkl/", "The board")]);
-        let home = masthead_home(&[("/lobby", "New game")]);
+        let home = masthead_home(&[("/lobby", "New game")], "");
         for html in [report.as_str(), home.as_str(), PAGE] {
             assert!(html.contains("<header>"), "a header");
             assert!(html.contains("class=\"mark\""), "one name for the mark");

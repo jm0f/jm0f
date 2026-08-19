@@ -59,7 +59,50 @@ pub struct Open {
 ///
 /// `open` is every table in memory, newest first; `mine` is what the store has
 /// that belongs to whoever is asking.
-pub fn page(open: &[Open], mine: &[Saved]) -> String {
+/// Who is reading, as far as the header needs to know.
+///
+/// Three states rather than two, and the third is the ordinary one: a server
+/// with no provider configured offers nothing at all rather than a button that
+/// leads to a four hundred and four. That is what a checkout without secrets in
+/// it looks like, and it has to look like a whole application rather than a
+/// broken one.
+pub struct Who {
+    /// Whether this server can sign anybody in.
+    pub offered: bool,
+    /// Whether this reader is signed in.
+    pub signed_in: bool,
+    /// What to call them, when they have said.
+    pub name: String,
+}
+
+/// The account strip, at the top right, and the only place accounts appear.
+///
+/// Deliberately small and deliberately not on the way to anything. Signing in
+/// buys one thing, your games following you to another machine, and a page that
+/// asked for it before letting somebody play would be charging for a game in
+/// advance of showing it. Guests play everything.
+fn account(who: &Who) -> String {
+    if !who.offered {
+        return String::new();
+    }
+    if !who.signed_in {
+        return "<a class=\"headLink\" href=\"/signin\">Sign in</a>".to_string();
+    }
+    let called = match who.name.trim() {
+        "" => "Signed in".to_string(),
+        name => esc(name),
+    };
+    // A form rather than a link, because signing out changes something and a
+    // link that changes something is a link a prefetcher can press. No script:
+    // this page renders on the server and a button in a form needs none.
+    format!(
+        "<span class=\"headWho\">{called}</span>\
+         <form class=\"headOut\" method=\"post\" action=\"/signout\">\
+         <button class=\"headLink\" type=\"submit\">Sign out</button></form>"
+    )
+}
+
+pub fn page(open: &[Open], mine: &[Saved], who: &Who) -> String {
     let mut b = String::new();
     let _ = write!(
         b,
@@ -72,7 +115,7 @@ pub fn page(open: &[Open], mine: &[Saved]) -> String {
         // way to a new game; this page is the way back, and the button below is
         // the way to a new game, said properly and in the place the eye lands. A
         // header link to the page's own first button is furniture.
-        head = crate::report::masthead_home(&[]),
+        head = crate::report::masthead_home(&[], &account(who)),
     );
 
     b.push_str(&deal());
@@ -428,6 +471,89 @@ td.act { text-align: right; white-space: nowrap; }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reader on a server with no sign-in configured, which is what a
+    /// checkout is and what most of these tests are about.
+    fn nobody() -> Who {
+        Who {
+            offered: false,
+            signed_in: false,
+            name: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_account_strip_says_one_of_three_things() {
+        // A server with nothing configured offers nothing at all, rather than a
+        // button that leads to a four hundred and four. That is what a checkout
+        // looks like, and it has to look like a whole application.
+        let html = page(&[], &[], &nobody());
+        assert!(!html.contains("Sign in"), "nothing offered");
+        assert!(!html.contains("/signout"));
+
+        // Offered, and not taken up.
+        let out = page(
+            &[],
+            &[],
+            &Who {
+                offered: true,
+                signed_in: false,
+                name: String::new(),
+            },
+        );
+        assert!(out.contains("href=\"/signin\">Sign in</a>"));
+        assert!(!out.contains("/signout"), "nothing to sign out of");
+
+        // Taken up. A form rather than a link, because signing out changes
+        // something and a link that changes something is one a prefetcher can
+        // press.
+        let inn = page(
+            &[],
+            &[],
+            &Who {
+                offered: true,
+                signed_in: true,
+                name: "Egon".to_string(),
+            },
+        );
+        assert!(inn.contains(">Egon</span>"), "named");
+        assert!(inn.contains("method=\"post\" action=\"/signout\""));
+        assert!(!inn.contains("href=\"/signin\""), "already in");
+        // And no script anywhere near it: this page renders on the server.
+        assert!(
+            !inn[..inn.find("</header>").expect("a header")].contains("<script"),
+            "the header needs none"
+        );
+
+        // Signed in and never named. Not "Player 1", which is a seat's word.
+        let unnamed = page(
+            &[],
+            &[],
+            &Who {
+                offered: true,
+                signed_in: true,
+                name: "   ".to_string(),
+            },
+        );
+        assert!(unnamed.contains(">Signed in</span>"));
+        assert!(unnamed.contains("/signout"));
+    }
+
+    #[test]
+    fn a_name_in_the_header_is_text_rather_than_markup() {
+        // It is somebody else's text, typed into a seat and kept on a person.
+        let html = page(
+            &[],
+            &[],
+            &Who {
+                offered: true,
+                signed_in: true,
+                name: "<script>alert(1)</script>".to_string(),
+            },
+        );
+        assert!(!html.contains("<script>alert"), "escaped");
+        assert!(html.contains("&lt;script&gt;alert"));
+    }
     use crate::game::Step;
     use crate::store::Setup;
     use carranta_core::action::Action;
@@ -482,7 +608,7 @@ mod tests {
 
     #[test]
     fn the_page_leads_with_the_one_thing_it_is_for() {
-        let html = page(&[], &[]);
+        let html = page(&[], &[], &nobody());
         // One button, and it leads to the lobby rather than dealing anything: the
         // settings live there, and a second form here would be half of them.
         assert!(html.contains("href=\"/lobby\">New game</a>"));
@@ -506,14 +632,24 @@ mod tests {
         // Two cards saying they have nothing in them is a hole in the page on
         // the one visit where it has the least to say. What is not there is not
         // mentioned; the sections arrive as somebody plays.
-        let html = page(&[], &[]);
+        let html = page(&[], &[], &nobody());
         assert!(!html.contains(">Tables</h2>"), "no empty table list");
         assert!(!html.contains(">Your games</h2>"), "and no empty history");
         assert!(!html.contains("Also on this server"));
         assert!(html.contains("New game"), "only the way to start one");
         // And they arrive the moment there is something to put in them.
-        assert!(page(&[table("aaaa-aaaa-aaaa", true, false, None)], &[]).contains(">Tables</h2>"));
-        assert!(page(&[], &[game("bbbb-bbbb-bbbb", "Egon", Some(0))]).contains(">Your games</h2>"));
+        assert!(
+            page(
+                &[table("aaaa-aaaa-aaaa", true, false, None)],
+                &[],
+                &nobody()
+            )
+            .contains(">Tables</h2>")
+        );
+        assert!(
+            page(&[], &[game("bbbb-bbbb-bbbb", "Egon", Some(0))], &nobody())
+                .contains(">Your games</h2>")
+        );
     }
 
     #[test]
@@ -521,7 +657,7 @@ mod tests {
         let mine = table("aaaa-aaaa-aaaa", false, true, None);
         let theirs = table("bbbb-bbbb-bbbb", false, false, None);
         let listed = table("cccc-cccc-cccc", true, false, None);
-        let html = page(&[mine, theirs, listed], &[]);
+        let html = page(&[mine, theirs, listed], &[], &nobody());
         assert!(html.contains("aaaa-aaaa-aaaa"), "my own unlisted table");
         assert!(
             !html.contains("bbbb-bbbb-bbbb"),
@@ -531,7 +667,7 @@ mod tests {
         // Mine and published says both: one says why it is on my list, the other
         // says it is on everybody's, and that is the half that cannot be undone.
         let both = table("eeee-eeee-eeee", true, true, None);
-        let row = page(&[both], &[]);
+        let row = page(&[both], &[], &nobody());
         let row = row
             .split("eeee-eeee-eeee")
             .next()
@@ -544,7 +680,7 @@ mod tests {
     fn a_table_with_a_chair_free_says_so_and_offers_it() {
         // The one thing on this page you can be too late for, so it is the one
         // tag that is not quiet.
-        let html = page(&[waiting_table("aaaa-aaaa-aaaa", false)], &[]);
+        let html = page(&[waiting_table("aaaa-aaaa-aaaa", false)], &[], &nobody());
         assert!(html.contains(">2 seats free</span>"));
         assert!(html.contains(">Sit down</a>"));
         // One reads as one.
@@ -552,10 +688,10 @@ mod tests {
             takeable: 1,
             ..waiting_table("bbbb-bbbb-bbbb", false)
         };
-        assert!(page(&[one], &[]).contains(">a seat free</span>"));
+        assert!(page(&[one], &[], &nobody()).contains(">a seat free</span>"));
         // Already in it: going back to your own game is not joining it, and
         // saying so twice would make the loud word mean nothing.
-        let html = page(&[waiting_table("cccc-cccc-cccc", true)], &[]);
+        let html = page(&[waiting_table("cccc-cccc-cccc", true)], &[], &nobody());
         assert!(html.contains(">Back to it</a>"));
         assert!(!html.contains("seats free"));
         // A full table is somewhere to watch, quietly.
@@ -564,7 +700,7 @@ mod tests {
             seated: false,
             ..waiting_table("dddd-dddd-dddd", false)
         };
-        let html = page(&[full], &[]);
+        let html = page(&[full], &[], &nobody());
         assert!(html.contains(">Watch</a>"));
         assert!(html.contains("go small quiet"));
     }
@@ -580,7 +716,7 @@ mod tests {
             takeable: 0,
             ..table("eeee-eeee-eeee", false, false, None)
         };
-        let html = page(&[theirs], &[]);
+        let html = page(&[theirs], &[], &nobody());
         assert!(html.contains("eeee-eeee-eeee"), "it is on their page");
         assert!(
             !html.contains(">yours</span>"),
@@ -595,7 +731,7 @@ mod tests {
         // history card, which reads it off the store rather than out of memory.
         for mine in [true, false] {
             let over = table("dddd-dddd-dddd", true, mine, Some(1));
-            let html = page(&[over], &[]);
+            let html = page(&[over], &[], &nobody());
             assert!(!html.contains("dddd-dddd-dddd"), "mine: {mine}");
             assert!(!html.contains(">Tables</h2>"), "and no list at all");
         }
@@ -604,7 +740,7 @@ mod tests {
     #[test]
     fn a_played_game_offers_its_board_and_its_report() {
         let g = game("ffff-ffff-ffff", "Egon", Some(0));
-        let html = page(&[], std::slice::from_ref(&g));
+        let html = page(&[], std::slice::from_ref(&g), &nobody());
         assert!(html.contains("href=\"/ffff-ffff-ffff/\""));
         assert!(html.contains("href=\"/ffff-ffff-ffff/analytics\""));
         // Turns, counted the way the report counts them, not moves.
@@ -620,7 +756,7 @@ mod tests {
         // the store. Fine while the store held six demo games; a browsable pile
         // of other people's games on the front page once it holds theirs.
         let g = game("1111-1111-1111", "", None);
-        let html = page(&[], std::slice::from_ref(&g));
+        let html = page(&[], std::slice::from_ref(&g), &nobody());
         assert!(html.contains("1111-1111-1111"), "mine is shown");
         assert!(html.contains(">unfinished</span>"));
         assert!(!html.contains("Also on this server"), "and only mine");
@@ -633,7 +769,7 @@ mod tests {
         let games: Vec<Saved> = (0..SHOWN + 3)
             .map(|i| game(&format!("{:04}-0000-0000", i + 1000), "Egon", Some(0)))
             .collect();
-        let html = page(&[], &games);
+        let html = page(&[], &games, &nobody());
         assert!(html.contains("1000-0000-0000"), "the newest is shown");
         let last = format!("{:04}-0000-0000", SHOWN + 1002);
         assert!(!html.contains(&last), "the oldest is not");
@@ -650,7 +786,7 @@ mod tests {
             game: "<script>alert(1)</script>".to_string(),
             ..sneaky
         };
-        let html = page(&[sneaky], &[]);
+        let html = page(&[sneaky], &[], &nobody());
         assert!(!html.contains("<script"), "no script on the home page");
         assert!(html.contains("&lt;script&gt;"));
         assert!(!html.contains("onfocus=\"x"));
@@ -660,7 +796,7 @@ mod tests {
             name: "<b>bold</b>".to_string(),
             ..game("3333-3333-3333", "", Some(0))
         };
-        let html = page(&[], &[g]);
+        let html = page(&[], &[g], &nobody());
         assert!(!html.contains("<b>bold</b>"));
         assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
     }

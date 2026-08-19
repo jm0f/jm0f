@@ -424,7 +424,7 @@ This matters most for the AI-training use case. A single engine step should land
 | `carranta-evolve` | Population loop, parallel evaluation, versioned ladder, checkpoints (§9.5); ships `carranta-train` | core, bot, analytics, record | **built** |
 | `carranta-py` | PyO3 bindings: batched environments, observation encoding, action masks | core | |
 | `carranta-server` | HTTP/WS service, matchmaking, persistence | core, record | |
-| `carranta-ui` | Play locally in a browser: dependency-free HTTP server over the engine; ships `carranta-play` | core, bot, record | **built** |
+| `carranta-ui` | Play in a browser: hand-written HTTP server over the engine; ships `carranta-play` | core, bot, record | **built** |
 | `carranta-wasm` | Browser bindings for the client | core, record | |
 | `carranta-analytics` | Parquet/Arrow export, derived-event materialization | record | |
 

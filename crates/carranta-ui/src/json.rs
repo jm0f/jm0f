@@ -181,6 +181,56 @@ fn escape(out: &mut String, s: &str) {
     out.push('"');
 }
 
+/// Read one string field from a small JSON object.
+///
+/// The first reader here that is pointed at somebody else's document rather than
+/// at our own page's: an identity provider's answer, and the payload inside the
+/// token it carries. So it is stricter than it looks. It finds `"key"`, insists
+/// on a colon and a quote, and reads to the closing quote, undoing the six
+/// escapes JSON defines and refusing anything else. It does not parse a
+/// document, it does not recurse, and it does not salvage: every way of being
+/// wrong is `None`.
+///
+/// Two things it deliberately cannot do. It will not find a key nested inside
+/// another object, because nothing here wants one and a reader that wanders into
+/// sub-objects can be steered. And it will not return a partial string, because
+/// a truncated subject is a different person.
+pub fn field(body: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let start = body.find(&needle)? + needle.len();
+    let rest = body[start..].trim_start().strip_prefix(':')?.trim_start();
+    let mut chars = rest.strip_prefix('"')?.chars();
+    let mut out = String::new();
+    loop {
+        match chars.next()? {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                '/' => out.push('/'),
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                'b' => out.push('\u{8}'),
+                'f' => out.push('\u{c}'),
+                'u' => {
+                    let hex: String = (0..4).filter_map(|_| chars.next()).collect();
+                    let n = u32::from_str_radix(&hex, 16).ok()?;
+                    // Lone surrogates are not characters. A subject with one in
+                    // it is not a subject we are going to key an account on.
+                    out.push(char::from_u32(n)?);
+                }
+                _ => return None,
+            },
+            // A raw control character is not legal in a JSON string, and the
+            // point of saying so is that this reader answers the same way to
+            // anything it does not recognise.
+            c if (c as u32) < 0x20 => return None,
+            c => out.push(c),
+        }
+    }
+}
+
 /// Read one unsigned integer field from a small JSON object.
 ///
 /// The client sends `{"action":3,"version":12}` and nothing else, so this looks
@@ -222,6 +272,44 @@ pub fn read_u8_array(body: &str, key: &str, n: usize) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_string_field_is_read_out_of_somebody_else_s_document() {
+        // The first reader here pointed at a document this server did not write:
+        // an identity provider's answer, and the payload inside the token it
+        // carries. So every way of being wrong is `None` rather than a partial
+        // value, because a truncated subject is a different person.
+        let body = r#"{"access_token":"a","id_token":"e30.e30.sig","expires_in":3599}"#;
+        assert_eq!(field(body, "id_token").as_deref(), Some("e30.e30.sig"));
+        assert_eq!(field(body, "access_token").as_deref(), Some("a"));
+        assert_eq!(field(body, "nothing"), None);
+        assert_eq!(field(body, "expires_in"), None, "not a string");
+
+        // Whitespace where JSON allows it, and the six escapes it defines.
+        assert_eq!(field(r#"{ "k"  :  "v" }"#, "k").as_deref(), Some("v"));
+        assert_eq!(
+            field(r#"{"k":"a\"b\\c\/d\ne\tf"}"#, "k").as_deref(),
+            Some("a\"b\\c/d\ne\tf")
+        );
+        assert_eq!(
+            field(r#"{"k":"\u00e9t\u00e9"}"#, "k").as_deref(),
+            Some("été")
+        );
+
+        // And the ways it can be malformed, none of which produce a value.
+        assert_eq!(field(r#"{"k":"unterminated"#, "k"), None);
+        assert_eq!(field(r#"{"k":123}"#, "k"), None);
+        assert_eq!(field(r#"{"k"}"#, "k"), None);
+        assert_eq!(field(r#"{"k":"bad\q"}"#, "k"), None, "not an escape");
+        assert_eq!(field(r#"{"k":"\ud800"}"#, "k"), None, "a lone surrogate");
+        assert_eq!(field(r#"{"k":"\uZZZZ"}"#, "k"), None);
+        assert_eq!(field("", "k"), None);
+        assert_eq!(
+            field(&format!(r#"{{"k":"a{}b"}}"#, '\u{1}'), "k"),
+            None,
+            "a raw control character is not legal in a JSON string"
+        );
+    }
 
     #[test]
     fn an_object_round_trips_through_shape() {

@@ -5,7 +5,9 @@ build in Rust rather than beside it.
 
 ## What exists
 
-`crates/carranta-ui/src/people.rs`, and no way to sign in.
+**Sign in with Google, over the server-side authorization code flow**, and
+guests who never have to. `crates/carranta-ui/src/people.rs` holds who somebody
+is; `signin.rs` is the flow.
 
 The three concepts §8.2 names are separated, which is the part that cannot be
 added afterwards. A **principal** is the durable identity and is what a game
@@ -17,8 +19,41 @@ already resolve through, so a claim moves a rating without moving a game; a
 display name that belongs to the person rather than to a seat; and a column for
 the P-11 age declaration that nothing writes to yet.
 
-The full account of it is `ui.md` §19. The short version is that a sign-in has
-somewhere to attach, and attaching one changes nothing else.
+The full account of it is `ui.md` §19 and §20.
+
+**Three requests, one of them ours.** `/signin` puts a random `state` aside for
+this browser and redirects to Google. `/signin/done` checks the state, trades the
+code for an ID token over a connection this process opened to Google, reads the
+subject out of it and drops the rest. `POST /signout` deletes the session row.
+
+**No signature check, on Google's own instruction**: a token taken directly from
+the token endpoint over TLS, authenticated with our client secret, does not need
+one, and it is passed nowhere that would. Trust rests on the transport and the
+secret rather than on a JWT library and a key-rotation schedule.
+
+**Nothing is stored but the subject.** Not the email address, not the name, not
+the picture. `openid` is the only scope asked for, so the consent screen does not
+list things nobody wanted either.
+
+**It is optional and silent when absent.** No `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` and `PUBLIC_ORIGIN` means no button and no routes, which
+is what a checkout looks like: a whole application that happens not to offer
+accounts, rather than a broken one.
+
+### Deploying it
+
+Three environment variables beside the volume and `CARRANTA_BUILD`:
+
+| | |
+|---|---|
+| `GOOGLE_CLIENT_ID` | From the Google Cloud console, an OAuth 2.0 Web application client |
+| `GOOGLE_CLIENT_SECRET` | The same client's secret. The first secret this program has needed |
+| `PUBLIC_ORIGIN` | `https://your.domain`, with no trailing path |
+
+The redirect URI is derived once, as `PUBLIC_ORIGIN` + `/signin/done`, and must
+be registered with Google exactly. Deriving it rather than configuring it
+separately means there is one place the two can disagree, and it is a typo in one
+variable rather than a mismatch between two.
 
 ## What the scoping document asked for
 
@@ -27,9 +62,9 @@ out three consequences, and §8.7 draws the conclusion: Auth.js runs inside a JS
 meta-framework, so the client becomes a Next.js or SvelteKit application
 rendering a `carranta-wasm` board.
 
-That was written before there was a server. What got built is a 3 MB
-dependency-free Rust binary that serves one HTML page, and the whole of its
-`Cargo.lock` is six entries, all of them ours. Following P-15 literally means a
+That was written before there was a server. What got built is a Rust binary
+that serves one HTML page from itself, and until sign-in landed the whole of its
+`Cargo.lock` was six entries, all of them ours. Following P-15 literally means a
 second service in a second language, and the no-dependency property survives
 only on the Rust side of the seam.
 

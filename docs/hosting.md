@@ -8,13 +8,18 @@ Measured on the build this was written against:
 
 | | |
 |---|---|
-| Binary | 3.0 MB, static, no third-party dependencies |
+| Binary | 4.6 MB, one file, 27 crates compiled in |
 | Memory resident | 6 MB, idle, with tables in it |
 | Egress per player-hour | 13.0 MB before the long poll; a fraction of that after |
 | First page load | 355 KB across 29 requests |
 | State on disk | one small text file per finished game |
 
-Three properties decide everything else.
+Four properties decide everything else.
+
+**It now makes one outbound request.** Signing somebody in means a POST to
+Google's token endpoint, which is the only thing this process asks of the outside
+world and the reason `ureq` and a TLS stack are in the tree at all. Everything
+else it serves comes out of itself.
 
 **It is a long-lived process.** Lobbies, seats, ready marks, presence and what
 has been said live in a `Mutex<Vec<Table>>` in process memory. Only finished
@@ -56,7 +61,13 @@ Three things to set in the dashboard, none of which belong in a file:
    `/data/games`, which is what the `--games` flag in the `Dockerfile` points at.
 2. **`CARRANTA_BUILD`** as a build argument, set to `$RAILWAY_GIT_COMMIT_SHA`, so
    the hash in the header names the commit rather than saying `container`.
-3. **Nothing else.** `PORT` is set by Railway, and the binary treats its presence
+3. **`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `PUBLIC_ORIGIN`**, if you
+   want people to be able to sign in. All three or none: without them the button
+   is not shown and the routes are not there, which is a whole application that
+   happens not to offer accounts rather than a broken one. `PUBLIC_ORIGIN` is
+   `https://your.domain` with no trailing path, and the redirect Google must have
+   registered is that plus `/signin/done`. See `accounts.md`.
+4. **Nothing else.** `PORT` is set by Railway, and the binary treats its presence
    as the signal to bind `0.0.0.0` rather than loopback.
 
 ## Cloudflare in front
@@ -64,9 +75,9 @@ Three things to set in the dashboard, none of which belong in a file:
 Free, and it does three jobs this server deliberately does not do itself.
 
 **Compression.** The server sends everything uncompressed, because compressing
-it in-house would mean either a third-party crate or a hand-written DEFLATE
-encoder, and this workspace has no third-party crates. Cloudflare compresses on
-the way out: the board's markup is 252 KB and goes to about 81 KB.
+it in-house would mean either another dependency or a hand-written DEFLATE
+encoder, and neither is worth it for something a proxy does for free. Cloudflare
+compresses on the way out: the board's markup is 252 KB and goes to about 81 KB.
 
 **Caching the parts that never change.** The art, the fonts and the sounds are
 compiled into the binary and are the same bytes for the life of a build, so they

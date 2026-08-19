@@ -1445,9 +1445,9 @@ The page borrows **shadcn/ui's design system and none of its code**. shadcn is
 not a library you link to: it is a CLI that copies React and TypeScript source
 into a project, and every component of it assumes React, Tailwind, a Radix
 primitive or two and a bundler. Its charts are Recharts, another React
-dependency. This workspace has no Node toolchain and no third-party crate, and
-`./play` is `cargo build --release` and run, with every asset compiled into one
-binary you can copy to a machine and execute. Taking the package would cost all
+dependency. This workspace has no Node toolchain, and `./play` is
+`cargo build --release` and run, with every asset compiled into one binary you
+can copy to a machine and execute. Taking the package would cost all
 of that to replace hand-written CSS that was already doing the job, and would
 ship a JavaScript runtime to a page that deliberately carries no script.
 
@@ -2913,6 +2913,80 @@ sixteen, self-declared, with chat as the trigger rather than the account. The
 column is here so the flow has somewhere to write, and so that *we never asked*
 is a value in the table rather than an absence whose meaning has to be
 remembered. Nothing asks yet.
+
+---
+
+## 20. Signing in
+
+**Guests play everything.** Signing in buys one thing and only one: your games
+follow you to another machine. A page that asked for an account before letting
+somebody play would be charging for a game before showing it, so the control is
+one quiet link in the corner of the home page and appears nowhere else. The board
+and the report are about a game and have no business asking.
+
+**Google, over the server-side code flow, and no more OAuth than that.** The
+browser is sent to Google, comes back with a code, and the server trades the code
+for a subject over a connection it opened itself. Three requests, one of them
+ours.
+
+**No signature is checked, on Google's own instruction.** The response carries a
+signed token and this does not verify it, because a token taken directly from the
+token endpoint over TLS with our client secret does not need verifying, and it is
+passed nowhere that would. Trust rests on the transport and the secret rather
+than on a JWT library and Google's key rotation. The browser-side alternative
+would need a script from `accounts.google.com` on a page that has none, and it is
+the variant that needs the keys.
+
+**Only `openid` is asked for.** Google would hand over an email address, a name
+and a picture; none is stored, and a consent screen listing things nobody wanted
+is its own kind of lie. What is kept is the subject, which is the only stable one
+of them, because an address changes hands and a subject does not. The account
+system therefore holds no personal data at all.
+
+**The `state` is the whole defence** against being walked into somebody else's
+account: an attacker who can make a browser follow a link cannot make it follow
+one carrying a value only that browser was given. It is real randomness, it is
+good exactly once, and it expires in ten minutes. It is also what remembers
+*which* browser set out, so a sign-in belongs to whoever started it rather than
+to whoever comes back.
+
+**Signing in ends the session it started from.** A new cookie every time, and the
+old row deleted, because a session that survives signing in survived whatever
+came before it. Signing out deletes the row too rather than merely clearing the
+cookie: a cookie cleared on one machine and still good on the server is a session
+that whoever copied it still holds.
+
+**What happens to the guest you were** is one of four things, and the interesting
+one is the third:
+
+1. **You are already that account here.** Nothing to settle, and a fresh session.
+2. **The credential is new and this browser has no account.** The guest you have
+   been *becomes* the account. Nothing is claimed and no alias is written, because
+   your history was never anybody else's. This is the ordinary path and it is the
+   reason guests are worth having.
+3. **The account is yours and you have been playing here as a guest.** Exactly
+   P-1: the guest is aliased to the account and the games follow. Only if that
+   guest has actually played, because an alias per idle visitor is a table of rows
+   that point at nothing.
+4. **A different person signs in on a machine that is already somebody's.** A
+   fresh principal takes the credential and nothing is aliased. Two accounts on
+   one machine is not two accounts being one.
+
+**It is optional, and silent when it is not configured**, which is what a
+checkout is: no client, no button, and the routes are not there. A server that
+refused to start without a Google client would make every contributor get one.
+
+**The exchange is a trait with a fake behind it in tests**, so nothing in the
+suite needs the internet or Google's uptime to check that the flow is right. What
+the tests exercise is the part where the mistakes live: the state, the claim, the
+sessions, and the immutability of what was already written.
+
+**Tokens are real randomness now.** They used to come from the clock and the
+process id run through a mixer, which is fine for naming a browser and useless
+the moment the name became the proof: two visitors in the same millisecond got
+adjacent values. Rejection-sampled from the operating system, and the process
+stops rather than hand out a guessable credential if the system will not supply
+randomness.
 
 ---
 

@@ -118,6 +118,19 @@ struct Book {
     /// breaks every checksum over them and destroys the append-only property
     /// that makes a replay worth trusting.
     aliases: HashMap<String, String>,
+    /// A credential from somewhere else, to the principal it proves.
+    ///
+    /// Keyed by provider and subject together, `google:1234…`, so two providers
+    /// that happen to number their users the same way are still two credentials.
+    /// A principal may have several, which is what makes "sign in with Apple as
+    /// well" a row rather than a redesign.
+    ///
+    /// What is stored is the subject and nothing else. Google will offer an
+    /// email address, a name and a picture; the subject is the only one of them
+    /// that is stable, because an address can change hands and a subject cannot,
+    /// and taking only it means this table holds no personal data at all. There
+    /// is nothing here to leak, and nothing to send anything to.
+    credentials: HashMap<String, String>,
 }
 
 impl People {
@@ -306,6 +319,101 @@ impl People {
             .is_some_and(|p| p.declared_adult)
     }
 
+    /// Somebody has proved a credential. Work out who they are now.
+    ///
+    /// Four cases, and the interesting one is the third.
+    ///
+    /// 1. **The credential is already this browser's principal.** Nothing to do
+    ///    but hand back a fresh token, which signing in should do anyway.
+    /// 2. **The credential is new and this browser has no account.** The guest
+    ///    they already are *becomes* the account: the credential is attached to
+    ///    the principal they have been playing under. No alias is needed and
+    ///    nothing is claimed, because their history was never anybody else's.
+    ///    This is the ordinary path and it is the reason guests are worth having.
+    /// 3. **The credential belongs to somebody else and this browser is a guest
+    ///    with something to keep.** They played here before signing in, on this
+    ///    machine, as a guest; the account is theirs on another. That is exactly
+    ///    P-1, so the guest is aliased to the account and their games follow. The
+    ///    caller decides what "something to keep" means, because whether a
+    ///    principal has ever played is a question about games and this file knows
+    ///    nothing about games.
+    /// 4. **The credential is new and this browser is already signed in as
+    ///    somebody else.** Two accounts, one machine. A fresh principal takes the
+    ///    credential and nothing is aliased: the person sitting here has said
+    ///    they are somebody different, not that two accounts are one.
+    ///
+    /// Always ends with a *new* device token. A session that survives signing in
+    /// is a session that survived whatever came before it.
+    pub fn sign_in(&self, credential: &str, browser: &str, claimable: bool) -> SignedIn {
+        let mut book = self.book.lock().unwrap();
+        let known = book.credentials.get(credential).cloned();
+        let browser_has_account = book.credentials.values().any(|p| p == browser);
+        let (principal, claimed) = match known {
+            // Cases 1 and 3.
+            Some(theirs) => {
+                let claim = theirs != browser && claimable && !browser_has_account;
+                if claim {
+                    book.aliases.insert(browser.to_string(), theirs.clone());
+                }
+                (theirs, claim.then(|| browser.to_string()))
+            }
+            // Case 2.
+            None if !browser_has_account && book.people.contains_key(browser) => {
+                book.credentials
+                    .insert(credential.to_string(), browser.to_string());
+                (browser.to_string(), None)
+            }
+            // Case 4, and a browser this table has never heard of.
+            None => {
+                let fresh = mint(&book.people);
+                book.people.insert(
+                    fresh.clone(),
+                    Person {
+                        id: fresh.clone(),
+                        created: now(),
+                        name: String::new(),
+                        declared_adult: false,
+                    },
+                );
+                book.credentials
+                    .insert(credential.to_string(), fresh.clone());
+                (fresh, None)
+            }
+        };
+        let token = mint_token(&book.devices);
+        book.devices.insert(token.clone(), principal.clone());
+        let out = SignedIn {
+            principal,
+            token,
+            claimed,
+        };
+        write(&self.path, &book);
+        out
+    }
+
+    /// Whether this principal has signed in with anything.
+    pub fn has_account(&self, principal: &str) -> bool {
+        self.book
+            .lock()
+            .unwrap()
+            .credentials
+            .values()
+            .any(|p| p == principal)
+    }
+
+    /// Stop this token proving anybody.
+    ///
+    /// Removed rather than merely forgotten by the browser: a cookie that is
+    /// cleared on one machine and still valid on the server is a session that
+    /// somebody who copied it still holds. Signing out should end the session,
+    /// not the browser's memory of it.
+    pub fn sign_out(&self, token: &str) {
+        let mut book = self.book.lock().unwrap();
+        if book.devices.remove(token).is_some() {
+            write(&self.path, &book);
+        }
+    }
+
     /// Point a guest's history at an account (P-1).
     ///
     /// Both must exist and must not be the same person, and the account must not
@@ -368,6 +476,20 @@ pub struct Arrival {
     pub fresh_token: bool,
 }
 
+/// What signing in settled.
+pub struct SignedIn {
+    /// Who they are now.
+    pub principal: String,
+    /// A new cookie for this browser, always.
+    pub token: String,
+    /// The guest principal whose history was pointed at this account, if any.
+    ///
+    /// Worth telling them about: "your games from this browser are now on your
+    /// account" is the whole point of the flow, and a silent claim looks like a
+    /// silent loss.
+    pub claimed: Option<String>,
+}
+
 /// Following a claim, at the moment somebody reads rather than at the moment
 /// somebody played (P-1, §8.2).
 ///
@@ -415,36 +537,66 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// A new string of the shape everything here uses, not already taken.
-fn fresh<T>(taken: &HashMap<String, T>, salt: u64) -> String {
+/// Sixteen characters of real randomness, not already taken.
+///
+/// From the operating system, and this is not a nicety. A device token is a
+/// bearer credential: whoever holds it is that person, with no second factor and
+/// nothing else to check. These used to come from the clock and the process id
+/// run through a mixer, which is fine for naming a browser and useless the
+/// moment the name became the proof. Two visitors in the same millisecond got
+/// adjacent values, and anybody who could guess when somebody first arrived
+/// could enumerate a small space around it.
+///
+/// Sixteen of thirty-six characters is a little over eighty-two bits, drawn
+/// uniformly, which is not a space anybody walks through.
+pub(crate) fn secret() -> String {
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    for attempt in 0..64u64 {
-        let mut n = now().wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ (std::process::id() as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
-            ^ salt.wrapping_mul(0x94D0_49BB_1331_11EB)
-            ^ attempt.wrapping_mul(0xD6E8_FEB8_6659_FD93);
-        let mut out = String::with_capacity(KEY_LEN);
-        for _ in 0..KEY_LEN {
-            n ^= n >> 33;
-            n = n.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-            n ^= n >> 29;
-            out.push(ALPHABET[(n % ALPHABET.len() as u64) as usize] as char);
+    // Rejection sampling rather than a modulus. Thirty-six does not divide two
+    // hundred and fifty-six, so folding a byte would make the first sixteen
+    // letters likelier than the rest, and a biased alphabet is a smaller space
+    // than it looks.
+    let mut out = String::with_capacity(KEY_LEN);
+    let mut buf = [0u8; 64];
+    while out.len() < KEY_LEN {
+        if getrandom::fill(&mut buf).is_err() {
+            // The system refused to give us randomness, which is not a thing to
+            // paper over with a clock: every value this returns is somebody's
+            // credential. Better to take the process down than to hand out a
+            // guessable one and never know.
+            panic!("no system randomness available, refusing to mint a credential");
         }
+        for b in buf {
+            if out.len() == KEY_LEN {
+                break;
+            }
+            if (b as usize) < 252 {
+                out.push(ALPHABET[(b % 36) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
+/// A new string of the shape everything here uses, not already taken.
+fn fresh<T>(taken: &HashMap<String, T>) -> String {
+    for _ in 0..64 {
+        let out = secret();
         if !taken.contains_key(&out) {
             return out;
         }
     }
-    // Sixty-four collisions in a row is not a thing that happens; answering
-    // anyway beats looping for ever in a lock somebody is waiting on.
-    format!("{:0>16}", now() % 10_000_000_000_000_000)
+    // Sixty-four collisions in a row against eighty-two bits does not happen,
+    // and if it somehow did it would mean the randomness is broken, which is the
+    // one case where carrying on regardless is worse than stopping.
+    panic!("cannot find an unused key, which means the randomness is not random");
 }
 
 fn mint(taken: &HashMap<String, Person>) -> String {
-    fresh(taken, 1)
+    fresh(taken)
 }
 
 fn mint_token(taken: &HashMap<String, String>) -> String {
-    fresh(taken, 2)
+    fresh(taken)
 }
 
 /// Whether a string is one of ours, which is the check a cookie gets.
@@ -496,6 +648,11 @@ fn encode(book: &Book) -> String {
     for key in pending {
         let _ = writeln!(out, "awaiting {key}");
     }
+    let mut credentials: Vec<(&String, &String)> = book.credentials.iter().collect();
+    credentials.sort();
+    for (credential, principal) in credentials {
+        let _ = writeln!(out, "proves {credential} {principal}");
+    }
     out
 }
 
@@ -541,6 +698,11 @@ fn decode(text: &str) -> Option<Book> {
                 book.aliases.insert(guest.to_string(), account.to_string());
             }
             "awaiting" => book.pending.push(rest.to_string()),
+            "proves" => {
+                let (credential, principal) = rest.split_once(' ')?;
+                book.credentials
+                    .insert(credential.to_string(), principal.to_string());
+            }
             // An unknown line is a newer build's, and the version check below is
             // what decides whether to trust any of it.
             _ => {}
@@ -698,6 +860,98 @@ mod tests {
         // And it survives the trip through the file.
         let people = People::open(&d);
         assert_eq!(people.resolve(&guest), account);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn signing_in_settles_which_of_four_things_just_happened() {
+        let d = dir("signin");
+        let people = People::open(&d);
+
+        // 2. A credential nobody has used, on a browser with no account: the
+        //    guest they already are becomes the account. Nothing is claimed,
+        //    because their history was never anybody else's.
+        let egon = people.arrive("").principal;
+        let first = people.sign_in("g:egon", &egon, true);
+        assert_eq!(first.principal, egon, "the guest became the account");
+        assert_eq!(first.claimed, None, "and had nothing to claim");
+        assert!(people.has_account(&egon));
+
+        // 1. The same person again on the same browser: nothing to settle, but
+        //    a new token all the same.
+        let again = people.sign_in("g:egon", &egon, true);
+        assert_eq!(again.principal, egon);
+        assert_eq!(again.claimed, None);
+        assert_ne!(again.token, first.token, "a fresh session either way");
+        assert_eq!(people.arrive(&again.token).principal, egon);
+
+        // 3. Their account, reached from a second machine where they have been
+        //    playing as a guest. That guest's games follow them (P-1).
+        let elsewhere = people.arrive("").principal;
+        let moved = people.sign_in("g:egon", &elsewhere, true);
+        assert_eq!(moved.principal, egon, "they are who the credential says");
+        assert_eq!(moved.claimed.as_deref(), Some(elsewhere.as_str()));
+        assert_eq!(people.resolve(&elsewhere), egon, "and so are their games");
+
+        // The same, from a guest who has never played: nothing to point at, so
+        // nothing is pointed. An alias per idle visitor is a table of rows that
+        // mean nothing.
+        let idle = people.arrive("").principal;
+        assert_eq!(people.sign_in("g:egon", &idle, false).claimed, None);
+        assert_eq!(people.resolve(&idle), idle, "left alone");
+
+        // 4. A different person signing in on a machine that is already
+        //    somebody's. Two accounts, one browser: a new principal, and the
+        //    first one's history stays the first one's.
+        let marta = people.sign_in("g:marta", &egon, true);
+        assert_ne!(marta.principal, egon, "not the same person");
+        assert_eq!(marta.claimed, None, "and not a claim on Egon's games");
+        assert_eq!(people.resolve(&egon), egon, "Egon is still Egon");
+        assert_eq!(people.arrive(&marta.token).principal, marta.principal);
+
+        // All of it survives the trip through the file.
+        let people = People::open(&d);
+        assert_eq!(people.arrive(&moved.token).principal, egon);
+        assert_eq!(people.resolve(&elsewhere), egon);
+        assert!(people.has_account(&marta.principal));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn signing_out_ends_the_session_rather_than_the_browser_s_memory_of_it() {
+        // A cookie cleared on one machine and still good on the server is a
+        // session that whoever copied it still holds.
+        let d = dir("signout");
+        let people = People::open(&d);
+        let a = people.arrive("");
+        people.sign_out(&a.token);
+        assert_ne!(
+            people.arrive(&a.token).principal,
+            a.principal,
+            "that token proves nobody now"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_token_is_not_something_anybody_can_guess() {
+        // These used to come from the clock and the process id, which is fine
+        // for naming a browser and useless the moment the name became the
+        // proof: two visitors in the same millisecond got adjacent values.
+        let d = dir("entropy");
+        let people = People::open(&d);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..500 {
+            let a = people.arrive("");
+            assert!(is_key(&a.token), "the shape the reader accepts");
+            assert!(seen.insert(a.token), "and never the same one twice");
+            assert!(seen.insert(a.principal));
+        }
+        // Every letter of the alphabet turns up across a thousand draws, which
+        // a biased or truncated encoding would not manage.
+        let letters: std::collections::HashSet<char> =
+            seen.iter().flat_map(|s| s.chars()).collect();
+        assert_eq!(letters.len(), 36, "the whole alphabet is in play");
         let _ = std::fs::remove_dir_all(&d);
     }
 

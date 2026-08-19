@@ -12,9 +12,8 @@ FROM rust:1.87-slim-bookworm AS build
 WORKDIR /src
 
 # The manifests first, so a change to the source does not re-fetch the registry.
-# There is nothing to fetch, as it happens: this workspace has no third-party
-# dependencies at all. The split costs nothing and keeps that true by accident
-# rather than by luck.
+# There was nothing to fetch until sign-in needed an HTTPS client; there is very
+# little now, and the split is what keeps a source change from re-fetching it.
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY art ./art
