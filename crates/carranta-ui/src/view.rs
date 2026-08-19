@@ -431,8 +431,23 @@ fn render_room(
     });
 
     // ---- What the human may do now ----
+    //
+    // Less the generated proposals. The engine enumerates every offer it
+    // would let this seat put up, which is what a bot chooses from and never
+    // what a person is shown: the page has a composer, keyed off `canPropose`,
+    // and posts what it builds to `api/propose`. Under mixed offer shapes the
+    // generated set runs to hundreds, so sending it would fatten every poll
+    // with buttons nothing renders. The indices the page acts with are stamped
+    // before the filter, so what remains still names its true place in the
+    // seat's own list.
     let choices = session.choices_for(seat);
-    j.array("choices", choices.iter().enumerate(), |o, (i, c)| {
+    let shown = choices.iter().enumerate().filter(|(_, c)| {
+        !matches!(
+            c,
+            crate::game::Choice::Play(carranta_core::action::Action::ProposeTrade { .. })
+        )
+    });
+    j.array("choices", shown, |o, (i, c)| {
         o.int("i", i as i64)
             .str("label", &c.label(session.state()))
             .str("group", c.group());
@@ -584,6 +599,56 @@ mod tests {
             without_the_clock(&render(&elsewhere)),
             "a different game must not survive the scrub as the same payload"
         );
+    }
+
+    #[test]
+    fn generated_proposals_stay_out_of_the_payload() {
+        use crate::game::Choice;
+        use carranta_core::action::Action;
+        // Walk a game to a moment where the engine has enumerated offers for
+        // the human, which is any action phase with cards in hand.
+        let mut s = Session::new(4, 21, TradeMode::Full);
+        let mut all = Vec::new();
+        for _ in 0..600 {
+            all = s.choices();
+            if all.is_empty()
+                || all
+                    .iter()
+                    .any(|c| matches!(c, Choice::Play(Action::ProposeTrade { .. })))
+            {
+                break;
+            }
+            let v = s.version();
+            let _ = s.act(0, v);
+        }
+        let proposals = all
+            .iter()
+            .filter(|c| matches!(c, Choice::Play(Action::ProposeTrade { .. })))
+            .count();
+        assert!(proposals > 0, "the engine did enumerate offers");
+        let out = render(&s);
+        // None of them reach the page: a person proposes through the composer,
+        // and under mixed shapes this list runs to hundreds of dead buttons.
+        assert!(
+            !out.contains("\"label\":\"Offer "),
+            "no generated proposal is serialized"
+        );
+        // What remains keeps its true index into the seat's own list, because
+        // that is the number a click comes back as.
+        let (kept, choice) = all
+            .iter()
+            .enumerate()
+            .find(|(_, c)| !matches!(c, Choice::Play(Action::ProposeTrade { .. })))
+            .expect("something besides proposals is on offer");
+        assert!(
+            out.contains(&format!(
+                "\"i\":{kept},\"label\":\"{}\"",
+                choice.label(s.state())
+            )),
+            "a kept choice still carries its unfiltered index"
+        );
+        // And the composer's door is the one left open.
+        assert!(out.contains("\"canPropose\":true"));
     }
 
     /// The payload with its wall-clock readings taken out.

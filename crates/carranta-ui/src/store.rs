@@ -97,10 +97,21 @@ pub struct Chair {
 impl Chair {
     /// A seat played by software, under the build that is playing it.
     pub fn bot() -> Self {
+        Chair::bot_as(&format!(
+            "{}@{}",
+            carranta_bot::HOUSE,
+            carranta_bot::HOUSE_VERSION
+        ))
+    }
+
+    /// A seat played by named software: `agent` is `name@version`, and the
+    /// name is the whole identity, so a trained champion's chair says which
+    /// champion rather than only that something automatic sat here.
+    pub fn bot_as(agent: &str) -> Self {
         Chair {
             who: "bot".to_string(),
             name: String::new(),
-            agent: format!("{}@{}", carranta_bot::HOUSE, carranta_bot::HOUSE_VERSION),
+            agent: agent.to_string(),
             left: false,
         }
     }
@@ -871,6 +882,16 @@ mod tests {
         ] {
             assert!(text.contains(line), "the file says `{line}`:\n{text}");
         }
+    }
+
+    #[test]
+    fn a_named_agent_chair_reads_back_as_that_player() {
+        // The constructor a trained champion's chair goes through: the string
+        // is the identity, so it has to survive the split intact.
+        let c = Chair::bot_as("trained@12");
+        assert!(!c.is_person());
+        assert_eq!(c.agent_id(), ("trained".to_string(), 12));
+        assert_eq!(Chair::bot().agent_id(), ("house".to_string(), 1));
     }
 
     #[test]

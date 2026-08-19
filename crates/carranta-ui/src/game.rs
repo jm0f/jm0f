@@ -7,10 +7,12 @@
 //! field for them. That is worth doing here rather than later: a local UI that
 //! reads the raw state would grow a habit the server then has to unpick.
 
+use carranta_bot::net::Net;
+use carranta_bot::policy_net::NetPolicy;
 use carranta_bot::{Heuristic, Policy};
 use carranta_core::action::{Action, Illegal};
 use carranta_core::rng::{Rng, Stream};
-use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Offer, Phase, State, TradeMode};
+use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Offer, OfferShapes, Phase, State, TradeMode};
 use carranta_record::fog::{Fog, Viewer, fog};
 
 /// The seat the person who dealt the table plays.
@@ -302,7 +304,11 @@ pub struct Session {
     /// What each seat is called, empty where nobody has said. A seat's name is
     /// the seat's, not the table's: two people means two answers.
     names: [String; SEATS],
-    bots: Vec<Heuristic>,
+    bots: Vec<Brain>,
+    /// The training generation of the champion playing the bot seats, when one
+    /// is. `None` is the house heuristic, which is what every table was before
+    /// there was anything trained to seat.
+    trained: Option<u32>,
     /// Bumped on every applied action, so a click made against a stale board is
     /// refused rather than applied to a different position.
     version: u64,
@@ -395,6 +401,40 @@ pub struct Session {
     forfeit: Rng,
 }
 
+/// The software behind a seat nobody is sitting in.
+///
+/// The house heuristic unless the server was handed a trained champion. An
+/// enum rather than a boxed trait object because there are exactly two of
+/// these, both already [`Policy`], and a session that can *name* its player
+/// can write that name into the game file, which a box of anonymous behaviour
+/// could not.
+enum Brain {
+    House(Heuristic),
+    Trained(NetPolicy),
+}
+
+impl Brain {
+    fn choose(&mut self, state: &State, legal: &[Action]) -> Action {
+        match self {
+            Brain::House(h) => h.choose(state, legal),
+            Brain::Trained(n) => n.choose(state, legal),
+        }
+    }
+
+    fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
+        match self {
+            Brain::House(h) => h.accepts(state, seat, offer),
+            Brain::Trained(n) => n.accepts(state, seat, offer),
+        }
+    }
+}
+
+/// One seed per seat off the table's, so four bots at one table do not mirror
+/// each other while the same table replays identically.
+fn seat_seed(seed: u64, seat: u8) -> u64 {
+    seed.wrapping_mul(31).wrapping_add(seat as u64 + 1)
+}
+
 impl Session {
     pub fn new(seats: u8, seed: u64, mode: TradeMode) -> Self {
         let seats = seats.clamp(3, MAX_PLAYERS as u8);
@@ -411,8 +451,9 @@ impl Session {
             },
             names: Default::default(),
             bots: (0..seats)
-                .map(|s| Heuristic::new(seed.wrapping_mul(31).wrapping_add(s as u64 + 1)))
+                .map(|s| Brain::House(Heuristic::new(seat_seed(seed, s))))
                 .collect(),
+            trained: None,
             version: 0,
             log: vec![LogLine {
                 turn: 0,
@@ -531,6 +572,42 @@ impl Session {
                 self.discard_at = None;
             }
             _ => {}
+        }
+    }
+
+    /// Hand every bot seat to a trained champion.
+    ///
+    /// All of them rather than one, because a seat nobody sits in is "the
+    /// bot's" and a table has one bot: the identity written into the game file
+    /// is per chair but the software behind every bot chair is the same, and
+    /// seating two different programs would need two identities the file can
+    /// already carry but nothing else here can yet.
+    ///
+    /// The market's *enumeration* is switched to the mixed shapes the champion
+    /// trained under (up to two cards a side, the training default), because a
+    /// policy chooses from what the engine generates, and a champion that
+    /// learned to offer wood-and-brick for ore would have that repertoire
+    /// silently amputated at a table that only generates one-type offers.
+    /// Nothing about *legality* moves: people compose whatever they like
+    /// through the form, exactly as before.
+    pub fn with_trained(mut self, net: &Net, generation: u32) -> Self {
+        self.bots = (0..self.seats)
+            .map(|s| Brain::Trained(NetPolicy::new(net.clone(), seat_seed(self.seed, s))))
+            .collect();
+        self.trained = Some(generation);
+        self.state.offer_shapes = OfferShapes::Mixed {
+            give: Some(2),
+            want: 2,
+        };
+        self
+    }
+
+    /// Which software plays this table's bot seats, as `name@version`: the
+    /// identity a game file writes into every bot chair.
+    pub fn agent(&self) -> String {
+        match self.trained {
+            Some(generation) => format!("{}@{generation}", carranta_bot::TRAINED),
+            None => format!("{}@{}", carranta_bot::HOUSE, carranta_bot::HOUSE_VERSION),
         }
     }
 
@@ -2617,6 +2694,39 @@ mod tests {
             )),
             "generation should not enumerate mixed sides"
         );
+    }
+
+    /// A small champion for the tests: every input wired straight to the
+    /// output, the shape a minimal NEAT start has.
+    fn tiny_champion() -> Net {
+        let out = Net::output_id(carranta_bot::features::FEATURES);
+        let links: Vec<(u32, u32, f64)> = (0..=carranta_bot::features::FEATURES as u32)
+            .map(|i| (i, out, ((i % 7) as f64 - 3.0) / 10.0))
+            .collect();
+        Net::assemble(carranta_bot::features::FEATURES, &links).expect("acyclic")
+    }
+
+    #[test]
+    fn a_trained_champion_plays_every_bot_seat_and_says_so() {
+        let mut s = Session::new(4, 5, TradeMode::Full)
+            .with_trained(&tiny_champion(), 7)
+            .with_pace(Pace::Instant);
+        // The identity the game file will carry, and the market the champion
+        // trained in: both come with the builder or the deployment lies about
+        // who played and what they were allowed to offer.
+        assert_eq!(s.agent(), "trained@7");
+        assert_eq!(
+            s.state().offer_shapes,
+            OfferShapes::Mixed {
+                give: Some(2),
+                want: 2
+            }
+        );
+        assert_eq!(Session::new(4, 5, TradeMode::Full).agent(), "house@1");
+        // And it can actually hold a table: a whole game, every seat the
+        // champion's, without the engine refusing a move.
+        s.play_out();
+        assert!(s.moves().len() > 50, "a real game happened");
     }
 
     #[test]

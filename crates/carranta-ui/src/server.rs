@@ -217,7 +217,9 @@ fn saved_of(t: &Table) -> Saved {
                 .iter()
                 .enumerate()
                 .map(|(seat, c)| match c {
-                    Chair::Bot => SavedChair::bot(),
+                    // The session knows which software plays its bot seats,
+                    // and the chair is where a rating reads the player from.
+                    Chair::Bot => SavedChair::bot_as(&t.session.agent()),
                     Chair::Open => SavedChair::open(),
                     Chair::Taken { key, name } => {
                         let mut chair = SavedChair::person(key, name);
@@ -854,6 +856,11 @@ pub struct Server {
     provider: Option<Box<dyn crate::signin::Exchange>>,
     /// Sign-ins begun and not yet come back.
     pending: crate::signin::Pending,
+    /// A trained champion to seat at every bot chair, and the training
+    /// generation it came from, or `None` for the house heuristic. Loaded once
+    /// at startup from a champion file: which software plays is a fact about
+    /// the server, the way the store directory is.
+    trained: Option<(carranta_bot::net::Net, u32)>,
 }
 
 impl Server {
@@ -892,7 +899,17 @@ impl Server {
             provider: crate::signin::Google::from_env()
                 .map(|g| Box::new(g) as Box<dyn crate::signin::Exchange>),
             pending: crate::signin::Pending::new(),
+            trained: None,
         }
+    }
+
+    /// Seat this champion at every bot chair of every table this server deals
+    /// from now on. `generation` is the training generation the champion file
+    /// says it was exported from; together with the name `trained` it is the
+    /// player identity written into every game it plays.
+    pub fn with_trained(mut self, net: carranta_bot::net::Net, generation: u32) -> Self {
+        self.trained = Some((net, generation));
+        self
     }
 
     /// The same, signing people in through something other than Google.
@@ -1073,6 +1090,12 @@ impl Server {
             .with_bank_exact(bank_exact)
             .with_discard_secs(discard_secs)
             .with_name(&decode(&name));
+        // The champion, when the server has one, plays every seat a person
+        // does not: a fact about the server, not a lobby setting.
+        let session = match &self.trained {
+            Some((net, generation)) => session.with_trained(net, *generation),
+            None => session,
+        };
         // A new game is a new address *and* a new table. The old one keeps its
         // file, keeps its address and keeps being playable, which is what a
         // table has to be once there is a page listing more than one of them.
@@ -1234,6 +1257,11 @@ impl Server {
             let mut session = Session::new(self.seats, self.next_seed(), self.mode)
                 .with_pace(Pace::Instant)
                 .with_name("Egon");
+            // The champion plays demo games too: they are exactly the "show
+            // what the training produced" games, and their files say so.
+            if let Some((net, generation)) = &self.trained {
+                session = session.with_trained(net, *generation);
+            }
             // Every seat played by the table's own hand, the human's included:
             // there is nobody here to ask.
             session.play_out();
@@ -1316,6 +1344,26 @@ impl Server {
             .with_bank_exact(saved.setup.bank_exact)
             .with_log(saved.setup.log)
             .with_record(saved.times.clone());
+        // Put the same player back in the bot seats the file says played
+        // them, and only then. A game the house began is finished by the
+        // house even on a server that has a champion loaded, and a game a
+        // *different* champion began falls back to the house rather than
+        // being quietly finished by a program nobody measured: the chair is
+        // re-stamped with whoever actually plays on, so the file stays honest
+        // either way.
+        let trained_here = saved
+            .setup
+            .chairs
+            .iter()
+            .find(|c| c.who == "bot")
+            .map(|c| c.agent_id())
+            .is_some_and(|(name, v)| {
+                name == carranta_bot::TRAINED && self.trained.as_ref().is_some_and(|(_, g)| *g == v)
+            });
+        let session = match (&self.trained, trained_here) {
+            (Some((net, generation)), true) => session.with_trained(net, *generation),
+            _ => session,
+        };
         let mut table = Table {
             id: saved.id.clone(),
             session,
@@ -1653,7 +1701,7 @@ impl Server {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_DISCARD_SECS);
         let named = param(query, "game").unwrap_or_default();
-        table.session = Session::new(seats, seed, TradeMode::Full)
+        let session = Session::new(seats, seed, TradeMode::Full)
             .with_clock(clock)
             .with_log(param(query, "log").as_deref() != Some("off"))
             .with_public(wants_public(query))
@@ -1661,6 +1709,12 @@ impl Server {
             .with_pace(Pace::parse(param(query, "pace").as_deref()))
             .with_bank_exact(param(query, "bank").as_deref() != Some("rough"))
             .with_discard_secs(discard_secs);
+        // Rearranging the room re-deals the table, and a re-dealt table keeps
+        // the server's player in its bot seats.
+        table.session = match &self.trained {
+            Some((net, generation)) => session.with_trained(net, *generation),
+            None => session,
+        };
         table.chat = param(query, "chat").as_deref() == Some("text");
         // The people keep their chairs; the counts around them follow the new
         // width of the table.
@@ -3137,6 +3191,65 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, id);
         assert_eq!(all[0].by, "keytest0000000000", "and whose game it is");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_trained_champion_is_written_into_the_chairs_and_comes_back_on_resume() {
+        let dir = std::env::temp_dir().join(format!("carranta-trained-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A minimal champion: every input wired straight to the output.
+        let out = carranta_bot::net::Net::output_id(carranta_bot::features::FEATURES);
+        let links: Vec<(u32, u32, f64)> = (0..=carranta_bot::features::FEATURES as u32)
+            .map(|i| (i, out, ((i % 5) as f64 - 2.0) / 10.0))
+            .collect();
+        let net = carranta_bot::net::Net::assemble(carranta_bot::features::FEATURES, &links)
+            .expect("acyclic");
+
+        let server = Server::new(4, 3, TradeMode::Full, &dir).with_trained(net.clone(), 9);
+        let id = server.deal("", "keytest0000000000");
+        // The first move writes the file; before it there is nothing on disk.
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            let v = t.session.version();
+            t.session.act(0, v).expect("the opening is playable");
+        }
+        server.keep(&id);
+        let saved = server.store().load(&id).expect("written down");
+        let bots: Vec<_> = saved
+            .setup
+            .chairs
+            .iter()
+            .filter(|c| c.who == "bot")
+            .collect();
+        assert!(
+            !bots.is_empty(),
+            "the host holds a seat, the champion the rest"
+        );
+        for c in &bots {
+            assert_eq!(c.agent, "trained@9", "the chair names the player");
+        }
+
+        // A restarted server with the same champion puts it back in its seats.
+        let again = Server::new(4, 3, TradeMode::Full, &dir).with_trained(net, 9);
+        assert!(again.seat(&id), "the game comes back onto a table");
+        {
+            let tables = again.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("seated");
+            assert_eq!(t.session.agent(), "trained@9");
+        }
+
+        // A restarted server *without* it falls back to the house, and says
+        // so: finishing the game with a player nobody loaded would be worse
+        // than finishing it with the player everybody has.
+        let bare = Server::new(4, 3, TradeMode::Full, &dir);
+        assert!(bare.seat(&id));
+        {
+            let tables = bare.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("seated");
+            assert_eq!(t.session.agent(), "house@1");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

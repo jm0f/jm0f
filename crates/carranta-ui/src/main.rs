@@ -19,6 +19,8 @@ carranta-play, play Carranta locally in a browser
   --mode MODE    full | restricted | disabled (full)
   --games DIR    where games are kept (./games)
   --demo N       have at least N finished games to look at (plays what is missing)
+  --trained FILE seat a trained champion (a champion.net from carranta-evolve)
+                 at every bot chair; games record it as trained@<generation>
 
 Binds 127.0.0.1 by default: on a laptop the game is local and stays local.
 Set PORT (as every host does) to bind 0.0.0.0 on that port instead, or HOST to
@@ -33,6 +35,7 @@ fn main() {
     // tomorrow without anyone having to say where to put it.
     let mut games = std::path::PathBuf::from("games");
     let mut demo: u32 = 0;
+    let mut trained: Option<std::path::PathBuf> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -43,6 +46,7 @@ fn main() {
             "--seed" => seed = value().parse().unwrap_or(seed),
             "--games" => games = std::path::PathBuf::from(value()),
             "--demo" => demo = value().parse().unwrap_or(demo),
+            "--trained" => trained = Some(std::path::PathBuf::from(value())),
             "--mode" => {
                 mode = match value().as_str() {
                     "disabled" => TradeMode::Disabled,
@@ -92,10 +96,29 @@ fn main() {
         env!("CARRANTA_BUILD")
     );
     println!("  {seats} seats, {mode:?} market, seed {seed}");
+    let mut server = Server::new(seats, seed, mode, &games);
+    // A champion that cannot be loaded stops the server rather than quietly
+    // seating the house bot: whoever passed `--trained` wanted the champion,
+    // and a wrong player that looks right is the worst of the outcomes.
+    if let Some(path) = &trained {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("cannot read {}: {e}", path.display());
+                std::process::exit(1);
+            }
+        };
+        let Some((net, generation)) = carranta_bot::net::Net::parse(&text) else {
+            eprintln!("{} is not a champion network file", path.display());
+            std::process::exit(1);
+        };
+        println!("  bot seats played by trained@{generation}");
+        server = server.with_trained(net, generation);
+    }
     // Leaked on purpose: this server lives until the process ends, and the
     // connection threads borrow it for as long as they run. A leak with the
     // lifetime of the program is the honest way to say so.
-    let server: &'static Server = Box::leak(Box::new(Server::new(seats, seed, mode, &games)));
+    let server: &'static Server = Box::leak(Box::new(server));
     println!("  games in {}", server.store().dir().display());
     // Played before the door opens, so the addresses are printed beside the
     // one you would open anyway.
