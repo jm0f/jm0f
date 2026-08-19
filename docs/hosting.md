@@ -78,11 +78,19 @@ What is in the repository for it:
   before there was anything trained. Deploying a new champion is committing a
   different file; see `training.md`.
 
-**Which branch deploys.** Not `main`. The work lives on the working branch and
-so does the running commit, and `main` still sits at the first commit in the
-repository, so a reader who assumes the default branch is the deployed one has
-it exactly backwards. Whatever branch the service is pointed at is the one a
-push has to land on for auto-deploy to see it.
+**Which branch deploys: `main`.** It is the branch the service watches, and it
+was watching it through a long stretch where every commit went somewhere else:
+`main` sat at the first commit in the repository while the work piled up on a
+working branch, so pushes were delivered to nobody and the silence looked
+exactly like a broken webhook. That is the failure to recognise here, because
+nothing reports it: the service is configured correctly, the pushes succeed,
+and no deployment ever starts.
+
+`main` has since been fast-forwarded onto the work and is the trunk. Development
+continues on a working branch, and **`main` moves only when a release is
+wanted**, which is what makes a deploy deliberate rather than a side effect of
+saving something. So the sequence for putting a change live is to push the
+working branch as usual and then fast-forward `main` onto it.
 
 Four things to set in the dashboard, none of which belong in a file:
 
