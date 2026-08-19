@@ -86,13 +86,16 @@ Four things to set in the dashboard, none of which belong in a file:
    happens not to offer accounts rather than a broken one. `PUBLIC_ORIGIN` is
    `https://your.domain` with no trailing path, and the redirect Google must have
    registered is that plus `/signin/done`. See `accounts.md`.
-4. **Install the Railway GitHub App on the repository**, which is the only way
-   a push becomes a deploy. Connecting Railway to GitHub through OAuth is enough
-   to *read* a repo and build it once; it is not enough for webhooks. Without the
-   app the service reports `autoDeploy: { enabled: false, canEnable: false,
-   reason: "NO_INSTALLATION" }`, and every push after the first is invisible to
-   it. Install at `github.com/apps/railway`, grant the repository, then refresh
-   the GitHub list on Railway's side.
+4. **Install the Railway GitHub App on the repository, and then switch
+   auto-deploy on.** Two steps, not one, and the first is silent about the
+   second. Connecting Railway to GitHub through OAuth is enough to *read* a repo
+   and build it on demand; webhooks need the app on the repository itself.
+
+   The service says which of the two is missing. Before the app:
+   `{ enabled: false, canEnable: false, reason: "NO_INSTALLATION" }`. After it:
+   `{ enabled: false, canEnable: true }`, which is the app installed and the
+   switch still off. Only the second state can be fixed from the dashboard, and
+   it has to be: the deployment API can read this setting and cannot write it.
 5. **Nothing else.** `PORT` is set by Railway, and the binary treats its presence
    as the signal to bind `0.0.0.0` rather than loopback.
 
