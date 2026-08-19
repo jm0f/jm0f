@@ -145,12 +145,39 @@ pub const MAX_OFFERS: usize = 8;
 /// Offers one seat may make per turn (R-7.20, D-7).
 pub const OFFERS_PER_TURN: u8 = 20;
 
-/// Largest side of a *generated* proposal, in cards.
+/// Largest side of a *generated* proposal, in cards, under
+/// [`OfferShapes::SingleType`].
 ///
 /// A bound on enumeration, not on legality: `apply` accepts any well-formed
 /// offer, so a human client may compose whatever it likes and a bot may accept
 /// it. Three covers essentially every offer real play produces.
 pub const MAX_GENERATED_OFFER: u8 = 3;
+
+/// How generated trade proposals are shaped.
+///
+/// The same distinction as [`MAX_GENERATED_OFFER`]: this bounds what the
+/// engine *enumerates*, never what it *accepts*. `apply` takes any well-formed
+/// offer under either setting, so changing the shape changes what bots see as
+/// candidates and what a page could list, and nothing else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OfferShapes {
+    /// A single resource type on each side, up to [`MAX_GENERATED_OFFER`]
+    /// cards. The original behaviour, and the default: mixed shapes multiply
+    /// the candidate list by an order of magnitude, and a served table sends
+    /// its candidates to a browser.
+    #[default]
+    SingleType,
+    /// Every affordable shape: mixed resource types, up to `give` cards
+    /// offered and `want` cards asked. `give: None` bounds the offered side by
+    /// the hand alone, so a seat may put its whole surplus on the market at
+    /// once.
+    ///
+    /// The candidate count is the product of the two sides' multiset counts,
+    /// less the overlapping pairs (R-7.18). At 2 and 2 that is at most a few
+    /// hundred and usually far fewer, which is what training runs use; at
+    /// `None` it scales with the hand, which is a setting to choose knowingly.
+    Mixed { give: Option<u8>, want: u8 },
+}
 
 /// Port kinds. Index 0 is the generic 3:1; 1..=5 are the 2:1 ports, one per
 /// resource, indexed by `Resource as usize + 1`.
@@ -225,6 +252,8 @@ pub struct State {
 
     // ---- Trade market (R-7.19) ----
     pub trade_mode: TradeMode,
+    /// What proposals are enumerated. See [`OfferShapes`].
+    pub offer_shapes: OfferShapes,
     pub offers: [Offer; MAX_OFFERS],
     pub offer_count: u8,
     /// Offers each seat has made this turn, against the R-7.20 cap.
@@ -350,6 +379,7 @@ impl State {
             free_roads: 0,
             discard_left: [0; MAX_PLAYERS],
             trade_mode: TradeMode::default(),
+            offer_shapes: OfferShapes::default(),
             offers: [Offer::default(); MAX_OFFERS],
             offer_count: 0,
             offers_made: [0; MAX_PLAYERS],
@@ -360,6 +390,12 @@ impl State {
     /// Turn player trading on for this game.
     pub fn with_trade_mode(mut self, mode: TradeMode) -> Self {
         self.trade_mode = mode;
+        self
+    }
+
+    /// Choose what proposals the engine enumerates. See [`OfferShapes`].
+    pub fn with_offer_shapes(mut self, shapes: OfferShapes) -> Self {
+        self.offer_shapes = shapes;
         self
     }
 

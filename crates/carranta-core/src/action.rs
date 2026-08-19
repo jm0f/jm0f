@@ -10,7 +10,8 @@ use crate::longest_road::longest_road;
 use crate::rng::Stream;
 use crate::state::{
     CITY_POOL, DevCard, MAX_GENERATED_OFFER, MAX_OFFERS, MAX_PLAYERS, OFFERS_PER_TURN, Offer,
-    Phase, RESOURCES, ROAD_POOL, Resource, SETTLEMENT_POOL, State, TradeMode, WINNING_VP,
+    OfferShapes, Phase, RESOURCES, ROAD_POOL, Resource, SETTLEMENT_POOL, State, TradeMode,
+    WINNING_VP,
 };
 use crate::topology::{
     HEX_COUNT, edge_bit, edge_endpoint_mask, hex_vertices, iter_edges, iter_vertices, vertex_bit,
@@ -702,13 +703,18 @@ impl State {
 
     /// Offers and responses available to `p`.
     ///
-    /// Generated proposals put a **single resource type on each side**, up to
-    /// [`MAX_GENERATED_OFFER`] cards. Mixed-type offers are legal and can be
-    /// accepted, but they cannot be enumerated: multisets of size 1..=3 drawn
-    /// from five resources give 55 possibilities a side, so the cross product
-    /// is about 3 000 candidates per decision. Single-type sides reduce that to
-    /// at most 180 before affordability prunes it, and cover the offers real
-    /// play actually makes.
+    /// What proposals appear is decided by [`OfferShapes`]. The default puts a
+    /// **single resource type on each side**, up to [`MAX_GENERATED_OFFER`]
+    /// cards: multisets of size 1..=3 drawn from five resources give 55
+    /// possibilities a side, so the full cross product is about 3 000
+    /// candidates per decision, and single-type sides reduce that to at most
+    /// 180 before affordability prunes it. `Mixed` enumerates the full space
+    /// under configurable per-side caps instead, which is what a policy that
+    /// scores every candidate trains on; at the training default of 2 and 2 the
+    /// list stays in the low hundreds.
+    ///
+    /// `Restricted` mode is one card for one card whatever the shapes say:
+    /// its whole point is the smallest market that still negotiates.
     fn push_market(&self, p: usize, out: &mut Vec<Action>) {
         if self.trade_mode == TradeMode::Disabled {
             return;
@@ -729,11 +735,19 @@ impl State {
         if self.offers_made[p] >= OFFERS_PER_TURN || self.offer_count as usize >= MAX_OFFERS {
             return;
         }
-        let max = if self.trade_mode == TradeMode::Restricted {
-            1
-        } else {
-            MAX_GENERATED_OFFER
-        };
+        if self.trade_mode == TradeMode::Restricted {
+            self.push_single_type(p, 1, out);
+            return;
+        }
+        match self.offer_shapes {
+            OfferShapes::SingleType => self.push_single_type(p, MAX_GENERATED_OFFER, out),
+            OfferShapes::Mixed { give, want } => self.push_mixed(p, give, want, out),
+        }
+    }
+
+    /// Single-type proposals: one resource offered, one asked, up to `max`
+    /// cards a side.
+    fn push_single_type(&self, p: usize, max: u8, out: &mut Vec<Action>) {
         for give in RESOURCES {
             let held = self.hand[p][give as usize].min(max);
             for gn in 1..=held {
@@ -755,6 +769,39 @@ impl State {
                         });
                     }
                 }
+            }
+        }
+    }
+
+    /// Every affordable mixed proposal under the per-side caps.
+    ///
+    /// The give side ranges over sub-multisets of the actual hand, so nothing
+    /// unaffordable is ever listed; the want side ranges over every multiset up
+    /// to its cap. Pairs sharing a resource type are skipped (R-7.18). The
+    /// order is a function of the hand and the caps alone, so the candidate
+    /// list is identical wherever it is generated.
+    fn push_mixed(&self, p: usize, give_cap: Option<u8>, want_cap: u8, out: &mut Vec<Action>) {
+        let hand = &self.hand[p];
+        let held: u8 = hand.iter().sum::<u8>();
+        let give_max = give_cap.unwrap_or(held).min(held);
+        if give_max == 0 || want_cap == 0 {
+            return;
+        }
+        let gives = multisets(*hand, give_max);
+        let wants = multisets([want_cap; 5], want_cap);
+        for g in &gives {
+            for w in &wants {
+                // No resource on both sides (R-7.18).
+                if (0..5).any(|r| g[r] > 0 && w[r] > 0) {
+                    continue;
+                }
+                out.push(Action::ProposeTrade {
+                    by: p as u8,
+                    // Generated offers are open: see the field's note.
+                    to: None,
+                    give: *g,
+                    want: *w,
+                });
             }
         }
     }
@@ -1082,6 +1129,35 @@ impl State {
 
         assert!((self.robber as usize) < HEX_COUNT);
     }
+}
+
+/// Every non-empty multiset over the five resources with per-resource counts
+/// at most `limit[r]` and total size at most `total`.
+///
+/// Five nested loops rather than recursion: the depth is a constant of the
+/// game, the order is fixed by construction, and there is nothing to get
+/// clever about. The all-zero multiset is excluded, a side must give or take
+/// something (R-7.5).
+fn multisets(limit: [u8; 5], total: u8) -> Vec<[u8; 5]> {
+    let mut out = Vec::new();
+    let cap = |used: u8, r: usize| limit[r].min(total - used);
+    for c0 in 0..=cap(0, 0) {
+        for c1 in 0..=cap(c0, 1) {
+            let u1 = c0 + c1;
+            for c2 in 0..=cap(u1, 2) {
+                let u2 = u1 + c2;
+                for c3 in 0..=cap(u2, 3) {
+                    let u3 = u2 + c3;
+                    for c4 in 0..=cap(u3, 4) {
+                        if c0 + c1 + c2 + c3 + c4 > 0 {
+                            out.push([c0, c1, c2, c3, c4]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1504,6 +1580,111 @@ mod tests {
             s.hand[seat][r] += n;
             s.supply[r] -= n;
         }
+    }
+
+    /// Proposals generated for a seat under the current shapes, nothing else.
+    fn proposals(s: &State, p: u8) -> Vec<([u8; 5], [u8; 5])> {
+        let mut buf = Vec::new();
+        s.push_market(p as usize, &mut buf);
+        buf.iter()
+            .filter_map(|a| match a {
+                Action::ProposeTrade { give, want, .. } => Some((*give, *want)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mixed_shapes_enumerate_the_whole_affordable_space_and_nothing_else() {
+        // The setting a policy that scores every candidate trains on: every
+        // affordable shape under the caps, no overlap, nothing unaffordable.
+        let mut s = trading_game(21).with_offer_shapes(OfferShapes::Mixed {
+            give: Some(2),
+            want: 2,
+        });
+        deal(&mut s, 0, [2, 1, 0, 0, 0]);
+        let got = proposals(&s, 0);
+
+        // By hand: give multisets over a (2,1,0,0,0) hand of size <= 2 are
+        // {b}, {bb}, {w}, {bw}: four. Want multisets of size <= 2 over five
+        // resources are 5 + 15 = 20. Overlap removes want-sets sharing a type
+        // with the give side.
+        for (g, w) in &got {
+            assert!((0..5).all(|r| g[r] <= s.hand[0][r]), "affordable: {g:?}");
+            assert!(g.iter().sum::<u8>() <= 2 && w.iter().sum::<u8>() <= 2);
+            assert!(g.iter().sum::<u8>() >= 1 && w.iter().sum::<u8>() >= 1);
+            assert!(
+                (0..5).all(|r| !(g[r] > 0 && w[r] > 0)),
+                "no type on both sides: {g:?} for {w:?}"
+            );
+        }
+        let gives: std::collections::HashSet<[u8; 5]> = got.iter().map(|(g, _)| *g).collect();
+        assert_eq!(gives.len(), 4, "four affordable give shapes: {gives:?}");
+        // Counting the want sets avoiding each give side's types: a one-type
+        // give side excludes want sets touching it (4 singles + 10 pairs = 14
+        // remain), the mixed give {brick, wood} leaves 3 singles + 6 pairs = 9.
+        assert_eq!(got.len(), 14 + 14 + 14 + 9, "the exact candidate count");
+
+        // Every one of them is a legal apply, not merely a listed one.
+        for (give, want) in got {
+            let mut probe = s;
+            probe
+                .apply(Action::ProposeTrade {
+                    by: 0,
+                    to: None,
+                    give,
+                    want,
+                })
+                .expect("a generated offer must be applicable");
+        }
+    }
+
+    #[test]
+    fn an_unbounded_give_side_can_offer_the_whole_surplus() {
+        // give: None is the setting for dumping a large surplus before a
+        // seven. The whole hand becomes offerable at once.
+        let mut s = trading_game(22).with_offer_shapes(OfferShapes::Mixed {
+            give: None,
+            want: 1,
+        });
+        deal(&mut s, 0, [4, 2, 0, 0, 0]);
+        let got = proposals(&s, 0);
+        assert!(
+            got.iter().any(|(g, _)| *g == [4, 2, 0, 0, 0]),
+            "the whole hand is one of the shapes"
+        );
+        let biggest = got.iter().map(|(g, _)| g.iter().sum::<u8>()).max();
+        assert_eq!(biggest, Some(6), "and nothing bigger than the hand exists");
+    }
+
+    #[test]
+    fn restricted_mode_ignores_the_shapes_entirely() {
+        // Restricted is one card for one card whatever the shapes say: its
+        // point is the smallest market that still negotiates, and a config
+        // that could quietly widen it would change what E-9 measured.
+        let mut s = State::new(4, 23).with_trade_mode(TradeMode::Restricted);
+        s.phase = Phase::Action;
+        s = s.with_offer_shapes(OfferShapes::Mixed {
+            give: None,
+            want: 3,
+        });
+        deal(&mut s, 0, [3, 3, 0, 0, 0]);
+        for (g, w) in proposals(&s, 0) {
+            assert_eq!(g.iter().sum::<u8>(), 1, "one card given: {g:?}");
+            assert_eq!(w.iter().sum::<u8>(), 1, "one card asked: {w:?}");
+        }
+    }
+
+    #[test]
+    fn the_candidate_list_is_a_pure_function_of_the_position() {
+        // Determinism under repetition is what lets training pair trials and
+        // lets a resumed run replay a generation exactly.
+        let mut s = trading_game(24).with_offer_shapes(OfferShapes::Mixed {
+            give: Some(2),
+            want: 2,
+        });
+        deal(&mut s, 0, [1, 1, 1, 0, 0]);
+        assert_eq!(proposals(&s, 0), proposals(&s, 0));
     }
 
     #[test]
