@@ -355,11 +355,12 @@ fn run_neat(args: Args) {
 
     let c = &trainer.config;
     println!(
-        "neat: population {}   market {:?} (give {}, want {})   workers {}   target species {}",
+        "neat: population {}   market {:?} (give {}, want {}, asks {})   workers {}   target species {}",
         c.population,
         c.mode,
         c.give_cap.map_or("hand".to_string(), |n| n.to_string()),
         c.want_cap,
+        c.ask_cap,
         c.threads,
         c.params.target_species,
     );
