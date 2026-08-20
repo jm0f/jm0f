@@ -789,7 +789,7 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-14 | Behavioural markers | **Sampled games run through §10.** A rating says something improved; only this says what |
 | E-15 | Ask pressure | **A generated-ask allowance, in the engine, shared by training and serving.** After a seat's Nth proposal of a turn the engine stops *generating* proposals for it (legality untouched, like `OfferShapes`); training default 3, configurable. Time is the real cost of asking at a table, and a count is time's deterministic proxy: wall clocks would break paired trials and exact resume. Rejected: a fitness toll per ask (the hand-set weight E-3 removed, and it distorts E-6), and serve-side filtering (the deployed policy must be the measured one) |
 | E-16 | Honest validation | **The champion's headline number is a paired anchor-only match, the `versus` method.** Common random numbers, all seatings of each board, one observation per seed, gap with a confidence interval. The ladder stays for selection and the hall, but its `+anchor` is not printed as if it measured strength against the anchor, because mostly it does not (see below) |
-| E-17 | Winning | **Fitness is finishing position less a bonus for the games won**, default 1.0, so a won game scores 0 and first is two steps clear of second where every other step is one. Position alone (E-6) prices first exactly as far above second as third is above fourth, and it selects accordingly: the second run's generation 72 champion finished measurably *ahead* of the heuristic on position while winning measurably *less* often. The bonus keeps the density that made position the right signal and points it at the goal. Rejected: win rate alone (one bit a game, far sparser, and E-5's budget would have to grow to separate anything), and rewarding victory points (§11.3 rewards the score, not the win, and a policy can bank points it never converts) |
+| E-17 | Winning | **Fitness is finishing position less a bonus for the games won**, default 1.0, so a won game scores 0 and first is two steps clear of second where every other step is one. Position alone (E-6) prices first exactly as far above second as third is above fourth, so nothing in the objective distinguishes winning from placing, and a policy is free to buy the mean by never coming fourth. Whether it does is a matter of which optimum it lands in: the second run's generation 72 champion finished ahead of the heuristic on position while winning *less* often, and its generation 162 champion, same run and same fitness, is ahead on both. The bonus does not fix a demonstrated failure so much as remove the freedom, at no cost to the density that made position the right signal. Rejected: win rate alone (one bit a game, far sparser, and E-5's budget would have to grow to separate anything), and rewarding victory points (§11.3 rewards the score, not the win, and a policy can bank points it never converts) |
 
 #### What the measurements say
 
@@ -922,30 +922,48 @@ been making.
 
 #### What the second run showed (E-17)
 
-The run under E-15 and E-16 reached the heuristic. Blocks of eighteen
-generations read +1.03, +0.42, +0.57, +0.23 against the anchor: one step
-change around generation 26 and then a plateau that oscillates, with
-generation-to-generation swings near a full position that are far larger
-than the ±0.25 intervals, because the champion seat changes hands every
-generation and best-of-96 on a noisy fitness is a lottery the same genome
-does not keep winning.
+The run under E-15 and E-16 passed the heuristic. It ran 192 generations,
+489,282 games, and its blocks of eighteen generations read against the
+anchor:
 
-Generation 72 of that run is the first network in the project measurably
-stronger than the house heuristic: **gap -0.0654 positions, 95% CI [-0.0987,
--0.0322], p < 0.001** over 1500 paired seeds. And in the same 9000 games it
-**won 47.8%** where a half is even.
+| generations | mean gap | | generations | mean gap |
+|---|---|---|---|---|
+| 1 to 25 | +1.03 | | 98 to 115 | +0.57 |
+| 26 to 43 | +0.42 | | 116 to 133 | +0.49 |
+| 44 to 61 | +0.57 | | 134 to 151 | +0.40 |
+| 62 to 79 | +0.23 | | 152 to 169 | +0.24 |
+| 80 to 97 | +0.70 | | 170 to 192 | +0.29 |
 
-Both facts at once is the finding. A policy can finish higher on average and
-still win less often, and this one does, because E-6 asked for exactly that:
-position prices first one step above second, the same step third is above
-fourth, so the cheapest way to a good mean is to stop coming fourth rather
-than to start coming first. No further generations fix it; the objective is
-not pointed there. E-17 prices the win.
+A real descent, buried in oscillation the whole way. Generation-to-generation
+swings approach a full position where the intervals are ±0.25, because the
+champion seat changes hands every generation and best-of-96 on a noisy
+fitness is a lottery the same genome does not keep winning. No single
+generation settles anything; blocks show the trend and `versus` decides.
 
-The margin is also worth keeping in proportion. 0.065 of a position is
-solid statistically and slight at a table, and the whole distance from the
-first run's champion (+0.0413, the wrong way) to this one is about a tenth
-of a position.
+Complexification stuck late. Genes went 33 to 73 and nodes 34 to 49, almost
+all of it after generation 130, and that is exactly where the negative
+readings cluster: twelve of the run's negatives fall in generations 152 to
+192.
+
+Two champions were measured at 1500 paired seeds, 9000 games each:
+
+| | position gap | wins |
+|---|---|---|
+| generation 72 | -0.0654, CI [-0.0987, -0.0322] | 47.8% |
+| generation 162 | **-0.3092**, CI [-0.3382, -0.2802] | **52.5%**, CI [51.3%, 53.7%] |
+
+Generation 162 is the project's first agent ahead of the house heuristic on
+both counts, by t = -20.9 and t = 4.0 respectively. Generation 72 is ahead
+on position and behind on wins, which is what E-17 is about: under position
+alone nothing in the objective distinguishes the two, and which one a run
+lands on is left to chance.
+
+The ladder printed at the end of that run ranks generation 72 **last of its
+nine champions, below the pinned heuristic**, at +2.56. It is the champion
+that measurably beats the heuristic. Each ladder entry carries 192 games at
+sigma 2.5, so the ordering among champions is mostly noise, and choosing by
+it would have chosen wrong. E-16's lesson, appearing in the printout it was
+written about.
 
 #### The reservation
 

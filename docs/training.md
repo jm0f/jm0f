@@ -157,25 +157,43 @@ from below. To judge a champion trained before this at today's rules, use
 
 ## What the second run taught
 
-It reached the heuristic. Generation 72 measured **-0.0654 positions, 95% CI
-[-0.0987, -0.0322], p < 0.001** over 1500 paired seeds, the first champion
-in the project measurably stronger than the house bot. In the same 9000
-games it **won 47.8%**, where even is 50%.
+It passed the heuristic. 192 generations, 489,282 games, and two champions
+worth measuring:
 
-That pair is E-17. Position alone prices first one step above second, the
-same step third is above fourth, so the cheapest route to a good mean is to
-stop coming fourth, not to start coming first, and the champion took it.
-`--win-bonus` subtracts a bonus from the position of games actually won:
-at the default 1.0 a win scores 0, so first is two steps clear of second.
-Runs started before this resume from their format 3 checkpoints with the
-bonus at zero, exactly the runs they were.
+| | position gap | wins |
+|---|---|---|
+| generation 72 | -0.0654, CI [-0.0987, -0.0322] | 47.8% |
+| generation 162 | **-0.3092**, CI [-0.3382, -0.2802] | **52.5%**, CI [51.3%, 53.7%] |
 
-Two habits follow. Read `gap` and `wins` together, since they can disagree
-and the disagreement is the interesting part. And expect no single
-generation to settle anything: champion strength swings nearly a full
-position generation to generation, because best-of-96 on a noisy fitness is
-a lottery the same genome does not keep winning. Blocks of generations show
-the trend; `versus` on an exported champion decides.
+Generation 162 is the first agent in the project ahead of the house bot on
+both counts. Generation 72 is ahead on position and behind on wins, and
+that split is what E-17 is about: position alone prices first one step
+above second, the same step third is above fourth, so nothing in the
+objective distinguishes winning from placing and a run is free to land on
+either. `--win-bonus` subtracts a bonus from the position of games actually
+won; at the default 1.0 a win scores 0, so first is two steps clear of
+second. Runs started before this resume from their format 3 checkpoints
+with the bonus at zero, exactly the runs they were.
+
+Three habits follow.
+
+**Read `gap` and `wins` together.** They can disagree, and the disagreement
+is the interesting part.
+
+**Do not let a single generation settle anything.** Champion strength swings
+nearly a full position generation to generation, far more than the ±0.25
+intervals, because best-of-96 on a noisy fitness is a lottery the same
+genome does not keep winning. Blocks of generations show the trend;
+`versus` on an exported champion decides.
+
+**Do not pick a champion off the ladder.** That run's final standings put
+generation 72 last of nine, below the pinned heuristic, and it is the one
+that beats the heuristic. 192 games at sigma 2.5 cannot order champions
+that close together.
+
+And give a run time to complexify. Genes went 33 to 73 and nodes 34 to 49
+almost entirely after generation 130, and the run's negative gaps cluster
+there. A hundred generations on the starting topology is not a stalled run.
 
 ## What not to do
 
