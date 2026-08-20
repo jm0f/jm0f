@@ -139,6 +139,14 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             other => return Err(format!("unknown option `{other}`")),
         }
     }
+    // Only phase two keeps a ladder of past champions, so an export is a NEAT
+    // request whatever else was typed. Without this, `--export 42 --out
+    // runs/neat-2` lands in the phase-one path and is answered by its guard
+    // against starting a fresh run over an existing checkpoint, which reads
+    // like a refusal to export.
+    if args.export.is_some() {
+        args.method = Method::Neat;
+    }
     if args.method == Method::Es && args.config.survivors >= args.config.population {
         return Err("--survivors must be below --population".to_string());
     }
@@ -170,8 +178,9 @@ carranta-evolve
   --ask-cap N          neat only: proposals generated per seat per turn (3).
                        Time is what asking costs at a real table; this is its
                        deterministic stand-in, and served tables share it
-  --export WHICH       neat only: write a past champion out of --out's
-                       checkpoint instead of training. WHICH is a label
+  --export WHICH       write a past champion out of --out's checkpoint
+                       instead of training; implies --method neat, the only
+                       method that keeps past champions. WHICH is a label
                        (g042-0017), a generation number (42), `best` by
                        rating, or `list` to see what the run has
   --export-to FILE     where --export writes (default: beside the checkpoint,
@@ -735,6 +744,17 @@ mod tests {
             None
         );
         assert!(parse("--export").is_err(), "a name is required");
+        // The ladder is phase two's, so asking for a champion is asking for
+        // NEAT. Typed without --method, an export used to fall into phase one
+        // and be answered by its "checkpoint already exists" guard.
+        let c = parse("--out runs/neat-2 --export 72").expect("no --method needed");
+        assert_eq!(c.method, Method::Neat);
+        assert_eq!(c.export.as_deref(), Some("72"));
+        assert_eq!(
+            parse("--out runs/neat-2").expect("known").method,
+            Method::Es,
+            "and nothing else changes the default method"
+        );
     }
 
     #[test]
