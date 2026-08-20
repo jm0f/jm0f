@@ -121,6 +121,18 @@ dashboard. Replacing the champion later is committing a different file:
 generations are read out of the file itself, so the chairs and the ladder
 sort out identity on their own.
 
+## What the first long run taught (read before starting another)
+
+The 378-generation run produced constant traders that measured worse than
+the heuristic in a paired match, while the run's own `+anchor` column read
++20 to +35 throughout. Both are explained, and two decisions came out of it,
+E-15 and E-16 in the scoping document: an engine-level per-turn allowance on
+*generated* proposals (training default 3, shared with served tables the way
+`OfferShapes` is), and champion validation as a paired anchor-only match so
+the printed number is the one `versus` would give. Until both are in, read
+`+anchor` as "beats a random sibling" and judge any champion with
+`--example versus` before deploying it.
+
 ## What not to do
 
 - Do not hand-edit `checkpoint.txt` or `champion.net`; both are exact-text

@@ -787,6 +787,8 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-12 | Rating configuration | **Rate where people play.** An agent trains in `Restricted` and is rated in the human pool, or its rating is not comparable to a person's (§10.8) |
 | E-13 | Checkpointing | **After every generation, atomically, in plain text.** An interruption costs one generation, never a run |
 | E-14 | Behavioural markers | **Sampled games run through §10.** A rating says something improved; only this says what |
+| E-15 | Ask pressure | **A generated-ask allowance, in the engine, shared by training and serving.** After a seat's Nth proposal of a turn the engine stops *generating* proposals for it (legality untouched, like `OfferShapes`); training default 3, configurable. Time is the real cost of asking at a table, and a count is time's deterministic proxy: wall clocks would break paired trials and exact resume. Rejected: a fitness toll per ask (the hand-set weight E-3 removed, and it distorts E-6), and serve-side filtering (the deployed policy must be the measured one) |
+| E-16 | Honest validation | **The champion's headline number is a paired anchor-only match, the `versus` method.** Common random numbers, all seatings of each board, one observation per seed, gap with a confidence interval. The ladder stays for selection and the hall, but its `+anchor` is not printed as if it measured strength against the anchor, because mostly it does not (see below) |
 
 #### What the measurements say
 
@@ -859,6 +861,56 @@ They earn their place immediately. Two findings came out of building them:
 
 - **A negative `offer_discount` does not silence the bot, it inverts it.** The discount scales the *gain* a proposal is credited with; negative, the bot comes to prefer proposals whose gain is negative, deals bad for itself, and those are far more plentiful, so it gets *louder*. A fitness score would have called this "worse" with no hint of why.
 - **`offer_cost` cannot quiet the first ask of a turn**, because the toll is charged per offer already made that turn. Raising it from its default to a punitive value changes nothing measurable. If offers ever need suppressing, `offer_discount` is the lever and this is not.
+
+#### What 378 generations of NEAT showed (E-15, E-16)
+
+The first long phase-two run, 378 generations in the full 2 v 2 mixed market,
+produced a population that trades constantly and never learns not to: 50 to
+190 completed trades per seat per sampled game, no trend across the run. The
+first champion deployed (generation 311) measured **worse than the pinned
+heuristic**: gap +0.041 positions, 95% CI [+0.012, +0.071] over 1 500 paired
+seeds, 44.7% of decided games won against the 50% an even matchup implies.
+
+Three findings, one per layer:
+
+**Asking costs nothing where the bot lives and plenty where it plays.** In
+training an offer is one action against a 20 000-action cap, invisible to
+mean finishing position; the only brake ever built was `offers_made` *as an
+input* (E-3's "learns its own patience"), which grants the ability to be
+patient and no reason to be. At a served table every offer interrupts three
+other seats, each answer is paced and drawn, and a person is asked a question
+per offer. The same behaviour is free in one place and the whole cost of
+playing in the other. E-15 closes that gap where every such gap has been
+closed before, in the engine, with one knob both sides share: after a seat's
+Nth generated proposal of a turn, no more are generated for it. A count
+rather than a clock because determinism is load-bearing here (paired trials,
+any-thread-count reproducibility, exact resume all stand on it), and a count
+is what a time budget looks like once it is deterministic. Generation rather
+than legality so no game file changes meaning: a person may still compose
+whatever the rules allow, exactly as with `OfferShapes`.
+
+**The churn is a plausible cause of the weakness, not just an annoyance.**
+Every trade is adjudicated by two value functions, and the net's is noisy
+where the heuristic's is competent, so high-volume trading against the anchor
+leaks value systematically: each deal the anchor accepts is one *its*
+judgement likes. If that hypothesis is right, capping asks helps strength as
+well as playability. It is measurable either way, with `versus`, before and
+after.
+
+**The run's own scoreboard pointed the wrong way.** The printed `+anchor`
+held at +20 to +35 all run while the honest match said the champion was
+behind. Not a rating bug: two of three validation games seat *no anchor at
+all*, and the champion's opponents are otherwise random genomes of its own
+generation, so the number mostly says "better than a random sibling", which
+every champion is. E-16 makes the headline number a paired anchor-only match
+(the `versus` method) so the chart and the truth cannot diverge like that
+again. The winner's-curse lesson of E-10, relearned one level up: it is not
+enough to rate on held-out games, they have to be held out against the
+opponent the claim is about.
+
+The run itself keeps its value as evidence: topology grew (33 to 71 genes),
+speciation held near target, the budget rule worked. What it lacked was a
+reason to stop asking, and a scoreboard that would have said so.
 
 #### The reservation
 
