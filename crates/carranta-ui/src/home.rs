@@ -213,25 +213,49 @@ fn island() -> String {
     b
 }
 
-/// One tile: the land, the marker, and the number on it.
+/// One tile: the land, the marker, the number, and the dots under it.
 ///
-/// The path is the report's tile path unmodified, so the front page and the
-/// drawings inside a game are the same hexagon at the same proportions rather
-/// than two hexagons that nearly agree.
+/// Drawn in the board's own units rather than at a size of its own, which is
+/// the only way the proportions come out identical instead of merely close.
+/// The board's `hexPoints` lays a pointy-top regular hexagon of radius `SIZE`,
+/// 62, and cuts the face 1.5 units inside the lattice so the board shows
+/// through the seam; these are that polygon's six corners, at the same one
+/// decimal place it rounds them to. Everything else is placed off the same
+/// origin at the same numbers the board uses: a white disc of radius 17, the
+/// numeral three units above centre, and the dots seven below it, radius 1.6
+/// and 4.5 apart.
+///
+/// The first version of this borrowed the report's inline tile, a hexagon 18
+/// wide by 20.8 tall. That is within a thousandth of the right ratio and still
+/// the wrong drawing: it carries no dots, and its disc and numeral are sized
+/// against a tile a third of the size, so every proportion inside the hex was
+/// off even where the hex itself was not.
 fn tile(land: usize, number: u8) -> String {
-    const PATH: &str = "M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z";
-    format!(
-        "<svg class=\"tileHex\" viewBox=\"-1 -1 20 22.8\">\
-         <path class=\"land l{land}\" d=\"{PATH}\"/>\
-         <circle class=\"chit\" cx=\"9\" cy=\"10.4\" r=\"5.2\"/>\
-         <text class=\"chitNum{red}\" x=\"9\" y=\"10.4\">{number}</text></svg>",
-        // The two the board is read for, in the ink they are printed in.
-        red = if number == 6 || number == 8 {
-            " red"
-        } else {
-            ""
-        },
-    )
+    const FACE: &str = "52.4,-30.3 52.4,30.3 0.0,60.5 -52.4,30.3 -52.4,-30.3 0.0,-60.5";
+    // The two the board is read for, in the ink the board prints them in.
+    let hot = if number == 6 || number == 8 {
+        " red"
+    } else {
+        ""
+    };
+    let mut b = format!(
+        "<svg class=\"tileHex\" viewBox=\"-53.7 -62 107.4 124\">\
+         <polygon class=\"land l{land}\" points=\"{FACE}\"/>\
+         <circle class=\"chit\" cx=\"0\" cy=\"0\" r=\"17\"/>\
+         <text class=\"chitNum{hot}\" x=\"0\" y=\"-3\">{number}</text>"
+    );
+    // How many ways there are to roll it, which is what the dots count and why
+    // six and eight carry the most of them.
+    let dots = 6 - (7i32 - i32::from(number)).abs();
+    for i in 0..dots {
+        let _ = write!(
+            b,
+            "<circle class=\"pip{hot}\" cx=\"{x:.2}\" cy=\"7\" r=\"1.6\"/>",
+            x = (f64::from(i) - f64::from(dots - 1) / 2.0) * 4.5,
+        );
+    }
+    b.push_str("</svg>");
+    b
 }
 
 /// Which deal is on screen, as one rule per deal.
@@ -643,23 +667,34 @@ const EXTRA: &str = "
         opacity: 0; pointer-events: none; }
 .laid { display: grid; }
 .laid .lay { grid-area: 1 / 1; display: none; cursor: pointer;
-             gap: clamp(.25rem, 1.1vw, .6rem); }
+             gap: clamp(.2rem, .9vw, .55rem); }
 /* Sized against the viewport with a floor and a ceiling: the row is the one
    thing on this page that is a picture, and a picture that is five tiles wide
-   has to fit a phone without becoming five specks on a desktop. */
-.tileHex { width: clamp(42px, 8.5vw, 70px); height: auto; display: block; }
+   has to fit a phone without becoming five specks on a desktop. Only the width
+   is set, so the hexagon keeps the ratio its own box gives it. */
+.tileHex { width: clamp(60px, 11vw, 108px); height: auto; display: block; }
 /* The five, in the colours every other drawing in the application paints a
-   resource in, left to right as the game lists them. */
-.land { stroke: rgba(0, 0, 0, .18); stroke-width: .5; }
+   resource in, left to right as the game lists them. The edge is the board's
+   trick: a stroke measured in board units is thicker than a hairline whenever
+   the drawing is scaled up, so it is held at one pixel whatever the size. */
+.land { stroke: rgba(0, 0, 0, .16); stroke-width: 1;
+        vector-effect: non-scaling-stroke; }
 .l0 { fill: #1F5E3A; } .l1 { fill: #C0563B; } .l2 { fill: #8DBE4A; }
 .l3 { fill: #E2A32B; } .l4 { fill: #5C6B78; }
-/* The white marker, and the number on it. Six and eight in red, because they
-   are the two a board is read for and the two a board is printed with. */
-.chit { fill: #FBF7EF; }
-.chitNum { font: 700 7px Figtree, system-ui, sans-serif; fill: #2B2622;
-           text-anchor: middle; dominant-baseline: central; }
-.chitNum.red { fill: #C0563B; }
-.laid .lay:hover .chit { fill: #FFFFFF; }
+/* The marker, the numeral and the dots, in the board's inks. Borderless, for
+   the board's reason: the disc supplies its own contrast whatever is under it,
+   so an outline would make a badge of a shape. Sturdy numerals rather than the
+   display face, which thins to hairlines at the size a disc gives them. */
+.chit { fill: #FFFFFF; }
+.chitNum { font: 700 13.5px Figtree, system-ui, sans-serif; fill: #33261B;
+           text-anchor: middle; dominant-baseline: central;
+           font-variant-numeric: tabular-nums; }
+.pip { fill: #33261B; }
+.chitNum.red, .pip.red { fill: #C2492A; }
+/* The board answers a hover by lifting the tile it is over, disc and dots and
+   all. The row lifts together here, because the row is one click. */
+.laid .lay { transition: transform .1s ease-out; }
+.laid .lay:hover { transform: translateY(-2px); }
 /* The one button on the page that starts something, in the colour the win is
    written in, and the same shape as a place badge so the family holds. */
 .go { display: inline-block; text-decoration: none; cursor: pointer;
@@ -872,8 +907,11 @@ mod tests {
                 "the {land} tile is drawn"
             );
         }
-        // The board's own hexagon, at the board's own proportions.
-        assert!(html.contains("M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z"));
+        // The board's own hexagon, in the board's own units and at the board's
+        // own proportions: a pointy-top regular hex, face cut inside the
+        // lattice, in a box the same shape as the hexagon it holds.
+        assert!(html.contains("viewBox=\"-53.7 -62 107.4 124\""));
+        assert!(html.contains("52.4,-30.3 52.4,30.3 0.0,60.5"));
         // Ornament, and marked as ornament: the button is still the first thing
         // on the page that anything can act on, whatever is drawn above it.
         assert!(html.contains("class=\"island\" aria-hidden=\"true\""));
@@ -913,6 +951,48 @@ mod tests {
                 assert!(!five[..i].contains(n), "{n} was already laid in this deal");
             }
         }
+    }
+
+    #[test]
+    fn the_dots_count_the_ways_a_number_can_be_rolled() {
+        // The board's own rule for how many dots a disc carries: six less the
+        // distance from seven, so the two numbers nearest it carry five and the
+        // two ends carry one. Counted off the markup rather than off a copy of
+        // the formula, so this fails if the drawing stops agreeing with it.
+        for number in DISCS {
+            let drawn = tile(0, number).matches("class=\"pip").count();
+            let ways = 6 - (7i32 - i32::from(number)).abs();
+            assert_eq!(drawn, ways as usize, "{number} is rolled {ways} ways");
+        }
+        // The shape of that, spelled out at both ends and in the middle.
+        assert_eq!(tile(0, 2).matches("class=\"pip").count(), 1);
+        assert_eq!(tile(0, 6).matches("class=\"pip").count(), 5);
+        assert_eq!(tile(0, 8).matches("class=\"pip").count(), 5);
+        assert_eq!(tile(0, 12).matches("class=\"pip").count(), 1);
+        // The dots sit under the numeral and are centred on it, so an odd count
+        // puts one on the axis and an even count straddles it.
+        assert!(tile(0, 6).contains("cx=\"0.00\" cy=\"7\""));
+        assert!(!tile(0, 5).contains("cx=\"0.00\" cy=\"7\""));
+        // Six and eight take the red ink, and take it on the dots as well as on
+        // the numeral, which is how the board prints them.
+        assert!(tile(0, 8).contains("class=\"pip red\""));
+        assert!(tile(0, 8).contains("class=\"chitNum red\""));
+        assert!(!tile(0, 9).contains("red"));
+    }
+
+    #[test]
+    fn a_tile_is_built_from_the_board_s_own_measurements() {
+        // Radius seventeen for the disc, the numeral three above centre and the
+        // dots seven below it, all in the units the hexagon is drawn in. The
+        // numbers matter only in proportion to each other, which is exactly why
+        // they are pinned: a tile that keeps them is the board's tile at another
+        // size, and a tile that does not is a different drawing.
+        let t = tile(3, 10);
+        assert!(t.contains("<circle class=\"chit\" cx=\"0\" cy=\"0\" r=\"17\"/>"));
+        assert!(t.contains("<text class=\"chitNum\" x=\"0\" y=\"-3\">10</text>"));
+        assert!(t.contains("r=\"1.6\""));
+        // The land is one of the five, and it is the one it was asked for.
+        assert!(t.contains("class=\"land l3\""));
     }
 
     #[test]
