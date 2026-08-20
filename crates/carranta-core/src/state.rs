@@ -254,6 +254,16 @@ pub struct State {
     pub trade_mode: TradeMode,
     /// What proposals are enumerated. See [`OfferShapes`].
     pub offer_shapes: OfferShapes,
+    /// Proposals *generated* for one seat in one turn, at most (E-15).
+    ///
+    /// The same distinction as [`OfferShapes`]: a bound on enumeration, never
+    /// on legality, which stays at [`OFFERS_PER_TURN`] (R-7.20). Time is the
+    /// real cost of asking at a table, and this is time's deterministic
+    /// proxy: past the allowance the engine offers a seat no further
+    /// proposals this turn, so a policy choosing from generated candidates
+    /// has to spend its asks where they count. Defaults to the rules cap,
+    /// which makes it invisible until a table chooses otherwise.
+    pub ask_allowance: u8,
     pub offers: [Offer; MAX_OFFERS],
     pub offer_count: u8,
     /// Offers each seat has made this turn, against the R-7.20 cap.
@@ -380,6 +390,7 @@ impl State {
             discard_left: [0; MAX_PLAYERS],
             trade_mode: TradeMode::default(),
             offer_shapes: OfferShapes::default(),
+            ask_allowance: OFFERS_PER_TURN,
             offers: [Offer::default(); MAX_OFFERS],
             offer_count: 0,
             offers_made: [0; MAX_PLAYERS],
@@ -396,6 +407,13 @@ impl State {
     /// Choose what proposals the engine enumerates. See [`OfferShapes`].
     pub fn with_offer_shapes(mut self, shapes: OfferShapes) -> Self {
         self.offer_shapes = shapes;
+        self
+    }
+
+    /// Cap the proposals generated per seat per turn (E-15). Clamped to the
+    /// rules cap; zero generates none, and the composer is still free.
+    pub fn with_ask_allowance(mut self, allowance: u8) -> Self {
+        self.ask_allowance = allowance.min(OFFERS_PER_TURN);
         self
     }
 

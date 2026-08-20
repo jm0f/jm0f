@@ -12,7 +12,9 @@ use carranta_bot::policy_net::NetPolicy;
 use carranta_bot::{Heuristic, Policy};
 use carranta_core::action::{Action, Illegal};
 use carranta_core::rng::{Rng, Stream};
-use carranta_core::state::{MAX_OFFERS, MAX_PLAYERS, Offer, OfferShapes, Phase, State, TradeMode};
+use carranta_core::state::{
+    MAX_OFFERS, MAX_PLAYERS, OFFERS_PER_TURN, Offer, OfferShapes, Phase, State, TradeMode,
+};
 use carranta_record::fog::{Fog, Viewer, fog};
 
 /// The seat the person who dealt the table plays.
@@ -635,6 +637,11 @@ impl Session {
             give: Some(2),
             want: 2,
         };
+        // And the ask allowance it trained under (E-15): three generated
+        // proposals per seat per turn. The same number in training and here,
+        // or the served bot would be free to spend a table's time in a way
+        // the measured one never could.
+        self.state.ask_allowance = 3;
     }
 
     /// Put the house heuristic back in a seat.
@@ -651,6 +658,7 @@ impl Session {
         *slot = Brain::House(Heuristic::new(seat_seed(self.seed, seat)));
         if self.champions().is_empty() {
             self.state.offer_shapes = OfferShapes::SingleType;
+            self.state.ask_allowance = OFFERS_PER_TURN;
         }
     }
 
@@ -2937,6 +2945,16 @@ mod tests {
         assert_eq!(mixed.agent_of(2), "trained@12");
         assert_eq!(mixed.agent_of(0), "house@1");
         assert_eq!(mixed.champions(), vec![12]);
+        assert_eq!(
+            mixed.state().ask_allowance,
+            3,
+            "a champion's table generates the asks it trained under (E-15)"
+        );
+        // And unseating the last champion closes the market back down.
+        mixed.seat_house(2);
+        assert_eq!(mixed.champions(), Vec::<u32>::new());
+        assert_eq!(mixed.state().offer_shapes, OfferShapes::SingleType);
+        assert_eq!(mixed.state().ask_allowance, OFFERS_PER_TURN);
     }
 
     #[test]

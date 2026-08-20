@@ -57,6 +57,10 @@ pub struct Arena {
     /// single-type default; NEAT trains in the full mixed market, capped 2 a
     /// side unless a run says otherwise.
     pub shapes: OfferShapes,
+    /// Proposals generated per seat per turn (E-15). The rules cap by
+    /// default, which is the uncapped market every run before the allowance
+    /// existed trained in.
+    pub asks: u8,
     /// Actions before a game is abandoned. Reached only by a pathological
     /// genome, which then simply scores badly.
     pub cap: usize,
@@ -67,6 +71,7 @@ impl Default for Arena {
         Arena {
             mode: TradeMode::Restricted,
             shapes: OfferShapes::SingleType,
+            asks: carranta_core::state::OFFERS_PER_TURN,
             cap: 20_000,
         }
     }
@@ -123,7 +128,8 @@ impl Arena {
     fn drive(&self, seed: u64, policies: &mut Vec<&mut dyn Policy>) -> Outcome {
         let mut state = State::new(MAX_PLAYERS as u8, seed)
             .with_trade_mode(self.mode)
-            .with_offer_shapes(self.shapes);
+            .with_offer_shapes(self.shapes)
+            .with_ask_allowance(self.asks);
         let mut buf = Vec::new();
         let mut actions = 0u32;
 
@@ -202,7 +208,8 @@ impl Arena {
             seed,
             State::new(MAX_PLAYERS as u8, seed)
                 .with_trade_mode(self.mode)
-                .with_offer_shapes(self.shapes),
+                .with_offer_shapes(self.shapes)
+                .with_ask_allowance(self.asks),
             (0..MAX_PLAYERS)
                 .map(|s| SeatId::agent(s as u64, "evolve", 1))
                 .collect(),

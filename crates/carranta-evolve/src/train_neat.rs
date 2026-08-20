@@ -24,10 +24,6 @@ use crate::ladder::{ANCHOR, Ladder};
 use crate::neat::{Innovations, NeatGenome, Params, Species, speciate};
 use crate::train::generation_rng;
 
-/// See `train::TRANSIENT`: identities for live population members, far above
-/// any real version id.
-const TRANSIENT: u64 = 1 << 40;
-
 /// Who is sitting in an opponent seat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Seat {
@@ -49,6 +45,11 @@ pub struct NeatConfig {
     pub threads: usize,
     /// Cards a generated offer may give; `None` is bounded by the hand alone.
     pub give_cap: Option<u8>,
+    /// Proposals generated per seat per turn (E-15). Three by default: with a
+    /// minute's turn clock and paced answers, three asks are what actually
+    /// fit at a table people sit at, and scarcity is what gives an ask an
+    /// opportunity cost the fitness can feel.
+    pub ask_cap: u8,
     /// Cards a generated offer may ask.
     pub want_cap: u8,
     /// Actions before a game is abandoned. Small in tests, generous in runs.
@@ -70,6 +71,7 @@ impl Default for NeatConfig {
             sample: 8,
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
             give_cap: Some(2),
+            ask_cap: 3,
             want_cap: 2,
             cap: 20_000,
             mode: TradeMode::Full,
@@ -88,8 +90,11 @@ pub struct NeatReport {
     pub median_fitness: f64,
     pub noise: f64,
     pub champion: u64,
-    pub above_anchor: f64,
-    pub champion_sigma: f64,
+    /// The champion's mean-position gap to the anchor in the paired match
+    /// (E-16), negative when the champion is ahead, and the 95% half-width
+    /// around it. A gap inside its interval has not been shown to exist.
+    pub gap: f64,
+    pub gap_ci: f64,
     /// How the population is structured: species alive, and the champion's
     /// size, which is the number a NEAT run is watched by.
     pub species: usize,
@@ -242,6 +247,7 @@ impl NeatTrainer {
                 give: cfg.give_cap,
                 want: cfg.want_cap,
             },
+            asks: cfg.ask_cap,
             cap: cfg.cap,
         };
         self.generation += 1;
@@ -345,39 +351,74 @@ impl NeatTrainer {
         let champion_slot = roster.len() as u32;
         roster.push(Brain::Net(champion_genome.compile()));
 
+        // ---- Validate the champion (E-16) ----
+        //
+        // A paired anchor-only match, the `versus` method. The first long run
+        // validated against a field that was mostly random siblings, two of
+        // three games seating no anchor at all, and printed +20 to +35 while
+        // a paired match had the champion *behind* the anchor: the number
+        // mostly said "better than a random genome of my own generation",
+        // which every champion is. E-10's lesson one level up: held-out games
+        // must be held out against the opponent the claim is about.
+        //
+        // Every board seed is played in all six ways two champions can sit
+        // among four seats, so champion and anchor meet on identical boards
+        // with identical dice and the seat advantage cancels exactly. The six
+        // seatings of one board are strongly correlated, so a seed is one
+        // observation: counting them as six would claim about sqrt(6) more
+        // certainty than the experiment has.
+        const PAIRINGS: [[bool; MAX_PLAYERS]; 6] = [
+            [true, true, false, false],
+            [true, false, true, false],
+            [true, false, false, true],
+            [false, true, true, false],
+            [false, true, false, true],
+            [false, false, true, true],
+        ];
         let validation_seed = base_seed + 500_000;
-        let mut vjobs = Vec::with_capacity(cfg.validation as usize);
-        let mut vseats = Vec::with_capacity(cfg.validation as usize);
-        for t in 0..cfg.validation as usize {
-            let opponents: [Seat; 3] = core::array::from_fn(|slot| match (slot, t % 3) {
-                (0, 0) => Seat::Rated(ANCHOR),
-                (0, 1) if !self.hall.is_empty() => {
-                    let pick = rng.below(Stream::Board, self.hall.len() as u32);
-                    Seat::Rated(self.hall[pick as usize])
-                }
-                _ => {
-                    let pick = rng.below(Stream::Board, cfg.population as u32);
-                    Seat::Current(pick as usize)
-                }
-            });
-            let seat = t % MAX_PLAYERS;
-            let mut seats = [0u32; MAX_PLAYERS];
-            let mut k = 0;
-            for (sidx, slot) in seats.iter_mut().enumerate() {
-                if sidx == seat {
-                    *slot = champion_slot;
-                } else {
-                    *slot = slot_of(&opponents[k]);
-                    k += 1;
-                }
+        let vseeds = (cfg.validation as usize / PAIRINGS.len()).max(1);
+        let mut vjobs = Vec::with_capacity(vseeds * PAIRINGS.len());
+        for s in 0..vseeds {
+            for mask in PAIRINGS {
+                let seats: [u32; MAX_PLAYERS] =
+                    core::array::from_fn(|i| if mask[i] { champion_slot } else { 0 });
+                vjobs.push(NetJob {
+                    seed: validation_seed + s as u64,
+                    seats,
+                });
             }
-            vjobs.push(NetJob {
-                seed: validation_seed + t as u64,
-                seats,
-            });
-            vseats.push((seat, opponents));
         }
         let voutcomes = arena.play_net_all(&roster, &vjobs, cfg.threads);
+
+        // One gap per seed: the champion's mean position less the anchor's,
+        // averaged over the six seatings. Negative is the champion ahead.
+        let mut gaps = Vec::with_capacity(vseeds);
+        for chunk in voutcomes.chunks(PAIRINGS.len()) {
+            let mut gap = 0.0;
+            for (o, mask) in chunk.iter().zip(PAIRINGS.iter()) {
+                let (mut mine, mut theirs) = (0.0, 0.0);
+                for (seat, &is_champion) in mask.iter().enumerate() {
+                    let p = o.position[seat] as f64 / 2.0;
+                    if is_champion {
+                        mine += p;
+                    } else {
+                        theirs += p;
+                    }
+                }
+                gap += (mine - theirs) / PAIRINGS.len() as f64;
+            }
+            gaps.push(gap);
+        }
+        let n = gaps.len() as f64;
+        let gap = gaps.iter().sum::<f64>() / n;
+        let gap_ci = if gaps.len() > 1 {
+            let var = gaps.iter().map(|g| (g - gap).powi(2)).sum::<f64>() / (n - 1.0);
+            1.96 * (var / n).sqrt()
+        } else {
+            // One seed has no spread to measure. Zero would claim certainty;
+            // this says the interval is the whole line, which is the truth.
+            f64::INFINITY
+        };
 
         // Behavioural markers, replayed from a sample of the validation games.
         let mut sampler = Sampler::default();
@@ -395,24 +436,16 @@ impl NeatTrainer {
             }
         }
 
+        // The same games feed the ladder, which makes its ratings
+        // anchor-grounded too: every durable game a champion has is against
+        // the anchor, so the standings and the printed gap can no longer
+        // tell two different stories.
         for (t, o) in voutcomes.iter().enumerate() {
-            let (seat, opponents) = vseats[t];
-            let mut ids = [0u64; MAX_PLAYERS];
-            let mut k = 0;
-            for (sidx, slot) in ids.iter_mut().enumerate() {
-                if sidx == seat {
-                    *slot = champion;
-                } else {
-                    *slot = match opponents[k] {
-                        Seat::Rated(id) => id,
-                        Seat::Current(i) => TRANSIENT + i as u64,
-                    };
-                    k += 1;
-                }
-            }
+            let mask = PAIRINGS[t % PAIRINGS.len()];
+            let ids: [u64; MAX_PLAYERS] =
+                core::array::from_fn(|i| if mask[i] { champion } else { ANCHOR });
             self.ladder.record(&ids, &o.position);
         }
-        self.ladder.forget_transients();
 
         // ---- Speciate, share, breed ----
         let params = cfg.params;
@@ -573,8 +606,8 @@ impl NeatTrainer {
             median_fitness,
             noise,
             champion,
-            above_anchor: self.ladder.above_anchor(champion),
-            champion_sigma: self.ladder.rating(champion).sigma,
+            gap,
+            gap_ci,
             species: species_alive,
             champion_nodes: {
                 let mut nodes: Vec<u32> = champion_genome
@@ -622,7 +655,9 @@ mod tests {
         let mut t = NeatTrainer::new(quick(), 1);
         let r = t.step();
         assert_eq!(r.generation, 1);
-        assert_eq!(r.games, 6 * 4 + 4);
+        // Trials games plus the paired validation: 4 asked-for validation
+        // games round up to one seed, played in all six seatings.
+        assert_eq!(r.games, 6 * 4 + 6);
         assert!((1.0..=4.0).contains(&r.best_fitness));
         assert!(r.best_fitness <= r.median_fitness);
         assert!(r.species >= 1);

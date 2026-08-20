@@ -30,7 +30,15 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 2;
+pub const NEAT_FORMAT: u32 = 3;
+
+/// The NEAT format before the ask allowance existed (E-15).
+///
+/// Still readable: a format 2 run trained in the uncapped market, and reading
+/// it back with the allowance at the rules cap resumes exactly the run it
+/// was, which is what a resume is for. Writing always uses the current
+/// format.
+pub const NEAT_FORMAT_UNCAPPED: u32 = 2;
 
 /// Why a checkpoint could not be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,6 +292,7 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         c.give_cap.map_or("hand".to_string(), |n| n.to_string())
     );
     let _ = writeln!(out, "want_cap {}", c.want_cap);
+    let _ = writeln!(out, "ask_cap {}", c.ask_cap);
     let _ = writeln!(out, "cap {}", c.cap);
     let _ = writeln!(out, "mode {}", mode_name(c.mode));
     // Display for f64 emits the shortest string that parses back to the same
@@ -376,12 +385,12 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         .strip_prefix("carranta-evolve ")
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| bad(line, "not a carranta-evolve checkpoint"))?;
-    if version != NEAT_FORMAT {
+    if version != NEAT_FORMAT && version != NEAT_FORMAT_UNCAPPED {
         return Err(LoadError::Version(version));
     }
     let (line, method) = lines.next().ok_or(LoadError::Missing("method"))?;
     if method != "method neat" {
-        return Err(bad(line, "format 2 requires `method neat`"));
+        return Err(bad(line, "this format requires `method neat`"));
     }
 
     let mut scalar = |key: &'static str| -> Result<(usize, String), LoadError> {
@@ -419,6 +428,13 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         }
     };
     let want_cap: u8 = num!("want_cap");
+    // Format 2 predates the allowance and trained uncapped; reading it back
+    // at the rules cap resumes exactly the run it was.
+    let ask_cap: u8 = if version == NEAT_FORMAT_UNCAPPED {
+        carranta_core::state::OFFERS_PER_TURN
+    } else {
+        num!("ask_cap")
+    };
     let cap: usize = num!("cap");
     let mode = {
         let (line, v) = scalar("mode")?;
@@ -457,6 +473,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         threads: NeatConfig::default().threads,
         give_cap,
         want_cap,
+        ask_cap,
         cap,
         mode,
         params,
@@ -675,7 +692,7 @@ mod tests {
                 a.generation
             );
             assert_eq!(a.games, b.games);
-            assert_eq!(a.above_anchor, b.above_anchor);
+            assert_eq!(a.gap, b.gap);
             assert_eq!(a.species, b.species);
             assert_eq!(a.champion_genes, b.champion_genes);
         }
@@ -729,8 +746,32 @@ mod tests {
         neat.step();
         assert!(matches!(
             decode(&encode_neat(&neat)),
-            Err(LoadError::Version(2))
+            Err(LoadError::Version(3))
         ));
+    }
+
+    #[test]
+    fn a_format_two_checkpoint_resumes_as_the_uncapped_run_it_was() {
+        // Format 2 predates the ask allowance (E-15). Those runs trained in
+        // the uncapped market, so reading one back must set the allowance to
+        // the rules cap, and never to today's training default: a resume that
+        // quietly changed the market would be a different run wearing the
+        // same directory.
+        let mut t = NeatTrainer::new(quick_neat(), 9);
+        t.step();
+        let modern = encode_neat(&t);
+        assert!(modern.contains("\nask_cap 3\n"), "format 3 writes the cap");
+        // The same file as format 2 wrote it: version 2, no ask_cap line.
+        let old = modern
+            .replace("carranta-evolve 3", "carranta-evolve 2")
+            .replace("ask_cap 3\n", "");
+        let back = decode_neat(&old).expect("a format two file still reads");
+        assert_eq!(
+            back.config.ask_cap,
+            carranta_core::state::OFFERS_PER_TURN,
+            "an uncapped run resumes uncapped"
+        );
+        assert_eq!(back.generation(), t.generation(), "and it is the same run");
     }
 
     #[test]

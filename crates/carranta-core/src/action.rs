@@ -732,7 +732,13 @@ impl State {
                 });
             }
         }
-        if self.offers_made[p] >= OFFERS_PER_TURN || self.offer_count as usize >= MAX_OFFERS {
+        // The ask allowance (E-15) gates *generation* only: it is the smaller
+        // of the table's allowance and the rules cap, and past it no proposal
+        // is enumerated for this seat this turn. Legality below stays at the
+        // rules cap (R-7.20), so a person composing through the form is bound
+        // by the rules alone, exactly as with the offer shapes.
+        let allowance = self.ask_allowance.min(OFFERS_PER_TURN);
+        if self.offers_made[p] >= allowance || self.offer_count as usize >= MAX_OFFERS {
             return;
         }
         if self.trade_mode == TradeMode::Restricted {
@@ -2095,6 +2101,39 @@ mod tests {
             Err(Illegal::OfferLimit),
             "R-7.20 bounds a turn's offers"
         );
+    }
+
+    #[test]
+    fn the_ask_allowance_stops_generation_and_never_legality() {
+        // E-15: past the allowance the engine offers a seat no further
+        // proposals, but a composed one is still judged by the rules alone.
+        // The distinction is the whole point: bots choose from what is
+        // generated, people compose whatever R-7.20 allows.
+        let mut s = trading_game(27).with_ask_allowance(2);
+        s.hand[0] = [9, 9, 0, 0, 0];
+        let proposals = |s: &State| {
+            let mut buf = Vec::new();
+            s.legal_into(&mut buf);
+            buf.iter()
+                .filter(|a| matches!(a, Action::ProposeTrade { .. }))
+                .count()
+        };
+        assert!(proposals(&s) > 0, "under the allowance the market is open");
+        s.offers_made[0] = 2;
+        assert_eq!(proposals(&s), 0, "at the allowance nothing is generated");
+        assert!(
+            s.apply(Action::ProposeTrade {
+                by: 0,
+                to: None,
+                give: one(Resource::Brick, 1),
+                want: one(Resource::Ore, 1)
+            })
+            .is_ok(),
+            "and a composed offer is still legal up to R-7.20"
+        );
+        // The builder cannot raise the rules cap, only lower it.
+        let loose = State::new(4, 27).with_ask_allowance(200);
+        assert_eq!(loose.ask_allowance, OFFERS_PER_TURN);
     }
 
     #[test]

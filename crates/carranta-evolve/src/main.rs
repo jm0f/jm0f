@@ -124,6 +124,7 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                 };
             }
             "--want-cap" => args.neat.want_cap = value()?.parse().map_err(|_| "bad --want-cap")?,
+            "--ask-cap" => args.neat.ask_cap = value()?.parse().map_err(|_| "bad --ask-cap")?,
             "--mode" => {
                 let mode = match value()?.as_str() {
                     "disabled" => TradeMode::Disabled,
@@ -166,6 +167,9 @@ carranta-evolve
   --mutation F         es only: mutation step, in per-gene scale units (1.0)
   --give-cap N|hand    neat only: cards an offer may give (2; hand = no cap)
   --want-cap N         neat only: cards an offer may ask (2)
+  --ask-cap N          neat only: proposals generated per seat per turn (3).
+                       Time is what asking costs at a real table; this is its
+                       deterministic stand-in, and served tables share it
   --export WHICH       neat only: write a past champion out of --out's
                        checkpoint instead of training. WHICH is a label
                        (g042-0017), a generation number (42), `best` by
@@ -224,8 +228,8 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
         r.species,
         r.champion_nodes,
         r.champion_genes,
-        r.above_anchor,
-        r.champion_sigma,
+        r.gap,
+        r.gap_ci,
         connectivity,
         r.seconds,
         b.games,
@@ -243,7 +247,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
 }
 
 const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
-species,champion_nodes,champion_genes,above_anchor,champion_sigma,connectivity,seconds,\
+species,champion_nodes,champion_genes,gap,gap_ci,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
 /// Take one past champion out of a run and write it as a network file.
@@ -361,9 +365,10 @@ fn run_neat(args: Args) {
     );
     println!("writing to {}", args.out.display());
     println!("  fitness is mean finishing position, lower is better (2.5 = average)");
-    println!("  read +anchor against its sigma: a gap inside it is noise, not progress\n");
+    println!("  gap is the champion's paired match against the anchor, in positions:");
+    println!("  negative is ahead, and a gap inside its interval has not been shown\n");
     println!(
-        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes      +anchor   trades   secs"
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes        gap (E-16)   trades   secs"
     );
 
     let started = std::time::Instant::now();
@@ -379,7 +384,7 @@ fn run_neat(args: Args) {
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
         println!(
-            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>+6.2} +-{:>4.1}  {:>6.1}  {:>5.1}",
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>+7.3} +-{:>5.3}  {:>6.1}  {:>5.1}",
             r.generation,
             r.trials,
             r.games,
@@ -390,8 +395,8 @@ fn run_neat(args: Args) {
             r.species,
             r.champion_nodes,
             r.champion_genes,
-            r.above_anchor,
-            r.champion_sigma,
+            r.gap,
+            r.gap_ci,
             r.behaviour.trades,
             r.seconds,
         );
@@ -520,7 +525,8 @@ fn main() {
     );
     println!("writing to {}", args.out.display());
     println!("  fitness is mean finishing position, lower is better (2.5 = average)");
-    println!("  read +anchor against its sigma: a gap inside it is noise, not progress\n");
+    println!("  gap is the champion's paired match against the anchor, in positions:");
+    println!("  negative is ahead, and a gap inside its interval has not been shown\n");
     println!(
         "  gen  trials    games    best  median   noise   sep  spread      +anchor   trades  cities   secs"
     );
@@ -685,9 +691,17 @@ mod tests {
 
     #[test]
     fn neat_flags_reach_the_configuration() {
-        let a = parse("--method neat --give-cap hand --want-cap 3 --population 32 --mode full")
-            .expect("every flag is known");
+        let a = parse(
+            "--method neat --give-cap hand --want-cap 3 --ask-cap 5 --population 32 --mode full",
+        )
+        .expect("every flag is known");
         assert_eq!(a.method, Method::Neat);
+        assert_eq!(a.neat.ask_cap, 5);
+        assert_eq!(
+            parse("--method neat").expect("defaults").neat.ask_cap,
+            3,
+            "the training default is three asks a turn"
+        );
         assert_eq!(a.neat.give_cap, None, "hand means bounded by the hand");
         assert_eq!(a.neat.want_cap, 3);
         assert_eq!(a.neat.population, 32);

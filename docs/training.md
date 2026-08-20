@@ -44,23 +44,25 @@ caffeinate -i -s cargo run --release -p carranta-evolve -- \
   plugged in.
 - `--generations 0` runs until told to stop.
 - The defaults are the training configuration of record: population 96, the
-  full market, mixed offers capped at 2 cards a side. `--give-cap hand`
-  lifts the give cap to whatever the hand holds, `--want-cap N` moves the
-  ask side; both are part of the market the champion learns, so changing
-  them mid-line means a new run, not a resumed one.
+  full market, mixed offers capped at 2 cards a side, three generated asks
+  per seat per turn (E-15). `--give-cap hand` lifts the give cap to whatever
+  the hand holds, `--want-cap N` moves the ask side, `--ask-cap N` the
+  allowance; all three are part of the market the champion learns, so
+  changing any of them mid-line means a new run, not a resumed one.
 
 ## While it runs
 
 The run directory is the whole interface:
 
 - `checkpoint.txt`: the entire run state, written atomically after every
-  generation. Plain text; format 2 says NEAT, and the ES loader and this one
-  refuse each other's files.
+  generation. Plain text; format 3 is NEAT with the ask allowance, format 2
+  a NEAT run from before it (readable, and resumed uncapped, exactly the run
+  it was), and the ES loader and this one refuse each other's files.
 - `history.csv`: one row per generation. `best_fitness` is mean finishing
-  position (lower is better, the anchor sits near 2.5 by symmetry);
-  `above_anchor` is the champion's held-out rating over the pinned
-  heuristic; `species`, `champion_nodes` and `champion_genes` say what the
-  complexification is doing. The behaviour columns (trades, settlements,
+  position (lower is better, the anchor sits near 2.5 by symmetry); `gap`
+  and `gap_ci` are the champion's paired match against the anchor (E-16),
+  negative ahead; `species`, `champion_nodes` and `champion_genes` say what
+  the complexification is doing. The behaviour columns (trades, settlements,
   roads, and so on) come from the sampled games and say *what* changed when
   the rating says something did.
 - `champion.net`: the current champion, re-exported every generation, also
@@ -104,34 +106,44 @@ enumerates the mixed shapes it trained under, and the game file records each
 of its chairs as `trained@<generation>`: a distinct player per E-8, so its
 rating never pools with the heuristic's or with another checkpoint's.
 
-The live site takes the same file through the repository:
+The live site takes champions through the repository's `bots/` directory:
 
 ```sh
-cp runs/neat-1/champion.net champion.net
-git add champion.net
-git commit
-git push
+cp runs/neat-1/champion.net bots/trained-42.net
+git add bots && git commit && git push
 ```
 
-The Dockerfile ships a root-level `champion.net` into the image and the
-container passes it to `--trained` on start; with no champion committed, the
-house heuristic plays, exactly as before. Until auto-deploy is switched on,
-the push must be followed by "Deploy Latest Commit" in the Railway
-dashboard. Replacing the champion later is committing a different file:
-generations are read out of the file itself, so the chairs and the ladder
-sort out identity on their own.
+The image copies `bots/` whole and the server offers every network in it as
+a player a lobby can put in a chair; nothing is seated until somebody asks,
+and the house bot stays the default. Name the file for the generation so the
+directory reads like the roster it is. A past generation comes back out of a
+run with `--export` (`--export list` names what a checkpoint holds), and
+whether one is worth shipping is `--example versus`, never the run's own
+chart.
 
 ## What the first long run taught (read before starting another)
 
 The 378-generation run produced constant traders that measured worse than
 the heuristic in a paired match, while the run's own `+anchor` column read
-+20 to +35 throughout. Both are explained, and two decisions came out of it,
-E-15 and E-16 in the scoping document: an engine-level per-turn allowance on
-*generated* proposals (training default 3, shared with served tables the way
-`OfferShapes` is), and champion validation as a paired anchor-only match so
-the printed number is the one `versus` would give. Until both are in, read
-`+anchor` as "beats a random sibling" and judge any champion with
-`--example versus` before deploying it.
++20 to +35 throughout. Both are explained, and both are now built, E-15 and
+E-16 in the scoping document.
+
+**E-15, the ask allowance.** The engine generates at most `--ask-cap`
+proposals per seat per turn (default 3), and a served table seating a
+champion uses the same number. Legality never moves, so people compose
+freely; what changes is what a policy can spend, which is what gives an ask
+an opportunity cost the fitness can feel. Runs before the allowance resume
+uncapped from their format 2 checkpoints, exactly the runs they were; new
+runs write format 3.
+
+**E-16, the honest scoreboard.** The `gap` column is a paired anchor-only
+match, the `versus` method: every validation seed played in all six
+seatings, one observation per seed, 95% interval beside it. Negative is
+ahead of the heuristic, and a gap inside its interval has not been shown to
+exist. Expect early generations to read +1.5 or worse, because that is where
+they really are; the number to celebrate is the first one that clears zero
+from below. To judge a champion trained before this at today's rules, use
+`--example versus --ask-cap 20`, the market it actually learned.
 
 ## What not to do
 

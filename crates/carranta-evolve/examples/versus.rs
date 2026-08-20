@@ -52,6 +52,7 @@ fn main() {
     let mut seed = 90_210u64;
     let mut give_cap = Some(2u8);
     let mut want_cap = 2u8;
+    let mut ask_cap = 3u8;
     let mut mode = TradeMode::Full;
 
     let mut args = std::env::args().skip(1);
@@ -63,6 +64,7 @@ fn main() {
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
             "--want-cap" => want_cap = value().parse().unwrap_or(want_cap),
+            "--ask-cap" => ask_cap = value().parse().unwrap_or(ask_cap),
             "--give-cap" => {
                 let v = value();
                 give_cap = if v == "hand" { None } else { v.parse().ok() };
@@ -97,8 +99,11 @@ fn main() {
     // seating it enumerates. Measuring it anywhere else would be measuring a
     // different player: a trading policy judged in a market it cannot trade in
     // is being asked the wrong question.
+    // A champion from before the allowance existed trained uncapped; measure
+    // it as it was trained with --ask-cap 20.
     let arena = Arena {
         mode,
+        asks: ask_cap,
         shapes: match give_cap {
             _ if mode != TradeMode::Full => OfferShapes::SingleType,
             give => OfferShapes::Mixed {

@@ -912,6 +912,13 @@ The run itself keeps its value as evidence: topology grew (33 to 71 genes),
 speciation held near target, the budget rule worked. What it lacked was a
 reason to stop asking, and a scoreboard that would have said so.
 
+Both decisions are implemented. The first generation under E-16 read
+**+1.854 +-0.139 behind the anchor** where the old column printed +13.8 for
+the same class of network, which is the size of the flattery removed; and a
+capped market plays two to three times faster besides, since most of a
+trading turn was enumeration and settlement of offers nobody should have
+been making.
+
 #### The reservation
 
 NEAT extracts **one scalar per game**. A policy-gradient method extracts a learning signal from each of ~500 decisions in that same game. That gap is the real risk, and no amount of throughput closes it, which is why E-1 sequences a cheap, certain step ahead of the ambitious one, and why E-3 hands the network features rather than making it discover them.
