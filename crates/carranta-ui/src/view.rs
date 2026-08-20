@@ -148,9 +148,10 @@ pub fn render_all(
     seat: Option<u8>,
     room: Room,
     talk: &[Talk<'_>],
+    roster: &[(String, String)],
     note: Option<&str>,
 ) -> String {
-    render_room(session, seat.unwrap_or(NOBODY), room, talk, note)
+    render_room(session, seat.unwrap_or(NOBODY), room, talk, roster, note)
 }
 
 /// A seat number no table has, for somebody who is not sitting at one.
@@ -169,7 +170,7 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn render_inner(session: &Session, seat: u8, note: Option<&str>) -> String {
-    render_room(session, seat, Room::default(), &[], note)
+    render_room(session, seat, Room::default(), &[], &[], note)
 }
 
 fn render_room(
@@ -177,6 +178,7 @@ fn render_room(
     seat: u8,
     room: Room,
     talk: &[Talk<'_>],
+    roster: &[(String, String)],
     note: Option<&str>,
 ) -> String {
     let v = if seat == NOBODY {
@@ -271,8 +273,16 @@ fn render_room(
     );
 
     // ---- Seats: counts for everyone, cards for you alone ----
+    // Who a chair could be given to, and who has it now. The list is the same
+    // for every seat, so it is sent once; `bot` is per seat and is the agent a
+    // game file would record for it, which is what makes the lobby's dropdown
+    // show the truth rather than the last thing anybody clicked.
+    j.array("roster", roster.iter(), |o, (agent, label)| {
+        o.str("agent", agent).str("label", label);
+    });
     j.array("seats", 0..seats, |o, p| {
-        o.int("seat", p as i64)
+        o.str("bot", &session.agent_of(p as u8))
+            .int("seat", p as i64)
             .int("hand", v.hand_size[p] as i64)
             .int("dev", v.dev_count[p] as i64)
             .int("vp", v.apparent_vp[p] as i64)

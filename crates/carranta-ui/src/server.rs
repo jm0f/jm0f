@@ -349,6 +349,15 @@ struct Table {
     /// part of who is in the seat and is never written down: a game that has
     /// begun has no use for it.
     ready: Vec<bool>,
+    /// Who this table's chairs could be given to, as `(agent, label)` pairs:
+    /// the house bot and every champion the server loaded.
+    ///
+    /// Copied onto the table rather than reached for through the server,
+    /// because the payload is built from a table and threading the catalogue
+    /// through a dozen call sites to reach it would be a lot of plumbing for a
+    /// handful of short strings. It cannot go stale: champions are loaded once
+    /// at startup and nothing adds one to a running server.
+    roster: Vec<(String, String)>,
     /// Whose keys the host has taken a seat back from.
     ///
     /// Without it, removing somebody does nothing at all: their page asks for
@@ -608,7 +617,7 @@ impl Table {
                 text: &d.text,
             })
             .collect();
-        view::render_all(&self.session, seat, room, &talk, note)
+        view::render_all(&self.session, seat, room, &talk, &self.roster, note)
     }
 
     fn seat_the_people(&mut self) {
@@ -959,7 +968,10 @@ impl Server {
     pub fn roster(&self) -> Vec<(String, String)> {
         let mut out = vec![(house_agent(), "House bot".to_string())];
         for c in &self.champions {
-            out.push((c.agent(), format!("Trained, generation {}", c.generation)));
+            // The same name the analytics gives a seat, "trained v311", so a
+            // bot chosen in the lobby and a bot named in a game report read as
+            // one player rather than two things that happen to be related.
+            out.push((c.agent(), format!("Trained v{}", c.generation)));
         }
         out
     }
@@ -1200,6 +1212,7 @@ impl Server {
             lobby: true,
             removed: Vec::new(),
             ready: vec![false; seats as usize],
+            roster: self.roster(),
         };
         table.seat_the_people();
         // Names come from the chairs and only from the chairs. The session keeps
@@ -1374,6 +1387,7 @@ impl Server {
                 lobby: false,
                 removed: Vec::new(),
                 ready: vec![false; self.seats as usize],
+                roster: self.roster(),
             });
             self.keep(&id);
             if finished {
@@ -1494,6 +1508,7 @@ impl Server {
             lobby: false,
             removed: Vec::new(),
             ready: vec![false; saved.setup.chairs.len().max(saved.seats as usize)],
+            roster: self.roster(),
         };
         table.seat_the_people();
         table.name_the_seats();
@@ -1833,6 +1848,44 @@ impl Server {
     ///
     /// Never their own seat: that is Leave, which already does the right thing
     /// and does not need a second way in.
+    /// Give one chair to a different player, while the table is still a room.
+    ///
+    /// The host's alone, like every other arrangement: which bot you are about
+    /// to play is a property of the table rather than of whoever is reading
+    /// it, and a guest changing the opposition mid-lobby would be changing the
+    /// game for everybody.
+    ///
+    /// Only a chair nobody is sitting in. A person's seat is theirs, and the
+    /// way a bot gets it is the person leaving.
+    fn set_bot(&self, id: &str, player: &str, seat: u8, agent: &str) -> Result<(), &'static str> {
+        // Looked up before the tables are locked: the champion is the
+        // server's, the table is the lock's, and taking them in the other
+        // order would hold a lock across a search for no reason.
+        let champion = self.champion(agent).cloned();
+        if champion.is_none() && agent != house_agent() {
+            return Err("no such bot");
+        }
+        let mut tables = self.tables.lock().unwrap();
+        let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
+            return Err("that game is over");
+        };
+        if player.is_empty() || table.by != player {
+            return Err("only the host changes the table");
+        }
+        if !table.in_lobby() {
+            return Err("the game has started");
+        }
+        if !matches!(table.chairs.get(seat as usize), Some(Chair::Bot)) {
+            return Err("somebody is in that seat");
+        }
+        match champion {
+            Some(c) => table.session.seat_trained(seat, &c.net, c.generation),
+            None => table.session.seat_house(seat),
+        }
+        table.moved();
+        Ok(())
+    }
+
     fn unseat(&self, id: &str, player: &str, seat: u8) -> Result<(), &'static str> {
         let mut tables = self.tables.lock().unwrap();
         let Some(table) = tables.iter_mut().find(|t| t.id == id) else {
@@ -2729,6 +2782,27 @@ impl Server {
             }
             // The host, taking a seat back. The other half of the same power:
             // one says the table is who it is now, the other says who that is.
+            ("POST", "/api/bot") => {
+                let id = game.clone().unwrap_or_default();
+                self.stir(&id);
+                let seat: u8 = match param(&body, "seat").and_then(|v| v.parse().ok()) {
+                    Some(s) => s,
+                    None => return respond(&mut stream, 400, "text/plain", b"which seat"),
+                };
+                let agent = decode(&param(&body, "agent").unwrap_or_default());
+                if let Err(why) = self.set_bot(&id, &player, seat, &agent) {
+                    return respond(&mut stream, 403, "text/plain", why.as_bytes());
+                }
+                let mine = self.seated(&id, &player);
+                let payload = {
+                    let tables = self.tables.lock().unwrap();
+                    match tables.iter().find(|t| t.id == id) {
+                        Some(t) => t.seen_by(mine, &player, None),
+                        None => String::from("{}"),
+                    }
+                };
+                respond(&mut stream, 200, "application/json", payload.as_bytes())
+            }
             ("POST", "/api/unseat") => {
                 let id = game.clone().unwrap_or_default();
                 self.stir(&id);
@@ -3264,6 +3338,7 @@ mod tests {
             shut: true,
             lobby: false,
             ready: Vec::new(),
+            roster: vec![(house_agent(), "House bot".to_string())],
         });
         server.keep(&id);
         assert!(server.store().all().is_empty(), "still nothing played");
@@ -3364,6 +3439,75 @@ mod tests {
             assert_eq!(t.session.agent_of(1), "house@1");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_host_alone_chooses_who_plays_an_empty_chair() {
+        let dir = std::env::temp_dir().join(format!("carranta-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = carranta_bot::net::Net::output_id(carranta_bot::features::FEATURES);
+        let links: Vec<(u32, u32, f64)> = (0..=carranta_bot::features::FEATURES as u32)
+            .map(|i| (i, out, ((i % 5) as f64 - 2.0) / 10.0))
+            .collect();
+        let net = carranta_bot::net::Net::assemble(carranta_bot::features::FEATURES, &links)
+            .expect("acyclic");
+        let server = Server::new(4, 3, TradeMode::Full, &dir)
+            .with_champions(vec![Champion { generation: 7, net }]);
+        let host = "keytest0000000000";
+        let id = server.deal("", host);
+
+        // The default, and then the host's choice, and then back again.
+        assert_eq!(seat_agent(&server, &id, 1), "house@1");
+        assert!(server.set_bot(&id, host, 1, "trained@7").is_ok());
+        assert_eq!(seat_agent(&server, &id, 1), "trained@7");
+        assert!(server.set_bot(&id, host, 1, "house@1").is_ok());
+        assert_eq!(
+            seat_agent(&server, &id, 1),
+            "house@1",
+            "and it can be undone"
+        );
+
+        // A guest cannot change what the table plays against, and neither can
+        // anybody once the game has started: both would be changing the game
+        // out from under the people in it.
+        assert_eq!(
+            server.set_bot(&id, "otherkey00000000", 1, "trained@7"),
+            Err("only the host changes the table")
+        );
+        // A champion this server does not have is refused rather than
+        // substituted, because the lobby would then show a player that is not
+        // the one sitting there.
+        assert_eq!(
+            server.set_bot(&id, host, 1, "trained@999"),
+            Err("no such bot")
+        );
+        // The host's own seat is a person's, and a person's seat is theirs.
+        assert_eq!(
+            server.set_bot(&id, host, 0, "trained@7"),
+            Err("somebody is in that seat")
+        );
+
+        {
+            let mut tables = server.tables.lock().unwrap();
+            let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+            t.lobby = false;
+        }
+        assert_eq!(
+            server.set_bot(&id, host, 1, "trained@7"),
+            Err("the game has started")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Who plays one seat of a table this server is holding.
+    fn seat_agent(server: &Server, id: &str, seat: u8) -> String {
+        let tables = server.tables.lock().unwrap();
+        tables
+            .iter()
+            .find(|t| t.id == id)
+            .expect("a table")
+            .session
+            .agent_of(seat)
     }
 
     #[test]
@@ -3504,6 +3648,7 @@ mod tests {
             shut: true,
             lobby: false,
             ready: Vec::new(),
+            roster: vec![(house_agent(), "House bot".to_string())],
         });
         for _ in 0..6 {
             let mut tables = server.tables.lock().unwrap();
@@ -3592,6 +3737,7 @@ mod tests {
             shut: true,
             lobby: false,
             ready: Vec::new(),
+            roster: vec![(house_agent(), "House bot".to_string())],
         });
         server.keep(&done);
         server.tables.lock().unwrap().clear();
@@ -5263,7 +5409,7 @@ mod tests {
                 text: &d.text,
             })
             .collect();
-        let out = view::render_all(&t.session, Some(0), view::Room::default(), &talk, None);
+        let out = view::render_all(&t.session, Some(0), view::Room::default(), &talk, &[], None);
         // Two things make this safe and neither is a filter on the words. The
         // payload is JSON fetched over HTTP, so what must not happen is the text
         // breaking out of its string: the quotes are escaped.

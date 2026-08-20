@@ -1171,6 +1171,10 @@
   /* What a bot's seat is, said quietly beside its name: a placeholder, not a
      decision. The row used to carry a button here. */
   .slotUntil { color: var(--dim); font-size: .85em; }
+  /* Which bot has an empty chair. Sized down to sit inside a seat row rather
+     than dominate it: it is one of four rows, and the row is a person's seat
+     first and a setting second. */
+  .seatBot { padding: 2px 22px 2px 8px; font-size: .85em; max-width: 13em; }
   /* The host taking a seat back. Dim until it is pointed at, because it is the
      one control on this screen that happens to another person and a row of
      bright crosses reads as an invitation to press them. Its hit area is
@@ -3697,10 +3701,42 @@ function renderLobby(v) {
         cell.appendChild(drop);
       }
     } else {
-      const until = document.createElement('span');
-      until.className = 'slotUntil';
-      until.textContent = 'plays until somebody joins';
-      cell.appendChild(until);
+      // An empty chair is played by something, and which something is the
+      // host's to choose while the table is still a room. Everybody else is
+      // told rather than asked: what you are about to play against is worth
+      // knowing from the lobby, and it is not a guest's to change.
+      const seatRow = (v.seats || []).find(s => s.seat === i) || {};
+      const roster = v.roster || [];
+      const now = roster.find(r => r.agent === seatRow.bot);
+      if (mine && roster.length > 1) {
+        const pick = document.createElement('select');
+        pick.className = 'seatBot';
+        pick.title = `Who plays seat ${i + 1}`;
+        pick.setAttribute('aria-label', pick.title);
+        for (const r of roster) {
+          const opt = document.createElement('option');
+          opt.value = r.agent;
+          opt.textContent = r.label;
+          opt.selected = r.agent === seatRow.bot;
+          pick.appendChild(opt);
+        }
+        pick.onchange = (e) => fetch(api('/api/bot'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ seat: i, agent: e.target.value }),
+        }).then(() => load(api('/api/state')));
+        cell.appendChild(pick);
+      } else {
+        const until = document.createElement('span');
+        until.className = 'slotUntil';
+        // The house bot keeps the old line, which says the useful thing about
+        // an ordinary empty chair: somebody may still take it. A champion says
+        // which champion, because that is the more surprising fact.
+        until.textContent = now && now.agent !== 'house@1'
+          ? now.label
+          : 'plays until somebody joins';
+        cell.appendChild(until);
+      }
     }
     row.append(dot, name, cell);
     slots.appendChild(row);
