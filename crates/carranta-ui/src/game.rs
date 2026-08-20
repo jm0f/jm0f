@@ -637,6 +637,23 @@ impl Session {
         };
     }
 
+    /// Put the house heuristic back in a seat.
+    ///
+    /// The inverse of [`Session::seat_trained`], and the reason a table can be
+    /// arranged rather than only dealt: a lobby that can seat a champion has
+    /// to be able to unseat one. The market's shapes follow the table's
+    /// occupants, so unseating the last champion closes the enumeration back
+    /// to single types, which is what a table of house bots has always played.
+    pub fn seat_house(&mut self, seat: u8) {
+        let Some(slot) = self.bots.get_mut(seat as usize) else {
+            return;
+        };
+        *slot = Brain::House(Heuristic::new(seat_seed(self.seed, seat)));
+        if self.champions().is_empty() {
+            self.state.offer_shapes = OfferShapes::SingleType;
+        }
+    }
+
     /// Deal champions round the bot seats, repeating if there are fewer
     /// champions than seats.
     ///

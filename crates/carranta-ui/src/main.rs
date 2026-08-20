@@ -19,10 +19,11 @@ carranta-play, play Carranta locally in a browser
   --mode MODE    full | restricted | disabled (full)
   --games DIR    where games are kept (./games)
   --demo N       have at least N finished games to look at (plays what is missing)
-  --trained FILE seat a trained champion (a champion.net from carranta-evolve)
-                 at the bot chairs; games record it as trained@<generation>.
-                 Repeat the flag to deal several champions round the chairs,
-                 which is how two of them play each other at one table
+  --bots DIR     load every .net in DIR as a champion a chair can be given
+  --trained FILE the same for one file; repeat for several
+
+Champions are offered, not seated: a chair plays the house bot until a lobby
+asks for one, and every game file records which player sat where.
 
 Binds 127.0.0.1 by default: on a laptop the game is local and stays local.
 Set PORT (as every host does) to bind 0.0.0.0 on that port instead, or HOST to
@@ -38,6 +39,7 @@ fn main() {
     let mut games = std::path::PathBuf::from("games");
     let mut demo: u32 = 0;
     let mut trained: Vec<std::path::PathBuf> = Vec::new();
+    let mut bots: Option<std::path::PathBuf> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -49,6 +51,7 @@ fn main() {
             "--games" => games = std::path::PathBuf::from(value()),
             "--demo" => demo = value().parse().unwrap_or(demo),
             "--trained" => trained.push(std::path::PathBuf::from(value())),
+            "--bots" => bots = Some(std::path::PathBuf::from(value())),
             "--mode" => {
                 mode = match value().as_str() {
                     "disabled" => TradeMode::Disabled,
@@ -99,12 +102,36 @@ fn main() {
     );
     println!("  {seats} seats, {mode:?} market, seed {seed}");
     let mut server = Server::new(seats, seed, mode, &games);
-    // A champion that cannot be loaded stops the server rather than quietly
-    // seating the house bot: whoever passed `--trained` wanted the champion,
-    // and a wrong player that looks right is the worst of the outcomes.
-    if !trained.is_empty() {
-        let mut champions = Vec::new();
-        for path in &trained {
+    // Every champion this server can offer: the committed directory, then any
+    // named outright. A champion that cannot be read stops the server rather
+    // than being skipped, because whoever passed the flag wanted that player,
+    // and a lobby quietly missing one of its choices is worse than a refusal.
+    let mut files = trained;
+    // A directory that is not there is no champions, not a failure: an empty
+    // catalogue is the state every build was in before the first one existed,
+    // and a laptop running without one should still start.
+    if let Some(dir) = bots.filter(|d| d.exists()) {
+        match std::fs::read_dir(&dir) {
+            Ok(entries) => {
+                let mut found: Vec<_> = entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|e| e == "net"))
+                    .collect();
+                // Read in a fixed order so the lobby offers the same list on
+                // every restart, whatever order the filesystem hands them back.
+                found.sort();
+                files.extend(found);
+            }
+            Err(e) => {
+                eprintln!("cannot read {}: {e}", dir.display());
+                std::process::exit(1);
+            }
+        }
+    }
+    if !files.is_empty() {
+        let mut champions: Vec<carranta_ui::server::Champion> = Vec::new();
+        for path in &files {
             let text = match std::fs::read_to_string(path) {
                 Ok(text) => text,
                 Err(e) => {
@@ -116,25 +143,21 @@ fn main() {
                 eprintln!("{} is not a champion network file", path.display());
                 std::process::exit(1);
             };
-            // Two files exported from the same generation are one player named
-            // twice, and seating it against itself would produce games that
-            // look like a comparison and are not one.
-            if champions.iter().any(|(_, g)| *g == generation) {
+            // Two files of one generation are one player named twice, and a
+            // lobby offering it twice would present self-play as a matchup.
+            if champions.iter().any(|c| c.generation == generation) {
                 eprintln!(
-                    "{} is trained@{generation}, which is already seated: champions are told \
+                    "{} is trained@{generation}, which is already loaded: champions are told \
                      apart by their generation, so two of one are not two players",
                     path.display()
                 );
                 std::process::exit(1);
             }
-            champions.push((net, generation));
+            champions.push(carranta_ui::server::Champion { generation, net });
         }
-        let named: Vec<String> = champions
-            .iter()
-            .map(|(_, g)| format!("trained@{g}"))
-            .collect();
-        println!("  bot seats played by {}", named.join(", "));
-        server = server.with_trained(champions);
+        server = server.with_champions(champions);
+        let named: Vec<String> = server.roster().into_iter().map(|(id, _)| id).collect();
+        println!("  chairs can be played by {}", named.join(", "));
     }
     // Leaked on purpose: this server lives until the process ends, and the
     // connection threads borrow it for as long as they run. A leak with the

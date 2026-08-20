@@ -862,14 +862,36 @@ pub struct Server {
     provider: Option<Box<dyn crate::signin::Exchange>>,
     /// Sign-ins begun and not yet come back.
     pending: crate::signin::Pending,
-    /// Champions to deal round the bot chairs, each with the training
-    /// generation it came from, or empty for the house heuristic. Loaded once
-    /// at startup from champion files: which software plays is a fact about
-    /// the server, the way the store directory is.
+    /// Every champion this server can seat, loaded once at startup from files
+    /// on disk. Which software is *available* is a fact about the server, the
+    /// way the store directory is; which of them is *seated* is a fact about a
+    /// table, chosen in its lobby.
     ///
-    /// A list rather than one, because two champions at a table is the only
-    /// way to ask which is better and get a comparable answer.
-    trained: Vec<(carranta_bot::net::Net, u32)>,
+    /// The house bot is not in here. It needs no file, is always available,
+    /// and is what a chair plays when nobody has said otherwise, which is the
+    /// right default for the one player every rating is measured against.
+    champions: Vec<Champion>,
+}
+
+/// One trained network this server can put in a chair.
+#[derive(Clone)]
+pub struct Champion {
+    /// The generation it was exported from, which is its identity: `trained@N`
+    /// is what goes in the game file and what a rating is about (E-8).
+    pub generation: u32,
+    pub net: carranta_bot::net::Net,
+}
+
+impl Champion {
+    /// What a game file calls it, and what a lobby sends back to ask for it.
+    pub fn agent(&self) -> String {
+        format!("{}@{}", carranta_bot::TRAINED, self.generation)
+    }
+}
+
+/// What the house bot answers to in the same place.
+fn house_agent() -> String {
+    format!("{}@{}", carranta_bot::HOUSE, carranta_bot::HOUSE_VERSION)
 }
 
 impl Server {
@@ -908,18 +930,61 @@ impl Server {
             provider: crate::signin::Google::from_env()
                 .map(|g| Box::new(g) as Box<dyn crate::signin::Exchange>),
             pending: crate::signin::Pending::new(),
-            trained: Vec::new(),
+            champions: Vec::new(),
         }
     }
 
-    /// Deal these champions round the bot chairs of every table this server
-    /// deals from now on. Each carries the training generation its file says
-    /// it came from; together with the name `trained` that is the player
-    /// identity written into every game it plays, so two champions at one
-    /// table are rated as the two different players they are.
-    pub fn with_trained(mut self, champions: Vec<(carranta_bot::net::Net, u32)>) -> Self {
-        self.trained = champions;
+    /// Make these champions available to seat. Nothing is seated by doing so:
+    /// a table plays the house bot until its lobby says otherwise.
+    ///
+    /// Two of one generation are refused rather than merged, because a
+    /// generation is the identity: the same network under one name twice would
+    /// give a lobby two choices that are one player, and a head to head
+    /// between them would be self-play wearing a disguise.
+    pub fn with_champions(mut self, champions: Vec<Champion>) -> Self {
+        self.champions = Vec::new();
+        for c in champions {
+            if self.champions.iter().any(|k| k.generation == c.generation) {
+                continue;
+            }
+            self.champions.push(c);
+        }
+        self.champions.sort_by_key(|c| c.generation);
         self
+    }
+
+    /// Everything that can sit in a chair, house bot first, then champions
+    /// oldest to newest. The order the lobby offers them in, and the house
+    /// leads because it is the default and the yardstick.
+    pub fn roster(&self) -> Vec<(String, String)> {
+        let mut out = vec![(house_agent(), "House bot".to_string())];
+        for c in &self.champions {
+            out.push((c.agent(), format!("Trained, generation {}", c.generation)));
+        }
+        out
+    }
+
+    /// The champion a lobby asked for, if this server has it.
+    fn champion(&self, agent: &str) -> Option<&Champion> {
+        self.champions.iter().find(|c| c.agent() == agent)
+    }
+
+    /// Seat whoever the query names in each chair a person does not hold.
+    ///
+    /// `bot<seat>=<agent>` per seat, so a table can be dealt straight into a
+    /// head to head from a link. Anything unnamed, unknown, or misspelled is
+    /// the house bot: a lobby asking for a champion this server does not have
+    /// should get the player everybody has rather than a refusal, and the
+    /// chair records what actually played either way.
+    fn seat_the_bots(&self, session: &mut Session, query: &str) {
+        let (seats, _, _) = session.table();
+        for seat in 0..seats {
+            let asked = param(query, &format!("bot{seat}")).unwrap_or_default();
+            match self.champion(&decode(&asked)) {
+                Some(c) => session.seat_trained(seat, &c.net, c.generation),
+                None => session.seat_house(seat),
+            }
+        }
     }
 
     /// The same, signing people in through something other than Google.
@@ -1100,9 +1165,13 @@ impl Server {
             .with_bank_exact(bank_exact)
             .with_discard_secs(discard_secs)
             .with_name(&decode(&name));
-        // The champions, when the server has any, are dealt round the seats a
-        // person does not hold: a fact about the server, not a lobby setting.
-        let session = session.with_trained(&self.trained);
+        // Who plays the chairs nobody is sitting in, as the link asked. The
+        // house bot unless a champion was named, which is the default worth
+        // having: it is the player every rating is measured against, and a
+        // table that says nothing should get the known quantity.
+        let mut session = session;
+        self.seat_the_bots(&mut session, query);
+        let session = session;
         // A new game is a new address *and* a new table. The old one keeps its
         // file, keeps its address and keeps being playable, which is what a
         // table has to be once there is a page listing more than one of them.
@@ -1264,11 +1333,22 @@ impl Server {
             let mut session = Session::new(self.seats, self.next_seed(), self.mode)
                 .with_pace(Pace::Instant)
                 .with_name("Egon");
-            // The champions play demo games too: they are exactly the "show
-            // what the training produced" games, and their files say so. With
-            // two of them this is also the cheapest head to head there is,
-            // since nobody has to sit at the table for it.
-            session = session.with_trained(&self.trained);
+            // Demo games are the one place bots play bots here, and they run
+            // only because a flag asked for them: `--demo` is a code interface
+            // rather than something the server decides to do with its idle
+            // time. A one-replica container serving live tables has no
+            // business burning CPU on a league nobody requested, and the same
+            // games run far faster offline (`--example versus`).
+            //
+            // Every champion available is dealt round the seats, so these are
+            // "what did the training produce" games, and their files name each
+            // player.
+            let field: Vec<_> = self
+                .champions
+                .iter()
+                .map(|c| (c.net.clone(), c.generation))
+                .collect();
+            session = session.with_trained(&field);
             // Every seat played by the table's own hand, the human's included:
             // there is nobody here to ask.
             session.play_out();
@@ -1368,8 +1448,8 @@ impl Server {
             if name != carranta_bot::TRAINED {
                 continue;
             }
-            if let Some((net, _)) = self.trained.iter().find(|(_, g)| *g == generation) {
-                session.seat_trained(seat as u8, net, generation);
+            if let Some(c) = self.champions.iter().find(|c| c.generation == generation) {
+                session.seat_trained(seat as u8, &c.net, c.generation);
             }
         }
         let session = session;
@@ -1718,9 +1798,11 @@ impl Server {
             .with_pace(Pace::parse(param(query, "pace").as_deref()))
             .with_bank_exact(param(query, "bank").as_deref() != Some("rough"))
             .with_discard_secs(discard_secs);
-        // Rearranging the room re-deals the table, and a re-dealt table keeps
-        // the server's players in its bot seats.
-        table.session = session.with_trained(&self.trained);
+        // Rearranging the room re-deals the table, and the same form that sets
+        // the clock says who sits in the chairs, so the choice survives it.
+        let mut session = session;
+        self.seat_the_bots(&mut session, query);
+        table.session = session;
         table.chat = param(query, "chat").as_deref() == Some("text");
         // The people keep their chairs; the counts around them follow the new
         // width of the table.
@@ -3216,8 +3298,28 @@ mod tests {
         };
         let net = champion(5);
 
-        let server = Server::new(4, 3, TradeMode::Full, &dir).with_trained(vec![(net.clone(), 9)]);
-        let id = server.deal("", "keytest0000000000");
+        let server = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
+            generation: 9,
+            net: net.clone(),
+        }]);
+        // Offered, not seated: a table that does not ask gets the house bot,
+        // which is the default worth having and the one every rating is
+        // measured against.
+        let plain = server.deal("", "keytest0000000000");
+        {
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == plain).expect("dealt");
+            assert_eq!(
+                t.session.agent_of(1),
+                "house@1",
+                "nobody asked for a champion"
+            );
+        }
+        // And the lobby's answer is what seats one.
+        let id = server.deal(
+            "bot1=trained@9&bot2=trained@9&bot3=trained@9",
+            "keytest0000000000",
+        );
         // The first move writes the file; before it there is nothing on disk.
         {
             let mut tables = server.tables.lock().unwrap();
@@ -3242,7 +3344,8 @@ mod tests {
         }
 
         // A restarted server with the same champion puts it back in its seats.
-        let again = Server::new(4, 3, TradeMode::Full, &dir).with_trained(vec![(net, 9)]);
+        let again = Server::new(4, 3, TradeMode::Full, &dir)
+            .with_champions(vec![Champion { generation: 9, net }]);
         assert!(again.seat(&id), "the game comes back onto a table");
         {
             let tables = again.tables.lock().unwrap();
@@ -3278,10 +3381,32 @@ mod tests {
             carranta_bot::net::Net::assemble(carranta_bot::features::FEATURES, &links)
                 .expect("acyclic")
         };
-        let pair = vec![(champion(5), 12), (champion(9), 40)];
+        let pair = vec![
+            Champion {
+                generation: 12,
+                net: champion(5),
+            },
+            Champion {
+                generation: 40,
+                net: champion(9),
+            },
+        ];
 
-        let server = Server::new(4, 3, TradeMode::Full, &dir).with_trained(pair.clone());
-        let id = server.deal("", "keytest0000000000");
+        let server = Server::new(4, 3, TradeMode::Full, &dir).with_champions(pair.clone());
+        // Both offered, and the lobby says which chair gets which.
+        assert_eq!(
+            server
+                .roster()
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["house@1", "trained@12", "trained@40"],
+            "house first, then champions oldest to newest"
+        );
+        let id = server.deal(
+            "bot1=trained@40&bot2=trained@12&bot3=trained@40",
+            "keytest0000000000",
+        );
         {
             let mut tables = server.tables.lock().unwrap();
             let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
@@ -3304,7 +3429,7 @@ mod tests {
         assert_eq!(agents[3], "trained@40");
 
         // And a restart puts each of them back where it was.
-        let again = Server::new(4, 3, TradeMode::Full, &dir).with_trained(pair);
+        let again = Server::new(4, 3, TradeMode::Full, &dir).with_champions(pair);
         assert!(again.seat(&id));
         {
             let tables = again.tables.lock().unwrap();
@@ -3316,7 +3441,10 @@ mod tests {
 
         // A server holding only one of them seats that one and leaves the
         // other chair to the house, rather than substituting a player.
-        let half = Server::new(4, 3, TradeMode::Full, &dir).with_trained(vec![(champion(9), 40)]);
+        let half = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
+            generation: 40,
+            net: champion(9),
+        }]);
         assert!(half.seat(&id));
         {
             let tables = half.tables.lock().unwrap();

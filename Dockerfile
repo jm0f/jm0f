@@ -44,15 +44,16 @@ FROM debian:stable-slim
 RUN mkdir -p /data/games
 COPY --from=build /src/target/release/carranta-play /usr/local/bin/carranta-play
 
-# The trained champion, when the repository carries one. Deploying a champion
-# is committing a `champion.net` (exported by `carranta-evolve --method neat`)
-# at the repository root; without one the house heuristic plays, which is what
-# every deploy did before there was anything trained.
+# Every champion the site can offer. Adding one is committing a `.net` file
+# here (exported by `carranta-evolve --method neat --export`), so the network
+# that played any rated game stays recoverable from the repository forever,
+# which a file uploaded to a volume would not be.
 #
-# The glob matches one file or none, and Docker refuses a COPY whose sources
-# match nothing, so the manifest rides along as a chaperone that always
-# matches. It is a file the image was never going to read either way.
-COPY Cargo.toml champion.ne[t] /srv/
+# The directory is copied whole rather than named file by file, so a new
+# champion needs no change here. An empty `bots/` is fine and means the house
+# bot is the only player, which is what every deploy was before there was
+# anything trained.
+COPY bots /srv/bots
 
 # Neither is a default the binary would pick on its own: on a laptop it binds
 # loopback, which is right there and wrong in a container.
@@ -60,11 +61,10 @@ ENV HOST=0.0.0.0
 ENV PORT=8080
 EXPOSE 8080
 
-# A shell only to ask one question, `exec` so it then gets out of the way: the
-# server replaces the shell and is PID 1, receiving the platform's stop signal
-# directly, so a deploy replaces it in a second rather than waiting out a ten
-# second kill timer. The question cannot be asked anywhere else: whether a
-# champion was committed is decided per build, and `--trained` on a file that
-# is not there is a refusal to start, which is right on a laptop and wrong as
-# the default state of every image built before the first champion existed.
-CMD ["/bin/sh", "-c", "if [ -f /srv/champion.net ]; then exec carranta-play --games /data/games --trained /srv/champion.net; else exec carranta-play --games /data/games; fi"]
+# Not a shell form: with `exec` semantics the server is PID 1 and receives the
+# platform's stop signal directly, so a deploy replaces it in a second rather
+# than waiting out a ten second kill timer. The conditional this used to need
+# is gone, because `--bots` on an empty or absent directory is not an error:
+# the champions are offered, and a chair plays the house bot until a lobby
+# asks for one of them.
+CMD ["carranta-play", "--games", "/data/games", "--bots", "/srv/bots"]
