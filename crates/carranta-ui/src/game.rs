@@ -1203,14 +1203,24 @@ impl Session {
                 self.finish_move();
                 continue;
             }
-            // What is left to force is a turn, and only a person's turns need
-            // forcing: a bot moves the moment it is asked to, so its allowance
-            // runs out only while something blocks it, which the offers above
-            // are the only thing that can. A mandatory answer owed by a passive
-            // player, discarding on a seven, is not the clock's to skip, since
-            // the position would be illegal without it. That turn waits.
+            // What is left to force is a turn, whoever holds it. This used to
+            // exempt bots, on the argument that a bot moves the moment it is
+            // asked to, so its allowance could only run out while an offer
+            // blocked it, and the offers above are cleared. That was true of
+            // the heuristic and stopped being true the day a trained bot sat
+            // down: its market appetite runs to twenty paced offers a turn,
+            // each drawn on its own beat and answered on the table's, which
+            // outlasts any allowance a person would accept. The screen showed
+            // exactly what the exemption implies, a turn standing at 0:00 for
+            // minutes while the bot went on trading. The clock is a table
+            // rule, and a seat is on it whoever plays the seat.
+            //
+            // A mandatory answer owed by a *passive* player, discarding on a
+            // seven, is still not the clock's to skip, since the position
+            // would be illegal without it: that is the `holder != acting`
+            // half, unchanged.
             let acting = self.state.decider();
-            if holder != acting || !self.is_person(acting) {
+            if holder != acting {
                 return;
             }
             let mut buf = Vec::new();
@@ -1249,13 +1259,21 @@ impl Session {
             }
             self.record(Step::Move(forced));
             self.version += 1;
+            // "for you" is only true of a person: the line is addressed to
+            // somebody whose move was made on their behalf. A bot forced by
+            // the clock did the thing, and its line reads like any other move
+            // of its, only prefixed with why.
+            let done = |text: String| {
+                if self.is_person(acting) {
+                    format!("{} for you", lower_first(text))
+                } else {
+                    lower_first(text)
+                }
+            };
             let what = match forced {
                 Action::EndTurn => "the turn was ended".to_string(),
-                Action::Roll => format!("{} for you", lower_first(rolled(&self.state))),
-                other => format!(
-                    "{} for you",
-                    lower_first(log_phrase(&other, &self.state, acting as usize))
-                ),
+                Action::Roll => done(rolled(&self.state)),
+                other => done(log_phrase(&other, &self.state, acting as usize)),
             };
             self.note_at(at, Some(acting), format!("Time ran out, {what}"));
             // A forced move pays out exactly like a chosen one, because the
@@ -3215,6 +3233,56 @@ mod tests {
             s.time_left(1),
             Some(600),
             "a seat not moving spends nothing"
+        );
+    }
+
+    #[test]
+    fn a_bots_turn_is_on_the_clock_too() {
+        // Production showed a table standing at 0:00 for minutes, turn 31,
+        // while a trained bot went on making paced offers. The clock exempted
+        // bots on the argument that they never dawdle, which was true of the
+        // heuristic and false of a bot whose market appetite is twenty paced
+        // offers a turn. The clock is a table rule: a seat is on it whoever
+        // plays the seat.
+        let mut s = Session::new(4, 5, TradeMode::Full)
+            .with_clock(Clock::PerTurn(60))
+            .with_pace(Pace::Instant);
+        // Through setup and to the end of the human's first turn.
+        while s.state.decider() == HUMAN {
+            let choices = s.choices();
+            let end = choices
+                .iter()
+                .position(|c| matches!(c, Choice::Play(Action::EndTurn)))
+                .unwrap_or(0);
+            let v = s.version();
+            if s.act(end, v).is_err() {
+                break;
+            }
+        }
+        // Freeze the bots mid-turn the way a paced table holds them, then
+        // spend the whole allowance. This is the abandoned-table poll.
+        s.pace = Pace::parse(Some("slow"));
+        s.bot_ready = std::time::Instant::now() + std::time::Duration::from_secs(3_600);
+        let holder = s.on_clock();
+        assert!(
+            !s.is_person(holder),
+            "need a bot on the clock: got {holder}"
+        );
+        let long_ago = std::time::Instant::now() - std::time::Duration::from_secs(600);
+        s.turn_began = long_ago;
+        s.last_settle = long_ago;
+        assert!(s.out_of_time(holder), "the allowance has gone");
+
+        s.enforce_clock();
+
+        assert_ne!(s.on_clock(), holder, "the bot's turn was ended");
+        assert!(
+            s.log().iter().any(|l| l.text.contains("Time ran out")),
+            "and the log says why"
+        );
+        assert!(
+            !s.log().iter().any(|l| l.text.contains("for you")),
+            "a bot's forced move is not addressed to a person"
         );
     }
 
