@@ -45,26 +45,36 @@ caffeinate -i -s cargo run --release -p carranta-evolve -- \
 - `--generations 0` runs until told to stop.
 - The defaults are the training configuration of record: population 96, the
   full market, mixed offers capped at 2 cards a side, three generated asks
-  per seat per turn (E-15). `--give-cap hand` lifts the give cap to whatever
-  the hand holds, `--want-cap N` moves the ask side, `--ask-cap N` the
-  allowance; all three are part of the market the champion learns, so
-  changing any of them mid-line means a new run, not a resumed one.
+  per seat per turn (E-15), and a win worth one place beyond first (E-17).
+  `--give-cap hand` lifts the give cap to whatever the hand holds,
+  `--want-cap N` moves the ask side, `--ask-cap N` the allowance, and
+  `--win-bonus F` what a win is worth; all four are part of the run the
+  champion comes out of, so changing any of them mid-line means a new run,
+  not a resumed one. `--win-bonus 0` is the old position-only fitness.
 
 ## While it runs
 
 The run directory is the whole interface:
 
 - `checkpoint.txt`: the entire run state, written atomically after every
-  generation. Plain text; format 3 is NEAT with the ask allowance, format 2
-  a NEAT run from before it (readable, and resumed uncapped, exactly the run
-  it was), and the ES loader and this one refuse each other's files.
+  generation. Plain text; format 4 is NEAT with the win bonus, format 3 the
+  same run without it, format 2 without the ask allowance either. Both older
+  formats still read, and resume as the runs they were, position-only and
+  uncapped respectively. The ES loader and this one refuse each other's
+  files.
 - `history.csv`: one row per generation. `best_fitness` is mean finishing
-  position (lower is better, the anchor sits near 2.5 by symmetry); `gap`
-  and `gap_ci` are the champion's paired match against the anchor (E-16),
-  negative ahead; `species`, `champion_nodes` and `champion_genes` say what
-  the complexification is doing. The behaviour columns (trades, settlements,
-  roads, and so on) come from the sampled games and say *what* changed when
-  the rating says something did.
+  position less the win bonus (lower is better; on position alone the anchor
+  sits near 2.5 by symmetry); `gap` and `gap_ci` are the champion's paired
+  match against the anchor (E-16), negative ahead; `wins` and `wins_ci` are
+  its share of those same games, where 0.5 is even (E-17); `species`,
+  `champion_nodes` and `champion_genes` say what the complexification is
+  doing. The behaviour columns (trades, settlements, roads, and so on) come
+  from the sampled games and say *what* changed when the rating says
+  something did.
+
+  Watch both rating columns, not one. A champion can finish higher on
+  average and win less often than the heuristic; generation 72 of the second
+  run did exactly that, and it is why the win bonus exists.
 - `champion.net`: the current champion, re-exported every generation, also
   atomically. This file is the deployment artifact and is complete in
   itself: inputs, links, weights and the generation it came from.
@@ -144,6 +154,28 @@ exist. Expect early generations to read +1.5 or worse, because that is where
 they really are; the number to celebrate is the first one that clears zero
 from below. To judge a champion trained before this at today's rules, use
 `--example versus --ask-cap 20`, the market it actually learned.
+
+## What the second run taught
+
+It reached the heuristic. Generation 72 measured **-0.0654 positions, 95% CI
+[-0.0987, -0.0322], p < 0.001** over 1500 paired seeds, the first champion
+in the project measurably stronger than the house bot. In the same 9000
+games it **won 47.8%**, where even is 50%.
+
+That pair is E-17. Position alone prices first one step above second, the
+same step third is above fourth, so the cheapest route to a good mean is to
+stop coming fourth, not to start coming first, and the champion took it.
+`--win-bonus` subtracts a bonus from the position of games actually won:
+at the default 1.0 a win scores 0, so first is two steps clear of second.
+Runs started before this resume from their format 3 checkpoints with the
+bonus at zero, exactly the runs they were.
+
+Two habits follow. Read `gap` and `wins` together, since they can disagree
+and the disagreement is the interesting part. And expect no single
+generation to settle anything: champion strength swings nearly a full
+position generation to generation, because best-of-96 on a noisy fitness is
+a lottery the same genome does not keep winning. Blocks of generations show
+the trend; `versus` on an exported champion decides.
 
 ## What not to do
 

@@ -778,7 +778,7 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-3 | Network inputs | **Engineered features, not raw board.** NEAT complexifies badly with hundreds of inputs |
 | E-4 | Evaluation | **Paired trials on common random numbers**, variants mirrored across seat pairs |
 | E-5 | Evaluation budget | **Grows as the population converges.** A fixed budget is wrong at both ends |
-| E-6 | Fitness | **Mean finishing position**, not win rate, the full order, for the same reason §10.5 uses it |
+| E-6 | Fitness | ~~Mean finishing position alone~~ **Revised by E-17: position less a win bonus.** The full order is still the signal, for the same reason §10.5 uses it; what changed is that first place is now priced above the step between any other two places |
 | E-7 | Opponents | **Fixed anchor plus a hall of fame.** The current heuristic, pinned, and past champions |
 | E-8 | Progress measure | **The §10.5 rating, with the heuristic's μ frozen** as an absolute reference |
 | E-9 | Trade mode | ~~Restricted~~ **Revised: Full, with configurable mixed-offer enumeration.** The original decision existed to keep the generated action space enumerable; that concern is now answered by per-side caps instead (`OfferShapes::Mixed`, up to N cards a side, 2 v 2 the training default, the give side optionally bounded by the hand alone). A trading repertoire is most of what a trained policy could hold over the heuristic, and a policy that never saw a mixed offer in training cannot have one |
@@ -789,6 +789,7 @@ The engine turned out fast enough to pull training forward. Rather than waiting 
 | E-14 | Behavioural markers | **Sampled games run through §10.** A rating says something improved; only this says what |
 | E-15 | Ask pressure | **A generated-ask allowance, in the engine, shared by training and serving.** After a seat's Nth proposal of a turn the engine stops *generating* proposals for it (legality untouched, like `OfferShapes`); training default 3, configurable. Time is the real cost of asking at a table, and a count is time's deterministic proxy: wall clocks would break paired trials and exact resume. Rejected: a fitness toll per ask (the hand-set weight E-3 removed, and it distorts E-6), and serve-side filtering (the deployed policy must be the measured one) |
 | E-16 | Honest validation | **The champion's headline number is a paired anchor-only match, the `versus` method.** Common random numbers, all seatings of each board, one observation per seed, gap with a confidence interval. The ladder stays for selection and the hall, but its `+anchor` is not printed as if it measured strength against the anchor, because mostly it does not (see below) |
+| E-17 | Winning | **Fitness is finishing position less a bonus for the games won**, default 1.0, so a won game scores 0 and first is two steps clear of second where every other step is one. Position alone (E-6) prices first exactly as far above second as third is above fourth, and it selects accordingly: the second run's generation 72 champion finished measurably *ahead* of the heuristic on position while winning measurably *less* often. The bonus keeps the density that made position the right signal and points it at the goal. Rejected: win rate alone (one bit a game, far sparser, and E-5's budget would have to grow to separate anything), and rewarding victory points (§11.3 rewards the score, not the win, and a policy can bank points it never converts) |
 
 #### What the measurements say
 
@@ -918,6 +919,33 @@ the same class of network, which is the size of the flattery removed; and a
 capped market plays two to three times faster besides, since most of a
 trading turn was enumeration and settlement of offers nobody should have
 been making.
+
+#### What the second run showed (E-17)
+
+The run under E-15 and E-16 reached the heuristic. Blocks of eighteen
+generations read +1.03, +0.42, +0.57, +0.23 against the anchor: one step
+change around generation 26 and then a plateau that oscillates, with
+generation-to-generation swings near a full position that are far larger
+than the ±0.25 intervals, because the champion seat changes hands every
+generation and best-of-96 on a noisy fitness is a lottery the same genome
+does not keep winning.
+
+Generation 72 of that run is the first network in the project measurably
+stronger than the house heuristic: **gap -0.0654 positions, 95% CI [-0.0987,
+-0.0322], p < 0.001** over 1500 paired seeds. And in the same 9000 games it
+**won 47.8%** where a half is even.
+
+Both facts at once is the finding. A policy can finish higher on average and
+still win less often, and this one does, because E-6 asked for exactly that:
+position prices first one step above second, the same step third is above
+fourth, so the cheapest way to a good mean is to stop coming fourth rather
+than to start coming first. No further generations fix it; the objective is
+not pointed there. E-17 prices the win.
+
+The margin is also worth keeping in proportion. 0.065 of a position is
+solid statistically and slight at a table, and the whole distance from the
+first run's champion (+0.0413, the wrong way) to this one is about a tenth
+of a position.
 
 #### The reservation
 

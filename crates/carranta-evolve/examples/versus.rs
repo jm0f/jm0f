@@ -138,12 +138,14 @@ fn main() {
     // averaged over the six seatings of that board. Negative means the
     // champion finished ahead.
     let mut gaps = Vec::with_capacity(rounds);
+    let mut shares = Vec::with_capacity(rounds);
     let mut champ_positions = 0.0f64;
     let mut house_positions = 0.0f64;
     let mut champion_wins = 0usize;
     let mut decided = 0usize;
     for (r, chunk) in outcomes.chunks(ARRANGEMENTS.len()).enumerate() {
         let mut gap = 0.0;
+        let (mut seed_wins, mut seed_decided) = (0.0, 0.0);
         for (o, seats) in chunk.iter().zip(ARRANGEMENTS.iter()) {
             let (mut mine, mut theirs) = (0.0, 0.0);
             for (seat, &who) in seats.iter().enumerate() {
@@ -161,22 +163,45 @@ fn main() {
             house_positions += theirs;
             if let Some(w) = o.winner {
                 decided += 1;
+                seed_decided += 1.0;
                 if seats[w as usize] == 1 {
                     champion_wins += 1;
+                    seed_wins += 1.0;
                 }
             }
         }
         let _ = r;
         gaps.push(gap);
+        // The same board's win share, as its own observation (E-17). Position
+        // and wins can disagree, and the generation 72 champion is why this
+        // is printed with an interval rather than as a bare percentage: it
+        // finished ahead on position while winning less often, which one
+        // number alone would have hidden either way. A board nobody won says
+        // nothing, so it counts as even.
+        shares.push(if seed_decided > 0.0 {
+            seed_wins / seed_decided
+        } else {
+            0.5
+        });
     }
 
-    let n = gaps.len() as f64;
-    let mean = gaps.iter().sum::<f64>() / n;
-    let var = gaps.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / (n - 1.0);
-    let se = (var / n).sqrt();
+    // Both columns are means over the same seeds, so both intervals are taken
+    // the same way.
+    let interval = |xs: &[f64]| {
+        let n = xs.len() as f64;
+        let mean = xs.iter().sum::<f64>() / n;
+        let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        let se = (var / n).sqrt();
+        (mean, se)
+    };
+    let (mean, se) = interval(&gaps);
     let t = mean / se;
     let p = two_sided_p(t.abs());
     let half = 1.96 * se;
+    let (win_mean, win_se) = interval(&shares);
+    let win_t = (win_mean - 0.5) / win_se;
+    let win_p = two_sided_p(win_t.abs());
+    let win_half = 1.96 * win_se;
 
     println!(
         "\n  {} games in {secs:.1}s ({:.0} games/s)",
@@ -201,13 +226,35 @@ fn main() {
     // The whole point of the interval: an effect whose interval spans zero has
     // not been shown to exist, however suggestive its midpoint looks.
     let verdict = if mean + half < 0.0 {
-        "the champion is better, and the interval clears zero"
+        "the champion is better on position, and the interval clears zero"
     } else if mean - half > 0.0 {
-        "the heuristic is better, and the interval clears zero"
+        "the heuristic is better on position, and the interval clears zero"
     } else {
         "no gap shown: the interval spans zero, so this is consistent with equal play"
     };
     println!("  {verdict}");
+
+    // Wins, on the same footing. Two champions sit against two anchors in
+    // every seating, so a half is even here and 50% is the null.
+    println!(
+        "\n  wins {:.1}%  95% CI [{:.1}%, {:.1}%]",
+        100.0 * win_mean,
+        100.0 * (win_mean - win_half),
+        100.0 * (win_mean + win_half)
+    );
+    println!(
+        "  t = {win_t:.2} over {} seeds, p {}",
+        shares.len(),
+        show_p(win_p)
+    );
+    let win_verdict = if win_mean - win_half > 0.5 {
+        "the champion wins more often, and the interval clears even"
+    } else if win_mean + win_half < 0.5 {
+        "the champion wins less often, and the interval clears even"
+    } else {
+        "no difference in wins shown: the interval spans even"
+    };
+    println!("  {win_verdict}");
 }
 
 /// Two-sided p for a t statistic, read off the normal distribution.

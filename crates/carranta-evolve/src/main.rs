@@ -115,6 +115,12 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             "--mutation" => {
                 args.config.mutation = value()?.parse().map_err(|_| "bad --mutation")?
             }
+            "--win-bonus" => {
+                args.neat.win_bonus = value()?.parse().map_err(|_| "bad --win-bonus")?;
+                if !args.neat.win_bonus.is_finite() || args.neat.win_bonus < 0.0 {
+                    return Err("--win-bonus must be zero or more".to_string());
+                }
+            }
             "--give-cap" => {
                 let v = value()?;
                 args.neat.give_cap = if v == "hand" {
@@ -178,6 +184,11 @@ carranta-evolve
   --ask-cap N          neat only: proposals generated per seat per turn (3).
                        Time is what asking costs at a real table; this is its
                        deterministic stand-in, and served tables share it
+  --win-bonus F        neat only: what a win is worth beyond first place
+                       (1.0). Subtracted from the finishing position, so a
+                       won game scores 0 and first is two steps clear of
+                       second. 0 selects on position alone, which favours
+                       avoiding fourth over reaching first
   --export WHICH       write a past champion out of --out's checkpoint
                        instead of training; implies --method neat, the only
                        method that keeps past champions. WHICH is a label
@@ -227,7 +238,7 @@ dev_bought,militia,production\n";
 fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
     let b = &r.behaviour;
     format!(
-        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{:.6},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
         r.generation,
         r.trials,
         r.games,
@@ -239,6 +250,8 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
         r.champion_genes,
         r.gap,
         r.gap_ci,
+        r.wins,
+        r.wins_ci,
         connectivity,
         r.seconds,
         b.games,
@@ -256,7 +269,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
 }
 
 const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
-species,champion_nodes,champion_genes,gap,gap_ci,connectivity,seconds,\
+species,champion_nodes,champion_genes,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
 /// Take one past champion out of a run and write it as a network file.
@@ -364,21 +377,26 @@ fn run_neat(args: Args) {
 
     let c = &trainer.config;
     println!(
-        "neat: population {}   market {:?} (give {}, want {}, asks {})   workers {}   target species {}",
+        "neat: population {}   market {:?} (give {}, want {}, asks {})   win bonus {}   workers {}   target species {}",
         c.population,
         c.mode,
         c.give_cap.map_or("hand".to_string(), |n| n.to_string()),
         c.want_cap,
         c.ask_cap,
+        c.win_bonus,
         c.threads,
         c.params.target_species,
     );
     println!("writing to {}", args.out.display());
-    println!("  fitness is mean finishing position, lower is better (2.5 = average)");
-    println!("  gap is the champion's paired match against the anchor, in positions:");
-    println!("  negative is ahead, and a gap inside its interval has not been shown\n");
     println!(
-        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes        gap (E-16)   trades   secs"
+        "  fitness is mean finishing position less {} a win, lower is better",
+        c.win_bonus
+    );
+    println!("  gap and wins are the champion's paired match against the anchor:");
+    println!("  a negative gap and a win share above 50% are ahead, and either");
+    println!("  one inside its interval has not been shown\n");
+    println!(
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes        gap (E-16)        wins (E-17)   trades   secs"
     );
 
     let started = std::time::Instant::now();
@@ -394,7 +412,7 @@ fn run_neat(args: Args) {
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
         println!(
-            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>+7.3} +-{:>5.3}  {:>6.1}  {:>5.1}",
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
             r.generation,
             r.trials,
             r.games,
@@ -407,6 +425,8 @@ fn run_neat(args: Args) {
             r.champion_genes,
             r.gap,
             r.gap_ci,
+            100.0 * r.wins,
+            100.0 * r.wins_ci,
             r.behaviour.trades,
             r.seconds,
         );
@@ -714,6 +734,21 @@ mod tests {
         );
         assert_eq!(a.neat.give_cap, None, "hand means bounded by the hand");
         assert_eq!(a.neat.want_cap, 3);
+        assert_eq!(
+            parse("--method neat").expect("defaults").neat.win_bonus,
+            1.0,
+            "a win is worth a place beyond first by default"
+        );
+        assert_eq!(
+            parse("--method neat --win-bonus 0")
+                .expect("known")
+                .neat
+                .win_bonus,
+            0.0,
+            "and zero is E-6's pure position fitness"
+        );
+        assert!(parse("--win-bonus -1").is_err(), "a bonus is not a penalty");
+        assert!(parse("--win-bonus x").is_err());
         assert_eq!(a.neat.population, 32);
         assert_eq!(a.neat.mode, TradeMode::Full);
         let b = parse("--method neat --give-cap 2").expect("a number is a cap");

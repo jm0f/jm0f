@@ -52,6 +52,13 @@ pub struct NeatConfig {
     pub ask_cap: u8,
     /// Cards a generated offer may ask.
     pub want_cap: u8,
+    /// What a win is worth beyond first place (E-17), subtracted from the
+    /// finishing position because lower is better. At the default of 1.0 a
+    /// won game scores 0 rather than 1, so first place is two steps clear of
+    /// second where every other step is one. Zero is E-6's pure position
+    /// fitness, which selects policies that avoid fourth rather than reach
+    /// first.
+    pub win_bonus: f64,
     /// Actions before a game is abandoned. Small in tests, generous in runs.
     pub cap: usize,
     pub mode: TradeMode,
@@ -73,6 +80,7 @@ impl Default for NeatConfig {
             give_cap: Some(2),
             ask_cap: 3,
             want_cap: 2,
+            win_bonus: 1.0,
             cap: 20_000,
             mode: TradeMode::Full,
             params: Params::default(),
@@ -95,6 +103,11 @@ pub struct NeatReport {
     /// around it. A gap inside its interval has not been shown to exist.
     pub gap: f64,
     pub gap_ci: f64,
+    /// The champion's share of the same paired games' wins (E-17), where a
+    /// half is even, and the 95% half-width around it. Position and wins can
+    /// disagree, and a run selecting on the blend should be watched by both.
+    pub wins: f64,
+    pub wins_ci: f64,
     /// How the population is structured: species alive, and the champion's
     /// size, which is the number a NEAT run is watched by.
     pub species: usize,
@@ -325,7 +338,16 @@ impl NeatTrainer {
         }
         let outcomes = arena.play_net_all(&roster, &jobs, cfg.threads);
 
-        // ---- Score (E-6) ----
+        // ---- Score (E-6, E-17) ----
+        //
+        // Finishing position, less a bonus for the games actually won. Pure
+        // position is a dense signal and that is why E-6 chose it, but it
+        // prices first place one step above second, the same step as third
+        // above fourth, so it selects policies that trade wins for safe
+        // middles: the generation 72 champion of the second run finished
+        // ahead of the heuristic on position and behind it on wins. The bonus
+        // buys back the difference between placing and winning without giving
+        // up the density.
         let mut fitness = vec![0.0f64; self.population.len()];
         let mut spread_sum = vec![0.0f64; self.population.len()];
         for (g, fit) in fitness.iter_mut().enumerate() {
@@ -333,7 +355,9 @@ impl NeatTrainer {
             let mut sq = 0.0;
             for t in 0..self.trials as usize {
                 let seat = t % MAX_PLAYERS;
-                let pos = outcomes[g * self.trials as usize + t].position[seat] as f64;
+                let o = &outcomes[g * self.trials as usize + t];
+                let won = o.winner == Some(seat as u8);
+                let pos = o.position[seat] as f64 - if won { cfg.win_bonus } else { 0.0 };
                 total += pos;
                 sq += pos * pos;
             }
@@ -393,8 +417,13 @@ impl NeatTrainer {
         // One gap per seed: the champion's mean position less the anchor's,
         // averaged over the six seatings. Negative is the champion ahead.
         let mut gaps = Vec::with_capacity(vseeds);
+        // And the same seeds' win share (E-17). Two champions sit against two
+        // anchors in every seating, so a half is even, and this is the column
+        // that says whether the win bonus is buying what it was added for.
+        let mut shares = Vec::with_capacity(vseeds);
         for chunk in voutcomes.chunks(PAIRINGS.len()) {
             let mut gap = 0.0;
+            let (mut won, mut decided) = (0.0, 0.0);
             for (o, mask) in chunk.iter().zip(PAIRINGS.iter()) {
                 let (mut mine, mut theirs) = (0.0, 0.0);
                 for (seat, &is_champion) in mask.iter().enumerate() {
@@ -406,19 +435,38 @@ impl NeatTrainer {
                     }
                 }
                 gap += (mine - theirs) / PAIRINGS.len() as f64;
+                if let Some(w) = o.winner {
+                    decided += 1.0;
+                    if mask[w as usize] {
+                        won += 1.0;
+                    }
+                }
             }
             gaps.push(gap);
+            // A board nobody won says nothing either way, so it counts as
+            // even rather than as a loss.
+            shares.push(if decided > 0.0 { won / decided } else { 0.5 });
         }
+        // One seed is one observation for both columns, so both intervals are
+        // taken the same way over the same seeds.
+        //
+        // One seed has no spread to measure. Zero would claim certainty; an
+        // infinite half-width says the interval is the whole line, which is
+        // the truth.
+        let interval = |xs: &[f64], mean: f64| {
+            let n = xs.len() as f64;
+            if xs.len() > 1 {
+                let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+                1.96 * (var / n).sqrt()
+            } else {
+                f64::INFINITY
+            }
+        };
         let n = gaps.len() as f64;
         let gap = gaps.iter().sum::<f64>() / n;
-        let gap_ci = if gaps.len() > 1 {
-            let var = gaps.iter().map(|g| (g - gap).powi(2)).sum::<f64>() / (n - 1.0);
-            1.96 * (var / n).sqrt()
-        } else {
-            // One seed has no spread to measure. Zero would claim certainty;
-            // this says the interval is the whole line, which is the truth.
-            f64::INFINITY
-        };
+        let gap_ci = interval(&gaps, gap);
+        let wins = shares.iter().sum::<f64>() / n;
+        let wins_ci = interval(&shares, wins);
 
         // Behavioural markers, replayed from a sample of the validation games.
         let mut sampler = Sampler::default();
@@ -608,6 +656,8 @@ impl NeatTrainer {
             champion,
             gap,
             gap_ci,
+            wins,
+            wins_ci,
             species: species_alive,
             champion_nodes: {
                 let mut nodes: Vec<u32> = champion_genome
@@ -658,11 +708,45 @@ mod tests {
         // Trials games plus the paired validation: 4 asked-for validation
         // games round up to one seed, played in all six seatings.
         assert_eq!(r.games, 6 * 4 + 6);
-        assert!((1.0..=4.0).contains(&r.best_fitness));
+        // A won game scores its position less the bonus, so the floor is one
+        // less than first place rather than first place itself (E-17).
+        let floor = 1.0 - t.config.win_bonus;
+        assert!((floor..=4.0).contains(&r.best_fitness));
         assert!(r.best_fitness <= r.median_fitness);
+        assert!((0.0..=1.0).contains(&r.wins), "a share of the paired wins");
         assert!(r.species >= 1);
         assert!(r.champion_genes >= crate::neat::INPUTS);
         assert_eq!(t.population.len(), 6, "the population count is preserved");
+    }
+
+    #[test]
+    fn the_win_bonus_prices_first_place_without_changing_the_games() {
+        // E-17. The bonus is a scoring choice, not a different experiment:
+        // one seed plays one set of games either way, and every genome's
+        // score falls by the bonus times the share of them it won. So the
+        // field can only move down, never up, and the run costs the same.
+        let plain = NeatTrainer::new(
+            NeatConfig {
+                win_bonus: 0.0,
+                ..quick()
+            },
+            5,
+        )
+        .step();
+        let priced = NeatTrainer::new(
+            NeatConfig {
+                win_bonus: 1.0,
+                ..quick()
+            },
+            5,
+        )
+        .step();
+        assert_eq!(plain.games, priced.games, "the same games are played");
+        assert!(priced.best_fitness <= plain.best_fitness);
+        assert!(priced.median_fitness <= plain.median_fitness);
+        // And pure position is still reachable, which is what a run started
+        // before the bonus resumes as.
+        assert!(plain.best_fitness >= 1.0, "position alone floors at first");
     }
 
     #[test]

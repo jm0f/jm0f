@@ -30,7 +30,7 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 3;
+pub const NEAT_FORMAT: u32 = 4;
 
 /// The NEAT format before the ask allowance existed (E-15).
 ///
@@ -39,6 +39,12 @@ pub const NEAT_FORMAT: u32 = 3;
 /// was, which is what a resume is for. Writing always uses the current
 /// format.
 pub const NEAT_FORMAT_UNCAPPED: u32 = 2;
+
+/// The NEAT format before the win bonus existed (E-17).
+///
+/// Same principle: formats 2 and 3 both selected on finishing position alone,
+/// so they read back with the bonus at zero and resume the runs they were.
+pub const NEAT_FORMAT_POSITION_ONLY: u32 = 3;
 
 /// Why a checkpoint could not be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,6 +299,7 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
     );
     let _ = writeln!(out, "want_cap {}", c.want_cap);
     let _ = writeln!(out, "ask_cap {}", c.ask_cap);
+    let _ = writeln!(out, "win_bonus {}", c.win_bonus);
     let _ = writeln!(out, "cap {}", c.cap);
     let _ = writeln!(out, "mode {}", mode_name(c.mode));
     // Display for f64 emits the shortest string that parses back to the same
@@ -385,7 +392,10 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         .strip_prefix("carranta-evolve ")
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| bad(line, "not a carranta-evolve checkpoint"))?;
-    if version != NEAT_FORMAT && version != NEAT_FORMAT_UNCAPPED {
+    if !matches!(
+        version,
+        NEAT_FORMAT | NEAT_FORMAT_UNCAPPED | NEAT_FORMAT_POSITION_ONLY
+    ) {
         return Err(LoadError::Version(version));
     }
     let (line, method) = lines.next().ok_or(LoadError::Missing("method"))?;
@@ -435,6 +445,13 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     } else {
         num!("ask_cap")
     };
+    // Formats 2 and 3 selected on finishing position alone, which is the
+    // bonus at zero.
+    let win_bonus: f64 = if version == NEAT_FORMAT {
+        num!("win_bonus")
+    } else {
+        0.0
+    };
     let cap: usize = num!("cap");
     let mode = {
         let (line, v) = scalar("mode")?;
@@ -474,6 +491,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         give_cap,
         want_cap,
         ask_cap,
+        win_bonus,
         cap,
         mode,
         params,
@@ -746,32 +764,48 @@ mod tests {
         neat.step();
         assert!(matches!(
             decode(&encode_neat(&neat)),
-            Err(LoadError::Version(3))
+            Err(LoadError::Version(NEAT_FORMAT))
         ));
     }
 
     #[test]
-    fn a_format_two_checkpoint_resumes_as_the_uncapped_run_it_was() {
-        // Format 2 predates the ask allowance (E-15). Those runs trained in
-        // the uncapped market, so reading one back must set the allowance to
-        // the rules cap, and never to today's training default: a resume that
-        // quietly changed the market would be a different run wearing the
-        // same directory.
+    fn an_older_checkpoint_resumes_as_the_run_it_was() {
+        // Format 2 predates the ask allowance (E-15) and format 3 the win
+        // bonus (E-17). Those runs trained in the uncapped market and
+        // selected on position alone, so reading one back must restore what
+        // it had, and never today's training defaults: a resume that quietly
+        // changed the market or the objective would be a different run
+        // wearing the same directory.
         let mut t = NeatTrainer::new(quick_neat(), 9);
         t.step();
         let modern = encode_neat(&t);
-        assert!(modern.contains("\nask_cap 3\n"), "format 3 writes the cap");
-        // The same file as format 2 wrote it: version 2, no ask_cap line.
-        let old = modern
+        assert!(
+            modern.contains("\nask_cap 3\n"),
+            "the current format writes"
+        );
+        assert!(modern.contains("\nwin_bonus 1\n"), "both of them");
+
+        // The same file as format 3 wrote it: version 3, no win_bonus line.
+        let three = modern
+            .replace("carranta-evolve 4", "carranta-evolve 3")
+            .replace("win_bonus 1\n", "");
+        let back = decode_neat(&three).expect("a format three file still reads");
+        assert_eq!(back.config.win_bonus, 0.0, "position alone, as it was");
+        assert_eq!(back.config.ask_cap, 3, "and the cap it really had");
+        assert_eq!(back.generation(), t.generation(), "the same run");
+
+        // And as format 2 wrote it: no ask_cap either.
+        let two = three
             .replace("carranta-evolve 3", "carranta-evolve 2")
             .replace("ask_cap 3\n", "");
-        let back = decode_neat(&old).expect("a format two file still reads");
+        let back = decode_neat(&two).expect("a format two file still reads");
         assert_eq!(
             back.config.ask_cap,
             carranta_core::state::OFFERS_PER_TURN,
             "an uncapped run resumes uncapped"
         );
-        assert_eq!(back.generation(), t.generation(), "and it is the same run");
+        assert_eq!(back.config.win_bonus, 0.0);
+        assert_eq!(back.generation(), t.generation());
     }
 
     #[test]
