@@ -526,6 +526,10 @@
   .seatRow .counts { grid-column: 2 / span 2; display: flex; flex-wrap: wrap;
                      gap: .2em .7em; color: var(--muted-foreground); font-size: .92em; }
   .seatRow .counts .left { flex-basis: 100%; }
+  /* Both awards, side by side on their own line. The row gap matches the
+     container's so the pair sits on the same rhythm as every other line in
+     the row if it ever has to wrap on a narrow column. */
+  .seatRow .counts .awardTags { display: flex; flex-wrap: wrap; gap: .2em .5em; }
   .seatRow .counts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
   .logPanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
   #log { overflow-y: auto; color: var(--muted-foreground); font-size: .95em;
@@ -963,6 +967,10 @@
   }
   .bigClock i { font-style: normal; width: 1ch; text-align: center; }
   .bigClock i.sep { width: .42ch; }
+  /* The hour marker in a long game's clock. It stands where the colon stands
+     and is set small, so 1h20 occupies the same three boxes as 4:07 and the
+     panel never changes width an hour in. */
+  .bigClock i.unit { width: .58ch; font-size: .62em; }
   .clockUnder { display: flex; justify-content: center; gap: .7em;
                 margin-top: .35em; color: var(--muted-foreground);
                 font-size: .88em; }
@@ -2859,8 +2867,16 @@ function renderSeats(v) {
     const counts = document.createElement('span');
     counts.className = 'counts';
     let html = `<span><b>${s.hand}</b> cards</span><span><b>${s.dev}</b> dev</span>`;
-    if (s.longestRoad) html += `<span class="tag tag-default">longest road · ${s.road}</span>`;
-    if (s.largestMilitia) html += `<span class="tag tag-default">largest militia · ${s.militia}</span>`;
+    // One award rides along beside the counts, where it fits. Two do not:
+    // laid out inline they wrapped one to a line each, so a player holding
+    // both cost the row two lines and left the first tag stranded at the end
+    // of the counts. Held together on a line of their own they take one line
+    // and read as the pair they are.
+    const tags = [];
+    if (s.longestRoad) tags.push(`<span class="tag tag-default">longest road · ${s.road}</span>`);
+    if (s.largestMilitia) tags.push(`<span class="tag tag-default">largest militia · ${s.militia}</span>`);
+    html += tags.length > 1 ? `<span class="left awardTags">${tags.join('')}</span>`
+      : tags.join('');
     html += `<span class="left" data-tip="pieces still to place" tabindex="0">`
       + `<b>${s.settlementsLeft}</b> settlements · <b>${s.citiesLeft}</b> cities`
       + ` · <b>${s.roadsLeft}</b> roads left</span>`;
@@ -3311,13 +3327,22 @@ function setDigits(el, text) {
   for (const ch of text) {
     const c = document.createElement('i');
     if (ch === ':') c.className = 'sep';
+    else if (ch === 'h') c.className = 'unit';
     c.textContent = ch;
     el.appendChild(c);
   }
 }
-function mmss(t) {
+// A clock reading, always three boxes wide.
+//
+// Past an hour this drops the seconds rather than adding a field: h:mm:ss is
+// nearly twice the width of m:ss, and a clock that grows by three boxes an
+// hour into a game moves the panel it sits in. Seconds are what a person
+// watches in the last minute of a turn and nothing at all an hour in, so the
+// hour is the thing worth the room. The `h` marks which reading it is, so
+// 1h20 is never read as a minute and twenty seconds.
+function clockText(t) {
   const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
-  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return h ? `${h}h${String(m).padStart(2, '0')}`
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 function tickClock() {
@@ -3338,7 +3363,7 @@ function tickClock() {
   countdownBeep(running && view && clockWho.seat === view.you ? t : null);
   el.classList.toggle('low', running && t > 0 && t <= 15);
   el.classList.toggle('over', clockDown && t <= 0);
-  setDigits(el, clockDown && t <= 0 ? '0:00' : mmss(Math.max(0, t)));
+  setDigits(el, clockDown && t <= 0 ? '0:00' : clockText(Math.max(0, t)));
 
   const turns = document.getElementById('turnCount');
   // Not whose turn it is: the boxed row in the players list already says that,
@@ -3350,7 +3375,7 @@ function tickClock() {
   // The game's own running time, which only ever counts up. It runs on the same
   // second as the turn clock so the two never disagree by a tick.
   const game = document.getElementById('gameTime');
-  if (game) setDigits(game, mmss(clockGame + gone));
+  if (game) setDigits(game, clockText(clockGame + gone));
   tickDiscard();
 }
 
