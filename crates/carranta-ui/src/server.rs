@@ -158,7 +158,7 @@ const FONTS: [(&str, &[u8]); 3] = [
 ///
 /// MP3 rather than the OGG originals, because every browser plays MP3 and the
 /// difference is a couple of kilobytes on a file already under six.
-const SOUNDS: [(&str, &[u8]); 8] = [
+const SOUNDS: [(&str, &[u8]); 9] = [
     ("error-008", include_bytes!("../../../audio/error-008.mp3")),
     (
         "jingles-hit-10",
@@ -171,6 +171,10 @@ const SOUNDS: [(&str, &[u8]); 8] = [
     (
         "confirmation-001",
         include_bytes!("../../../audio/confirmation-001.mp3"),
+    ),
+    (
+        "confirmation-002",
+        include_bytes!("../../../audio/confirmation-002.mp3"),
     ),
     (
         "dice-throw-3",

@@ -1,12 +1,13 @@
 # Where the sounds came from
 
-Eight sounds, all by [Kenney](https://kenney.nl), all **CC0**. That licence is
+Nine sounds, all by [Kenney](https://kenney.nl), all **CC0**. That licence is
 why they can live in this repository at all: the files are redistributed inside
 the binary, and the page makes no external requests to fetch them.
 
 | File | Kenney pack | Original |
 |---|---|---|
 | `confirmation-001.mp3` | Interface Sounds | `confirmation_001.ogg` |
+| `confirmation-002.mp3` | Interface Sounds | `confirmation_002.ogg` |
 | `dice-throw-3.mp3` | Casino Audio | `dice-throw-3.ogg` |
 | `card-place-1.mp3` | Casino Audio | `card-place-1.ogg` |
 | `impact-generic-light-002.mp3` | Impact Sounds | `impactGeneric_light_002.ogg` |
@@ -26,6 +27,13 @@ a React project with a `useSound` hook. None of that applies here: this is a
 dependency-free Rust binary serving one static page. So what was taken is the
 audio, which is CC0 and Kenney's, and the naming, which is soundcn's and is what
 each of them was called in the conversation that asked for it.
+
+Its install command is `pnpm dlx shadcn add @soundcn/<name>`, which does not
+apply here and was tried once to be sure: with no `components.json` it stops to
+ask which React component library to scaffold, which is the wrong question to
+answer in a Rust workspace. What the command would fetch is served plainly at
+`https://soundcn.xyz/r/<name>.json`, so that is what is read, and the MP3 is
+decoded out of the `dataUri` field of the TypeScript module inside it.
 
 The MP3s are soundcn's transcodes of Kenney's OGG originals, lifted out of the
 registry's base64 data URIs. MP3 rather than OGG because every browser plays it,
