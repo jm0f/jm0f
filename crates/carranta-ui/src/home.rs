@@ -20,7 +20,7 @@
 
 use std::fmt::Write as _;
 
-use carranta_core::state::TradeMode;
+use carranta_core::state::{DISCS, TradeMode};
 
 use crate::analysis::Finishing;
 use crate::report::{CSS, ICON};
@@ -126,7 +126,7 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> Str
     b
 }
 
-/// What the page is for: one button, and three lines saying what is behind it.
+/// What the page is for: one button, over five tiles of the board it opens.
 ///
 /// Not a card. The card is the shape this page uses for a list of things, and a
 /// list of one thing dressed as a list reads as the first of several: the button
@@ -145,22 +145,170 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> Str
 /// settings live and always did. Two forms asking overlapping halves of the same
 /// question is one too many, and the half here was the smaller one.
 ///
-/// The three lines under it are the three reasons to press it, one clause each,
-/// in the order somebody meets them: the game, then what the server keeps of it,
-/// then who else is at the table. Long enough to say something and short enough
-/// to be read without deciding to read them.
+/// Above it, the five resources as five tiles. Three lines of prose used to sit
+/// under the button saying what the game was; a row of hexes says it in the
+/// game's own alphabet, and says it before it is read, which is the one thing a
+/// sentence cannot do. They are ornament and are marked as ornament, so nothing
+/// reading the page aloud has to announce them, and the button stays the first
+/// thing on the page that anything can act on.
 fn deal() -> String {
     let mut b = String::from("<section class=\"hero\">");
-    b.push_str(
-        "<a class=\"go\" href=\"/lobby\">New game</a>\
-         <ul class=\"claims\">\
-         <li>Settle an island, trade, and strategize.</li>\
-         <li>Analyze your games with advanced analytics.</li>\
-         <li>Play humans and the best AI in the world.</li>\
-         </ul>",
-    );
+    b.push_str(&island());
+    b.push_str("<a class=\"go\" href=\"/lobby\">New game</a>");
     b.push_str("</section>");
     b
+}
+
+/// The five resources, left to right, in the order the application shows them:
+/// wood, brick, sheep, wheat, ore.
+///
+/// Their colours are the report's colours, written here as classes rather than
+/// as fills so the five live in one place in the stylesheet, beside every other
+/// rule this page adds.
+const LANDS: usize = 5;
+
+/// How many deals are laid out at once.
+///
+/// The easter egg is a cycle rather than a draw: without a script the page
+/// cannot roll a number after it has been sent, so it sends several and shows
+/// one. Six is enough that a run of clicks does not obviously repeat, and small
+/// enough that the markup stays a rounding error on the page. Every load deals
+/// all six afresh, so the sequence is different on the next visit as well.
+const DEALS: usize = 6;
+
+/// The row of tiles, and the deals behind it.
+///
+/// A radio per deal, one of them checked, and a label over each row pointing at
+/// the next: clicking the tiles moves the check along and the stylesheet swaps
+/// which row is displayed. That is the whole mechanism, and it is the reason
+/// this stays inside the rule the page and the report share, **no script at
+/// all**. The radios are named together so the browser keeps exactly one, and
+/// they are taken out of the tab order and out of the accessibility tree with
+/// the rest of the ornament.
+fn island() -> String {
+    let mut seed = spark();
+    let mut b = String::from("<div class=\"island\" aria-hidden=\"true\">");
+    for i in 0..DEALS {
+        let _ = write!(
+            b,
+            "<input class=\"pick\" type=\"radio\" name=\"island\" id=\"deal{i}\" \
+             tabindex=\"-1\"{}>",
+            if i == 0 { " checked" } else { "" },
+        );
+    }
+    b.push_str("<div class=\"laid\">");
+    for i in 0..DEALS {
+        let numbers = five(&mut seed);
+        // The last row points back at the first, so the cycle closes rather
+        // than ending on a dead tile.
+        let _ = write!(b, "<label class=\"lay\" for=\"deal{}\">", (i + 1) % DEALS);
+        for (land, number) in numbers.iter().enumerate() {
+            b.push_str(&tile(land, *number));
+        }
+        b.push_str("</label>");
+    }
+    b.push_str("</div>");
+    b.push_str(&showing());
+    b.push_str("</div>");
+    b
+}
+
+/// One tile: the land, the marker, and the number on it.
+///
+/// The path is the report's tile path unmodified, so the front page and the
+/// drawings inside a game are the same hexagon at the same proportions rather
+/// than two hexagons that nearly agree.
+fn tile(land: usize, number: u8) -> String {
+    const PATH: &str = "M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z";
+    format!(
+        "<svg class=\"tileHex\" viewBox=\"-1 -1 20 22.8\">\
+         <path class=\"land l{land}\" d=\"{PATH}\"/>\
+         <circle class=\"chit\" cx=\"9\" cy=\"10.4\" r=\"5.2\"/>\
+         <text class=\"chitNum{red}\" x=\"9\" y=\"10.4\">{number}</text></svg>",
+        // The two the board is read for, in the ink they are printed in.
+        red = if number == 6 || number == 8 {
+            " red"
+        } else {
+            ""
+        },
+    )
+}
+
+/// Which deal is on screen, as one rule per deal.
+///
+/// Written beside the markup rather than in the stylesheet, for the reason the
+/// report writes its tooltip rules there: only the thing that laid the rows out
+/// knows how many there are, and a count kept in two places is a count that
+/// drifts.
+fn showing() -> String {
+    let mut out = String::from("<style>");
+    for i in 0..DEALS {
+        let _ = write!(
+            out,
+            "#deal{i}:checked~.laid .lay:nth-child({}){{display:flex}}",
+            i + 1
+        );
+    }
+    out.push_str("</style>");
+    out
+}
+
+/// A seed for the deal, from the clock.
+///
+/// Not from the game's own generator, for the reason the seating draw is not
+/// either: that one is the board and the dice, and a decoration on the front
+/// page has no business moving it. Nothing here is a secret, so the clock is
+/// enough, and the process id keeps two servers started in the same nanosecond
+/// from laying out the same row.
+fn spark() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    now ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+/// One step of a small mixing generator, which is all a decoration needs.
+fn next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Five numbers off a shuffled pool, no two of them the same.
+///
+/// The pool is the engine's own [`DISCS`], the eighteen a board is dealt from,
+/// rather than eighteen numbers typed again here: the front page should show
+/// the numbers this game plays with, and it should keep showing them if the
+/// rules ever change which those are. There is no seven for the same reason,
+/// rather than by filtering one out.
+///
+/// Distinct numbers rather than an honest draw, which is the one place this
+/// departs from dealing a board. The pool holds two of everything but the two
+/// and the twelve, so an honest draw of five turns up a repeated number about
+/// half the time, and a row of five tiles showing two sixes reads as a mistake
+/// in the page rather than as the board it would be. Five of the ten faces,
+/// each once, is what a slice of a board looks like from across the room.
+fn five(state: &mut u64) -> [u8; LANDS] {
+    let mut pool = DISCS;
+    for i in (1..pool.len()).rev() {
+        let j = (next(state) % (i + 1) as u64) as usize;
+        pool.swap(i, j);
+    }
+    let mut out = [0u8; LANDS];
+    let mut laid = 0;
+    for &disc in pool.iter() {
+        if laid == LANDS {
+            break;
+        }
+        if !out[..laid].contains(&disc) {
+            out[laid] = disc;
+            laid += 1;
+        }
+    }
+    debug_assert_eq!(laid, LANDS, "ten faces are more than five tiles");
+    out
 }
 
 /// The card that lists tables you could open, or nothing at all.
@@ -480,17 +628,38 @@ const EXTRA: &str = "
 .hero { border: 0; background: none; box-shadow: none; padding: 0;
         margin: clamp(2.5rem, 9vh, 6rem) 0 clamp(1rem, 3vh, 2rem);
         text-align: center; }
-/* Three lines, one clause each, under the thing they are reasons for. A list
-   because they are a list, without the bullets, which would make three items
-   out of what reads as three sentences.
+/* Five tiles of the board, over the button rather than under it: the hexes are
+   what the page is a front page for, and they are read as a picture before the
+   button is read as a word.
 
-   The page's own size, not a size of its own. Scaling them with the viewport
-   made the front page the one screen in the application whose body text is not
-   the body text, which is a different typeface decision every time the window
-   moves. */
-.claims { list-style: none; margin: 1.6rem 0 0; padding: 0;
-          display: grid; gap: .5rem;
-          color: var(--muted-foreground); }
+   Every deal sits in the same grid cell, so swapping which one shows moves
+   nothing on the page. Only the checked one is displayed, by the rules written
+   beside the markup. */
+.island { display: grid; justify-items: center;
+          margin: 0 0 clamp(1.4rem, 4vh, 2.4rem); }
+/* Off the page rather than `display: none`, which would take the radio out of
+   the box its label points at and stop the click landing. */
+.pick { position: absolute; width: 1px; height: 1px;
+        opacity: 0; pointer-events: none; }
+.laid { display: grid; }
+.laid .lay { grid-area: 1 / 1; display: none; cursor: pointer;
+             gap: clamp(.25rem, 1.1vw, .6rem); }
+/* Sized against the viewport with a floor and a ceiling: the row is the one
+   thing on this page that is a picture, and a picture that is five tiles wide
+   has to fit a phone without becoming five specks on a desktop. */
+.tileHex { width: clamp(42px, 8.5vw, 70px); height: auto; display: block; }
+/* The five, in the colours every other drawing in the application paints a
+   resource in, left to right as the game lists them. */
+.land { stroke: rgba(0, 0, 0, .18); stroke-width: .5; }
+.l0 { fill: #1F5E3A; } .l1 { fill: #C0563B; } .l2 { fill: #8DBE4A; }
+.l3 { fill: #E2A32B; } .l4 { fill: #5C6B78; }
+/* The white marker, and the number on it. Six and eight in red, because they
+   are the two a board is read for and the two a board is printed with. */
+.chit { fill: #FBF7EF; }
+.chitNum { font: 700 7px Figtree, system-ui, sans-serif; fill: #2B2622;
+           text-anchor: middle; dominant-baseline: central; }
+.chitNum.red { fill: #C0563B; }
+.laid .lay:hover .chit { fill: #FFFFFF; }
 /* The one button on the page that starts something, in the colour the win is
    written in, and the same shape as a place badge so the family holds. */
 .go { display: inline-block; text-decoration: none; cursor: pointer;
@@ -692,18 +861,71 @@ mod tests {
         // settings live there, and a second form here would be half of them.
         assert!(html.contains("href=\"/lobby\">New game</a>"));
         assert!(!html.contains("<form"), "the settings are the lobby's");
-        // Three lines under it, the three reasons to press it.
-        assert!(html.contains("Settle an island, trade, and strategize."));
-        assert!(html.contains("Analyze your games with advanced analytics."));
-        assert!(html.contains("Play humans and the best AI in the world."));
-        // The button is first: it is what the page is for, and anything above it
-        // is something read before the thing somebody came to do.
-        let button = html.find("href=\"/lobby\"").expect("the button");
-        let first_claim = html.find("Settle an island").expect("the claims");
-        assert!(button < first_claim, "the button, then the reasons");
-        // The rule of this page and of the report: no script at all.
+        // The prose that used to sit under the button is gone; the row of tiles
+        // above it says the same thing in the game's own alphabet.
+        assert!(!html.contains("Settle an island, trade, and strategize."));
+        assert!(!html.contains("class=\"claims\""));
+        // Five tiles, one per resource, in the application's own order.
+        for land in 0..LANDS {
+            assert!(
+                html.contains(&format!("land l{land}")),
+                "the {land} tile is drawn"
+            );
+        }
+        // The board's own hexagon, at the board's own proportions.
+        assert!(html.contains("M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z"));
+        // Ornament, and marked as ornament: the button is still the first thing
+        // on the page that anything can act on, whatever is drawn above it.
+        assert!(html.contains("class=\"island\" aria-hidden=\"true\""));
+        // The rule of this page and of the report: no script at all. The tiles
+        // change on a click through a radio and a stylesheet, not through one.
         assert!(!html.contains("<script"), "no script on the home page");
         assert!(!html.contains("onclick"));
+    }
+
+    #[test]
+    fn every_tile_carries_a_marker_from_the_pool() {
+        let html = page(&[], &[], &nobody(), Finishing::default());
+        // One white marker per tile per deal, and nothing else drawn on them.
+        assert_eq!(html.matches("class=\"chit\"").count(), LANDS * DEALS);
+        // Six deals, each pointing at the next, and the last back at the first,
+        // so a run of clicks cycles rather than stopping.
+        for i in 0..DEALS {
+            assert!(html.contains(&format!("id=\"deal{i}\"")));
+            assert!(html.contains(&format!("for=\"deal{i}\"")));
+        }
+        // Exactly one is checked, or the row starts empty.
+        assert_eq!(html.matches(" checked>").count(), 1);
+    }
+
+    #[test]
+    fn a_deal_is_five_different_numbers_off_the_board_s_own_pool() {
+        // Drawn without replacement, so no row repeats a number, and every one
+        // of them is a number the engine actually deals.
+        let mut state = 0x1234_5678_9ABC_DEF0u64;
+        for _ in 0..2_000 {
+            let five = five(&mut state);
+            for (i, n) in five.iter().enumerate() {
+                assert!(DISCS.contains(n), "{n} is on the board");
+                // No seven: there is no seven among the discs, and the loop
+                // above would have caught it, but this is the reason why.
+                assert_ne!(*n, 7);
+                assert!(!five[..i].contains(n), "{n} was already laid in this deal");
+            }
+        }
+    }
+
+    #[test]
+    fn the_marker_pool_is_the_engine_s_and_not_a_copy_of_it() {
+        // The point of reading DISCS rather than retyping eighteen numbers: if
+        // the rules ever change which numbers a board is dealt from, the front
+        // page changes with them.
+        let mut sorted = DISCS;
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12],
+        );
     }
 
     #[test]
