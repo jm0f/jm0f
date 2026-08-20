@@ -702,6 +702,13 @@ impl Table {
             self.chairs.swap(i, j);
             self.seen.swap(i, j);
             moved.swap(i, j);
+            // The player in a chair moves with the chair. That keeps a chair
+            // and the brain deciding its moves in step, and it is also what
+            // makes a bot's rating a rating of the bot: seats are not equal,
+            // the first to place has a real advantage, and a champion that
+            // always sat where the host put it would be rated partly on the
+            // chair. The draw is random, so over games it lands everywhere.
+            self.session.swap_bots(i, j);
             // Everything held per seat moves with the seat. Nothing reads the
             // ready flags after the draw, since the draw is what closing the
             // room causes, but leaving them behind would make two records of who
@@ -3497,6 +3504,60 @@ mod tests {
             Err("the game has started")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_draw_moves_a_champion_with_its_chair() {
+        // Seats are not equal: the first to place has a real advantage, so a
+        // champion that always sat where the host put it would earn a rating
+        // partly about the chair. The draw is what removes that, and it can
+        // only do so if the player travels with the chair rather than staying
+        // behind at a seat index.
+        let dir = std::env::temp_dir().join(format!("carranta-draw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = carranta_bot::net::Net::output_id(carranta_bot::features::FEATURES);
+        let links: Vec<(u32, u32, f64)> = (0..=carranta_bot::features::FEATURES as u32)
+            .map(|i| (i, out, ((i % 5) as f64 - 2.0) / 10.0))
+            .collect();
+        let net = carranta_bot::net::Net::assemble(carranta_bot::features::FEATURES, &links)
+            .expect("acyclic");
+        let host = "keytest0000000000";
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..40 {
+            let server = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
+                generation: 7,
+                net: net.clone(),
+            }]);
+            let id = server.deal("bot1=trained@7", host);
+            {
+                let mut tables = server.tables.lock().unwrap();
+                let t = tables.iter_mut().find(|t| t.id == id).expect("dealt");
+                t.shuffle();
+                // Exactly one champion, wherever it went: a draw moves players
+                // about and must never duplicate or lose one.
+                let where_now: Vec<u8> = (0..4)
+                    .filter(|&s| t.session.agent_of(s) == "trained@7")
+                    .collect();
+                assert_eq!(where_now.len(), 1, "one champion, once");
+                let at = where_now[0];
+                // And never in a person's chair. The host is a person, and a
+                // champion deciding their moves would be a chair naming one
+                // player while another plays it.
+                assert!(
+                    !matches!(t.chairs.get(at as usize), Some(Chair::Taken { .. })),
+                    "a champion landed in somebody's seat"
+                );
+                seen.insert(at);
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        // Forty draws of three eligible chairs: landing in only one of them
+        // every time would mean the rotation is not happening at all.
+        assert!(
+            seen.len() > 1,
+            "the champion sat in only seat {seen:?} across forty draws"
+        );
     }
 
     /// Who plays one seat of a table this server is holding.

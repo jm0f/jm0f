@@ -654,6 +654,23 @@ impl Session {
         }
     }
 
+    /// Move two seats' players, as part of a draw for seats.
+    ///
+    /// Whoever is holding a chair takes their player with them. Without this
+    /// the chairs move and the brains stay, so a champion chosen for the chair
+    /// a person ends up in would be playing a seat nobody asked it to, and the
+    /// chair would name a player that is not the one deciding its moves.
+    ///
+    /// The seat's generator is not re-seeded to match its new index. It could
+    /// be, and it would buy nothing: a table whose seats were drawn is not
+    /// reproducible from its seed anyway, and every seat still has a distinct
+    /// stream, which is the property that matters.
+    pub fn swap_bots(&mut self, a: usize, b: usize) {
+        if a < self.bots.len() && b < self.bots.len() {
+            self.bots.swap(a, b);
+        }
+    }
+
     /// Deal champions round the bot seats, repeating if there are fewer
     /// champions than seats.
     ///

@@ -3842,7 +3842,13 @@ function renderLobby(v) {
   count.textContent = v.readyOf === 0
     ? 'Waiting for somebody to sit down.'
     : v.readyOf === 1 && v.you >= 0
-      ? 'Bots play the other seats. Anybody with the link can take one until you start.'
+      // Seats are drawn when the game starts, for people and bots alike, so
+      // the row above is who is at the table rather than who sits where. Said
+      // out loud because the form invites the other reading: you pick a bot on
+      // a particular line, and without this the draw looks like it lost your
+      // answer rather than doing the thing that makes a bot's record mean
+      // anything.
+      ? 'Bots play the other seats. Anybody with the link can take one until you start, and seats are drawn when the game begins.'
       : `${v.ready} of ${v.readyOf} ready. The game starts when everybody is.`;
 }
 
