@@ -1549,6 +1549,11 @@ impl Session {
     /// order is part of the interface and the list is per seat: two people at
     /// one table are looking at two different lists at the same moment.
     pub fn choices_for(&self, seat: u8) -> Vec<Choice> {
+        // Somebody watching has nothing to press, and asking on their behalf
+        // reaches code that indexes by seat. See `is_seat`.
+        if !self.is_seat(seat) {
+            return Vec::new();
+        }
         if matches!(self.state.phase, Phase::GameOver { .. }) {
             return Vec::new();
         }
@@ -1583,8 +1588,27 @@ impl Session {
         self.can_propose_for(HUMAN)
     }
 
+    /// Whether a number names a seat at this table.
+    ///
+    /// Asked before anything indexes by it. The view renders for somebody with
+    /// no seat by passing one that does not exist, which is what makes the
+    /// redaction safe rather than careful: a hand nobody is holding is a hand
+    /// of nothing. That only holds if every question asked of such a seat
+    /// *answers*, and one of them indexed instead, which took the process down
+    /// rather than merely answering wrongly. See `can_propose_for`.
+    fn is_seat(&self, seat: u8) -> bool {
+        (seat as usize) < self.state.players as usize
+    }
+
     /// The same question for one seat.
     pub fn can_propose_for(&self, seat: u8) -> bool {
+        // Nobody's seat can put nothing on the table. This is the guard whose
+        // absence crashed the server: a spectator is rendered for seat 255,
+        // the two checks below let that through once a game reached its action
+        // phase, and the probe underneath indexed a four-seat hand with it.
+        if !self.is_seat(seat) {
+            return false;
+        }
         if self.state.trade_mode == TradeMode::Disabled {
             return false;
         }

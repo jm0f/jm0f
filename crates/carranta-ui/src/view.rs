@@ -368,7 +368,15 @@ fn render_room(
             .str("who", t.name)
             .str("said", t.text);
     });
-    j.bool("canPropose", session.can_propose_for(seat));
+    // Nothing a seat can do is asked about somebody who has not got one.
+    // The session guards this too, and did not always: a spectator was
+    // rendered for seat 255 and a probe indexed a four-seat hand with it,
+    // which under `panic = "abort"` did not fail the request but killed the
+    // process and every live table in it. Guarded in both places on purpose,
+    // because either guard alone would have been enough to prevent that and
+    // neither was there.
+    let playing = seat != NOBODY;
+    j.bool("canPropose", playing && session.can_propose_for(seat));
     j.ints("supply", v.supply.iter().map(|&n| n as i64));
     j.int("devLeft", v.dev_left as i64);
     // Roads still owed by a played road building card (R-9.10). Public: the
@@ -406,7 +414,7 @@ fn render_room(
     j.bool("inSetup", session.in_setup());
     j.bool("logShown", session.log_shown());
     // Whether a development card is half played and can still be put back.
-    j.bool("canCancel", session.can_cancel_for(seat));
+    j.bool("canCancel", playing && session.can_cancel_for(seat));
     j.bool("bankExact", session.bank_exact());
     // How the bots are paced, and whether one is mid-thought, so the page can
     // poll quickly while the table is moving and slowly while it is not.
@@ -457,7 +465,11 @@ fn render_room(
     // with buttons nothing renders. The indices the page acts with are stamped
     // before the filter, so what remains still names its true place in the
     // seat's own list.
-    let choices = session.choices_for(seat);
+    let choices = if playing {
+        session.choices_for(seat)
+    } else {
+        Vec::new()
+    };
     let shown = choices.iter().enumerate().filter(|(_, c)| {
         !matches!(
             c,
@@ -666,6 +678,49 @@ mod tests {
         );
         // And the composer's door is the one left open.
         assert!(out.contains("\"canPropose\":true"));
+    }
+
+    #[test]
+    fn somebody_watching_a_game_under_way_is_answered_rather_than_crashed() {
+        // This crashed production. A spectator is rendered for a seat that
+        // does not exist, which is what makes the redaction safe: every
+        // private field is keyed off that seat, so there is nothing to leak.
+        // It only holds if every question asked of that seat answers, and
+        // `can_propose_for` indexed a four-seat hand with it instead. Under
+        // `panic = "abort"` that did not fail one request: it took the process
+        // down, and with it every lobby and every table in memory.
+        //
+        // Both earlier guards in that function let a non-seat through until a
+        // game reached its action phase, which is why every test passed and
+        // every finished or freshly dealt table was fine. So this plays into
+        // the phase first, and then watches.
+        for seed in [4u64, 9, 17] {
+            let mut s = Session::new(4, seed, TradeMode::Full);
+            for _ in 0..400 {
+                if matches!(s.state().phase, carranta_core::state::Phase::Action) {
+                    break;
+                }
+                if s.choices().is_empty() {
+                    break;
+                }
+                let v = s.version();
+                let _ = s.act(0, v);
+            }
+            assert!(
+                matches!(s.state().phase, carranta_core::state::Phase::Action),
+                "need a game in its action phase to reproduce this"
+            );
+            let watching = render_all(&s, None, Room::default(), &[], &[], None);
+            // A watcher has no controls and is told so, rather than the
+            // request dying on the way to saying it.
+            assert!(watching.contains("\"canPropose\":false"));
+            assert!(watching.contains("\"canCancel\":false"));
+            assert!(watching.contains("\"choices\":[]"));
+            assert!(watching.contains("\"you\":-1"));
+            // And the seat itself answers, whoever asks it.
+            assert!(!s.can_propose_for(u8::MAX), "no seat proposes nothing");
+            assert!(s.choices_for(u8::MAX).is_empty());
+        }
     }
 
     /// The payload with its wall-clock readings taken out.
