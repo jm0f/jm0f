@@ -43,7 +43,7 @@ pub const BOT_NAMES: [&str; 4] = ["Ada", "Bram", "Ines", "Odd"];
 ///
 /// What it folds is what the game file already says (format 6): a person's key,
 /// or an agent's name, build and which copy of it this was.
-fn player_number(text: &str) -> u64 {
+pub(crate) fn player_number(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
         (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
     })
@@ -227,8 +227,20 @@ pub fn seat_names(saved: &Saved) -> Vec<String> {
 /// `None` when the moves and this build disagree about the rules, which is the
 /// same answer `Session::resume` gives and for the same reason.
 pub fn to_log(saved: &Saved) -> Option<Log> {
+    to_log_as(saved, &NoAliases)
+}
+
+/// The same, with guests' later claims folded into the seat identities (P-1),
+/// so a corpus groups a claimed guest's games under the account that claimed
+/// them without a byte of those games having moved.
+pub fn to_log_as(saved: &Saved, who: &dyn Aliases) -> Option<Log> {
     let state = crate::game::Session::opening(saved.seats, saved.seed, saved.mode);
-    let mut rec = Recorder::new(game_number(&saved.id), saved.seed, state, seat_ids(saved));
+    let mut rec = Recorder::new(
+        game_number(&saved.id),
+        saved.seed,
+        state,
+        seat_ids_as(saved, who),
+    );
     for step in &saved.moves {
         match *step {
             Step::Move(action) => {

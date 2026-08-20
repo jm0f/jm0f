@@ -12,6 +12,7 @@
 //! unpick.
 
 pub mod analysis;
+pub mod corpus;
 pub mod game;
 pub mod home;
 pub mod json;

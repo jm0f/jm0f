@@ -3639,6 +3639,7 @@ pub fn page(saved: &Saved, study: &Study) -> String {
         "",
         &[
             (&format!("/{}/", esc(&saved.id)), "The board"),
+            ("/corpus", "Across games"),
             ("/lobby", "New game"),
         ],
     ));

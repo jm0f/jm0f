@@ -2404,6 +2404,21 @@ impl Server {
                     respond(&mut stream, 404, "text/plain", b"no such game")
                 }
             }
+            // Across games (§10.3, §10.6): the corpus battery over every
+            // saved game, sliced by configuration, presence and player.
+            // Rendered whole for the report's reason: nothing on it changes
+            // without a request.
+            ("GET", "/corpus") => {
+                let mut history = self.store.all();
+                // Oldest first, so a person's newest chair names their row.
+                history.reverse();
+                return respond(
+                    &mut stream,
+                    200,
+                    "text/html; charset=utf-8",
+                    crate::corpus::page(&history, &self.people).as_bytes(),
+                );
+            }
             // The analytics for one game (§10). Rendered here rather than
             // fetched and drawn: everything on it settled the moment the game
             // ended, so there is nothing for a script to do.

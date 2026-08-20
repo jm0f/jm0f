@@ -112,11 +112,13 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> Str
          <title>Carranta</title>{ICON}\
          <style>{CSS}{EXTRA}</style></head><body>\
          {head}<main>",
-        // No links. Every other page's header offers a way back to this one and a
-        // way to a new game; this page is the way back, and the button below is
-        // the way to a new game, said properly and in the place the eye lands. A
-        // header link to the page's own first button is furniture.
-        head = crate::report::masthead_home(&[], &account(who)),
+        // One link. Every other page's header offers a way back to this one and
+        // a way to a new game; this page is the way back, and the button below
+        // is the way to a new game, said properly and in the place the eye
+        // lands, so a header link to either would be furniture. What the page
+        // does not hold is the view across games, and a page about starting
+        // one game is the wrong place to grow one, so that is a link.
+        head = crate::report::masthead_home(&[("/corpus", "Across games")], &account(who)),
     );
 
     b.push_str(&deal());
@@ -1174,8 +1176,11 @@ mod tests {
         assert!(html.contains("1111-1111-1111"), "mine is shown");
         assert!(html.contains(">unfinished</span>"));
         assert!(!html.contains("Also on this server"), "and only mine");
-        // Nor is there a header link to the page's own first button.
-        assert!(!html.contains("class=\"headLink\""));
+        // Nor is there a header link to the page's own first button: the one
+        // link up there leads somewhere this page does not go itself.
+        let header = &html[..html.find("</header>").expect("a header")];
+        assert!(!header.contains("href=\"/lobby\""));
+        assert!(header.contains("href=\"/corpus\""));
     }
 
     #[test]

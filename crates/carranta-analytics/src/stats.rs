@@ -389,3 +389,41 @@ mod tests {
         close(percentile_of(1000.0, &sample), 1.0, 1e-12);
     }
 }
+
+/// A share whose samples arrive in clusters, with a 95% half-width that
+/// respects the clustering (§10.6 pitfall 3).
+///
+/// The corpus's per-actor win rates are built from player-games, and
+/// player-games inside one game are not independent: one seat's win is
+/// literally the others' loss, and in self-play one actor can hold several of
+/// the seats at once. Treating each seat as an i.i.d. Bernoulli draw
+/// understates the variance, which is precisely the mistake this module's
+/// header warns about, so the interval here treats the *game* as the sampling
+/// unit and each game's `(hits, seats)` as one cluster.
+///
+/// The estimate is the ratio `Σhits / Σseats`, and the variance is the ratio
+/// estimator's, `Σ(hᵢ − R·sᵢ)² · n/(n−1) / (Σs)²`, which collapses to the
+/// binomial answer when every cluster has one seat and to zero when every
+/// cluster agrees exactly. Two clusters are the fewest with a variance;
+/// fewer returns the share with no width rather than a made-up one.
+pub fn clustered_share(clusters: &[(u32, u32)]) -> Option<(f64, Option<f64>)> {
+    let hits: u64 = clusters.iter().map(|c| u64::from(c.0)).sum();
+    let seats: u64 = clusters.iter().map(|c| u64::from(c.1)).sum();
+    if seats == 0 {
+        return None;
+    }
+    let share = hits as f64 / seats as f64;
+    let n = clusters.len();
+    if n < 2 {
+        return Some((share, None));
+    }
+    let residual: f64 = clusters
+        .iter()
+        .map(|&(h, s)| {
+            let d = f64::from(h) - share * f64::from(s);
+            d * d
+        })
+        .sum();
+    let variance = residual * (n as f64 / (n as f64 - 1.0)) / (seats as f64 * seats as f64);
+    Some((share, Some(1.96 * variance.sqrt())))
+}

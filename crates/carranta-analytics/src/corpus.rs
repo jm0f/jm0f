@@ -16,6 +16,8 @@
 //! One player's gain is literally another's loss, so treating player-games as
 //! i.i.d. understates the variance of any aggregate over them.
 
+use std::collections::BTreeMap;
+
 use carranta_core::state::{MAX_PLAYERS, TradeMode};
 use carranta_record::{Log, Payload};
 
@@ -23,7 +25,7 @@ use crate::dice::{self, Audit};
 use crate::game;
 use crate::production;
 use crate::rating::{LuckAdjustment, Ratings};
-use crate::stats::benjamini_hochberg;
+use crate::stats::{benjamini_hochberg, clustered_share};
 
 /// The configuration a corpus is restricted to (§7.4's mandatory filters).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +53,115 @@ pub struct PlayerGame {
     pub won: bool,
 }
 
+/// Who was in a seat, as the cross-game slicing sees them (§10.3).
+///
+/// Two kinds on purpose, and the keys are different on purpose. An agent is
+/// its name and build: every copy of `trained@378` at a table is the same
+/// player, however many chairs it holds, because two copies of one program
+/// have nothing to tell apart. A person is their durable id and nothing else:
+/// the log is pseudonymous by construction (H-8), so this key can be grouped
+/// on and never read.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Who {
+    Agent { name: String, version: u32 },
+    Human { player: u64 },
+}
+
+impl Who {
+    fn of(seat: &carranta_record::SeatId) -> Who {
+        match &seat.agent {
+            Some(a) => Who::Agent {
+                name: a.name.clone(),
+                version: a.version,
+            },
+            None => Who::Human {
+                player: seat.player,
+            },
+        }
+    }
+}
+
+/// Everything accumulated for one actor across the corpus.
+#[derive(Clone, Debug, Default)]
+pub struct ActorStats {
+    /// Games this actor appeared in at all.
+    pub games: u32,
+    /// Seats it held across them, which self-play makes more than `games`.
+    pub seats: u32,
+    pub wins: u32,
+    /// Victory points summed over every seat held.
+    pub vp: u64,
+    pub seat_games: [u32; MAX_PLAYERS],
+    /// Per game: seats won and seats held, the clusters the win rate's
+    /// interval is built from (§10.6.3).
+    pub shares: Vec<(u32, u32)>,
+    /// Per seat held: total production and final victory points, for the
+    /// §10.4 residual.
+    pub conversion: Vec<(f64, f64)>,
+}
+
+/// One line of the per-actor table, ready to print.
+#[derive(Clone, Debug)]
+pub struct ActorRow {
+    pub who: Who,
+    pub games: u32,
+    pub seats: u32,
+    pub wins: u32,
+    /// Win share over seats held, with a 95% half-width where two or more
+    /// games make one computable. The interval is clustered by game, never
+    /// per seat: seats inside one game are not independent draws.
+    pub share: f64,
+    pub half_width: Option<f64>,
+    pub mean_vp: f64,
+    /// Mean §10.4 conversion residual, when the corpus can fit the curve.
+    pub residual: Option<f64>,
+}
+
+/// A per-turn aggregate that cannot be read without its `n` (§10.6.2).
+///
+/// Games end when somebody reaches ten points, so "mean VP at turn 25" is a
+/// mean over the games that lasted that long, and quietly biased toward the
+/// slow ones. The pitfall list says to report n per turn explicitly; this type
+/// is that rule made structural, since [`PerTurn::rows`] is the only reader
+/// and every row it returns carries the count it was computed over.
+#[derive(Clone, Debug, Default)]
+pub struct PerTurn {
+    sums: Vec<f64>,
+    ns: Vec<u32>,
+}
+
+impl PerTurn {
+    fn fold(&mut self, curve: &[[u32; MAX_PLAYERS]], players: usize) {
+        if players == 0 {
+            return;
+        }
+        if self.sums.len() < curve.len() {
+            self.sums.resize(curve.len(), 0.0);
+            self.ns.resize(curve.len(), 0);
+        }
+        for (t, vp) in curve.iter().enumerate() {
+            let total: u32 = vp[..players].iter().sum();
+            self.sums[t] += f64::from(total) / players as f64;
+            self.ns[t] += 1;
+        }
+    }
+
+    /// `(turn, mean VP per seat, games that reached the turn)`, turn 1 first.
+    pub fn rows(&self) -> Vec<(usize, f64, u32)> {
+        self.sums
+            .iter()
+            .zip(&self.ns)
+            .enumerate()
+            .filter(|(_, (_, n))| **n > 0)
+            .map(|(t, (sum, n))| (t + 1, sum / f64::from(*n), *n))
+            .collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ns.iter().all(|n| *n == 0)
+    }
+}
+
 /// Accumulated statistics over a body of games sharing one configuration.
 #[derive(Clone, Debug)]
 pub struct Corpus {
@@ -68,6 +179,10 @@ pub struct Corpus {
     pub dice_p_values: Vec<f64>,
     pub player_games: Vec<PlayerGame>,
     pub ratings: Ratings,
+    /// Everything sliceable by who was playing, keyed so iteration is stable.
+    pub actors: BTreeMap<Who, ActorStats>,
+    /// Mean VP over the turns, with its n (§10.6.2).
+    pub vp_turns: PerTurn,
     /// Mean turns per finished game.
     turns: u64,
 }
@@ -86,6 +201,8 @@ impl Corpus {
             dice_p_values: Vec::new(),
             player_games: Vec::new(),
             ratings: Ratings::default(),
+            actors: BTreeMap::new(),
+            vp_turns: PerTurn::default(),
             turns: 0,
         }
     }
@@ -167,6 +284,36 @@ impl Corpus {
             });
         }
         self.ratings.record(log);
+
+        // The actor slicing. Grouped within the game first, because the win
+        // rate's interval needs each game as one cluster, and because in
+        // self-play one actor holds several of the seats at once. A seat the
+        // log does not name is left out rather than guessed at: no identity,
+        // no row.
+        let mut in_game: BTreeMap<Who, (u32, u32)> = BTreeMap::new();
+        for p in 0..seats {
+            let Some(seat) = log.created.seats.get(p) else {
+                continue;
+            };
+            let who = Who::of(seat);
+            let won = u32::from(summary.winner == Some(p as u8));
+            let e = in_game.entry(who.clone()).or_insert((0, 0));
+            e.0 += won;
+            e.1 += 1;
+            let a = self.actors.entry(who).or_default();
+            a.seats += 1;
+            a.wins += won;
+            a.vp += u64::from(summary.vp[p]);
+            a.seat_games[p] += 1;
+            a.conversion
+                .push((prod.total_actual(p) as f64, f64::from(summary.vp[p])));
+        }
+        for (who, (wins, held)) in in_game {
+            let a = self.actors.entry(who).or_default();
+            a.games += 1;
+            a.shares.push((wins, held));
+        }
+        self.vp_turns.fold(&summary.vp_curve, seats);
         true
     }
 
@@ -246,6 +393,51 @@ impl Corpus {
             self.turns as f64 / self.games as f64
         }
     }
+
+    /// The per-actor table, most-played first.
+    ///
+    /// Win shares come with a clustered interval or none at all, never a
+    /// naive one, and the residual column is filled only when the corpus can
+    /// fit the §10.4 curve in the first place.
+    pub fn actor_rows(&self) -> Vec<ActorRow> {
+        let fit = self.luck_adjustment();
+        let mut rows: Vec<ActorRow> = self
+            .actors
+            .iter()
+            .map(|(who, a)| {
+                let (share, half_width) = clustered_share(&a.shares).unwrap_or((0.0, None));
+                let residual = fit.as_ref().map(|f| {
+                    let sum: f64 = a
+                        .conversion
+                        .iter()
+                        .map(|&(prod, vp)| f.residual(prod, vp))
+                        .sum();
+                    sum / a.conversion.len().max(1) as f64
+                });
+                ActorRow {
+                    who: who.clone(),
+                    games: a.games,
+                    seats: a.seats,
+                    wins: a.wins,
+                    share,
+                    half_width,
+                    mean_vp: a.vp as f64 / f64::from(a.seats.max(1)),
+                    residual,
+                }
+            })
+            .collect();
+        rows.sort_by(|a, b| b.games.cmp(&a.games).then_with(|| a.who.cmp(&b.who)));
+        rows
+    }
+}
+
+/// Whether anybody at this table was a person.
+///
+/// The segmentation §10.6.5 demands: self-play corpora are orders of
+/// magnitude larger than human ones, so they are never pooled, and this is
+/// the bit the split is made on.
+pub fn has_human(log: &Log) -> bool {
+    log.created.seats.iter().any(|s| s.agent.is_none())
 }
 
 /// Split games into one corpus per configuration, so nothing incomparable is
@@ -276,7 +468,124 @@ pub fn actions(log: &Log) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::self_play;
+    use crate::testing::{self_play, self_play_rotated};
+
+    #[test]
+    fn every_copy_of_an_agent_is_one_actor() {
+        // Four seats, all played by heuristic@1: one row, four seats a game,
+        // and the row's games count games rather than chairs.
+        let mut c = Corpus::new(Config::of(&self_play(1, TradeMode::Full)));
+        for seed in 1..=3 {
+            assert!(c.add(&self_play(seed, TradeMode::Full), 0));
+        }
+        let rows = c.actor_rows();
+        assert_eq!(rows.len(), 1, "four copies pooled into one actor");
+        let row = &rows[0];
+        assert_eq!(
+            row.who,
+            Who::Agent {
+                name: "heuristic".to_string(),
+                version: 1
+            }
+        );
+        assert_eq!(row.games, 3);
+        assert_eq!(row.seats, 12);
+        // Every finished game has one winner, and this actor holds every
+        // seat, so its share is exactly the finish rate and its clustered
+        // interval is exact zero width when every game finished.
+        if c.finished == c.games {
+            assert!((row.share - 0.25).abs() < 1e-12);
+            assert_eq!(row.half_width, Some(0.0));
+        }
+    }
+
+    #[test]
+    fn two_people_are_two_actors_and_never_pooled() {
+        // Hand-build a log where seat identities are two humans and two
+        // copies of one agent: three rows, keyed apart.
+        let mut log = self_play(7, TradeMode::Full);
+        log.created.seats[0] = carranta_record::SeatId::human(11);
+        log.created.seats[1] = carranta_record::SeatId::human(22);
+        let mut c = Corpus::new(Config::of(&log));
+        assert!(c.add(&log, 0));
+        let rows = c.actor_rows();
+        assert_eq!(rows.len(), 3);
+        let humans = rows
+            .iter()
+            .filter(|r| matches!(r.who, Who::Human { .. }))
+            .count();
+        assert_eq!(humans, 2);
+        let agent = rows
+            .iter()
+            .find(|r| matches!(r.who, Who::Agent { .. }))
+            .expect("the agent row");
+        assert_eq!(agent.seats, 2, "two copies, one row");
+        assert!(has_human(&log));
+        assert!(!has_human(&self_play(7, TradeMode::Full)));
+    }
+
+    #[test]
+    fn the_win_interval_is_clustered_by_game_not_by_seat() {
+        // An actor that holds all four seats wins every game it finishes:
+        // per seat that is 25% with binomial scatter, per game it is a
+        // certainty. The clustered interval knows the difference.
+        let mut c = Corpus::new(Config::of(&self_play(1, TradeMode::Full)));
+        let mut finished = 0;
+        for seed in 10..20 {
+            let log = self_play(seed, TradeMode::Full);
+            if game::analyse(&log).expect("replayable").winner.is_some() {
+                finished += 1;
+            }
+            c.add(&log, 0);
+        }
+        if finished == c.games && finished >= 2 {
+            let rows = c.actor_rows();
+            assert_eq!(
+                rows[0].half_width,
+                Some(0.0),
+                "every cluster agrees, so the width is exactly zero"
+            );
+        }
+    }
+
+    #[test]
+    fn per_turn_means_carry_their_n_and_the_n_shrinks() {
+        let mut c = Corpus::new(Config::of(&self_play(1, TradeMode::Full)));
+        for seed in 1..=4 {
+            c.add(&self_play(seed, TradeMode::Full), 0);
+        }
+        let rows = c.vp_turns.rows();
+        assert!(!rows.is_empty());
+        // Turn one was reached by every game; the last row by at least one;
+        // and n never grows with the turn, which is the truncation the type
+        // exists to keep visible.
+        assert_eq!(rows[0].2, c.games);
+        for pair in rows.windows(2) {
+            assert!(pair[0].2 >= pair[1].2, "n grew as games died off");
+            assert!(pair[0].0 + 1 == pair[1].0);
+        }
+        // And the means are believable: nobody has VP above ten.
+        for (_, mean, n) in &rows {
+            assert!(*mean >= 0.0 && *mean <= 10.0);
+            assert!(*n >= 1);
+        }
+    }
+
+    #[test]
+    fn rotation_still_lands_in_one_row_per_agent() {
+        // The A-4 rotation moves agents around the table; the actor table
+        // must see the agent, not the seat it happened to hold.
+        let mut c = Corpus::new(Config::of(&self_play(1, TradeMode::Full)));
+        for r in 0..4 {
+            c.add(&self_play_rotated(5, TradeMode::Full, r), 0);
+        }
+        let rows = c.actor_rows();
+        assert_eq!(rows.len(), 1);
+        // The seat histogram spreads across chairs rather than piling on one.
+        let key = &rows[0].who;
+        let spread = c.actors[key].seat_games.iter().filter(|n| **n > 0).count();
+        assert_eq!(spread, 4);
+    }
 
     #[test]
     fn a_corpus_refuses_a_game_from_another_configuration() {
