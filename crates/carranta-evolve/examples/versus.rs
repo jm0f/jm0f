@@ -3,7 +3,17 @@
 //! ```text
 //! cargo run --release -p carranta-evolve --example versus -- --champion champion.net
 //! cargo run --release -p carranta-evolve --example versus -- --champion c.net --rounds 2000
+//! cargo run --release -p carranta-evolve --example versus -- --champion c.net --against bots/trained-378.net
 //! ```
+//!
+//! `--against FILE` swaps the heuristic out for another champion file, which
+//! is the shipping question asked directly: a candidate does not have to beat
+//! the heuristic to earn a chair, it has to beat the champion holding one.
+//! Measured against the incumbent, a negative gap with its interval clear of
+//! zero *is* an improvement over what is deployed, with nothing inferred
+//! through a common yardstick. The heuristic stays the default because it is
+//! the pinned ruler every run and every generation is comparable on; this
+//! flag is for the head-to-head that ruler cannot give.
 //!
 //! The training loop already answers a version of this every generation, on
 //! held-out games and through the rating (E-10, E-11). This answers it the
@@ -47,6 +57,7 @@ const ARRANGEMENTS: [[u32; 4]; 6] = [
 
 fn main() {
     let mut champion = String::new();
+    let mut against = String::new();
     let mut rounds = 500usize;
     let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut seed = 90_210u64;
@@ -60,6 +71,7 @@ fn main() {
         let mut value = || args.next().unwrap_or_default();
         match flag.as_str() {
             "--champion" => champion = value(),
+            "--against" => against = value(),
             "--rounds" => rounds = value().parse().unwrap_or(rounds),
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
@@ -94,6 +106,21 @@ fn main() {
         eprintln!("{champion} is not a champion network file");
         std::process::exit(1);
     };
+    // The other side of the table: the pinned heuristic unless --against
+    // names a champion file, in which case the incumbent it names.
+    let opponent = if against.is_empty() {
+        None
+    } else {
+        let text = std::fs::read_to_string(&against).unwrap_or_else(|e| {
+            eprintln!("cannot read {against}: {e}");
+            std::process::exit(1);
+        });
+        let Some(parsed) = Net::parse(&text) else {
+            eprintln!("{against} is not a champion network file");
+            std::process::exit(1);
+        };
+        Some(parsed)
+    };
 
     // The market the champion was trained in, which is also the one a table
     // seating it enumerates. Measuring it anywhere else would be measuring a
@@ -113,7 +140,11 @@ fn main() {
         },
         ..Arena::default()
     };
-    let roster = [Brain::Anchor, Brain::Net(net)];
+    let (them, them_name) = match &opponent {
+        Some((net, generation)) => (Brain::Net(net.clone()), format!("trained@{generation}")),
+        None => (Brain::Anchor, "the pinned heuristic".to_string()),
+    };
+    let roster = [them, Brain::Net(net)];
 
     let jobs: Vec<NetJob> = (0..rounds)
         .flat_map(|r| {
@@ -124,7 +155,7 @@ fn main() {
         })
         .collect();
 
-    println!("trained@{generation} against the pinned heuristic");
+    println!("trained@{generation} against {them_name}");
     println!(
         "  {} seeds x 6 seatings = {} games, {mode:?} market, {threads} workers",
         rounds,
@@ -209,9 +240,14 @@ fn main() {
         outcomes.len() as f64 / secs
     );
     println!(
-        "  mean finishing position   champion {:.4}   heuristic {:.4}   (2.5 = even)",
+        "  mean finishing position   champion {:.4}   {them_short} {:.4}   (2.5 = even)",
         champ_positions / outcomes.len() as f64,
-        house_positions / outcomes.len() as f64
+        house_positions / outcomes.len() as f64,
+        them_short = if opponent.is_some() {
+            "incumbent"
+        } else {
+            "heuristic"
+        },
     );
     println!(
         "  wins                      champion {champion_wins} of {decided} decided ({:.1}%, 50% = even)",
@@ -228,14 +264,18 @@ fn main() {
     let verdict = if mean + half < 0.0 {
         "the champion is better on position, and the interval clears zero"
     } else if mean - half > 0.0 {
-        "the heuristic is better on position, and the interval clears zero"
+        if opponent.is_some() {
+            "the incumbent is better on position, and the interval clears zero"
+        } else {
+            "the heuristic is better on position, and the interval clears zero"
+        }
     } else {
         "no gap shown: the interval spans zero, so this is consistent with equal play"
     };
     println!("  {verdict}");
 
-    // Wins, on the same footing. Two champions sit against two anchors in
-    // every seating, so a half is even here and 50% is the null.
+    // Wins, on the same footing. Two of one side sit against two of the
+    // other in every seating, so a half is even here and 50% is the null.
     println!(
         "\n  wins {:.1}%  95% CI [{:.1}%, {:.1}%]",
         100.0 * win_mean,
