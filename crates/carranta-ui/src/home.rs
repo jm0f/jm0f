@@ -691,10 +691,12 @@ const EXTRA: &str = "
            font-variant-numeric: tabular-nums; }
 .pip { fill: #33261B; }
 .chitNum.red, .pip.red { fill: #C2492A; }
-/* The board answers a hover by lifting the tile it is over, disc and dots and
-   all. The row lifts together here, because the row is one click. */
-.laid .lay { transition: transform .1s ease-out; }
-.laid .lay:hover { transform: translateY(-2px); }
+/* The board answers a hover by lifting the one tile the cursor is over, disc
+   and dots and all, and this does the same. Per tile rather than per row: the
+   row is one click, but a row that rises as a block reads as a button the width
+   of the page, and the thing under the cursor is a tile. */
+.laid .tileHex { transition: transform .1s ease-out; }
+.laid .tileHex:hover { transform: translateY(-2px); }
 /* The one button on the page that starts something, in the colour the win is
    written in, and the same shape as a place badge so the family holds. */
 .go { display: inline-block; text-decoration: none; cursor: pointer;
