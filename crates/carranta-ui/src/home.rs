@@ -484,14 +484,20 @@ pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
     let cap = if all { usize::MAX } else { SHOWN };
     let mut b = String::from(TABLE_OPEN);
     b.push_str(
-        "<thead><tr><th></th><th>seats</th><th>turns</th>\
+        "<thead><tr><th></th><th>players</th><th>turns</th>\
          <th>result</th><th>place</th><th>stayed</th><th></th></tr></thead><tbody>",
     );
     for (i, g) in games.iter().take(cap).enumerate() {
+        let line = lines.get(i).cloned().unwrap_or_default();
+        // Who won, by name, because "seat 2 won" told the reader nothing and
+        // was wrong besides: the draw moves people, and seat nought stopped
+        // being the keyboard the day it did.
         let result = match g.winner {
-            // Seat nought is whoever was at the keyboard.
-            Some(0) => "<span class=\"up\">won</span>".to_string(),
-            Some(w) => format!("seat {w} won"),
+            Some(_) if line.you_won => "<span class=\"up\">you won</span>".to_string(),
+            Some(_) if !line.winner_name.is_empty() => {
+                format!("{} won", esc(&line.winner_name))
+            }
+            Some(_) => "a bot won".to_string(),
             None => "<span class=\"worth\">unfinished</span>".to_string(),
         };
         // One of the two is the thing to do and the other is beside it. Which is
@@ -500,7 +506,6 @@ pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
         let over = g.winner.is_some();
         let board = if over { " quiet" } else { "" };
         let study = if over { "" } else { " quiet" };
-        let line = lines.get(i).copied().unwrap_or_default();
         let _ = write!(
             b,
             "<tr><td>{name}</td><td>{seats}</td><td>{turns}</td>\
@@ -768,10 +773,12 @@ mod tests {
                 MineLine {
                     position: Some(2),
                     stayed: Some(true),
+                    ..MineLine::default()
                 },
                 MineLine {
                     position: Some(4),
                     stayed: Some(false),
+                    ..MineLine::default()
                 },
                 MineLine::default(),
             ],
@@ -1100,8 +1107,45 @@ mod tests {
         // Turns, counted the way the report counts them, not moves.
         assert_eq!(turns_of(&g), 2);
         assert!(html.contains("<td>2</td>"));
-        // Seat nought is whoever was at the keyboard, so their win is a win.
-        assert!(html.contains(">won</span>"));
+    }
+
+    #[test]
+    fn the_result_column_names_the_winner_instead_of_numbering_a_seat() {
+        // "seat 2 won" was doubly bad: it meant nothing to the reader, and
+        // once seats were drawn it stopped meaning what it once did. The
+        // column now says who: you, a person by name, or a bot.
+        let g = game("ffff-ffff-ffff", "Egon", Some(2));
+        let yours = MineLine {
+            position: Some(1),
+            stayed: Some(true),
+            you_won: true,
+            winner_name: String::new(),
+        };
+        let html = played(std::slice::from_ref(&g), std::slice::from_ref(&yours), true);
+        assert!(html.contains(">you won</span>"), "your win says so plainly");
+        assert!(!html.contains("seat 2"), "and no seat arithmetic");
+
+        let theirs = MineLine {
+            position: Some(3),
+            stayed: Some(true),
+            you_won: false,
+            winner_name: "Ines".to_string(),
+        };
+        let html = played(
+            std::slice::from_ref(&g),
+            std::slice::from_ref(&theirs),
+            true,
+        );
+        assert!(html.contains("<td>Ines won</td>"), "a person wins by name");
+
+        let bots = MineLine {
+            position: Some(2),
+            stayed: Some(true),
+            you_won: false,
+            winner_name: String::new(),
+        };
+        let html = played(std::slice::from_ref(&g), std::slice::from_ref(&bots), true);
+        assert!(html.contains("<td>a bot won</td>"));
     }
 
     #[test]

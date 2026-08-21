@@ -95,13 +95,20 @@ pub fn seat_ids_as(saved: &Saved, who: &dyn Aliases) -> Vec<SeatId> {
 
 /// One game of yours, as the games list describes it: where you finished,
 /// and whether you were still there.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MineLine {
     /// Your finishing place, one to four, for a game that ended with you
     /// found at a chair; nothing for one still going.
     pub position: Option<u8>,
     /// Whether you were at the table when it ended.
     pub stayed: Option<bool>,
+    /// Whether the winner was you. Said by the chairs after the draw, which
+    /// is what the old label got wrong: seat nought stopped being "whoever
+    /// was at the keyboard" the day seats were drawn.
+    pub you_won: bool,
+    /// What to call the winner when it was not you: a person's name, or
+    /// empty for a bot's chair, which the list words as the bot's win.
+    pub winner_name: String,
 }
 
 /// The lines for a list of your games, in the list's order.
@@ -119,11 +126,33 @@ pub fn mine_lines(mine: &[Saved], who: &dyn Aliases, principal: &str) -> Vec<Min
                 .chairs
                 .iter()
                 .position(|c| c.is_person() && !c.who.is_empty() && who.resolve(&c.who) == me);
+            let (you_won, winner_name) = match g.winner {
+                Some(w) => match g.setup.chairs.get(w as usize) {
+                    Some(c) if c.is_person() => (
+                        seat == Some(w as usize),
+                        if seat == Some(w as usize) {
+                            String::new()
+                        } else {
+                            c.name.clone()
+                        },
+                    ),
+                    _ => (false, String::new()),
+                },
+                None => (false, String::new()),
+            };
             let Some(seat) = seat else {
-                return MineLine::default();
+                return MineLine {
+                    you_won,
+                    winner_name,
+                    ..MineLine::default()
+                };
             };
             if g.winner.is_none() {
-                return MineLine::default();
+                return MineLine {
+                    you_won,
+                    winner_name,
+                    ..MineLine::default()
+                };
             }
             let stayed = g.setup.chairs.get(seat).map(|c| !c.left);
             let position = to_log_as(g, who)
@@ -133,7 +162,12 @@ pub fn mine_lines(mine: &[Saved], who: &dyn Aliases, principal: &str) -> Vec<Min
                     (seat < n)
                         .then(|| 1 + r.vp[..n].iter().filter(|&&v| v > r.vp[seat]).count() as u8)
                 });
-            MineLine { position, stayed }
+            MineLine {
+                position,
+                stayed,
+                you_won,
+                winner_name,
+            }
         })
         .collect()
 }
