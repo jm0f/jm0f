@@ -101,57 +101,111 @@ pub fn page(history: &[Saved], who: &dyn Aliases, viewer: &crate::home::Who) -> 
             .then((a.config.trade_mode as u8).cmp(&(b.config.trade_mode as u8)))
     });
 
+    // The console: one tab per section, the pattern the account and history
+    // pages already wear, so the page itself never scrolls; a long table
+    // scrolls inside its pane. The tab strip is the page's whole table of
+    // contents, and the ids are made here because the sections are counted
+    // here.
+    let mut extra = String::new();
+    for i in 0..sections.len() {
+        let _ = write!(
+            extra,
+            "#tabC{i}:checked ~ .tabs label[for=\"tabC{i}\"] {{ \
+             background: var(--primary); color: var(--primary-foreground); }}\
+             #tabC{i}:checked ~ .paneC{i} {{ display: block; }}\n",
+        );
+    }
+
     let mut b = String::new();
     let _ = write!(
         b,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>Across games · Carranta</title>{ICON}\
-         <style>{CSS}</style></head><body>\
+         <style>{CSS}{extra}</style></head><body>\
          {head}<main>",
         head = crate::report::masthead_as("across games", &[], "corpus", viewer),
     );
 
+    b.push_str("<div class=\"deck\">");
     if sections.is_empty() {
         b.push_str(
-            "<section><p class=\"blurb\">Nothing to count yet: this server has \
-             no saved games. Every finished game joins this page on its own.</p>\
-             </section>",
+            "<p class=\"blurb\">Nothing to count yet: this server has \
+             no saved games. Every finished game joins this page on its own.</p>",
         );
-    }
-    for s in &sections {
-        b.push_str(&section(s, &names));
+    } else {
+        for i in 0..sections.len() {
+            let _ = write!(
+                b,
+                "<input class=\"tabPick\" type=\"radio\" name=\"tab\" \
+                 id=\"tabC{i}\" tabindex=\"-1\"{}>",
+                if i == 0 { " checked" } else { "" },
+            );
+        }
+        b.push_str("<nav class=\"tabs\">");
+        for (i, s) in sections.iter().enumerate() {
+            let _ = write!(
+                b,
+                "<label for=\"tabC{i}\" title=\"{long}. Nothing here \
+                 crosses a configuration or pools people with self-play: a \
+                 bot corpus is bigger by orders of magnitude, and an average \
+                 over both is a bot average wearing a different \
+                 name.\">{short}</label>",
+                long = section_title(s),
+                short = tab_label(s),
+            );
+        }
+        b.push_str("</nav>");
+        for (i, s) in sections.iter().enumerate() {
+            let _ = write!(b, "<div class=\"pane paneC{i}\">");
+            b.push_str(&section(s, &names));
+            b.push_str("</div>");
+        }
     }
     if unreadable > 0 {
         let _ = write!(
             b,
-            "<section><p class=\"blurb\">{unreadable} saved \
-             {} this build could not replay {} left out of every number above.</p></section>",
+            "<p class=\"blurb\">{unreadable} saved \
+             {} this build could not replay {} left out of every number above.</p>",
             plural(unreadable, "game", "games"),
             if unreadable == 1 { "is" } else { "are" },
         );
     }
-    b.push_str("</main></body></html>");
+    b.push_str("</div></main></body></html>");
     b
+}
+
+/// The tab's word: short enough for a strip of several.
+fn tab_label(s: &Section) -> String {
+    format!(
+        "{:?} v{} · {}",
+        s.config.trade_mode,
+        s.config.rules_version,
+        if s.people { "people" } else { "self-play" },
+    )
+}
+
+/// The full name the heading used to carry, now the tab's tooltip.
+fn section_title(s: &Section) -> String {
+    format!(
+        "{:?} market · rules v{} · {}",
+        s.config.trade_mode,
+        s.config.rules_version,
+        if s.people {
+            "with people at the table"
+        } else {
+            "self-play"
+        },
+    )
 }
 
 fn section(s: &Section, names: &HashMap<u64, String>) -> String {
     let c = &s.corpus;
     let mut b = String::from("<section>");
+    // The tab names the configuration; the pane opens with its numbers alone.
     let _ = write!(
         b,
-        "<h2>{mode} market · rules v{rules} · {who}</h2>\
-         <p class=\"blurb\">{n} {games}, {f} finished, {t:.0} turns on average. \
-         Nothing on this page crosses a configuration or pools people with \
-         self-play: a bot corpus is bigger by orders of magnitude, and an \
-         average over both is a bot average wearing a different name.</p>",
-        mode = format!("{:?}", c.config.trade_mode),
-        rules = c.config.rules_version,
-        who = if s.people {
-            "with people at the table"
-        } else {
-            "self-play"
-        },
+        "<p class=\"blurb\">{n} {games}, {f} finished, {t:.0} turns on average.</p>",
         n = c.games,
         games = plural(c.games as usize, "game", "games"),
         f = c.finished,
@@ -173,10 +227,9 @@ fn seats(c: &Corpus) -> String {
     }
     let rates = c.seat_win_rate();
     let mut b = String::from(
-        "<h3>Seats</h3>\
-         <p class=\"blurb\">Whether going first is worth anything. The draw \
+        "<h3 title=\"Whether going first is worth anything. The draw \
          shuffles who sits where, so over enough games every seat holds every \
-         kind of player and the rates below are the seats' own.</p>",
+         kind of player and the rates below are the seats' own.\">Seats</h3>",
     );
     b.push_str(TABLE_OPEN);
     b.push_str(
@@ -206,20 +259,19 @@ fn actors(c: &Corpus, names: &HashMap<u64, String>) -> String {
         return String::new();
     }
     let mut b = String::from(
-        "<h3>Players</h3>\
-         <p class=\"blurb\">Everyone the record can tell apart: an agent is \
-         its name and build wherever it sits and however many chairs it \
-         holds, a person is themselves across every game including the ones \
-         played as a guest before signing up. The interval on a win rate is \
-         clustered by game, because chairs in one game win and lose together; \
-         conversion is the §10.4 residual, points scored above what the \
-         player's production predicts, and it is the closest thing here to \
-         skill with the luck taken out.</p>",
+        "<h3 title=\"Everyone the record can tell apart: an agent is its \
+         name and build wherever it sits, a person is themselves across \
+         every game including the ones played as a guest before signing \
+         up.\">Players</h3>",
     );
     b.push_str(TABLE_OPEN);
     b.push_str(
         "<thead><tr><th>player</th><th>games</th><th>seats</th><th>wins</th>\
-         <th>win rate</th><th>mean VP</th><th>conversion</th></tr></thead><tbody>",
+         <th title=\"The interval is clustered by game, because chairs in one \
+         game win and lose together.\">win rate</th><th>mean VP</th>\
+         <th title=\"The §10.4 residual: points scored above what the \
+         player's production predicts, the closest thing here to skill with \
+         the luck taken out.\">conversion</th></tr></thead><tbody>",
     );
     for row in &rows {
         let _ = write!(
@@ -248,12 +300,10 @@ fn turns(c: &Corpus) -> String {
         return String::new();
     }
     let mut b = String::from(
-        "<h3>Over the turns</h3>\
-         <p class=\"blurb\">Mean victory points per seat as games run on. The \
-         games column is not decoration: a game ends when somebody reaches \
-         ten, so the later rows average only the games still going, which are \
-         the slow ones. A mean shown without that count would be quietly \
-         biased, so none is.</p>",
+        "<h3 title=\"Mean victory points per seat as games run on. A game \
+         ends when somebody reaches ten, so the later rows average only the \
+         games still going, which are the slow ones; the games column is \
+         what keeps that honest.\">Over the turns</h3>",
     );
     b.push_str(TABLE_OPEN);
     b.push_str("<thead><tr><th>turn</th><th>mean VP</th><th>games</th></tr></thead><tbody>");
@@ -278,10 +328,9 @@ fn audit(c: &Corpus) -> String {
     }
     let a = c.dice_audit();
     format!(
-        "<h3>Dice</h3>\
-         <p class=\"blurb\">The generator over every roll this section holds, \
+        "<h3 title=\"The generator over every roll this section holds, \
          pooled. One game's dice being strange is weather and belongs on that \
-         game's report; the pool is the climate.</p>\
+         game's report; the pool is the climate.\">Dice</h3>\
          <p class=\"blurb\">{n} rolls · sevens {sevens:.1}% against 16.7% \
          expected · KL from theory {kl:.5} bits · chi-squared p = {p:.2}</p>",
         n = c.rolls.len(),
@@ -389,8 +438,12 @@ mod tests {
         let html = page(&history, &NoAliases, &nobody_who());
         assert!(html.contains("with people at the table"));
         assert!(html.contains("self-play"));
-        // Two sections of one configuration, not one of two games.
+        // Two tabs of one configuration, not one of two games; each is a
+        // pane of the console, and the first tab is the open one.
         assert_eq!(html.matches("Full market · rules v").count(), 2);
+        assert_eq!(html.matches("class=\"pane paneC").count(), 2);
+        assert!(html.contains("id=\"tabC0\" tabindex=\"-1\" checked"));
+        assert!(html.contains(">Full v1 · people</label>"));
     }
 
     #[test]
