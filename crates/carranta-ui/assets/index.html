@@ -1130,7 +1130,10 @@
   /* Nothing in the header but the mark. The report is about a game that has not
      happened, New game leads to the screen you are standing on, and leaving is
      what the mark does. */
-  body.atLobby .headLinks { display: none; }
+  /* The lobby keeps the site's pills: what it hides is the page links, New
+     game above a page that is a new game, and the leave button before there
+     is anything to leave. */
+  body.atLobby .headLinks .headLink { display: none; }
   .lobbyLead { margin: .2em 0 1.6em; color: var(--muted-foreground); }
   .field { margin-bottom: 1.35em; }
   /* Sized to its words, not to the card. As a full-width block its hover area
@@ -1714,6 +1717,25 @@
 <script>
 const COLOURS = ['var(--p0)','var(--p1)','var(--p2)','var(--p3)'];
 const SIZE = 62;                 // hex radius in svg units
+
+// The header's last pill, whoever you are, the same one every server-rendered
+// page wears. Asked for once: the answer does not change while a page lives,
+// and a failure leaves the pills that are already there.
+fetch('/api/whoami').then(r => r.json()).then(w => {
+  const tabs = document.querySelector('.headTabs');
+  if (!tabs) return;
+  const a = document.createElement('a');
+  if (w.signedIn) {
+    a.href = '/account';
+    a.textContent = (w.name || '').trim() || 'Signed in';
+  } else if (w.offered) {
+    a.href = '/signin';
+    a.textContent = 'Sign in';
+  } else {
+    return;
+  }
+  tabs.appendChild(a);
+}).catch(() => {});
 // The tile is cut a little inside the lattice, and the board shows through the
 // difference. That gap used to be a fat stroke of the panel's colour laid over
 // the lattice line, which put pale paint 1.5 units *inside* the terrain and so
