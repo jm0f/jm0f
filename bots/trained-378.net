@@ -1,5 +1,6 @@
 carranta-net 1
 generation 378
+run neat-4
 inputs 32
 link 0 33 1.5324445
 link 1 33 13.416159500000003

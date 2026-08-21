@@ -333,7 +333,10 @@ fn export_champion(ckpt: &std::path::Path, which: &str, to: Option<&std::path::P
         println!("\n  export one with --export <champion|generation|best>");
         return;
     }
-    let Some((label, text)) = trainer.export(which) else {
+    // The run's name comes off the directory the checkpoint lives in:
+    // `runs/neat-6/checkpoint.txt` is run `neat-6`.
+    let run = ckpt.parent().map(|d| run_name(d)).unwrap_or_default();
+    let Some((label, text)) = trainer.export(which, &run) else {
         eprintln!(
             "no champion `{which}` in {}; --export list names them",
             ckpt.display()
@@ -473,7 +476,7 @@ fn run_neat(args: Args) {
         // beside the checkpoint every generation, so "deploy the latest" is a
         // copy of one small text file at any moment of a run.
         if let Some(g) = trainer.champion_genome() {
-            let text = g.compile().show(r.generation);
+            let text = g.compile().show_from(r.generation, &run_name(&args.out));
             let temp = champion_file.with_extension("tmp");
             if std::fs::write(&temp, text)
                 .and_then(|_| std::fs::rename(&temp, &champion_file))
@@ -892,4 +895,11 @@ mod tests {
         assert_eq!(one.above_anchor, many.above_anchor);
         assert_eq!(one.games, many.games);
     }
+}
+
+/// The run's name, read off its directory: `runs/neat-6` is run `neat-6`.
+fn run_name(out: &std::path::Path) -> String {
+    out.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }

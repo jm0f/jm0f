@@ -240,7 +240,7 @@ impl NeatTrainer {
     /// on the row of `history.csv` you were reading, and `best` picks by
     /// conservative rating rather than by recency, because the newest champion
     /// is not reliably the strongest one.
-    pub fn export(&self, which: &str) -> Option<(String, String)> {
+    pub fn export(&self, which: &str, run: &str) -> Option<(String, String)> {
         let which = which.trim();
         let rows = self.ladder.standings(0);
         let mut mine = rows.iter().filter(|(v, _, _)| v.id != ANCHOR);
@@ -255,7 +255,10 @@ impl NeatTrainer {
                         .is_ok_and(|generation| v.generation == generation)
             })?
         };
-        Some((v.label.clone(), v.genome.compile().show(v.generation)))
+        Some((
+            v.label.clone(),
+            v.genome.compile().show_from(v.generation, run),
+        ))
     }
 
     /// Run one generation.
@@ -785,21 +788,21 @@ mod tests {
 
         // By generation, by label, and by rating, all naming a real network.
         for which in ["2", &roster[0].0.clone(), "best"] {
-            let (label, text) = t.export(which).expect("a champion by {which}");
+            let (label, text) = t.export(which, "neat-test").expect("a champion by {which}");
             assert!(roster.iter().any(|(l, ..)| *l == label));
             let (net, generation) = Net::parse(&text).expect("a readable network");
             assert_eq!(net.inputs(), crate::neat::INPUTS);
             assert!((1..=3).contains(&generation), "stamped with its own age");
         }
         // A generation picks that generation, not merely something.
-        let (label, text) = t.export("2").expect("generation two");
+        let (label, text) = t.export("2", "neat-test").expect("generation two");
         assert!(label.starts_with("g002"));
         assert_eq!(Net::parse(&text).expect("readable").1, 2);
         // And asking for what is not there answers nothing rather than
         // something near it, because a champion silently substituted is a
         // rating attached to the wrong player.
-        assert!(t.export("99").is_none());
-        assert!(t.export("g999-0001").is_none());
+        assert!(t.export("99", "neat-test").is_none());
+        assert!(t.export("g999-0001", "neat-test").is_none());
     }
 
     #[test]

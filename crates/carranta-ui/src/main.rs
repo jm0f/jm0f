@@ -155,7 +155,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            let Some((net, generation)) = carranta_bot::net::Net::parse(&text) else {
+            let Some((net, generation, run)) = carranta_bot::net::Net::parse_meta(&text) else {
                 eprintln!("{} is not a champion network file", path.display());
                 std::process::exit(1);
             };
@@ -169,7 +169,11 @@ fn main() {
                 );
                 std::process::exit(1);
             }
-            champions.push(carranta_ui::server::Champion { generation, net });
+            champions.push(carranta_ui::server::Champion {
+                generation,
+                net,
+                run,
+            });
         }
         server = server.with_champions(champions);
         let named: Vec<String> = server.roster().into_iter().map(|(id, _)| id).collect();

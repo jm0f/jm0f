@@ -208,10 +208,23 @@ impl Net {
     /// what is written parses back to the identical bits: a champion shipped
     /// to a server is the champion that was trained, not a rounding of it.
     pub fn show(&self, generation: u32) -> String {
+        self.show_from(generation, "")
+    }
+
+    /// The same, naming the run the champion came from.
+    ///
+    /// The generation alone is the identity a rating hangs on, and it
+    /// collides across runs: two runs both have a generation 378, and only
+    /// one of them was worth shipping. The run line is the provenance a
+    /// person reads, not a new identity, which is why nothing keys on it.
+    pub fn show_from(&self, generation: u32, run: &str) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();
         let _ = writeln!(out, "carranta-net 1");
         let _ = writeln!(out, "generation {generation}");
+        if !run.is_empty() {
+            let _ = writeln!(out, "run {run}");
+        }
         let _ = writeln!(out, "inputs {}", self.inputs);
         for &(from, to, w) in &self.links {
             let _ = writeln!(out, "link {from} {to} {w:?}");
@@ -222,8 +235,14 @@ impl Net {
     /// Read a network written by [`Net::show`]. Answers the generation too,
     /// which is the version a deployed champion plays under.
     pub fn parse(text: &str) -> Option<(Net, u32)> {
+        Self::parse_meta(text).map(|(net, generation, _)| (net, generation))
+    }
+
+    /// The same, with the run the file says it came from, when it says.
+    pub fn parse_meta(text: &str) -> Option<(Net, u32, Option<String>)> {
         let mut inputs = None;
         let mut generation = 0u32;
+        let mut run = None;
         let mut links = Vec::new();
         for line in text.lines() {
             let line = line.trim();
@@ -238,6 +257,7 @@ impl Net {
                     }
                 }
                 "generation" => generation = parts.next()?.parse().ok()?,
+                "run" => run = Some(parts.next()?.to_string()),
                 "inputs" => inputs = Some(parts.next()?.parse().ok()?),
                 "link" => {
                     let from = parts.next()?.parse().ok()?;
@@ -248,7 +268,7 @@ impl Net {
                 _ => return None,
             }
         }
-        Net::assemble(inputs?, &links).map(|n| (n, generation))
+        Net::assemble(inputs?, &links).map(|n| (n, generation, run))
     }
 }
 
