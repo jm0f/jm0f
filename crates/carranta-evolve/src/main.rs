@@ -440,6 +440,11 @@ fn run_neat(args: Args) {
     let started = std::time::Instant::now();
     let mut total_games = 0u64;
     let mut done = 0u32;
+    // The body of the last champion archived under `champions/`, so a reign
+    // of a hundred generations is one file rather than a hundred copies. A
+    // resume starts empty and re-archives the incumbent once, which is the
+    // cheap way to be sure the archive holds it.
+    let mut archived = String::new();
     while args.generations == 0 || done < args.generations {
         if stop.exists() {
             println!("\nstop file found, finishing here");
@@ -478,11 +483,34 @@ fn run_neat(args: Args) {
         if let Some(g) = trainer.champion_genome() {
             let text = g.compile().show_from(r.generation, &run_name(&args.out));
             let temp = champion_file.with_extension("tmp");
-            if std::fs::write(&temp, text)
+            if std::fs::write(&temp, &text)
                 .and_then(|_| std::fs::rename(&temp, &champion_file))
                 .is_err()
             {
                 eprintln!("warning: could not write {}", champion_file.display());
+            }
+            // And kept under `champions/` whenever the network itself is new.
+            // A net is a few kilobytes, so a run's whole succession costs less
+            // than a screenshot, and the archive is what makes a striking row
+            // in the console retestable afterwards: `champion.net` remembers
+            // one generation, this directory remembers them all. The body is
+            // what is compared, because the generation header changes every
+            // time and the network mostly does not.
+            let body: String = text
+                .lines()
+                .filter(|l| !l.starts_with("generation"))
+                .collect();
+            if body != archived {
+                let dir = args.out.join("champions");
+                let name = dir.join(format!("gen-{:05}.net", r.generation));
+                if std::fs::create_dir_all(&dir)
+                    .and_then(|_| std::fs::write(&name, &text))
+                    .is_ok()
+                {
+                    archived = body;
+                } else {
+                    eprintln!("warning: could not write {}", name.display());
+                }
             }
         }
         let connectivity = trainer.ladder.connectivity(1);
