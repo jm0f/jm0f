@@ -13,14 +13,25 @@ use std::fmt::Write as _;
 use carranta_analytics::corpus::{Config, Corpus, Who as Actor};
 
 use crate::account::sat;
-use crate::analysis::{player_number, to_log_as};
+use crate::analysis::{Finishing, player_number, to_log_as};
 use crate::home::Who;
 use crate::people::Aliases;
 use crate::report::{CSS, ICON};
 use crate::store::Saved;
 
 /// The page, for the signed-in person `principal`.
-pub fn page(history: &[Saved], aliases: &dyn Aliases, principal: &str, who: &Who) -> String {
+///
+/// `mine` is the games that are theirs the way the home page counts them,
+/// played in or dealt, through the claims; `staying` is whether they finish
+/// what they start, which the games tab says under the list.
+pub fn page(
+    history: &[Saved],
+    mine: &[Saved],
+    staying: Finishing,
+    aliases: &dyn Aliases,
+    principal: &str,
+    who: &Who,
+) -> String {
     let me = player_number(&aliases.resolve(principal));
 
     let mut b = String::new();
@@ -33,8 +44,10 @@ pub fn page(history: &[Saved], aliases: &dyn Aliases, principal: &str, who: &Who
          {head}<main>",
         head = crate::report::masthead_as(
             "your history",
-            &[("/corpus", "Across games")],
+            &[],
             &crate::home::account(who),
+            "history",
+            true,
         ),
     );
 
@@ -42,12 +55,18 @@ pub fn page(history: &[Saved], aliases: &dyn Aliases, principal: &str, who: &Who
         "<div class=\"deck\">\
          <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabOverview\" \
          tabindex=\"-1\" checked>\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabGames\" \
+         tabindex=\"-1\">\
          <nav class=\"tabs\">\
          <label for=\"tabOverview\">Overview</label>\
+         <label for=\"tabGames\">Games</label>\
          </nav>",
     );
     b.push_str("<div class=\"pane paneOverview\">");
     b.push_str(&record(history, aliases, me));
+    b.push_str("</div>");
+    b.push_str("<div class=\"pane paneGames\">");
+    b.push_str(&crate::home::played(mine, staying, true));
     b.push_str("</div></div></main></body></html>");
     b
 }
@@ -133,9 +152,11 @@ const TABLE_OPEN: &str = "<div class=\"tw\"><table>";
 const TABLE_CLOSE: &str = "</tbody></table></div>";
 
 const EXTRA: &str = "
-#tabOverview:checked ~ .tabs label[for=\"tabOverview\"] {
+#tabOverview:checked ~ .tabs label[for=\"tabOverview\"],
+#tabGames:checked ~ .tabs label[for=\"tabGames\"] {
   background: var(--primary); color: var(--primary-foreground); }
 #tabOverview:checked ~ .paneOverview { display: block; }
+#tabGames:checked ~ .paneGames { display: block; }
 ";
 
 #[cfg(test)]
@@ -189,8 +210,17 @@ mod tests {
     #[test]
     fn the_overview_is_the_record_in_the_console_shape() {
         let history = vec![played(21, "egonkey000000000", "Egon")];
-        let html = page(&history, &NoAliases, "egonkey000000000", &signed_in("Egon"));
-        assert!(html.contains("id=\"tabOverview\""), "one tab, checked");
+        let html = page(
+            &history,
+            &history,
+            Finishing::default(),
+            &NoAliases,
+            "egonkey000000000",
+            &signed_in("Egon"),
+        );
+        assert!(html.contains("id=\"tabOverview\""), "the overview tab");
+        assert!(html.contains("id=\"tabGames\""), "the games tab");
+        assert!(html.contains("Your games"), "the list moved in from home");
         assert!(html.contains("What your games add up to"));
         assert!(html.contains("<td>Full</td>"), "their row, by market");
         assert!(!html.contains("<script"), "no script on the history page");
@@ -198,7 +228,14 @@ mod tests {
 
     #[test]
     fn an_empty_history_says_so() {
-        let html = page(&[], &NoAliases, "egonkey000000000", &signed_in("Egon"));
+        let html = page(
+            &[],
+            &[],
+            Finishing::default(),
+            &NoAliases,
+            "egonkey000000000",
+            &signed_in("Egon"),
+        );
         assert!(html.contains("Nothing yet"));
     }
 }

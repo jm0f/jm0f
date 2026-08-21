@@ -113,19 +113,18 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> Str
         // hero for the eye, and on any laptop it fell back to a strip that was
         // a second header wearing a card. Links to the page's own button stay
         // out; links to the places this page does not go itself belong here.
-        head = crate::report::masthead_home(
-            &if who.signed_in {
-                vec![("/history", "History"), ("/corpus", "Across games")]
-            } else {
-                vec![("/corpus", "Across games")]
-            },
-            &account(who),
-        ),
+        head = crate::report::masthead_home(&[], &account(who), who.signed_in),
     );
 
     b.push_str(&deal());
     b.push_str(&joining(open));
-    b.push_str(&played(mine, staying, who.signed_in));
+    // A guest's games live here, because a guest has nowhere else they can
+    // reach them; an account's games live behind History, where the header
+    // already points, and repeating the list on the front page would make
+    // the door and the room the same place.
+    if !who.signed_in {
+        b.push_str(&played(mine, staying, who.signed_in));
+    }
     b.push_str("</main></body></html>");
     b
 }
@@ -465,7 +464,7 @@ fn joining(open: &[Open]) -> String {
 /// Absent rather than empty, for the same reason the table list is: a first
 /// visit has no history and does not need to be told twice that it has none.
 /// The page grows as somebody plays, and starts as the one thing they came for.
-fn played(mine: &[Saved], staying: Finishing, signed_in: bool) -> String {
+pub(crate) fn played(mine: &[Saved], staying: Finishing, signed_in: bool) -> String {
     if mine.is_empty() {
         return String::new();
     }

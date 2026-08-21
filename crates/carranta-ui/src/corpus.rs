@@ -46,7 +46,7 @@ struct Section {
 /// Order of `history` does not matter to the numbers; the one thing it decides
 /// is which spelling of a person's name wins, and the caller passes oldest
 /// first so the latest one does.
-pub fn page(history: &[Saved], who: &dyn Aliases, account: &str) -> String {
+pub fn page(history: &[Saved], who: &dyn Aliases, account: &str, signed_in: bool) -> String {
     let mut sections: Vec<Section> = Vec::new();
     let mut names: HashMap<u64, String> = HashMap::new();
     let mut unreadable = 0usize;
@@ -109,7 +109,7 @@ pub fn page(history: &[Saved], who: &dyn Aliases, account: &str) -> String {
          <title>Across games · Carranta</title>{ICON}\
          <style>{CSS}</style></head><body>\
          {head}<main>",
-        head = crate::report::masthead_as("across games", &[], account),
+        head = crate::report::masthead_as("across games", &[], account, "corpus", signed_in),
     );
 
     if sections.is_empty() {
@@ -378,7 +378,7 @@ mod tests {
             played(1, TradeMode::Full, bots()),
             played(2, TradeMode::Full, with_person("Egon")),
         ];
-        let html = page(&history, &NoAliases, "");
+        let html = page(&history, &NoAliases, "", false);
         assert!(html.contains("with people at the table"));
         assert!(html.contains("self-play"));
         // Two sections of one configuration, not one of two games.
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn an_agent_is_named_by_its_build_and_a_person_by_their_chair() {
         let history = vec![played(3, TradeMode::Full, with_person("Egon"))];
-        let html = page(&history, &NoAliases, "");
+        let html = page(&history, &NoAliases, "", false);
         assert!(html.contains("trained@378"), "the champion's row");
         assert!(html.contains("house@1"), "the house rows pooled");
         assert!(html.contains("Egon"), "the person under their name");
@@ -400,7 +400,7 @@ mod tests {
             played(4, TradeMode::Full, bots()),
             played(5, TradeMode::Disabled, bots()),
         ];
-        let html = page(&history, &NoAliases, "");
+        let html = page(&history, &NoAliases, "", false);
         assert!(html.contains("Full market"));
         assert!(html.contains("Disabled market"));
     }
@@ -411,7 +411,7 @@ mod tests {
             played(6, TradeMode::Full, bots()),
             played(7, TradeMode::Full, bots()),
         ];
-        let html = page(&history, &NoAliases, "");
+        let html = page(&history, &NoAliases, "", false);
         assert!(html.contains("Over the turns"));
         assert!(html.contains("<th>games</th>"), "the n column is there");
     }
@@ -423,14 +423,14 @@ mod tests {
             TradeMode::Full,
             with_person("<script>alert(1)</script>"),
         )];
-        let html = page(&history, &NoAliases, "");
+        let html = page(&history, &NoAliases, "", false);
         assert!(!html.contains("<script"), "no script on the corpus page");
         assert!(html.contains("&lt;script&gt;"), "the name is escaped");
     }
 
     #[test]
     fn an_empty_server_is_still_a_page() {
-        let html = page(&[], &NoAliases, "");
+        let html = page(&[], &NoAliases, "", false);
         assert!(html.contains("Nothing to count yet"));
     }
 }

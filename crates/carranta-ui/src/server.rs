@@ -2385,11 +2385,32 @@ impl Server {
                 };
                 let mut history = self.store.all();
                 history.reverse();
+                // Their games, counted the way the home page counts them:
+                // played in or dealt, through the claims (P-1).
+                let me = crate::people::Aliases::resolve(&self.people, &player);
+                let mine: Vec<crate::store::Saved> = self
+                    .store
+                    .all()
+                    .into_iter()
+                    .filter(|g| {
+                        let is_mine = |key: &str| {
+                            !key.is_empty()
+                                && crate::people::Aliases::resolve(&self.people, key) == me
+                        };
+                        is_mine(&g.by)
+                            || g.setup
+                                .chairs
+                                .iter()
+                                .any(|c| c.is_person() && is_mine(&c.who))
+                    })
+                    .collect();
+                let staying = crate::analysis::finishing(&mine, &player, &self.people);
                 return respond(
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::history::page(&history, &self.people, &player, &who).as_bytes(),
+                    crate::history::page(&history, &mine, staying, &self.people, &player, &who)
+                        .as_bytes(),
                 );
             }
             ("POST", "/account/name") => {
@@ -2488,7 +2509,13 @@ impl Server {
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::corpus::page(&history, &self.people, &strip).as_bytes(),
+                    crate::corpus::page(
+                        &history,
+                        &self.people,
+                        &strip,
+                        self.people.has_account(&player),
+                    )
+                    .as_bytes(),
                 );
             }
             // The analytics for one game (§10). Rendered here rather than
@@ -2520,7 +2547,13 @@ impl Server {
                         &mut stream,
                         200,
                         "text/html; charset=utf-8",
-                        crate::report::page(&saved, &study, &strip).as_bytes(),
+                        crate::report::page(
+                            &saved,
+                            &study,
+                            &strip,
+                            self.people.has_account(&player),
+                        )
+                        .as_bytes(),
                     ),
                     None => respond(
                         &mut stream,
