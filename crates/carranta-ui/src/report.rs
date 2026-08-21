@@ -4653,6 +4653,22 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
            white-space: nowrap; }
 /* A button that reads as the links beside it, because it does the same kind of
    thing and only needs to be a button so that pressing it is a POST. */
+/* The application's one action button, shared: the home page named it and
+   the account page proved it belongs to every page with a form. */
+/* The one button on the page that starts something, in the colour the win is
+   written in, and the same shape as a place badge so the family holds. */
+.go { display: inline-block; text-decoration: none; cursor: pointer;
+      font: 600 15px Figtree, system-ui, sans-serif;
+      background: var(--primary); color: var(--primary-foreground);
+      border: 1px solid var(--primary); border-radius: var(--radius-md);
+      padding: .5em 1.1em; }
+.go:hover { filter: brightness(1.06); }
+.go:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+.go.small { font-size: 13px; padding: .35em .7em; }
+/* A second action beside a first is quieter: same shape, the page's own ink. */
+.go.quiet { background: var(--card); color: var(--muted-foreground);
+            border-color: var(--border); }
+.go.quiet:hover { color: var(--foreground); border-color: var(--muted-foreground); }
 a.headWho { text-decoration: none; }
 a.headWho:hover { color: var(--primary); }
 .headOut { display: flex; margin: 0; }

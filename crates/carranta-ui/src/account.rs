@@ -153,12 +153,29 @@ pub fn page(
         ),
     );
 
-    // ---- what you are called ------------------------------------------------
-    b.push_str("<section><h2>What you are called</h2>");
+    // The deck: one card the width of the window, the lobby's own shape, with
+    // the two tabs riding a radio the way the front page's deals do, because
+    // this page keeps the no-script rule and needs nothing more. The card
+    // holds to the window's height and the panes scroll inside it, so the
+    // frame never leaves the screen however long a record grows.
+    b.push_str(
+        "<div class=\"deck\">\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabAccount\" \
+         tabindex=\"-1\" checked>\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabDealing\" \
+         tabindex=\"-1\">\
+         <nav class=\"tabs\">\
+         <label for=\"tabAccount\">Account</label>\
+         <label for=\"tabDealing\">Default game settings</label>\
+         </nav>",
+    );
+
+    // ---- the Account pane ---------------------------------------------------
+    b.push_str("<div class=\"pane paneAccount\">");
+    b.push_str("<section><h2>Name</h2>");
     b.push_str(
         "<p class=\"blurb\">The name new tables will offer for your chair. \
-         Games already written down keep the name they were played under, \
-         because a record is of what happened.</p>",
+         Games already written down keep the name they were played under.</p>",
     );
     let _ = write!(
         b,
@@ -170,31 +187,130 @@ pub fn page(
     );
     b.push_str("</section>");
 
-    // ---- how you are signed in ----------------------------------------------
-    b.push_str("<section><h2>How you are signed in</h2>");
+    b.push_str(&activity(history, aliases, me));
+
+    b.push_str("<section><h2>Signed in</h2>");
     b.push_str(
         "<p class=\"blurb\">Through Google. What this server keeps of that is \
          an opaque subject and nothing else: not your email address, not your \
          Google name, not your picture. Signing out removes this browser's \
-         key; the account and its games stay, and signing in again picks them \
-         back up.</p>",
+         key; the account and its games stay.</p>",
     );
     b.push_str(
         "<form class=\"headOut\" method=\"post\" action=\"/signout\">\
          <button class=\"go small quiet\" type=\"submit\">Sign out</button></form>",
     );
-    b.push_str("</section>");
+    b.push_str("</section></div>");
 
-    // ---- how you deal -------------------------------------------------------
+    // ---- the Default game settings pane -------------------------------------
+    b.push_str("<div class=\"pane paneDealing\">");
     b.push_str(&dealing(defaults));
-
-    // ---- what your games add up to ------------------------------------------
     b.push_str(&record(history, aliases, me));
-    b.push_str("</main></body></html>");
+    b.push_str("</div>");
+
+    b.push_str("</div></main></body></html>");
     b
 }
 
-/// The person's own line of the corpus, one section per configuration.
+/// Whether this person sat in this game.
+fn sat(saved: &Saved, aliases: &dyn Aliases, me: u64) -> bool {
+    saved
+        .setup
+        .chairs
+        .iter()
+        .any(|c| c.is_person() && player_number(&aliases.resolve(&c.who)) == me)
+}
+
+/// The last half year of play, one cell a day, the way a contribution graph
+/// draws it: weeks as columns, Monday at the top, today in the last column.
+///
+/// Drawn from the games' own dealt stamps, which is the one clock the store
+/// already keeps. Server time, since the page has no script to ask a browser
+/// what day it thinks it is; a game dealt near midnight may land a cell off
+/// from the player's own calendar, which is what every such graph accepts.
+fn activity(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
+    const WEEKS: usize = 26;
+    let today = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+        / 86_400_000) as i64;
+    // Day zero of the epoch was a Thursday; Monday-first columns.
+    let weekday = |day: i64| (((day + 3) % 7) + 7) % 7;
+    let last_monday = today - weekday(today);
+    let first = last_monday - (WEEKS as i64 - 1) * 7;
+
+    let mut counts = std::collections::HashMap::new();
+    for saved in history {
+        if !sat(saved, aliases, me) {
+            continue;
+        }
+        let day = (saved.dealt / 86_400_000) as i64;
+        if day >= first {
+            *counts.entry(day).or_insert(0u32) += 1;
+        }
+    }
+    let played: u32 = counts.values().sum();
+
+    let mut b = String::from("<section><h2>Activity</h2>");
+    let _ = write!(
+        b,
+        "<p class=\"blurb\">{played} {} in the last half year, dealt or sat \
+         in, finished or not: the graph counts sitting down.</p>",
+        if played == 1 { "game" } else { "games" },
+    );
+    b.push_str("<div class=\"weeks\">");
+    for w in 0..WEEKS as i64 {
+        b.push_str("<div class=\"week\">");
+        for d in 0..7 {
+            let day = first + w * 7 + d;
+            if day > today {
+                b.push_str("<span class=\"day off\"></span>");
+                continue;
+            }
+            let n = counts.get(&day).copied().unwrap_or(0);
+            let level = match n {
+                0 => 0,
+                1 => 1,
+                2..=3 => 2,
+                4..=6 => 3,
+                _ => 4,
+            };
+            let (y, m, dd) = ymd(day);
+            let _ = write!(
+                b,
+                "<span class=\"day l{level}\" title=\"{n} {} on {y:04}-{m:02}-{dd:02}\"></span>",
+                if n == 1 { "game" } else { "games" },
+            );
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</div>");
+    b.push_str(
+        "<p class=\"scale\">none<span class=\"day l1\"></span>\
+         <span class=\"day l2\"></span><span class=\"day l3\"></span>\
+         <span class=\"day l4\"></span>plenty</p>",
+    );
+    b.push_str("</section>");
+    b
+}
+
+/// Days since the epoch to a calendar date, the civil-from-days arithmetic,
+/// here so a tooltip can name a day without the workspace growing a calendar
+/// dependency for one line of text.
+fn ymd(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// The person's own line of the corpus, one section per configuration./// The person's own line of the corpus, one section per configuration.
 ///
 /// Built by the same fold the across-games page uses, over only the games
 /// this person sat in, and read out of the same actor table, so the numbers
@@ -202,12 +318,7 @@ pub fn page(
 fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
     let mut corpora: Vec<Corpus> = Vec::new();
     for saved in history {
-        let sat = saved
-            .setup
-            .chairs
-            .iter()
-            .any(|c| c.is_person() && player_number(&aliases.resolve(&c.who)) == me);
-        if !sat {
+        if !sat(saved, aliases, me) {
             continue;
         }
         let Some(log) = to_log_as(saved, aliases) else {
@@ -350,12 +461,43 @@ fn dealing(d: &Defaults) -> String {
 /* The two forms, in the page's own idiom: text inputs and selects at the
 card's size, labels as quiet words beside them, one control to a line in
 the dealing grid so ten settings read as a list rather than a wall. */
+/* The deck: the lobby's own card at the window's width, holding two panes
+behind a segmented control. The tabs are the lobby's pill toggle drawn in
+CSS alone: a radio remembers the pane, the labels are the pills, and the
+checked one wears the primary the way the lobby's active setting does. */
 const EXTRA: &str = "
+main { max-width: none; }
+.deck { display: flex; flex-direction: column;
+        max-height: calc(100vh - 7.5rem);
+        background: var(--card); border: 1px solid var(--border);
+        border-radius: var(--radius-lg); padding: clamp(12px, 2vw, 28px);
+        box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07); }
+.tabPick { position: absolute; width: 1px; height: 1px; opacity: 0;
+           pointer-events: none; }
+.tabs { display: flex; gap: 4px; align-self: flex-start;
+        background: var(--background); border-radius: var(--radius-md);
+        padding: 4px; margin-bottom: .6rem; }
+.tabs label { font: 600 14px Figtree, system-ui, sans-serif; cursor: pointer;
+              color: var(--muted-foreground); padding: .45em 1em;
+              border-radius: var(--radius-md); }
+#tabAccount:checked ~ .tabs label[for=\"tabAccount\"],
+#tabDealing:checked ~ .tabs label[for=\"tabDealing\"] {
+  background: var(--primary); color: var(--primary-foreground); }
+.pane { display: none; overflow-y: auto; min-height: 0; }
+#tabAccount:checked ~ .paneAccount { display: block; }
+#tabDealing:checked ~ .paneDealing { display: block; }
+/* Sections inside the deck are the lobby's: a small capital heading over its
+   controls, not the report's cards, because this is a console and not a
+   reading page. */
+.pane section { border: 0; background: none; box-shadow: none; padding: .4rem 0 .9rem;
+                margin: 0; }
+.pane h2 { font: 600 12px Figtree, system-ui, sans-serif; text-transform: uppercase;
+           letter-spacing: .08em; color: var(--muted-foreground); margin: 0 0 .5rem; }
 .rename { display: flex; gap: .6em; align-items: center; margin-top: .4rem; }
 .rename input { flex: 0 1 22em; }
 .rename input, .dealing input, .dealing select {
   font: 400 14px Figtree, system-ui, sans-serif; color: var(--foreground);
-  background: var(--card); border: 1px solid var(--border);
+  background: var(--background); border: 1px solid var(--border);
   border-radius: var(--radius-md); padding: .45em .6em; }
 .dealing { display: grid; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr));
            gap: .7em 1.2em; align-items: center; margin-top: .4rem; }
@@ -363,6 +505,19 @@ const EXTRA: &str = "
                  gap: .8em; font-size: 14px; color: var(--muted-foreground); }
 .dealing input { width: 6em; }
 .dealing button { grid-column: 1 / -1; justify-self: start; margin-top: .3rem; }
+/* The activity graph: weeks as columns, a day a cell, the primary's own ink
+   deepening with the count. Cells are spans with titles, which is all a
+   tooltip needs and all a no-script page has. */
+.weeks { display: flex; gap: 3px; overflow-x: auto; padding-bottom: .3rem; }
+.week { display: flex; flex-direction: column; gap: 3px; }
+.day { width: 11px; height: 11px; border-radius: 2px; background: var(--background); }
+.day.off { background: none; }
+.day.l1 { background: #F2CDB2; }
+.day.l2 { background: #EDA477; }
+.day.l3 { background: #E8703C; }
+.day.l4 { background: #C2492A; }
+.scale { display: flex; gap: 3px; align-items: center; margin: .3rem 0 0;
+         font-size: 12px; color: var(--muted-foreground); }
 ";
 
 const TABLE_OPEN: &str = "<div class=\"tw\"><table>";
@@ -436,6 +591,9 @@ mod tests {
         assert!(html.contains("value=\"Egon\""), "the name, editable");
         assert!(html.contains("action=\"/account/name\""));
         assert!(html.contains("action=\"/signout\""));
+        assert!(html.contains("id=\"tabAccount\""), "the account tab");
+        assert!(html.contains("id=\"tabDealing\""), "the settings tab");
+        assert!(html.contains("class=\"weeks\""), "the activity graph");
         assert!(html.contains("What your games add up to"));
         assert!(html.contains("<td>Full</td>"), "their row, by market");
         assert!(!html.contains("<script"), "no script on the account page");

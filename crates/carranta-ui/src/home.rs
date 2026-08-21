@@ -715,20 +715,6 @@ const EXTRA: &str = "
    of the page, and the thing under the cursor is a tile. */
 .laid .tileHex { transition: transform .1s ease-out; }
 .laid .tileHex:hover { transform: translateY(-2px); }
-/* The one button on the page that starts something, in the colour the win is
-   written in, and the same shape as a place badge so the family holds. */
-.go { display: inline-block; text-decoration: none; cursor: pointer;
-      font: 600 15px Figtree, system-ui, sans-serif;
-      background: var(--primary); color: var(--primary-foreground);
-      border: 1px solid var(--primary); border-radius: var(--radius-md);
-      padding: .5em 1.1em; }
-.go:hover { filter: brightness(1.06); }
-.go:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
-.go.small { font-size: 13px; padding: .35em .7em; }
-/* A second action beside a first is quieter: same shape, the page's own ink. */
-.go.quiet { background: var(--card); color: var(--muted-foreground);
-            border-color: var(--border); }
-.go.quiet:hover { color: var(--foreground); border-color: var(--muted-foreground); }
 /* The actions column holds buttons rather than figures, so it is left alone by
    the table's right alignment and never wraps. */
 td.act { text-align: right; white-space: nowrap; }
