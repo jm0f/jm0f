@@ -6,6 +6,14 @@
 //! cargo run --release -p carranta-evolve --example versus -- --champion c.net --against bots/trained-378.net
 //! ```
 //!
+//! `--solo` seats one champion against three of the opponent instead of two
+//! against two, rotated through all four chairs of every seed. The paired gap
+//! loses its meaning there, so the headline becomes the champion's win share
+//! against the 25% a fair four-seat game hands any one chair, plus its mean
+//! finishing position against 2.5. This is the domination question, how far
+//! under 100% the chance in the game holds a stronger player, and it is also
+//! the number a person sitting alone against three bots actually faces.
+//!
 //! `--against FILE` swaps the heuristic out for another champion file, which
 //! is the shipping question asked directly: a candidate does not have to beat
 //! the heuristic to earn a chair, it has to beat the champion holding one.
@@ -55,9 +63,13 @@ const ARRANGEMENTS: [[u32; 4]; 6] = [
     [0, 0, 1, 1],
 ];
 
+/// The four ways one champion can sit among four seats.
+const SOLO: [[u32; 4]; 4] = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+
 fn main() {
     let mut champion = String::new();
     let mut against = String::new();
+    let mut solo = false;
     let mut rounds = 500usize;
     let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut seed = 90_210u64;
@@ -72,6 +84,7 @@ fn main() {
         match flag.as_str() {
             "--champion" => champion = value(),
             "--against" => against = value(),
+            "--solo" => solo = true,
             "--rounds" => rounds = value().parse().unwrap_or(rounds),
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
@@ -146,19 +159,25 @@ fn main() {
     };
     let roster = [them, Brain::Net(net)];
 
+    let seatings: &[[u32; 4]] = if solo { &SOLO } else { &ARRANGEMENTS };
     let jobs: Vec<NetJob> = (0..rounds)
         .flat_map(|r| {
-            ARRANGEMENTS.iter().map(move |seats| NetJob {
+            seatings.iter().map(move |seats| NetJob {
                 seed: seed.wrapping_add(r as u64),
                 seats: *seats,
             })
         })
         .collect();
 
-    println!("trained@{generation} against {them_name}");
     println!(
-        "  {} seeds x 6 seatings = {} games, {mode:?} market, {threads} workers",
+        "trained@{generation}{} against {}{them_name}",
+        if solo { " alone" } else { "" },
+        if solo { "three of " } else { "" },
+    );
+    println!(
+        "  {} seeds x {} seatings = {} games, {mode:?} market, {threads} workers",
         rounds,
+        seatings.len(),
         jobs.len()
     );
     let began = std::time::Instant::now();
@@ -174,22 +193,23 @@ fn main() {
     let mut house_positions = 0.0f64;
     let mut champion_wins = 0usize;
     let mut decided = 0usize;
-    for (r, chunk) in outcomes.chunks(ARRANGEMENTS.len()).enumerate() {
+    let champions_a_game: f64 = if solo { 1.0 } else { 2.0 };
+    for (r, chunk) in outcomes.chunks(seatings.len()).enumerate() {
         let mut gap = 0.0;
         let (mut seed_wins, mut seed_decided) = (0.0, 0.0);
-        for (o, seats) in chunk.iter().zip(ARRANGEMENTS.iter()) {
+        for (o, seats) in chunk.iter().zip(seatings.iter()) {
             let (mut mine, mut theirs) = (0.0, 0.0);
             for (seat, &who) in seats.iter().enumerate() {
                 let p = o.position[seat] as f64;
                 if who == 1 {
-                    mine += p / 2.0;
+                    mine += p / champions_a_game;
                 } else {
-                    theirs += p / 2.0;
+                    theirs += p / (4.0 - champions_a_game);
                 }
             }
             // `mine` and `theirs` are already each side's mean position in
             // this game, since the two seats were halved as they were added.
-            gap += (mine - theirs) / ARRANGEMENTS.len() as f64;
+            gap += (mine - theirs) / seatings.len() as f64;
             champ_positions += mine;
             house_positions += theirs;
             if let Some(w) = o.winner {
@@ -209,10 +229,11 @@ fn main() {
         // finished ahead on position while winning less often, which one
         // number alone would have hidden either way. A board nobody won says
         // nothing, so it counts as even.
+        let even = champions_a_game / 4.0;
         shares.push(if seed_decided > 0.0 {
             seed_wins / seed_decided
         } else {
-            0.5
+            even
         });
     }
 
@@ -230,7 +251,8 @@ fn main() {
     let p = two_sided_p(t.abs());
     let half = 1.96 * se;
     let (win_mean, win_se) = interval(&shares);
-    let win_t = (win_mean - 0.5) / win_se;
+    let win_null = champions_a_game / 4.0;
+    let win_t = (win_mean - win_null) / win_se;
     let win_p = two_sided_p(win_t.abs());
     let win_half = 1.96 * win_se;
 
@@ -239,6 +261,7 @@ fn main() {
         outcomes.len(),
         outcomes.len() as f64 / secs
     );
+    let even = 100.0 * champions_a_game / 4.0;
     println!(
         "  mean finishing position   champion {:.4}   {them_short} {:.4}   (2.5 = even)",
         champ_positions / outcomes.len() as f64,
@@ -250,7 +273,7 @@ fn main() {
         },
     );
     println!(
-        "  wins                      champion {champion_wins} of {decided} decided ({:.1}%, 50% = even)",
+        "  wins                      champion {champion_wins} of {decided} decided ({:.1}%, {even:.0}% = even)",
         100.0 * champion_wins as f64 / decided.max(1) as f64
     );
     println!(
@@ -287,10 +310,10 @@ fn main() {
         shares.len(),
         show_p(win_p)
     );
-    let win_verdict = if win_mean - win_half > 0.5 {
-        "the champion wins more often, and the interval clears even"
-    } else if win_mean + win_half < 0.5 {
-        "the champion wins less often, and the interval clears even"
+    let win_verdict = if win_mean - win_half > win_null {
+        "the champion wins more often than an even chair, and the interval clears even"
+    } else if win_mean + win_half < win_null {
+        "the champion wins less often than an even chair, and the interval clears even"
     } else {
         "no difference in wins shown: the interval spans even"
     };
