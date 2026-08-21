@@ -69,8 +69,9 @@ pub struct Person {
     /// mean, which is the same stance the game files take about chairs.
     pub table: String,
     /// Whether this person's profile, their games and their statistics, may
-    /// be read by anybody who knows their name. Off unless they turned it on:
-    /// a record is theirs before it is anyone's.
+    /// be read by anybody who knows their name. On unless they turned it off:
+    /// the page shares play alone, never anything personal, so the default is
+    /// the open one and the roster writes down the opt-out.
     pub public: bool,
     /// Recorded here and asked nowhere yet: the declaration is a flow with a
     /// screen, and chat is its trigger rather than the account. The field is
@@ -204,7 +205,7 @@ impl People {
                         name: String::new(),
                         declared_adult: false,
                         table: String::new(),
-                        public: false,
+                        public: true,
                     },
                 );
             }
@@ -274,7 +275,7 @@ impl People {
             name: String::new(),
             declared_adult: false,
             table: String::new(),
-            public: false,
+            public: true,
         });
         let out = Arrival {
             principal,
@@ -453,7 +454,7 @@ impl People {
                         name: String::new(),
                         declared_adult: false,
                         table: String::new(),
-                        public: false,
+                        public: true,
                     },
                 );
                 book.credentials
@@ -536,7 +537,7 @@ impl People {
             name: String::new(),
             declared_adult: false,
             table: String::new(),
-            public: false,
+            public: true,
         });
         write(&self.path, &book);
     }
@@ -718,8 +719,8 @@ fn encode(book: &Book) -> String {
         if !p.table.is_empty() {
             let _ = writeln!(out, "table {} {}", p.id, p.table);
         }
-        if p.public {
-            let _ = writeln!(out, "public {}", p.id);
+        if !p.public {
+            let _ = writeln!(out, "private {}", p.id);
         }
     }
     let mut devices: Vec<(&String, &String)> = book.devices.iter().collect();
@@ -771,7 +772,7 @@ fn decode(text: &str) -> Option<Book> {
                         name: String::new(),
                         declared_adult,
                         table: String::new(),
-                        public: false,
+                        public: true,
                     },
                 );
             }
@@ -785,6 +786,13 @@ fn decode(text: &str) -> Option<Book> {
                 let (id, table) = rest.split_once(' ')?;
                 if let Some(p) = book.people.get_mut(id) {
                     p.table = table.to_string();
+                }
+            }
+            // Today's opt-out, and the opt-in older files recorded when the
+            // default was the other way. Both read, only `private` written.
+            "private" => {
+                if let Some(p) = book.people.get_mut(rest) {
+                    p.public = false;
                 }
             }
             "public" => {

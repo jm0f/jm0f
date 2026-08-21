@@ -188,8 +188,10 @@ pub fn page(
 
     b.push_str(
         "<section><h2 title=\"A public profile, its games and its statistics, \
-         is readable by anybody at /player/ followed by your name. Private is \
-         only you, which is where everybody starts.\">Profile</h2>",
+         is readable by anybody at /player/ followed by your name. It shares \
+         play alone: games, results, activity. Nothing personal is on it, no \
+         email, nothing from Google, which is why it starts public. Private \
+         is only you.\">Profile</h2>",
     );
     let on = |yes: bool| if yes { " checked" } else { "" };
     let _ = write!(
