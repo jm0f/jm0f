@@ -15,7 +15,7 @@ carranta-play, play Carranta locally in a browser
 
   --port N       port to listen on (8181)
   --seats N      3 or 4 (4)
-  --seed N       board seed (1)
+  --seed N       board seed for the first table (random unless given)
   --mode MODE    full | restricted | disabled (full)
   --games DIR    where games are kept (./games)
   --demo N       have at least N finished games to look at (plays what is missing)
@@ -32,7 +32,7 @@ say exactly which address.";
 fn main() {
     let mut port: u16 = 8181;
     let mut seats: u8 = 4;
-    let mut seed: u64 = 1;
+    let mut seed: Option<u64> = None;
     let mut mode = TradeMode::Full;
     // Beside the binary by default, so a game played today is still there
     // tomorrow without anyone having to say where to put it.
@@ -47,7 +47,7 @@ fn main() {
         match flag.as_str() {
             "--port" => port = value().parse().unwrap_or(port),
             "--seats" => seats = value().parse().unwrap_or(seats),
-            "--seed" => seed = value().parse().unwrap_or(seed),
+            "--seed" => seed = value().parse().ok().or(seed),
             "--games" => games = std::path::PathBuf::from(value()),
             "--demo" => demo = value().parse().unwrap_or(demo),
             "--trained" => trained.push(std::path::PathBuf::from(value())),
@@ -100,6 +100,22 @@ fn main() {
         "Carranta {}, listening on {host}:{port}",
         carranta_ui::stamp::build()
     );
+    // Random unless somebody asked for a particular one: a fixed default
+    // meant the first table after every restart was the same board, which a
+    // fresh deployment turned into the same opening game for everybody. The
+    // clock is entropy enough for a board seed, mixed so consecutive restarts
+    // differ in more than their low bits, and passing --seed still gives the
+    // exact reproducibility it always did.
+    let seed = seed.unwrap_or_else(|| {
+        let mut x = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64)
+            ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+        x ^= x >> 33;
+        x
+    });
     println!("  {seats} seats, {mode:?} market, seed {seed}");
     let mut server = Server::new(seats, seed, mode, &games);
     // Every champion this server can offer: the committed directory, then any

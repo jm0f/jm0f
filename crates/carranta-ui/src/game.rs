@@ -33,7 +33,7 @@ pub const SEATS: usize = 4;
 /// Short, because it is an interruption rather than a turn: everyone else is
 /// waiting on it, the decision is small, and the hand is laid out to choose
 /// from. Ten seconds is long enough to read a hand of eight and pick four.
-pub const DEFAULT_DISCARD_SECS: u64 = 10;
+pub const DEFAULT_DISCARD_SECS: u64 = 25;
 
 /// A seed as something a person can read out loud, copy, or type back in.
 ///
