@@ -15,7 +15,7 @@
 //! of them; this bot exists to trade, so it trains in the market it will
 //! play, `Full`, every affordable shape enumerated under configurable caps.
 
-use carranta_core::rng::Stream;
+use carranta_core::rng::{Rng, Stream};
 use carranta_core::state::{MAX_PLAYERS, OfferShapes, TradeMode};
 
 use crate::arena::{Arena, Brain, NetJob};
@@ -70,6 +70,30 @@ pub struct NeatConfig {
     pub cap: usize,
     pub mode: TradeMode,
     pub params: Params,
+    /// Select on victory-point margin (own VP less the mean of the other
+    /// three) instead of finishing position (E-20). Position is a four-valued
+    /// observation; the margin carries most of what the game produced at the
+    /// same cost. The ship gate stays rank-based either way, so the objective
+    /// cannot drift toward point-farming unpunished.
+    pub margin: bool,
+    /// Evaluate in halving rounds (E-21): everyone plays a cheap first round,
+    /// and each halving of the field doubles the deals for those still in.
+    /// The budget concentrates where the ordering is actually decided, which
+    /// is among the best few, not between the best and the median.
+    pub halving: bool,
+    /// Sample hall opponents by how often they still beat the population
+    /// (E-22), rather than uniformly. A hall member every genome beats
+    /// carries no gradient, and a uniformly sampled archive spends most of
+    /// its games on exactly those members.
+    pub pfsp: bool,
+    /// Play every deal once per seat (E-23): the same board and dice with the
+    /// genome in each of the four chairs, so seat and board luck cancel
+    /// exactly instead of averaging out slowly.
+    pub rotate: bool,
+    /// Keep the anchor out of the training field (E-24). It is the measuring
+    /// stick for the gap column, and a stick the population trains against
+    /// is one third training set.
+    pub held_out_anchor: bool,
 }
 
 impl Default for NeatConfig {
@@ -92,6 +116,11 @@ impl Default for NeatConfig {
             cap: 20_000,
             mode: TradeMode::Full,
             params: Params::default(),
+            margin: false,
+            halving: false,
+            pfsp: false,
+            rotate: false,
+            held_out_anchor: false,
         }
     }
 }
@@ -139,6 +168,11 @@ pub struct NeatTrainer {
     pub(crate) run_seed: u64,
     /// The reigning champion, for export between generations.
     pub(crate) champion: u64,
+    /// How often each hall member still beat the population last generation,
+    /// as a sampling weight (E-22). Checkpointed, because a resume that
+    /// sampled the hall uniformly for a generation would diverge from the
+    /// run it claims to continue.
+    pub(crate) hall_weight: std::collections::HashMap<u64, f64>,
 }
 
 impl NeatTrainer {
@@ -165,7 +199,18 @@ impl NeatTrainer {
             generation: 0,
             run_seed: seed,
             champion: ANCHOR,
+            hall_weight: std::collections::HashMap::new(),
         }
+    }
+
+    /// Enrol an outside network as the run's opening incumbent: into the
+    /// ladder at the generation its file names, and into the hall, so a
+    /// fresh population trains against the best already shipped rather than
+    /// rediscovering it (E-25).
+    pub fn seed_baseline(&mut self, genome: NeatGenome, generation: u32) -> u64 {
+        let id = self.ladder.enrol(genome, generation);
+        self.hall.push(id);
+        id
     }
 
     /// Rebuild a run from a checkpoint. See [`crate::checkpoint`].
@@ -195,6 +240,7 @@ impl NeatTrainer {
             trials,
             run_seed,
             champion,
+            hall_weight: std::collections::HashMap::new(),
         }
     }
 
@@ -277,27 +323,6 @@ impl NeatTrainer {
         self.generation += 1;
         let mut rng = generation_rng(self.run_seed, self.generation);
 
-        // ---- The field, fixed for the whole generation (E-4) ----
-        let field: Vec<[Seat; 3]> = (0..self.trials)
-            .map(|t| {
-                core::array::from_fn(|slot| match (slot, t as usize % 3) {
-                    (0, 0) => Seat::Rated(ANCHOR),
-                    (0, 1) if !self.hall.is_empty() => {
-                        let pick = rng.below(Stream::Board, self.hall.len() as u32);
-                        Seat::Rated(self.hall[pick as usize])
-                    }
-                    _ if slot < cfg.hall_seats && !self.hall.is_empty() => {
-                        let pick = rng.below(Stream::Board, self.hall.len() as u32);
-                        Seat::Rated(self.hall[pick as usize])
-                    }
-                    _ => {
-                        let pick = rng.below(Stream::Board, cfg.population as u32);
-                        Seat::Current(pick as usize)
-                    }
-                })
-            })
-            .collect();
-
         // ---- The roster: every brain compiled once ----
         //
         // Slot 0 is the anchor, played by the heuristic itself. Slots
@@ -325,66 +350,204 @@ impl NeatTrainer {
             }
         };
 
-        // ---- Play ----
-        let base_seed = self.generation as u64 * 1_000_003;
-        let mut jobs = Vec::with_capacity(self.population.len() * self.trials as usize);
-        for gi in 0..self.population.len() {
-            for (t, triple) in field.iter().enumerate() {
-                let seat = t % MAX_PLAYERS;
-                let mut seats = [0u32; MAX_PLAYERS];
-                let mut k = 0;
-                for (s, slot) in seats.iter_mut().enumerate() {
-                    if s == seat {
-                        *slot = 1 + gi as u32;
+        // ---- The rounds ----
+        //
+        // Classic evaluation is one round: every genome, `trials` deals.
+        // Halving (E-21) is a schedule: everyone plays a cheap opening round,
+        // and each halving of the field doubles the deals for those still in,
+        // so the budget concentrates where the ordering is decided, among the
+        // best few rather than between the best and the median. With rotation
+        // (E-23) a deal costs four games, one per seat.
+        let seats_per_deal = if cfg.rotate { MAX_PLAYERS as u32 } else { 1 };
+        let base_deals = (self.trials / seats_per_deal).max(1);
+        let rounds: Vec<(usize, u32)> = if cfg.halving {
+            let mut rounds = Vec::new();
+            let mut keep = cfg.population;
+            let mut deals = (base_deals / 4).max(1);
+            loop {
+                rounds.push((keep, deals));
+                if keep <= 6 {
+                    break;
+                }
+                keep = keep.div_ceil(2);
+                deals *= 2;
+            }
+            rounds
+        } else {
+            vec![(cfg.population, base_deals)]
+        };
+
+        // Hall sampling weights (E-22): last generation's meetings, squared
+        // shortfall, floored so no member ever leaves the field entirely.
+        // Uniform when PFSP is off, and uniform on the first generation after
+        // a resume, which relearns the weights in one generation.
+        let hall_cum: Vec<f64> = {
+            let mut total = 0.0;
+            self.hall
+                .iter()
+                .map(|id| {
+                    total += if cfg.pfsp {
+                        self.hall_weight.get(id).copied().unwrap_or(1.0)
                     } else {
-                        *slot = slot_of(&triple[k]);
+                        1.0
+                    };
+                    total
+                })
+                .collect()
+        };
+        let pick_hall = |rng: &mut Rng, hall: &[u64], cum: &[f64]| -> u64 {
+            let scale = cum.last().copied().unwrap_or(0.0);
+            let x = rng.below(Stream::Board, 1 << 20) as f64 / (1u64 << 20) as f64 * scale;
+            hall[cum.partition_point(|&c| c <= x).min(hall.len() - 1)]
+        };
+
+        // ---- Play, in rounds ----
+        //
+        // Within a round every surviving genome plays the same deals (E-4):
+        // the same board, the same dice, the same opponents, so every
+        // comparison the survivors face is paired rather than independent.
+        let base_seed = self.generation as u64 * 1_000_003;
+        let mut alive: Vec<usize> = (0..cfg.population).collect();
+        let mut sum = vec![0.0f64; cfg.population];
+        let mut sq = vec![0.0f64; cfg.population];
+        let mut played = vec![0u32; cfg.population];
+        let mut total_jobs = 0u32;
+        // Per hall member: how often the population finished ahead of it, and
+        // how often they met (E-22).
+        let mut met: std::collections::HashMap<u64, (f64, f64)> = std::collections::HashMap::new();
+        let mut deal_no = 0u64;
+        let mut finalists: Vec<usize> = alive.clone();
+        for (round, &(keep, deals)) in rounds.iter().enumerate() {
+            if round > 0 {
+                alive.sort_by(|&a, &b| {
+                    let fa = sum[a] / played[a].max(1) as f64;
+                    let fb = sum[b] / played[b].max(1) as f64;
+                    fa.total_cmp(&fb).then(a.cmp(&b))
+                });
+                alive.truncate(keep);
+            }
+            let dealset: Vec<(u64, [Seat; 3])> = (0..deals)
+                .map(|_| {
+                    let d = deal_no;
+                    deal_no += 1;
+                    let triple: [Seat; 3] = core::array::from_fn(|slot| {
+                        match (slot, d as usize % 3) {
+                            // The anchor's arm, unless it is held out (E-24):
+                            // the measuring stick for the gap column should
+                            // not also be one third of the training set.
+                            (0, 0) if !cfg.held_out_anchor => Seat::Rated(ANCHOR),
+                            _ if !self.hall.is_empty()
+                                && (slot < cfg.hall_seats
+                                    || (slot == 0 && d as usize % 3 <= 1)) =>
+                            {
+                                Seat::Rated(pick_hall(&mut rng, &self.hall, &hall_cum))
+                            }
+                            _ => {
+                                let pick = rng.below(Stream::Board, cfg.population as u32);
+                                Seat::Current(pick as usize)
+                            }
+                        }
+                    });
+                    (base_seed + d, triple)
+                })
+                .collect();
+            let games_each = dealset.len() * seats_per_deal as usize;
+            let mut jobs = Vec::with_capacity(alive.len() * games_each);
+            for &gi in &alive {
+                for (di, (seed, triple)) in dealset.iter().enumerate() {
+                    let first = if cfg.rotate { 0 } else { di % MAX_PLAYERS };
+                    for r in 0..seats_per_deal as usize {
+                        let seat = (first + r) % MAX_PLAYERS;
+                        let mut seats = [0u32; MAX_PLAYERS];
+                        let mut k = 0;
+                        for (s, slot) in seats.iter_mut().enumerate() {
+                            if s == seat {
+                                *slot = 1 + gi as u32;
+                            } else {
+                                *slot = slot_of(&triple[k]);
+                                k += 1;
+                            }
+                        }
+                        jobs.push(NetJob { seed: *seed, seats });
+                    }
+                }
+            }
+            let outcomes = arena.play_net_all(&roster, &jobs, cfg.threads);
+            total_jobs += jobs.len() as u32;
+
+            // ---- Score (E-6, E-17, E-20) ----
+            //
+            // Position, less a bonus for the games actually won: pure
+            // position is dense but prices first one step above second, so it
+            // selects policies that trade wins for safe middles, and the
+            // bonus buys the difference back. The margin signal (E-20) keeps
+            // the same shape in victory points: the mean of the other three
+            // hands less your own, lower better, several times the
+            // information per game at the same cost.
+            for (ai, &gi) in alive.iter().enumerate() {
+                for j in 0..games_each {
+                    let o = &outcomes[ai * games_each + j];
+                    let di = j / seats_per_deal as usize;
+                    let first = if cfg.rotate { 0 } else { di % MAX_PLAYERS };
+                    let seat = (first + j % seats_per_deal as usize) % MAX_PLAYERS;
+                    let won = o.winner == Some(seat as u8);
+                    let score = if cfg.margin {
+                        let own = o.vp[seat] as f64;
+                        let others = (0..MAX_PLAYERS)
+                            .filter(|&s| s != seat)
+                            .map(|s| o.vp[s] as f64)
+                            .sum::<f64>()
+                            / (MAX_PLAYERS - 1) as f64;
+                        (others - own) - if won { cfg.win_bonus } else { 0.0 }
+                    } else {
+                        match cfg.payoff {
+                            Some(pay) => {
+                                let mut place = o.position[seat] as usize - 1;
+                                if place == 0 && !won {
+                                    place = 1;
+                                }
+                                -pay[place]
+                            }
+                            None => o.position[seat] as f64 - if won { cfg.win_bonus } else { 0.0 },
+                        }
+                    };
+                    sum[gi] += score;
+                    sq[gi] += score * score;
+                    played[gi] += 1;
+                    // Who the genome met from the hall, and whether it
+                    // finished ahead (E-22). The triple fills every seat that
+                    // is not the genome's, in order.
+                    let mut k = 0;
+                    for s in 0..MAX_PLAYERS {
+                        if s == seat {
+                            continue;
+                        }
+                        if let Seat::Rated(id) = dealset[di].1[k]
+                            && id != ANCHOR
+                        {
+                            let e = met.entry(id).or_insert((0.0, 0.0));
+                            e.1 += 1.0;
+                            if o.position[seat] < o.position[s] {
+                                e.0 += 1.0;
+                            } else if o.position[seat] == o.position[s] {
+                                e.0 += 0.5;
+                            }
+                        }
                         k += 1;
                     }
                 }
-                jobs.push(NetJob {
-                    seed: base_seed + t as u64,
-                    seats,
-                });
             }
+            finalists = alive.clone();
         }
-        let outcomes = arena.play_net_all(&roster, &jobs, cfg.threads);
-
-        // ---- Score (E-6, E-17) ----
-        //
-        // Finishing position, less a bonus for the games actually won. Pure
-        // position is a dense signal and that is why E-6 chose it, but it
-        // prices first place one step above second, the same step as third
-        // above fourth, so it selects policies that trade wins for safe
-        // middles: the generation 72 champion of the second run finished
-        // ahead of the heuristic on position and behind it on wins. The bonus
-        // buys back the difference between placing and winning without giving
-        // up the density.
-        let mut fitness = vec![0.0f64; self.population.len()];
-        let mut spread_sum = vec![0.0f64; self.population.len()];
-        for (g, fit) in fitness.iter_mut().enumerate() {
-            let mut total = 0.0;
-            let mut sq = 0.0;
-            for t in 0..self.trials as usize {
-                let seat = t % MAX_PLAYERS;
-                let o = &outcomes[g * self.trials as usize + t];
-                let won = o.winner == Some(seat as u8);
-                let pos = match cfg.payoff {
-                    Some(pay) => {
-                        let mut place = o.position[seat] as usize - 1;
-                        if place == 0 && !won {
-                            place = 1;
-                        }
-                        -pay[place]
-                    }
-                    None => o.position[seat] as f64 - if won { cfg.win_bonus } else { 0.0 },
-                };
-                total += pos;
-                sq += pos * pos;
-            }
-            let n = self.trials as f64;
-            *fit = total / n;
-            spread_sum[g] = (sq / n - (total / n).powi(2)).max(0.0).sqrt();
-        }
+        let fitness: Vec<f64> = (0..cfg.population)
+            .map(|g| sum[g] / played[g].max(1) as f64)
+            .collect();
+        let spread_sum: Vec<f64> = (0..cfg.population)
+            .map(|g| {
+                let n = played[g].max(1) as f64;
+                (sq[g] / n - (sum[g] / n).powi(2)).max(0.0).sqrt()
+            })
+            .collect();
 
         // ---- Rate the champion on fresh games (E-10) ----
         let mut order: Vec<usize> = (0..self.population.len()).collect();
@@ -643,7 +806,7 @@ impl NeatTrainer {
 
         let best_fitness = fitness[order[0]];
         let median_fitness = fitness[order[order.len() / 2]];
-        let noise = spread_sum[order[0]] / (self.trials as f64).sqrt();
+        let noise = spread_sum[order[0]] / (played[order[0]].max(1) as f64).sqrt();
         let species_alive = species
             .iter()
             .enumerate()
@@ -658,8 +821,27 @@ impl NeatTrainer {
             self.hall.remove(0);
         }
 
+        // Refresh the sampling weights from this generation's meetings
+        // (E-22): the more of the population a member still beats, the more
+        // games it earns next generation.
+        self.hall_weight = met
+            .iter()
+            .map(|(&id, &(ahead, games))| (id, (1.0 - ahead / games).powi(2).max(0.02)))
+            .collect();
+
         // ---- Adapt the budget (E-5) ----
-        let separated = (median_fitness - best_fitness) > 2.0 * noise;
+        //
+        // Classic separation asks whether the best stands clear of the
+        // median, which is trivially easy and lets the budget sit at the
+        // floor for ever. Under halving the question is asked where selection
+        // actually happens: does the best stand clear of the median finalist?
+        let separated = if cfg.halving {
+            let mut f: Vec<f64> = finalists.iter().map(|&g| fitness[g]).collect();
+            f.sort_by(|a, b| a.total_cmp(b));
+            (f[f.len() / 2] - best_fitness) > 2.0 * noise
+        } else {
+            (median_fitness - best_fitness) > 2.0 * noise
+        };
         self.trials = if separated {
             (self.trials * 3 / 4).max(cfg.trials_min)
         } else {
@@ -668,8 +850,8 @@ impl NeatTrainer {
 
         NeatReport {
             generation: self.generation,
-            trials: jobs.len() as u32 / cfg.population as u32,
-            games: jobs.len() as u32 + voutcomes.len() as u32,
+            trials: total_jobs / cfg.population as u32,
+            games: total_jobs + voutcomes.len() as u32,
             best_fitness,
             median_fitness,
             noise,

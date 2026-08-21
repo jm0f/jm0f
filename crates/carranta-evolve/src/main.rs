@@ -53,6 +53,10 @@ struct Args {
     /// and `champion.net` (the newest, rewritten every generation) is left
     /// exactly as the run left it.
     export_to: Option<PathBuf>,
+    /// A network file to enrol as the opening incumbent of a fresh run
+    /// (E-25): into the hall and the ladder, so the population trains against
+    /// the best already shipped instead of rediscovering it.
+    baseline: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -70,6 +74,7 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         neat: NeatConfig::default(),
         export: None,
         export_to: None,
+        baseline: None,
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -142,6 +147,20 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                     return Err("--win-bonus must be zero or more".to_string());
                 }
             }
+            "--margin" => args.neat.margin = true,
+            "--halving" => args.neat.halving = true,
+            "--pfsp" => args.neat.pfsp = true,
+            "--rotate" => args.neat.rotate = true,
+            "--held-out-anchor" => args.neat.held_out_anchor = true,
+            // The whole refined-selection bundle (E-20 to E-24) in one word.
+            "--refined" => {
+                args.neat.margin = true;
+                args.neat.halving = true;
+                args.neat.pfsp = true;
+                args.neat.rotate = true;
+                args.neat.held_out_anchor = true;
+            }
+            "--baseline" => args.baseline = Some(std::path::PathBuf::from(value()?)),
             "--give-cap" => {
                 let v = value()?;
                 args.neat.give_cap = if v == "hand" {
@@ -372,6 +391,10 @@ fn run_neat(args: Args) {
         return;
     }
 
+    if args.resume && args.baseline.is_some() {
+        eprintln!("--baseline seeds a fresh run; a resume already has its hall");
+        std::process::exit(2);
+    }
     let mut trainer = if args.resume {
         match checkpoint::load_neat(&ckpt) {
             Ok(Ok(mut t)) => {
@@ -401,7 +424,52 @@ fn run_neat(args: Args) {
             std::process::exit(1);
         }
         let _ = std::fs::write(&history, NEAT_CSV_HEADER);
-        NeatTrainer::new(args.neat, args.seed)
+        let mut fresh = NeatTrainer::new(args.neat, args.seed);
+        // The opening incumbent (E-25): a shipped champion enrolled into the
+        // hall before the first deal, so a fresh population is measured
+        // against the best there is from generation one.
+        if let Some(path) = &args.baseline {
+            let text = match std::fs::read_to_string(path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("cannot read {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            };
+            let Some((_, generation, _)) = carranta_bot::net::Net::parse_meta(&text) else {
+                eprintln!("{} is not a champion network file", path.display());
+                std::process::exit(1);
+            };
+            // The genome is the link list itself, re-numbered: a baseline
+            // sits in the hall and never breeds, so its innovation numbers
+            // only have to be internally consistent.
+            let genes = text
+                .lines()
+                .filter_map(|l| {
+                    let mut p = l.split_whitespace();
+                    (p.next() == Some("link")).then(|| {
+                        Some(carranta_evolve::neat::Gene {
+                            innov: 0,
+                            from: p.next()?.parse().ok()?,
+                            to: p.next()?.parse().ok()?,
+                            weight: p.next()?.parse().ok()?,
+                            enabled: true,
+                        })
+                    })?
+                })
+                .enumerate()
+                .map(|(i, mut g)| {
+                    g.innov = i as u32;
+                    g
+                })
+                .collect();
+            let id = fresh.seed_baseline(carranta_evolve::neat::NeatGenome { genes }, generation);
+            println!(
+                "baseline {} enrolled as the opening incumbent (ladder id {id}, generation {generation})",
+                path.display()
+            );
+        }
+        fresh
     };
 
     let c = &trainer.config;
@@ -420,15 +488,40 @@ fn run_neat(args: Args) {
         c.params.target_species,
     );
     println!("writing to {}", args.out.display());
-    match c.payoff {
-        Some([a, b, cc, d]) => println!(
-            "  fitness is minus the payoff of the place taken ({a}, {b}, {cc}, {d}; an \
-             unwon first place pays {b}), lower is better"
-        ),
-        None => println!(
-            "  fitness is mean finishing position less {} a win, lower is better",
+    {
+        let words: Vec<&str> = [
+            (c.margin, "margin"),
+            (c.halving, "halving"),
+            (c.pfsp, "pfsp"),
+            (c.rotate, "rotate"),
+            (c.held_out_anchor, "held-out-anchor"),
+        ]
+        .into_iter()
+        .filter_map(|(on, w)| on.then_some(w))
+        .collect();
+        if words.is_empty() {
+            println!("  selection: classic");
+        } else {
+            println!("  selection: {}", words.join(" "));
+        }
+    }
+    if c.margin {
+        println!(
+            "  fitness is the mean opposing victory points less your own, \
+             less {} a win, lower is better",
             c.win_bonus
-        ),
+        );
+    } else {
+        match c.payoff {
+            Some([a, b, cc, d]) => println!(
+                "  fitness is minus the payoff of the place taken ({a}, {b}, {cc}, {d}; an \
+                 unwon first place pays {b}), lower is better"
+            ),
+            None => println!(
+                "  fitness is mean finishing position less {} a win, lower is better",
+                c.win_bonus
+            ),
+        }
     }
     println!("  gap and wins are the champion's paired match against the anchor:");
     println!("  a negative gap and a win share above 50% are ahead, and either");
@@ -761,6 +854,27 @@ mod tests {
         assert_eq!(a.config.threads, 6);
         assert_eq!(a.config.mutation, 0.5);
         assert_eq!(a.config.mode, TradeMode::Full);
+    }
+
+    #[test]
+    fn the_refined_bundle_sets_every_selection_flag() {
+        let a = parse("--method neat --refined --baseline bots/trained-462.net")
+            .expect("the bundle is one word");
+        assert!(a.neat.margin);
+        assert!(a.neat.halving);
+        assert!(a.neat.pfsp);
+        assert!(a.neat.rotate);
+        assert!(a.neat.held_out_anchor);
+        assert_eq!(
+            a.baseline.as_deref(),
+            Some(std::path::Path::new("bots/trained-462.net"))
+        );
+
+        // And one at a time, for the ablation runs.
+        let a = parse("--method neat --rotate --pfsp").expect("single flags parse");
+        assert!(a.neat.rotate && a.neat.pfsp);
+        assert!(!a.neat.margin && !a.neat.halving && !a.neat.held_out_anchor);
+        assert!(a.baseline.is_none());
     }
 
     #[test]

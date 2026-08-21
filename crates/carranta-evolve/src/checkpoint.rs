@@ -30,7 +30,12 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 5;
+pub const NEAT_FORMAT: u32 = 6;
+
+/// The NEAT format before the selection line existed (E-20 to E-24): payoff
+/// table, but classic evaluation only, so it reads back with every selection
+/// flag off and resumes the run it was.
+pub const NEAT_FORMAT_CLASSIC_SELECTION: u32 = 5;
 
 /// The NEAT format before the ask allowance existed (E-15).
 ///
@@ -312,6 +317,28 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
             let _ = writeln!(out, "payoff none");
         }
     }
+    // The selection line: which evaluation refinements the run trains under,
+    // as words, or `classic` for none. A resume must evaluate the way the
+    // run always did, so these are state, not flags to re-pass.
+    let mut selection = String::new();
+    for (on, word) in [
+        (c.margin, "margin"),
+        (c.halving, "halving"),
+        (c.pfsp, "pfsp"),
+        (c.rotate, "rotate"),
+        (c.held_out_anchor, "held-out-anchor"),
+    ] {
+        if on {
+            if !selection.is_empty() {
+                selection.push(' ');
+            }
+            selection.push_str(word);
+        }
+    }
+    if selection.is_empty() {
+        selection.push_str("classic");
+    }
+    let _ = writeln!(out, "selection {selection}");
     let _ = writeln!(out, "cap {}", c.cap);
     let _ = writeln!(out, "mode {}", mode_name(c.mode));
     // Display for f64 emits the shortest string that parses back to the same
@@ -362,6 +389,18 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         let _ = writeln!(out, "{id}");
     }
 
+    // PFSP sampling weights (E-22), id then weight, sorted by id so the
+    // encoding is a pure function of the state. Without them a resume would
+    // sample the hall uniformly for one generation and diverge from the run
+    // it claims to continue.
+    let mut weights: Vec<(u64, f64)> = trainer.hall_weight.iter().map(|(&k, &v)| (k, v)).collect();
+    weights.sort_unstable_by_key(|&(id, _)| id);
+    let _ = writeln!(out, "\n# hall sampling weights: id, weight");
+    let _ = writeln!(out, "weights {}", weights.len());
+    for (id, w) in weights {
+        let _ = writeln!(out, "{id} {w}");
+    }
+
     let _ = writeln!(out, "\n# ladder: one version block each");
     let mut ids = trainer.ladder.ids();
     ids.sort_unstable();
@@ -406,7 +445,11 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         .ok_or_else(|| bad(line, "not a carranta-evolve checkpoint"))?;
     if !matches!(
         version,
-        NEAT_FORMAT | NEAT_FORMAT_FLAT_WIN | NEAT_FORMAT_UNCAPPED | NEAT_FORMAT_POSITION_ONLY
+        NEAT_FORMAT
+            | NEAT_FORMAT_CLASSIC_SELECTION
+            | NEAT_FORMAT_FLAT_WIN
+            | NEAT_FORMAT_UNCAPPED
+            | NEAT_FORMAT_POSITION_ONLY
     ) {
         return Err(LoadError::Version(version));
     }
@@ -465,7 +508,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         0.0
     };
     // Older formats had no table; the bonus above is their whole story.
-    let payoff: Option<[f64; 4]> = if version == NEAT_FORMAT {
+    let payoff: Option<[f64; 4]> = if version >= NEAT_FORMAT_CLASSIC_SELECTION {
         let (line, v) = scalar("payoff")?;
         if v == "none" {
             None
@@ -478,6 +521,26 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         }
     } else {
         None
+    };
+    // Format 5 and earlier evaluated the classic way; the selection line
+    // (E-20 to E-24) says which refinements a format 6 run trains under.
+    let (margin, halving, pfsp, rotate, held_out_anchor) = if version >= NEAT_FORMAT {
+        let (line, v) = scalar("selection")?;
+        let mut flags = (false, false, false, false, false);
+        for word in v.split(' ') {
+            match word {
+                "classic" => {}
+                "margin" => flags.0 = true,
+                "halving" => flags.1 = true,
+                "pfsp" => flags.2 = true,
+                "rotate" => flags.3 = true,
+                "held-out-anchor" => flags.4 = true,
+                other => return Err(bad(line, &format!("unknown selection word `{other}`"))),
+            }
+        }
+        flags
+    } else {
+        (false, false, false, false, false)
     };
     let cap: usize = num!("cap");
     let mode = {
@@ -523,6 +586,11 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         cap,
         mode,
         params,
+        margin,
+        halving,
+        pfsp,
+        rotate,
+        held_out_anchor,
     };
 
     // A genome block: `gene` lines up to `end`.
@@ -597,6 +665,26 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         );
     }
 
+    // The sampling weights (E-22), format 6 on. Older files have none, and
+    // resume with a uniform hall for one generation, which is what they did.
+    let mut hall_weight = std::collections::HashMap::new();
+    if version >= NEAT_FORMAT {
+        let n = count(&mut lines, "weights")?;
+        for _ in 0..n {
+            let (line, text) = lines.next().ok_or(LoadError::Missing("weight entry"))?;
+            let mut f = text.split_whitespace();
+            let id: u64 = f
+                .next()
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| bad(line, "bad weight id"))?;
+            let w: f64 = f
+                .next()
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| bad(line, "bad weight"))?;
+            hall_weight.insert(id, w);
+        }
+    }
+
     let n = count(&mut lines, "ladder")?;
     let mut ladder = Ladder::with_anchor(
         carranta_analytics::rating::Model::default(),
@@ -633,7 +721,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         return Err(LoadError::Missing("anchor"));
     }
 
-    Ok(NeatTrainer::restore(
+    let mut trainer = NeatTrainer::restore(
         config,
         ladder,
         population,
@@ -645,7 +733,9 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         trials,
         run_seed,
         champion,
-    ))
+    );
+    trainer.hall_weight = hall_weight;
+    Ok(trainer)
 }
 
 /// Write a phase-two checkpoint atomically, like [`save`].
@@ -780,6 +870,53 @@ mod tests {
     }
 
     #[test]
+    fn a_refined_run_round_trips_its_selection_and_resumes_exactly() {
+        // The refined flags (E-20 to E-24) are how the run evaluates, so
+        // losing one across a resume would silently change the objective.
+        // Round trip first, then the exact-continuation promise under the
+        // full bundle.
+        let refined = crate::train_neat::NeatConfig {
+            margin: true,
+            halving: true,
+            pfsp: true,
+            rotate: true,
+            held_out_anchor: true,
+            ..quick_neat()
+        };
+        let mut straight = NeatTrainer::new(refined, 4_242);
+        let mut interrupted = NeatTrainer::new(refined, 4_242);
+        for _ in 0..3 {
+            straight.step();
+            interrupted.step();
+        }
+        let text = encode_neat(&interrupted);
+        assert!(
+            text.contains("\nselection margin halving pfsp rotate held-out-anchor\n"),
+            "the selection line names every refinement"
+        );
+        let Ok(mut resumed) = decode_neat(&text) else {
+            panic!("decode failed")
+        };
+        let c = &resumed.config;
+        assert!(
+            c.margin && c.halving && c.pfsp && c.rotate && c.held_out_anchor,
+            "all five flags survive the trip"
+        );
+        for _ in 0..2 {
+            let a = straight.step();
+            let b = resumed.step();
+            assert_eq!(a.generation, b.generation);
+            assert_eq!(
+                a.best_fitness, b.best_fitness,
+                "generation {}",
+                a.generation
+            );
+            assert_eq!(a.games, b.games);
+            assert_eq!(a.champion_genes, b.champion_genes);
+        }
+    }
+
+    #[test]
     fn the_two_formats_refuse_each_other() {
         // A phase-one checkpoint read as phase two, or the reverse, must be a
         // version error, never a half-parsed trainer.
@@ -817,8 +954,38 @@ mod tests {
             "and the table's absence"
         );
 
+        // The same file as format 5 wrote it: version 5, no selection line
+        // and no weights section.
+        let strip_weights = |text: &str| -> String {
+            let mut out = String::new();
+            let mut skip = 0usize;
+            for l in text.lines() {
+                let t = l.trim();
+                if skip > 0 && !t.is_empty() && !t.starts_with('#') {
+                    skip -= 1;
+                    continue;
+                }
+                if let Some(n) = t.strip_prefix("weights ") {
+                    skip = n.parse().expect("a weights count");
+                    continue;
+                }
+                out.push_str(l);
+                out.push('\n');
+            }
+            out
+        };
+        let five = strip_weights(&modern)
+            .replace("carranta-evolve 6", "carranta-evolve 5")
+            .replace("selection classic\n", "");
+        let back = decode_neat(&five).expect("a format five file still reads");
+        assert!(
+            !back.config.margin && !back.config.halving && !back.config.rotate,
+            "classic evaluation, as it was"
+        );
+        assert_eq!(back.config.payoff, None, "and the table it really had");
+
         // The same file as format 4 wrote it: version 4, no payoff line.
-        let four = modern
+        let four = five
             .replace("carranta-evolve 5", "carranta-evolve 4")
             .replace("payoff none\n", "");
         let back = decode_neat(&four).expect("a format four file still reads");
