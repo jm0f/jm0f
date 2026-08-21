@@ -15,6 +15,7 @@ pub mod account;
 pub mod analysis;
 pub mod corpus;
 pub mod game;
+pub mod history;
 pub mod home;
 pub mod json;
 pub mod people;

@@ -113,7 +113,14 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> Str
         // hero for the eye, and on any laptop it fell back to a strip that was
         // a second header wearing a card. Links to the page's own button stay
         // out; links to the places this page does not go itself belong here.
-        head = crate::report::masthead_home(&[("/corpus", "Across games")], &account(who)),
+        head = crate::report::masthead_home(
+            &if who.signed_in {
+                vec![("/history", "History"), ("/corpus", "Across games")]
+            } else {
+                vec![("/corpus", "Across games")]
+            },
+            &account(who),
+        ),
     );
 
     b.push_str(&deal());

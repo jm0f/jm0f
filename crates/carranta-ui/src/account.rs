@@ -148,7 +148,7 @@ pub fn page(
          {head}<main>",
         head = crate::report::masthead_as(
             "your account",
-            &[("/corpus", "Across games")],
+            &[("/history", "History"), ("/corpus", "Across games")],
             &crate::home::account(who),
         ),
     );
@@ -205,7 +205,6 @@ pub fn page(
     // ---- the Default game settings pane -------------------------------------
     b.push_str("<div class=\"pane paneDealing\">");
     b.push_str(&dealing(defaults));
-    b.push_str(&record(history, aliases, me));
     b.push_str("</div>");
 
     b.push_str("</div></main></body></html>");
@@ -213,7 +212,7 @@ pub fn page(
 }
 
 /// Whether this person sat in this game.
-fn sat(saved: &Saved, aliases: &dyn Aliases, me: u64) -> bool {
+pub(crate) fn sat(saved: &Saved, aliases: &dyn Aliases, me: u64) -> bool {
     saved
         .setup
         .chairs
@@ -310,83 +309,6 @@ fn ymd(days: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// The person's own line of the corpus, one section per configuration./// The person's own line of the corpus, one section per configuration.
-///
-/// Built by the same fold the across-games page uses, over only the games
-/// this person sat in, and read out of the same actor table, so the numbers
-/// here and the numbers there are one computation.
-fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
-    let mut corpora: Vec<Corpus> = Vec::new();
-    for saved in history {
-        if !sat(saved, aliases, me) {
-            continue;
-        }
-        let Some(log) = to_log_as(saved, aliases) else {
-            continue;
-        };
-        let config = Config::of(&log);
-        match corpora.iter_mut().find(|c| c.config == config) {
-            Some(c) => {
-                c.add(&log, 0);
-            }
-            None => {
-                let mut c = Corpus::new(config);
-                c.add(&log, 0);
-                corpora.push(c);
-            }
-        }
-    }
-
-    let mut b = String::from("<section><h2>What your games add up to</h2>");
-    if corpora.is_empty() {
-        b.push_str(
-            "<p class=\"blurb\">Nothing yet: no finished game on this server \
-             has you at the table. The first one joins this page on its own.</p>\
-             </section>",
-        );
-        return b;
-    }
-    b.push_str(
-        "<p class=\"blurb\">Your line of the corpus, one row per market. The \
-         interval on a win rate is clustered by game, and conversion is points \
-         scored above what your production predicts, the closest thing here \
-         to skill with the luck taken out.</p>",
-    );
-    b.push_str(TABLE_OPEN);
-    b.push_str(
-        "<thead><tr><th>market</th><th>games</th><th>wins</th><th>win rate</th>\
-         <th>mean VP</th><th>conversion</th></tr></thead><tbody>",
-    );
-    for c in &corpora {
-        let Some(row) = c
-            .actor_rows()
-            .into_iter()
-            .find(|r| r.who == Actor::Human { player: me })
-        else {
-            continue;
-        };
-        let share = match row.half_width {
-            Some(h) if h > 0.0 => format!("{:.1}% ± {:.1}", row.share * 100.0, h * 100.0),
-            _ => format!("{:.1}%", row.share * 100.0),
-        };
-        let _ = write!(
-            b,
-            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{}</td></tr>",
-            c.config.trade_mode,
-            row.games,
-            row.wins,
-            share,
-            row.mean_vp,
-            row.residual
-                .map(|r| format!("{r:+.2}"))
-                .unwrap_or_else(|| "·".to_string()),
-        );
-    }
-    b.push_str(TABLE_CLOSE);
-    b.push_str("</section>");
-    b
-}
-
 /// The standard values a new table of yours starts from.
 ///
 /// Selects rather than anything cleverer, because the page has no script and
@@ -461,38 +383,13 @@ fn dealing(d: &Defaults) -> String {
 /* The two forms, in the page's own idiom: text inputs and selects at the
 card's size, labels as quiet words beside them, one control to a line in
 the dealing grid so ten settings read as a list rather than a wall. */
-/* The deck: the lobby's own card at the window's width, holding two panes
-behind a segmented control. The tabs are the lobby's pill toggle drawn in
-CSS alone: a radio remembers the pane, the labels are the pills, and the
-checked one wears the primary the way the lobby's active setting does. */
+
 const EXTRA: &str = "
-main { max-width: none; }
-.deck { display: flex; flex-direction: column;
-        max-height: calc(100vh - 7.5rem);
-        background: var(--card); border: 1px solid var(--border);
-        border-radius: var(--radius-lg); padding: clamp(12px, 2vw, 28px);
-        box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07); }
-.tabPick { position: absolute; width: 1px; height: 1px; opacity: 0;
-           pointer-events: none; }
-.tabs { display: flex; gap: 4px; align-self: flex-start;
-        background: var(--background); border-radius: var(--radius-md);
-        padding: 4px; margin-bottom: .6rem; }
-.tabs label { font: 600 14px Figtree, system-ui, sans-serif; cursor: pointer;
-              color: var(--muted-foreground); padding: .45em 1em;
-              border-radius: var(--radius-md); }
 #tabAccount:checked ~ .tabs label[for=\"tabAccount\"],
 #tabDealing:checked ~ .tabs label[for=\"tabDealing\"] {
   background: var(--primary); color: var(--primary-foreground); }
-.pane { display: none; overflow-y: auto; min-height: 0; }
 #tabAccount:checked ~ .paneAccount { display: block; }
 #tabDealing:checked ~ .paneDealing { display: block; }
-/* Sections inside the deck are the lobby's: a small capital heading over its
-   controls, not the report's cards, because this is a console and not a
-   reading page. */
-.pane section { border: 0; background: none; box-shadow: none; padding: .4rem 0 .9rem;
-                margin: 0; }
-.pane h2 { font: 600 12px Figtree, system-ui, sans-serif; text-transform: uppercase;
-           letter-spacing: .08em; color: var(--muted-foreground); margin: 0 0 .5rem; }
 .rename { display: flex; gap: .6em; align-items: center; margin-top: .4rem; }
 .rename input { flex: 0 1 22em; }
 .rename input, .dealing input, .dealing select {
@@ -505,9 +402,6 @@ main { max-width: none; }
                  gap: .8em; font-size: 14px; color: var(--muted-foreground); }
 .dealing input { width: 6em; }
 .dealing button { grid-column: 1 / -1; justify-self: start; margin-top: .3rem; }
-/* The activity graph: weeks as columns, a day a cell, the primary's own ink
-   deepening with the count. Cells are spans with titles, which is all a
-   tooltip needs and all a no-script page has. */
 .weeks { display: flex; gap: 3px; overflow-x: auto; padding-bottom: .3rem; }
 .week { display: flex; flex-direction: column; gap: 3px; }
 .day { width: 11px; height: 11px; border-radius: 2px; background: var(--background); }
@@ -594,8 +488,10 @@ mod tests {
         assert!(html.contains("id=\"tabAccount\""), "the account tab");
         assert!(html.contains("id=\"tabDealing\""), "the settings tab");
         assert!(html.contains("class=\"weeks\""), "the activity graph");
-        assert!(html.contains("What your games add up to"));
-        assert!(html.contains("<td>Full</td>"), "their row, by market");
+        assert!(
+            !html.contains("What your games add up to"),
+            "the record lives on the history page now"
+        );
         assert!(!html.contains("<script"), "no script on the account page");
     }
 
@@ -610,8 +506,8 @@ mod tests {
             &Defaults::default(),
         );
         assert!(
-            html.contains("Nothing yet"),
-            "an empty record says so rather than borrowing one"
+            html.contains("0 games in the last half year"),
+            "the activity counts nothing rather than borrowing somebody's games"
         );
     }
 

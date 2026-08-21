@@ -2374,6 +2374,24 @@ impl Server {
                         .as_bytes(),
                 );
             }
+            ("GET", "/history") => {
+                if !self.people.has_account(&player) {
+                    return redirect_with(&mut stream, "/", "");
+                }
+                let who = crate::home::Who {
+                    offered: self.provider.is_some(),
+                    signed_in: true,
+                    name: self.people.name(&player),
+                };
+                let mut history = self.store.all();
+                history.reverse();
+                return respond(
+                    &mut stream,
+                    200,
+                    "text/html; charset=utf-8",
+                    crate::history::page(&history, &self.people, &player, &who).as_bytes(),
+                );
+            }
             ("POST", "/account/name") => {
                 if self.people.has_account(&player) {
                     let name = param(&body, "name").map(|v| decode(&v)).unwrap_or_default();

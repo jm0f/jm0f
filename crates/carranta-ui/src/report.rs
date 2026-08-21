@@ -4669,6 +4669,28 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
 .go.quiet { background: var(--card); color: var(--muted-foreground);
             border-color: var(--border); }
 .go.quiet:hover { color: var(--foreground); border-color: var(--muted-foreground); }
+/* The console: one card at the window's width, panes behind a segmented
+   control, shared by the account and history pages. Which pane a radio shows
+   is each page's own two lines, since the ids are the page's. */
+main:has(.deck) { max-width: none; }
+.deck { display: flex; flex-direction: column;
+        max-height: calc(100vh - 7.5rem);
+        background: var(--card); border: 1px solid var(--border);
+        border-radius: var(--radius-lg); padding: clamp(12px, 2vw, 28px);
+        box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07); }
+.tabPick { position: absolute; width: 1px; height: 1px; opacity: 0;
+           pointer-events: none; }
+.tabs { display: flex; gap: 4px; align-self: flex-start;
+        background: var(--background); border-radius: var(--radius-md);
+        padding: 4px; margin-bottom: .6rem; }
+.tabs label { font: 600 14px Figtree, system-ui, sans-serif; cursor: pointer;
+              color: var(--muted-foreground); padding: .45em 1em;
+              border-radius: var(--radius-md); }
+.pane { display: none; overflow-y: auto; min-height: 0; }
+.pane section { border: 0; background: none; box-shadow: none;
+                padding: .4rem 0 .9rem; margin: 0; }
+.pane h2 { font: 600 12px Figtree, system-ui, sans-serif; text-transform: uppercase;
+           letter-spacing: .08em; color: var(--muted-foreground); margin: 0 0 .5rem; }
 a.headWho { text-decoration: none; }
 a.headWho:hover { color: var(--primary); }
 .headOut { display: flex; margin: 0; }
