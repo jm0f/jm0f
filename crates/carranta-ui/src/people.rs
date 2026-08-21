@@ -63,6 +63,11 @@ pub struct Person {
     pub name: String,
     /// Whether they have declared themselves old enough (P-11, sixteen).
     ///
+    /// The table settings this person deals by default, as the query string
+    /// [`deal`] already parses, or empty for the server's own defaults. The
+    /// roster writes down what it was told and the server owns what the words
+    /// mean, which is the same stance the game files take about chairs.
+    pub table: String,
     /// Recorded here and asked nowhere yet: the declaration is a flow with a
     /// screen, and chat is its trigger rather than the account. The field is
     /// here so that the flow has somewhere to write when it is built, and so
@@ -194,6 +199,7 @@ impl People {
                         created: 0,
                         name: String::new(),
                         declared_adult: false,
+                        table: String::new(),
                     },
                 );
             }
@@ -262,6 +268,7 @@ impl People {
             created: now(),
             name: String::new(),
             declared_adult: false,
+            table: String::new(),
         });
         let out = Arrival {
             principal,
@@ -281,6 +288,29 @@ impl People {
             .get(principal)
             .map(|p| p.name.clone())
             .unwrap_or_default()
+    }
+
+    /// The table settings this person deals by, or empty for the server's.
+    pub fn table_defaults(&self, principal: &str) -> String {
+        self.book
+            .lock()
+            .unwrap()
+            .people
+            .get(principal)
+            .map(|p| p.table.clone())
+            .unwrap_or_default()
+    }
+
+    /// Set the table settings this person deals by. Empty clears them.
+    pub fn set_table_defaults(&self, principal: &str, table: &str) {
+        let mut book = self.book.lock().unwrap();
+        let Some(person) = book.people.get_mut(principal) else {
+            return;
+        };
+        if person.table != table {
+            person.table = table.to_string();
+            write(&self.path, &book);
+        }
     }
 
     /// Set what somebody calls themselves, if it has changed.
@@ -373,6 +403,7 @@ impl People {
                         created: now(),
                         name: String::new(),
                         declared_adult: false,
+                        table: String::new(),
                     },
                 );
                 book.credentials
@@ -454,6 +485,7 @@ impl People {
             created: now(),
             name: String::new(),
             declared_adult: false,
+            table: String::new(),
         });
         write(&self.path, &book);
     }
@@ -630,6 +662,11 @@ fn encode(book: &Book) -> String {
         if !p.name.is_empty() {
             let _ = writeln!(out, "name {} {}", p.id, p.name);
         }
+        // A query string holds no spaces, so it fits the line format the way
+        // an id does; empty means the server's defaults and is not written.
+        if !p.table.is_empty() {
+            let _ = writeln!(out, "table {} {}", p.id, p.table);
+        }
     }
     let mut devices: Vec<(&String, &String)> = book.devices.iter().collect();
     devices.sort();
@@ -679,6 +716,7 @@ fn decode(text: &str) -> Option<Book> {
                         created,
                         name: String::new(),
                         declared_adult,
+                        table: String::new(),
                     },
                 );
             }
@@ -686,6 +724,12 @@ fn decode(text: &str) -> Option<Book> {
                 let (id, name) = rest.split_once(' ')?;
                 if let Some(p) = book.people.get_mut(id) {
                     p.name = name.to_string();
+                }
+            }
+            "table" => {
+                let (id, table) = rest.split_once(' ')?;
+                if let Some(p) = book.people.get_mut(id) {
+                    p.table = table.to_string();
                 }
             }
             "device" => {

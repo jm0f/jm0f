@@ -93,14 +93,10 @@ pub(crate) fn account(who: &Who) -> String {
         "" => "Signed in".to_string(),
         name => esc(name),
     };
-    // A form rather than a link, because signing out changes something and a
-    // link that changes something is a link a prefetcher can press. No script:
-    // this page renders on the server and a button in a form needs none.
-    format!(
-        "<span class=\"headWho\">{called}</span>\
-         <form class=\"headOut\" method=\"post\" action=\"/signout\">\
-         <button class=\"headLink\" type=\"submit\">Sign out</button></form>"
-    )
+    // The name is the door to the account page, and the account page is where
+    // signing out lives now: a destructive button in the corner of every page
+    // was furniture, and a name that went nowhere was a dead end.
+    format!("<a class=\"headWho\" href=\"/account\">{called}</a>")
 }
 
 pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> String {
@@ -788,8 +784,12 @@ mod tests {
             },
             Finishing::default(),
         );
-        assert!(inn.contains(">Egon</span>"), "named");
-        assert!(inn.contains("method=\"post\" action=\"/signout\""));
+        assert!(inn.contains(">Egon</a>"), "named");
+        assert!(
+            inn.contains("href=\"/account\""),
+            "the name is the door to the account page"
+        );
+        assert!(!inn.contains("/signout"), "signing out lives on that page");
         assert!(!inn.contains("href=\"/signin\""), "already in");
         // And no script anywhere near it: this page renders on the server.
         assert!(
@@ -808,8 +808,8 @@ mod tests {
             },
             Finishing::default(),
         );
-        assert!(unnamed.contains(">Signed in</span>"));
-        assert!(unnamed.contains("/signout"));
+        assert!(unnamed.contains(">Signed in</a>"));
+        assert!(!unnamed.contains("/signout"), "signing out lives behind it");
     }
 
     #[test]

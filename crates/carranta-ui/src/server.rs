@@ -2351,6 +2351,46 @@ impl Server {
                 self.people.sign_out(&browser);
                 redirect_with(&mut stream, "/", &cookie_header(&signed.token))
             }
+            // The page behind your own name. Signed-in only: a guest has no
+            // account to look at, and is sent home rather than shown a shell.
+            ("GET", "/account") => {
+                if !self.people.has_account(&player) {
+                    return redirect_with(&mut stream, "/", "");
+                }
+                let who = crate::home::Who {
+                    offered: self.provider.is_some(),
+                    signed_in: true,
+                    name: self.people.name(&player),
+                };
+                let defaults =
+                    crate::account::Defaults::from_query(&self.people.table_defaults(&player));
+                let mut history = self.store.all();
+                history.reverse();
+                return respond(
+                    &mut stream,
+                    200,
+                    "text/html; charset=utf-8",
+                    crate::account::page(&history, &self.people, &player, &who, &defaults)
+                        .as_bytes(),
+                );
+            }
+            ("POST", "/account/name") => {
+                if self.people.has_account(&player) {
+                    let name = param(&body, "name").map(|v| decode(&v)).unwrap_or_default();
+                    let name: String = name.trim().chars().take(40).collect();
+                    self.people.rename(&player, &name);
+                }
+                redirect_with(&mut stream, "/account", "")
+            }
+            ("POST", "/account/table") => {
+                if self.people.has_account(&player) {
+                    // Through the struct and back out, so whatever arrived,
+                    // what is stored is a line this build would have written.
+                    let d = crate::account::Defaults::from_query(&body);
+                    self.people.set_table_defaults(&player, &d.to_query());
+                }
+                redirect_with(&mut stream, "/account", "")
+            }
             ("POST", "/signout") => {
                 self.people.sign_out(&token);
                 // Cleared in the browser as well as removed from the table. The
@@ -2371,7 +2411,16 @@ impl Server {
             // every few seconds for ever, to learn one bit.
             ("GET", "/health") => respond(&mut stream, 200, "text/plain", b"ok"),
             ("GET", "/lobby") => {
-                let id = self.deal("seats=4&clock=turn&clockSecs=60&discardSecs=10", &player);
+                // The table starts from this person's standard values when
+                // they have set any, and from the server's when they have
+                // not. Either way the lobby can change everything: a default
+                // is where a table starts, never where it has to stay.
+                let stored = self.people.table_defaults(&player);
+                let id = if stored.is_empty() {
+                    self.deal("seats=4&clock=turn&clockSecs=60", &player)
+                } else {
+                    self.deal(&stored, &player)
+                };
                 let set = if issue {
                     cookie_header(&token)
                 } else {

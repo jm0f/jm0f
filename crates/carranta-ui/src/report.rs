@@ -4653,6 +4653,8 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
            white-space: nowrap; }
 /* A button that reads as the links beside it, because it does the same kind of
    thing and only needs to be a button so that pressing it is a POST. */
+a.headWho { text-decoration: none; }
+a.headWho:hover { color: var(--primary); }
 .headOut { display: flex; margin: 0; }
 .headOut .headLink { appearance: none; background: none; cursor: pointer;
                      border: 0; border-bottom: 1px solid var(--border);
