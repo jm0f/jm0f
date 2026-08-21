@@ -82,7 +82,7 @@ pub struct Who {
 /// buys one thing, your games following you to another machine, and a page that
 /// asked for it before letting somebody play would be charging for a game in
 /// advance of showing it. Guests play everything.
-fn account(who: &Who) -> String {
+pub(crate) fn account(who: &Who) -> String {
     if !who.offered {
         return String::new();
     }
@@ -112,12 +112,11 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, staying: Finishing) -> Str
          <title>Carranta</title>{ICON}\
          <style>{CSS}{EXTRA}</style></head><body>\
          {head}<main>",
-        // One link. Every other page's header offers a way back to this one and
-        // a way to a new game; this page is the way back, and the button below
-        // is the way to a new game, said properly and in the place the eye
-        // lands, so a header link to either would be furniture. What the page
-        // does not hold is the view across games, and a page about starting
-        // one game is the wrong place to grow one, so that is a link.
+        // The header is the navigation. A left rail in the chat panel's shape
+        // was tried and deleted: hung under the wordmark it fought the centred
+        // hero for the eye, and on any laptop it fell back to a strip that was
+        // a second header wearing a card. Links to the page's own button stay
+        // out; links to the places this page does not go itself belong here.
         head = crate::report::masthead_home(&[("/corpus", "Across games")], &account(who)),
     );
 
@@ -190,6 +189,20 @@ const DEALS: usize = 6;
 fn island() -> String {
     let mut seed = spark();
     let mut b = String::from("<div class=\"island\" aria-hidden=\"true\">");
+    // The board's cardboard, defined once and referenced by every tile: the
+    // same turbulence at the same frequency over the same 120-unit patch the
+    // board repeats, and the tiles are drawn in board units, so the tooth
+    // lands at the same size against the hex as it does on a real board.
+    b.push_str(
+        "<svg width=\"0\" height=\"0\" style=\"position:absolute\">\
+         <filter id=\"tooth\" x=\"0\" y=\"0\" width=\"100%\" height=\"100%\">\
+         <feTurbulence type=\"fractalNoise\" baseFrequency=\"1.6\" numOctaves=\"3\" \
+         stitchTiles=\"stitch\"/><feColorMatrix type=\"saturate\" values=\"0\"/>\
+         </filter>\
+         <pattern id=\"cardboard\" width=\"120\" height=\"120\" \
+         patternUnits=\"userSpaceOnUse\">\
+         <rect width=\"120\" height=\"120\" filter=\"url(#tooth)\"/></pattern></svg>",
+    );
     for i in 0..DEALS {
         let _ = write!(
             b,
@@ -243,6 +256,8 @@ fn tile(land: usize, number: u8) -> String {
     let mut b = format!(
         "<svg class=\"tileHex\" viewBox=\"-53.7 -62 107.4 124\">\
          <polygon class=\"land l{land}\" points=\"{FACE}\"/>\
+         <polygon class=\"grain\" points=\"{FACE}\"/>\
+         <polygon class=\"lip\" points=\"{FACE}\"/>\
          <circle class=\"chit\" cx=\"0\" cy=\"0\" r=\"17\"/>\
          <text class=\"chitNum{hot}\" x=\"0\" y=\"-3\">{number}</text>"
     );
@@ -676,13 +691,18 @@ const EXTRA: &str = "
    is set, so the hexagon keeps the ratio its own box gives it. */
 .tileHex { width: clamp(60px, 11vw, 108px); height: auto; display: block; }
 /* The five, in the colours every other drawing in the application paints a
-   resource in, left to right as the game lists them. The edge is the board's
-   trick: a stroke measured in board units is thicker than a hairline whenever
-   the drawing is scaled up, so it is held at one pixel whatever the size. */
-.land { stroke: rgba(0, 0, 0, .16); stroke-width: 1;
-        vector-effect: non-scaling-stroke; }
+   resource in, left to right as the game lists them. */
 .l0 { fill: #1F5E3A; } .l1 { fill: #C0563B; } .l2 { fill: #8DBE4A; }
 .l3 { fill: #E2A32B; } .l4 { fill: #5C6B78; }
+/* The board's cardboard, layer for layer: the tooth is the face's own polygon
+   filled with the shared noise and blended over it, so the grain modulates
+   the terrain rather than greying it, and the lip is the pale one-pixel edge
+   a card has, held at one pixel however large the tile is drawn. The dark
+   outline the tiles briefly wore is gone because the board has none. */
+.grain { fill: url(#cardboard); opacity: .45; mix-blend-mode: soft-light;
+         pointer-events: none; }
+.lip { fill: none; stroke: rgba(255, 250, 242, .5); stroke-width: 1;
+       vector-effect: non-scaling-stroke; pointer-events: none; }
 /* The marker, the numeral and the dots, in the board's inks. Borderless, for
    the board's reason: the disc supplies its own contrast whatever is under it,
    so an outline would make a badge of a shape. Sturdy numerals rather than the
@@ -993,6 +1013,14 @@ mod tests {
         // size, and a tile that does not is a different drawing.
         let t = tile(3, 10);
         assert!(t.contains("<circle class=\"chit\" cx=\"0\" cy=\"0\" r=\"17\"/>"));
+        // The board's grain and lip ride the same polygon as the face.
+        assert_eq!(
+            t.matches("points=\"52.4,-30.3").count(),
+            3,
+            "face, grain, lip"
+        );
+        assert!(t.contains("class=\"grain\""));
+        assert!(t.contains("class=\"lip\""));
         assert!(t.contains("<text class=\"chitNum\" x=\"0\" y=\"-3\">10</text>"));
         assert!(t.contains("r=\"1.6\""));
         // The land is one of the five, and it is the one it was asked for.
@@ -1181,6 +1209,7 @@ mod tests {
         let header = &html[..html.find("</header>").expect("a header")];
         assert!(!header.contains("href=\"/lobby\""));
         assert!(header.contains("href=\"/corpus\""));
+        assert!(!html.contains("class=\"rail\""), "the rail stayed deleted");
     }
 
     #[test]
