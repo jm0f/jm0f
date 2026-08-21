@@ -101,18 +101,60 @@ pub fn page(history: &[Saved], who: &dyn Aliases, viewer: &crate::home::Who) -> 
             .then((a.config.trade_mode as u8).cmp(&(b.config.trade_mode as u8)))
     });
 
-    // The console: one tab per section, the pattern the account and history
+    // The console: one tab per analysis, the pattern the account and history
     // pages already wear, so the page itself never scrolls; a long table
-    // scrolls inside its pane. The tab strip is the page's whole table of
-    // contents, and the ids are made here because the sections are counted
-    // here.
+    // scrolls inside its pane. Inside every pane the configurations stay
+    // apart: one block per section, headed by its full name, because the
+    // boundary between them is the page's whole methodology.
+    const TABS: [(&str, &str, &str); 5] = [
+        (
+            "tabOverview",
+            "Overview",
+            "What each body of games amounts to, and when they were played. \
+             Nothing on this page crosses a configuration or pools people \
+             with self-play: a bot corpus is bigger by orders of magnitude, \
+             and an average over both is a bot average wearing a different \
+             name.",
+        ),
+        (
+            "tabSeats",
+            "Seats",
+            "Whether going first is worth anything. The draw shuffles who \
+             sits where, so over enough games every seat holds every kind of \
+             player and the rates are the seats' own.",
+        ),
+        (
+            "tabPlayers",
+            "Players",
+            "Everyone the record can tell apart: an agent is its name and \
+             build wherever it sits, a person is themselves across every \
+             game including the ones played as a guest before signing up.",
+        ),
+        (
+            "tabTurns",
+            "Over the turns",
+            "Mean victory points per seat as games run on, the whisker one \
+             standard deviation across games either side. A game ends when \
+             somebody reaches ten, so later turns average only the games \
+             still going, which are the slow ones; every candle names its \
+             games for that reason.",
+        ),
+        (
+            "tabDice",
+            "Dice",
+            "The generator over every roll a section holds, pooled. One \
+             game's dice being strange is weather and belongs on that game's \
+             report; the pool is the climate.",
+        ),
+    ];
     let mut extra = String::new();
-    for i in 0..sections.len() {
+    for (id, _, _) in TABS {
         let _ = write!(
             extra,
-            "#tabC{i}:checked ~ .tabs label[for=\"tabC{i}\"] {{ \
+            "#{id}:checked ~ .tabs label[for=\"{id}\"] {{ \
              background: var(--primary); color: var(--primary-foreground); }}\
-             #tabC{i}:checked ~ .paneC{i} {{ display: block; }}\n",
+             #{id}:checked ~ .pane{pane} {{ display: block; }}\n",
+            pane = &id[3..],
         );
     }
 
@@ -134,32 +176,59 @@ pub fn page(history: &[Saved], who: &dyn Aliases, viewer: &crate::home::Who) -> 
              no saved games. Every finished game joins this page on its own.</p>",
         );
     } else {
-        for i in 0..sections.len() {
+        for (id, _, _) in TABS {
             let _ = write!(
                 b,
                 "<input class=\"tabPick\" type=\"radio\" name=\"tab\" \
-                 id=\"tabC{i}\" tabindex=\"-1\"{}>",
-                if i == 0 { " checked" } else { "" },
+                 id=\"{id}\" tabindex=\"-1\"{}>",
+                if id == "tabSeats" { " checked" } else { "" },
             );
         }
         b.push_str("<nav class=\"tabs\">");
-        for (i, s) in sections.iter().enumerate() {
-            let _ = write!(
-                b,
-                "<label for=\"tabC{i}\" title=\"{long}. Nothing here \
-                 crosses a configuration or pools people with self-play: a \
-                 bot corpus is bigger by orders of magnitude, and an average \
-                 over both is a bot average wearing a different \
-                 name.\">{short}</label>",
-                long = section_title(s),
-                short = tab_label(s),
-            );
+        for (id, label, tip) in TABS {
+            let _ = write!(b, "<label for=\"{id}\" title=\"{tip}\">{label}</label>");
         }
         b.push_str("</nav>");
-        for (i, s) in sections.iter().enumerate() {
-            let _ = write!(b, "<div class=\"pane paneC{i}\">");
-            b.push_str(&section(s, &names));
-            b.push_str("</div>");
+
+        // Overview: each section's totals, then when the games were played,
+        // which is the one graph volume alone can honestly share.
+        b.push_str("<div class=\"pane paneOverview\">");
+        for s in &sections {
+            let c = &s.corpus;
+            let _ = write!(
+                b,
+                "<section><h3>{title}</h3>\
+                 <p class=\"blurb\">{n} {games}, {f} finished, {t:.0} turns \
+                 on average.</p></section>",
+                title = section_title(s),
+                n = c.games,
+                games = plural(c.games as usize, "game", "games"),
+                f = c.finished,
+                t = c.mean_turns(),
+            );
+        }
+        b.push_str(&activity_all(history));
+        b.push_str("</div>");
+
+        for (pane, body) in [
+            (
+                "Seats",
+                &sections.iter().map(seats_block).collect::<String>(),
+            ),
+            (
+                "Players",
+                &sections
+                    .iter()
+                    .map(|s| actors_block(s, &names))
+                    .collect::<String>(),
+            ),
+            (
+                "Turns",
+                &sections.iter().map(turns_block).collect::<String>(),
+            ),
+            ("Dice", &sections.iter().map(dice_block).collect::<String>()),
+        ] {
+            let _ = write!(b, "<div class=\"pane pane{pane}\">{body}</div>");
         }
     }
     if unreadable > 0 {
@@ -175,17 +244,97 @@ pub fn page(history: &[Saved], who: &dyn Aliases, viewer: &crate::home::Who) -> 
     b
 }
 
-/// The tab's word: short enough for a strip of several.
-fn tab_label(s: &Section) -> String {
-    format!(
-        "{:?} v{} · {}",
-        s.config.trade_mode,
-        s.config.rules_version,
-        if s.people { "people" } else { "self-play" },
-    )
+/// When the games were played, all of them together: 26 weeks of days in the
+/// account graph's own dress. Volume is the one number that can cross every
+/// configuration without lying, because nothing is averaged.
+fn activity_all(history: &[Saved]) -> String {
+    const WEEKS: usize = 26;
+    let today = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+        / 86_400_000) as i64;
+    let weekday = |day: i64| (((day + 3) % 7) + 7) % 7;
+    let last_monday = today - weekday(today);
+    let first = last_monday - (WEEKS as i64 - 1) * 7;
+
+    let mut counts = HashMap::new();
+    for saved in history {
+        let day = (saved.dealt / 86_400_000) as i64;
+        if day >= first {
+            *counts.entry(day).or_insert(0u32) += 1;
+        }
+    }
+    let played: u32 = counts.values().sum();
+
+    let mut b = String::from("<section><h3>Activity</h3>");
+    let _ = write!(
+        b,
+        "<p class=\"blurb\">{played} {} on this server in the last half year.</p>",
+        plural(played as usize, "game", "games"),
+    );
+    b.push_str("<div class=\"weeks\">");
+    for w in 0..WEEKS as i64 {
+        b.push_str("<div class=\"week\">");
+        for d in 0..7 {
+            let day = first + w * 7 + d;
+            if day > today {
+                b.push_str("<span class=\"day off\"></span>");
+                continue;
+            }
+            let n = counts.get(&day).copied().unwrap_or(0);
+            let level = match n {
+                0 => 0,
+                1 => 1,
+                2..=3 => 2,
+                4..=6 => 3,
+                _ => 4,
+            };
+            let (y, m, dd) = crate::account::ymd(day);
+            let _ = write!(
+                b,
+                "<span class=\"day l{level}\" title=\"{n} {} on {y:04}-{m:02}-{dd:02}\"></span>",
+                plural(n as usize, "game", "games"),
+            );
+        }
+        b.push_str("</div>");
+    }
+    b.push_str("</div>");
+    b.push_str(
+        "<p class=\"scale\">none<span class=\"day l1\"></span>\
+         <span class=\"day l2\"></span><span class=\"day l3\"></span>\
+         <span class=\"day l4\"></span>plenty</p>",
+    );
+    b.push_str("</section>");
+    b
 }
 
-/// The full name the heading used to carry, now the tab's tooltip.
+/// One configuration's name over one analysis body, or nothing when the body
+/// has nothing to show: an empty heading would claim a table that is not
+/// there.
+fn block(title: &str, body: String) -> String {
+    if body.is_empty() {
+        return String::new();
+    }
+    format!("<section><h3>{title}</h3>{body}</section>")
+}
+
+fn seats_block(s: &Section) -> String {
+    block(&section_title(s), seats(&s.corpus))
+}
+
+fn actors_block(s: &Section, names: &HashMap<u64, String>) -> String {
+    block(&section_title(s), actors(&s.corpus, names))
+}
+
+fn turns_block(s: &Section) -> String {
+    block(&section_title(s), turns(&s.corpus))
+}
+
+fn dice_block(s: &Section) -> String {
+    block(&section_title(s), audit(&s.corpus))
+}
+
+/// A configuration's full name, over its block in every pane.
 fn section_title(s: &Section) -> String {
     format!(
         "{:?} market · rules v{} · {}",
@@ -199,39 +348,13 @@ fn section_title(s: &Section) -> String {
     )
 }
 
-fn section(s: &Section, names: &HashMap<u64, String>) -> String {
-    let c = &s.corpus;
-    let mut b = String::from("<section>");
-    // The tab names the configuration; the pane opens with its numbers alone.
-    let _ = write!(
-        b,
-        "<p class=\"blurb\">{n} {games}, {f} finished, {t:.0} turns on average.</p>",
-        n = c.games,
-        games = plural(c.games as usize, "game", "games"),
-        f = c.finished,
-        t = c.mean_turns(),
-    );
-
-    b.push_str(&seats(c));
-    b.push_str(&actors(c, names));
-    b.push_str(&turns(c));
-    b.push_str(&audit(c));
-    b.push_str("</section>");
-    b
-}
-
 /// Win rate by seat: the first-player-advantage question (A-4).
 fn seats(c: &Corpus) -> String {
     if c.finished == 0 {
         return String::new();
     }
     let rates = c.seat_win_rate();
-    let mut b = String::from(
-        "<h3 title=\"Whether going first is worth anything. The draw \
-         shuffles who sits where, so over enough games every seat holds every \
-         kind of player and the rates below are the seats' own.\">Seats</h3>",
-    );
-    b.push_str(TABLE_OPEN);
+    let mut b = String::from(TABLE_OPEN);
     b.push_str(
         "<thead><tr><th>seat</th><th>games</th><th>wins</th><th>win rate</th></tr></thead><tbody>",
     );
@@ -258,13 +381,7 @@ fn actors(c: &Corpus, names: &HashMap<u64, String>) -> String {
     if rows.is_empty() {
         return String::new();
     }
-    let mut b = String::from(
-        "<h3 title=\"Everyone the record can tell apart: an agent is its \
-         name and build wherever it sits, a person is themselves across \
-         every game including the ones played as a guest before signing \
-         up.\">Players</h3>",
-    );
-    b.push_str(TABLE_OPEN);
+    let mut b = String::from(TABLE_OPEN);
     b.push_str(
         "<thead><tr><th>player</th><th>games</th><th>seats</th><th>wins</th>\
          <th title=\"The interval is clustered by game, because chairs in one \
@@ -293,51 +410,106 @@ fn actors(c: &Corpus, names: &HashMap<u64, String>) -> String {
     b
 }
 
-/// Mean VP over the turns, every mean beside the games it was computed over.
+/// Mean VP over the turns as candles: the bar is the mean, the whisker one
+/// standard deviation across games either side of it, every candle naming the
+/// games it averages, because later turns hold only the slow ones.
 fn turns(c: &Corpus) -> String {
-    let rows = c.vp_turns.rows();
+    let rows = c.vp_turns.spread_rows();
     if rows.is_empty() {
         return String::new();
     }
-    let mut b = String::from(
-        "<h3 title=\"Mean victory points per seat as games run on. A game \
-         ends when somebody reaches ten, so the later rows average only the \
-         games still going, which are the slow ones; the games column is \
-         what keeps that honest.\">Over the turns</h3>",
-    );
-    b.push_str(TABLE_OPEN);
-    b.push_str("<thead><tr><th>turn</th><th>mean VP</th><th>games</th></tr></thead><tbody>");
+    // Every fifth turn plus the first and the last: the shape at the page's
+    // size, not the whole vector.
     let last = rows.len() - 1;
-    for (i, (turn, mean, n)) in rows.iter().enumerate() {
-        // Every fifth turn plus the first and the last: the shape at the
-        // page's size, not the whole vector.
-        if i != 0 && i != last && turn % 5 != 0 {
-            continue;
-        }
-        let _ = write!(b, "<tr><td>{turn}</td><td>{mean:.2}</td><td>{n}</td></tr>",);
+    let picked: Vec<&(usize, f64, f64, u32)> = rows
+        .iter()
+        .enumerate()
+        .filter(|(i, (turn, _, _, _))| *i == 0 || *i == last || turn % 5 == 0)
+        .map(|(_, r)| r)
+        .collect();
+    let tallest = picked
+        .iter()
+        .map(|(_, mean, sd, _)| mean + sd)
+        .fold(0.0, f64::max);
+    if tallest <= 0.0 {
+        return String::new();
     }
-    b.push_str(TABLE_CLOSE);
+    let mut b = String::from("<div class=\"tw\"><table class=\"rolls\"><thead>");
+    b.push_str("<tr class=\"chart\">");
+    for (turn, mean, sd, n) in &picked {
+        let low = ((mean - sd).max(0.0) / tallest) * 100.0;
+        let high = ((mean + sd) / tallest) * 100.0;
+        let _ = write!(
+            b,
+            "<td><div class=\"col\" data-tip=\"turn {turn}: mean {mean:.2} VP \
+             ± {sd:.2} over {n} {}\">\
+             <div class=\"stem\" style=\"height:{h:.1}%\"></div>\
+             <div class=\"whisk\" style=\"bottom:{low:.1}%;height:{wh:.1}%\"></div>\
+             </div></td>",
+            plural(*n as usize, "game", "games"),
+            h = (mean / tallest) * 100.0,
+            wh = (high - low).max(0.5),
+        );
+    }
+    b.push_str("</tr><tr>");
+    for (turn, _, _, _) in &picked {
+        let _ = write!(b, "<th>{turn}</th>");
+    }
+    b.push_str("</tr></thead></table></div>");
     b
 }
 
-/// The pooled generator audit (§10.1b), which is the only fairness question a
-/// corpus can answer.
+/// The pooled generator audit (§10.1b), drawn the way a single game's report
+/// draws it: the rolls as bars with the fair-dice expectation marked across
+/// them, and the pooled numbers under the chart.
 fn audit(c: &Corpus) -> String {
     if c.rolls.is_empty() {
         return String::new();
     }
     let a = c.dice_audit();
-    format!(
-        "<h3 title=\"The generator over every roll this section holds, \
-         pooled. One game's dice being strange is weather and belongs on that \
-         game's report; the pool is the climate.\">Dice</h3>\
-         <p class=\"blurb\">{n} rolls · sevens {sevens:.1}% against 16.7% \
+    let mut counts = [0u32; 11];
+    for &r in &c.rolls {
+        if (2..=12).contains(&r) {
+            counts[r as usize - 2] += 1;
+        }
+    }
+    let total: u32 = counts.iter().sum();
+    let expect = |n: u32| f64::from(total) * f64::from(6 - (n as i32 - 7).abs() as u32) / 36.0;
+    let tallest = (2..=12u32)
+        .map(|n| expect(n).max(f64::from(counts[n as usize - 2])))
+        .fold(0.0, f64::max);
+    if tallest <= 0.0 {
+        return String::new();
+    }
+    let mut b = String::from("<div class=\"tw\"><table class=\"rolls\"><thead>");
+    b.push_str("<tr class=\"chart\">");
+    for n in 2..=12u32 {
+        let got = counts[n as usize - 2];
+        let _ = write!(
+            b,
+            "<td><div class=\"col\" data-tip=\"{n}: rolled {got}, expected {e:.1}\">\
+             <div class=\"stem\" style=\"height:{h:.1}%\"></div>\
+             <div class=\"owed\" style=\"bottom:{m:.1}%\"></div></div></td>",
+            e = expect(n),
+            h = 100.0 * f64::from(got) / tallest,
+            m = 100.0 * expect(n) / tallest,
+        );
+    }
+    b.push_str("</tr><tr>");
+    for n in 2..=12u32 {
+        let _ = write!(b, "<th>{n}</th>");
+    }
+    b.push_str("</tr></thead></table></div>");
+    let _ = write!(
+        b,
+        "<p class=\"blurb\">{n} rolls · sevens {sevens:.1}% against 16.7% \
          expected · KL from theory {kl:.5} bits · chi-squared p = {p:.2}</p>",
         n = c.rolls.len(),
         sevens = a.seven_share * 100.0,
         kl = a.kl_bits,
         p = a.p_value,
-    )
+    );
+    b
 }
 
 fn name_of(who: &Who, names: &HashMap<u64, String>) -> String {
@@ -438,12 +610,24 @@ mod tests {
         let html = page(&history, &NoAliases, &nobody_who());
         assert!(html.contains("with people at the table"));
         assert!(html.contains("self-play"));
-        // Two tabs of one configuration, not one of two games; each is a
-        // pane of the console, and the first tab is the open one.
-        assert_eq!(html.matches("Full market · rules v").count(), 2);
-        assert_eq!(html.matches("class=\"pane paneC").count(), 2);
-        assert!(html.contains("id=\"tabC0\" tabindex=\"-1\" checked"));
-        assert!(html.contains(">Full v1 · people</label>"));
+        // One tab per analysis with Seats open, and inside every pane the
+        // two bodies of one configuration stay apart, each under its own
+        // full name: two blocks in the overview, never a pooled one.
+        for id in [
+            "tabOverview",
+            "tabSeats",
+            "tabPlayers",
+            "tabTurns",
+            "tabDice",
+        ] {
+            assert!(html.contains(&format!("id=\"{id}\"")), "{id}");
+        }
+        assert!(html.contains("id=\"tabSeats\" tabindex=\"-1\" checked"));
+        // rfind, because the stylesheet names the panes before the body does.
+        let overview = &html[html.rfind("paneOverview").expect("an overview pane")
+            ..html.rfind("paneSeats").expect("a seats pane")];
+        assert_eq!(overview.matches("Full market · rules v").count(), 2);
+        assert!(overview.contains(">Activity</h3>"), "the all-games graph");
     }
 
     #[test]

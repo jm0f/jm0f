@@ -127,6 +127,7 @@ pub struct ActorRow {
 #[derive(Clone, Debug, Default)]
 pub struct PerTurn {
     sums: Vec<f64>,
+    sqs: Vec<f64>,
     ns: Vec<u32>,
 }
 
@@ -137,23 +138,42 @@ impl PerTurn {
         }
         if self.sums.len() < curve.len() {
             self.sums.resize(curve.len(), 0.0);
+            self.sqs.resize(curve.len(), 0.0);
             self.ns.resize(curve.len(), 0);
         }
         for (t, vp) in curve.iter().enumerate() {
             let total: u32 = vp[..players].iter().sum();
-            self.sums[t] += f64::from(total) / players as f64;
+            let mean = f64::from(total) / players as f64;
+            self.sums[t] += mean;
+            self.sqs[t] += mean * mean;
             self.ns[t] += 1;
         }
     }
 
     /// `(turn, mean VP per seat, games that reached the turn)`, turn 1 first.
     pub fn rows(&self) -> Vec<(usize, f64, u32)> {
+        self.spread_rows()
+            .into_iter()
+            .map(|(t, mean, _, n)| (t, mean, n))
+            .collect()
+    }
+
+    /// The same rows with the spread beside the mean: `(turn, mean, standard
+    /// deviation across the games that reached the turn, games)`. One game has
+    /// no spread to measure, so its deviation is zero rather than a claim.
+    pub fn spread_rows(&self) -> Vec<(usize, f64, f64, u32)> {
         self.sums
             .iter()
+            .zip(&self.sqs)
             .zip(&self.ns)
             .enumerate()
-            .filter(|(_, (_, n))| **n > 0)
-            .map(|(t, (sum, n))| (t + 1, sum / f64::from(*n), *n))
+            .filter(|(_, ((_, _), n))| **n > 0)
+            .map(|(t, ((sum, sq), n))| {
+                let n_f = f64::from(*n);
+                let mean = sum / n_f;
+                let sd = (sq / n_f - mean * mean).max(0.0).sqrt();
+                (t + 1, mean, sd, *n)
+            })
             .collect()
     }
 

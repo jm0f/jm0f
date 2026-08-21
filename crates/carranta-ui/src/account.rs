@@ -324,7 +324,7 @@ fn activity(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
 /// Days since the epoch to a calendar date, the civil-from-days arithmetic,
 /// here so a tooltip can name a day without the workspace growing a calendar
 /// dependency for one line of text.
-fn ymd(days: i64) -> (i64, u32, u32) {
+pub(crate) fn ymd(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -495,16 +495,6 @@ const EXTRA: &str = "
   background: var(--background); border: 1px solid var(--border);
   border-radius: var(--radius-md); padding: .5em .7em; width: 7em; }
 .amount .unit { font-size: 14px; color: var(--muted-foreground); }
-.weeks { display: flex; gap: 3px; overflow-x: auto; padding-bottom: .3rem; }
-.week { display: flex; flex-direction: column; gap: 3px; }
-.day { width: 11px; height: 11px; border-radius: 2px; background: var(--background); }
-.day.off { background: none; }
-.day.l1 { background: #F2CDB2; }
-.day.l2 { background: #EDA477; }
-.day.l3 { background: #E8703C; }
-.day.l4 { background: #C2492A; }
-.scale { display: flex; gap: 3px; align-items: center; margin: .3rem 0 0;
-         font-size: 12px; color: var(--muted-foreground); }
 ";
 
 #[cfg(test)]

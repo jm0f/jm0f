@@ -4753,14 +4753,33 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
    cap as the lobby's card, centred both ways in what the header leaves, and
    the height still bounded so only the pane inside ever scrolls. */
 body:has(.deck) { display: flex; flex-direction: column; }
-main:has(.deck) { max-width: none; flex: 1;
+/* Explicit width, because the base main centres itself with auto margins and
+   a flex item with auto cross margins shrinks to its content instead. */
+main:has(.deck) { max-width: none; width: 100%; flex: 1;
                   justify-content: center; padding-bottom: 1.5rem; }
 .deck { display: flex; flex-direction: column;
-        width: min(880px, 100%); margin: 0 auto;
-        max-height: calc(100vh - 7.5rem);
+        width: min(calc(880px + clamp(8px, .8vw, 16px) + clamp(260px, 18.5vw, 400px)), 100%);
+        margin: 0 auto;
+        height: calc(100vh - 7.5rem);
         background: var(--card); border: 1px solid var(--border);
         border-radius: var(--radius-lg); padding: clamp(12px, 2vw, 28px);
         box-shadow: 0 2px 5px rgba(51, 38, 27, .05), 0 12px 28px rgba(51, 38, 27, .07); }
+/* The activity weeks, shared by the account's own graph and the corpus's
+   all-games one: columns of days, Monday first, an orange ramp. */
+.weeks { display: flex; gap: 3px; overflow-x: auto; padding-bottom: .3rem; }
+.week { display: flex; flex-direction: column; gap: 3px; }
+.day { width: 11px; height: 11px; border-radius: 2px; background: var(--background); }
+.day.off { background: none; }
+.day.l1 { background: #F2CDB2; }
+.day.l2 { background: #EDA477; }
+.day.l3 { background: #E8703C; }
+.day.l4 { background: #C2492A; }
+.scale { display: flex; gap: 3px; align-items: center; margin: .3rem 0 0;
+         font-size: 12px; color: var(--muted-foreground); }
+/* The candle on a per-turn column: the whisker is the standard deviation
+   either side of the mean, drawn up the middle of the column's bar. */
+.whisk { position: absolute; left: 50%; width: 2px; margin-left: -1px;
+         background: var(--primary); border-radius: 1px; }
 .tabPick { position: absolute; width: 1px; height: 1px; opacity: 0;
            pointer-events: none; }
 .tabs { display: flex; gap: 4px; align-self: flex-start;
