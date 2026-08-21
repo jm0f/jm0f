@@ -4744,11 +4744,19 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
 .go.quiet { background: var(--card); color: var(--muted-foreground);
             border-color: var(--border); }
 .go.quiet:hover { color: var(--foreground); border-color: var(--muted-foreground); }
-/* The console: one card at the window's width, panes behind a segmented
-   control, shared by the account and history pages. Which pane a radio shows
-   is each page's own two lines, since the ids are the page's. */
-main:has(.deck) { max-width: none; }
+/* The console: one card, the lobby's own size and place, panes behind a
+   segmented control, shared by the account and history pages. Which pane a
+   radio shows is each page's own two lines, since the ids are the page's.
+   It used to take the window's width, which on a monitor made it a slab in
+   the top corner while the lobby floated a centred card: the screens scaled
+   differently with the display, and the difference read as a design. Same
+   cap as the lobby's card, centred both ways in what the header leaves, and
+   the height still bounded so only the pane inside ever scrolls. */
+body:has(.deck) { display: flex; flex-direction: column; }
+main:has(.deck) { max-width: none; flex: 1;
+                  justify-content: center; padding-bottom: 1.5rem; }
 .deck { display: flex; flex-direction: column;
+        width: min(880px, 100%); margin: 0 auto;
         max-height: calc(100vh - 7.5rem);
         background: var(--card); border: 1px solid var(--border);
         border-radius: var(--radius-lg); padding: clamp(12px, 2vw, 28px);
