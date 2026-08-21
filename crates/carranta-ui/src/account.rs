@@ -162,12 +162,9 @@ pub fn page(
          tabindex=\"-1\" checked>\
          <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabDealing\" \
          tabindex=\"-1\">\
-         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabPrivacy\" \
-         tabindex=\"-1\">\
          <nav class=\"tabs\">\
          <label for=\"tabAccount\">Account</label>\
          <label for=\"tabDealing\">Default game settings</label>\
-         <label for=\"tabPrivacy\">Privacy</label>\
          </nav>",
     );
 
@@ -189,20 +186,6 @@ pub fn page(
 
     b.push_str(&activity(history, aliases, me));
 
-    b.push_str(
-        "<section><h2 title=\"Through Google. What this server keeps is an \
-         opaque subject and nothing else: not your email address, not your \
-         Google name, not your picture. Signing out removes this browser's \
-         key; the account and its games stay.\">Signed in</h2>",
-    );
-    b.push_str(
-        "<form class=\"headOut\" method=\"post\" action=\"/signout\">\
-         <button class=\"go small quiet\" type=\"submit\">Sign out</button></form>",
-    );
-    b.push_str("</section></div>");
-
-    // ---- the Privacy pane ---------------------------------------------------
-    b.push_str("<div class=\"pane panePrivacy\">");
     b.push_str(
         "<section><h2 title=\"A public profile, its games and its statistics, \
          is readable by anybody at /player/ followed by your name. Private is \
@@ -230,6 +213,18 @@ pub fn page(
             n = esc(called),
         );
     }
+    b.push_str("</section>");
+
+    b.push_str(
+        "<section><h2 title=\"Through Google. What this server keeps is an \
+         opaque subject and nothing else: not your email address, not your \
+         Google name, not your picture. Signing out removes this browser's \
+         key; the account and its games stay.\">Signed in</h2>",
+    );
+    b.push_str(
+        "<form class=\"headOut\" method=\"post\" action=\"/signout\">\
+         <button class=\"go small quiet\" type=\"submit\">Sign out</button></form>",
+    );
     b.push_str("</section></div>");
 
     // ---- the Default game settings pane -------------------------------------
@@ -452,9 +447,6 @@ const EXTRA: &str = "
   background: var(--primary); color: var(--primary-foreground); }
 #tabAccount:checked ~ .paneAccount { display: block; }
 #tabDealing:checked ~ .paneDealing { display: block; }
-#tabPrivacy:checked ~ .tabs label[for=\"tabPrivacy\"] {
-  background: var(--primary); color: var(--primary-foreground); }
-#tabPrivacy:checked ~ .panePrivacy { display: block; }
 /* Air inside the scroll container, so a focus ring is drawn rather than
    shaved off at the pane's edge. */
 .pane { padding: 4px 6px; }
@@ -559,7 +551,10 @@ mod tests {
         assert!(html.contains("action=\"/signout\""));
         assert!(html.contains("id=\"tabAccount\""), "the account tab");
         assert!(html.contains("id=\"tabDealing\""), "the settings tab");
-        assert!(html.contains("id=\"tabPrivacy\""), "the privacy tab");
+        assert!(
+            !html.contains("id=\"tabPrivacy\""),
+            "privacy is a section of Account, not a tab"
+        );
         assert!(
             html.contains("id=\"profile-private\" checked"),
             "private is where everybody starts"
