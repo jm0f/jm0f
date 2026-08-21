@@ -8,13 +8,14 @@
 //! the same code that computes it for everybody, so this page can never
 //! disagree with the across-games one.
 //!
-//! No script, like every page that changes nothing without a request. The
-//! rename is a form, the sign-out is a form, and everything else settled when
-//! the games ended.
+//! This page carries one small script and nothing more: the settings save
+//! themselves when changed and the name saves itself when typed, because a
+//! console that needs a save button pressed is a console that loses whatever
+//! was set before somebody remembered to press it. The forms are still forms
+//! and the server still answers posts, so the page degrades to Enter-to-save
+//! without the script rather than to nothing.
 
 use std::fmt::Write as _;
-
-use carranta_analytics::corpus::{Config, Corpus, Who as Actor};
 
 /// The table settings a person deals by, in lobby vocabulary.
 ///
@@ -117,7 +118,7 @@ impl Defaults {
     }
 }
 
-use crate::analysis::{player_number, to_log_as};
+use crate::analysis::player_number;
 use crate::home::Who;
 use crate::people::Aliases;
 use crate::report::{CSS, ICON};
@@ -172,29 +173,27 @@ pub fn page(
 
     // ---- the Account pane ---------------------------------------------------
     b.push_str("<div class=\"pane paneAccount\">");
-    b.push_str("<section><h2>Name</h2>");
     b.push_str(
-        "<p class=\"blurb\">The name new tables will offer for your chair. \
-         Games already written down keep the name they were played under.</p>",
+        "<section><h2 title=\"The name new tables will offer for your chair. \
+         Games already written down keep the name they were played under.\">\
+         Name</h2>",
     );
     let _ = write!(
         b,
         "<form class=\"rename\" method=\"post\" action=\"/account/name\">\
          <input name=\"name\" value=\"{}\" maxlength=\"40\" \
-         placeholder=\"what the table should call you\">\
-         <button class=\"go small\" type=\"submit\">Rename</button></form>",
+         placeholder=\"what the table should call you\"></form>",
         esc(called),
     );
     b.push_str("</section>");
 
     b.push_str(&activity(history, aliases, me));
 
-    b.push_str("<section><h2>Signed in</h2>");
     b.push_str(
-        "<p class=\"blurb\">Through Google. What this server keeps of that is \
-         an opaque subject and nothing else: not your email address, not your \
+        "<section><h2 title=\"Through Google. What this server keeps is an \
+         opaque subject and nothing else: not your email address, not your \
          Google name, not your picture. Signing out removes this browser's \
-         key; the account and its games stay.</p>",
+         key; the account and its games stay.\">Signed in</h2>",
     );
     b.push_str(
         "<form class=\"headOut\" method=\"post\" action=\"/signout\">\
@@ -207,7 +206,9 @@ pub fn page(
     b.push_str(&dealing(defaults));
     b.push_str("</div>");
 
-    b.push_str("</div></main></body></html>");
+    b.push_str("</div></main>");
+    b.push_str(SAVES_ITSELF);
+    b.push_str("</body></html>");
     b
 }
 
@@ -253,8 +254,7 @@ fn activity(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
     let mut b = String::from("<section><h2>Activity</h2>");
     let _ = write!(
         b,
-        "<p class=\"blurb\">{played} {} in the last half year, dealt or sat \
-         in, finished or not: the graph counts sitting down.</p>",
+        "<p class=\"blurb\">{played} {} in the last half year.</p>",
         if played == 1 { "game" } else { "games" },
     );
     b.push_str("<div class=\"weeks\">");
@@ -309,80 +309,111 @@ fn ymd(days: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// The standard values a new table of yours starts from.
+/// The standard values a new table of yours starts from, in the lobby's own
+/// dress: a small capital label over a row of pills, a number with its unit
+/// after it, stacked the way the lobby stacks them, so the person who set a
+/// table up an hour ago recognises every control here.
 ///
-/// Selects rather than anything cleverer, because the page has no script and
-/// needs none: the browser holds the state and the form posts it whole. Every
-/// field mirrors a lobby control, and the lobby can still override any of it
-/// per table, which is what a default is.
+/// The pills are radios wearing labels, the trick the tabs already use. The
+/// form saves itself when anything changes; there is no button to forget.
 fn dealing(d: &Defaults) -> String {
-    let picked = |on: bool| if on { " selected" } else { "" };
-    let mut b = String::from("<section><h2>How you deal</h2>");
-    b.push_str(
-        "<p class=\"blurb\">The settings a new table of yours starts from \
+    let on = |yes: bool| if yes { " checked" } else { "" };
+    let pill = |name: &str, value: &str, label: &str, checked: bool| {
+        format!(
+            "<input type=\"radio\" name=\"{name}\" value=\"{value}\" \
+             id=\"{name}-{value}\"{}><label class=\"pill\" \
+             for=\"{name}-{value}\">{label}</label>",
+            on(checked),
+        )
+    };
+    let mut b = String::from(
+        "<section><h2 title=\"The settings a new table of yours starts from \
          when you press New game. The lobby can still change any of them for \
-         one table; this is only where it starts.</p>",
+         one table; changes here save themselves.\">How you deal</h2>",
+    );
+    b.push_str("<form class=\"dealing\" method=\"post\" action=\"/account/table\">");
+
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Mode</h3><div class=\"pills\">{}{}</div></div>",
+        pill("seats", "4", "4 players", d.seats == 4),
+        pill("seats", "3", "3 players", d.seats == 3),
     );
     let _ = write!(
         b,
-        "<form class=\"dealing\" method=\"post\" action=\"/account/table\">\
-         <label>players <select name=\"seats\">\
-         <option value=\"4\"{s4}>4</option><option value=\"3\"{s3}>3</option>\
-         </select></label>\
-         <label>turn clock <select name=\"clock\">\
-         <option value=\"turn\"{ct}>per turn</option>\
-         <option value=\"chess\"{cc}>chess clock</option>\
-         <option value=\"off\"{co}>no clock</option></select></label>\
-         <label>seconds <input type=\"number\" name=\"clockSecs\" value=\"{secs}\" \
-         min=\"0\" max=\"6000\"></label>\
-         <label>increment <input type=\"number\" name=\"clockInc\" value=\"{inc}\" \
-         min=\"0\" max=\"600\"></label>\
-         <label>to discard on a seven <input type=\"number\" name=\"discardSecs\" \
-         value=\"{disc}\" min=\"0\" max=\"600\"></label>\
-         <label>bot speed <select name=\"pace\">\
-         <option value=\"slow\"{ps}>slow</option>\
-         <option value=\"fast\"{pf}>fast</option>\
-         <option value=\"instant\"{pi}>instant</option></select></label>\
-         <label>bank <select name=\"bank\">\
-         <option value=\"exact\"{be}>exact count</option>\
-         <option value=\"rough\"{br}>stack size</option></select></label>\
-         <label>log <select name=\"log\">\
-         <option value=\"on\"{lo}>keep a log</option>\
-         <option value=\"off\"{lf}>play from memory</option></select></label>\
-         <label>visibility <select name=\"visibility\">\
-         <option value=\"private\"{vp}>private</option>\
-         <option value=\"public\"{vu}>public</option></select></label>\
-         <label>chat <select name=\"chat\">\
-         <option value=\"off\"{cn}>no chat</option>\
-         <option value=\"text\"{cx}>text</option></select></label>\
-         <button class=\"go small\" type=\"submit\">Save table defaults</button>\
-         </form></section>",
-        s4 = picked(d.seats == 4),
-        s3 = picked(d.seats == 3),
-        ct = picked(d.clock == "turn"),
-        cc = picked(d.clock == "chess"),
-        co = picked(d.clock == "off"),
-        secs = d.clock_secs,
-        inc = d.clock_inc,
-        disc = d.discard_secs,
-        ps = picked(d.pace == "slow"),
-        pf = picked(d.pace == "fast"),
-        pi = picked(d.pace == "instant"),
-        be = picked(d.bank_exact),
-        br = picked(!d.bank_exact),
-        lo = picked(d.log),
-        lf = picked(!d.log),
-        vp = picked(!d.public),
-        vu = picked(d.public),
-        cn = picked(!d.chat),
-        cx = picked(d.chat),
+        "<div class=\"set\"><h3>Chat</h3><div class=\"pills\">{}{}</div></div>",
+        pill("chat", "off", "no chat", !d.chat),
+        pill("chat", "text", "text", d.chat),
     );
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Turn clock</h3><div class=\"pills\">{}{}{}</div>\
+         <div class=\"amount\"><input type=\"number\" name=\"clockSecs\" \
+         value=\"{}\" min=\"0\" max=\"6000\"><span class=\"unit\">seconds</span></div>\
+         <div class=\"amount\"><input type=\"number\" name=\"clockInc\" \
+         value=\"{}\" min=\"0\" max=\"600\"><span class=\"unit\">increment</span></div>\
+         <div class=\"amount\"><input type=\"number\" name=\"discardSecs\" \
+         value=\"{}\" min=\"0\" max=\"600\">\
+         <span class=\"unit\">to discard on a seven</span></div>",
+        pill("clock", "turn", "per turn", d.clock == "turn"),
+        pill("clock", "chess", "chess clock", d.clock == "chess"),
+        pill("clock", "off", "no clock", d.clock == "off"),
+        d.clock_secs,
+        d.clock_inc,
+        d.discard_secs,
+    );
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Bank</h3><div class=\"pills\">{}{}</div></div>",
+        pill("bank", "exact", "exact count", d.bank_exact),
+        pill("bank", "rough", "stack size", !d.bank_exact),
+    );
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Log</h3><div class=\"pills\">{}{}</div></div>",
+        pill("log", "on", "keep a log", d.log),
+        pill("log", "off", "play from memory", !d.log),
+    );
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Bot speed</h3><div class=\"pills\">{}{}{}</div></div>",
+        pill("pace", "slow", "slow", d.pace == "slow"),
+        pill("pace", "fast", "fast", d.pace == "fast"),
+        pill("pace", "instant", "instant", d.pace == "instant"),
+    );
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Visibility</h3><div class=\"pills\">{}{}</div></div>",
+        pill("visibility", "private", "private", !d.public),
+        pill("visibility", "public", "public", d.public),
+    );
+    b.push_str("</form></section>");
     b
 }
 
-/* The two forms, in the page's own idiom: text inputs and selects at the
-card's size, labels as quiet words beside them, one control to a line in
-the dealing grid so ten settings read as a list rather than a wall. */
+/// The one script the page carries: forms that save themselves.
+///
+/// A change on the dealing form posts it whole; typing in the rename posts it
+/// after the typing pauses. Failures are silent because the next change posts
+/// everything again: the form is the state and the server stores whatever the
+/// last post said.
+const SAVES_ITSELF: &str = "<script>\
+const d=document.querySelector('.dealing');\
+if(d){d.addEventListener('change',()=>\
+fetch(d.action,{method:'POST',body:new URLSearchParams(new FormData(d))}))}\
+const r=document.querySelector('.rename');\
+if(r){const i=r.querySelector('input');let t;\
+const save=()=>fetch(r.action,{method:'POST',body:new URLSearchParams(new FormData(r))});\
+i.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(save,600)});\
+r.addEventListener('submit',e=>{e.preventDefault();save();});}\
+</script>";
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
 
 const EXTRA: &str = "
 #tabAccount:checked ~ .tabs label[for=\"tabAccount\"],
@@ -390,18 +421,34 @@ const EXTRA: &str = "
   background: var(--primary); color: var(--primary-foreground); }
 #tabAccount:checked ~ .paneAccount { display: block; }
 #tabDealing:checked ~ .paneDealing { display: block; }
-.rename { display: flex; gap: .6em; align-items: center; margin-top: .4rem; }
-.rename input { flex: 0 1 22em; }
-.rename input, .dealing input, .dealing select {
-  font: 400 14px Figtree, system-ui, sans-serif; color: var(--foreground);
+/* Air inside the scroll container, so a focus ring is drawn rather than
+   shaved off at the pane's edge. */
+.pane { padding: 4px 6px; }
+.rename input {
+  font: 400 15px Figtree, system-ui, sans-serif; color: var(--foreground);
   background: var(--background); border: 1px solid var(--border);
-  border-radius: var(--radius-md); padding: .45em .6em; }
-.dealing { display: grid; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr));
-           gap: .7em 1.2em; align-items: center; margin-top: .4rem; }
-.dealing label { display: flex; justify-content: space-between; align-items: center;
-                 gap: .8em; font-size: 14px; color: var(--muted-foreground); }
-.dealing input { width: 6em; }
-.dealing button { grid-column: 1 / -1; justify-self: start; margin-top: .3rem; }
+  border-radius: var(--radius-md); padding: .5em .7em; width: min(22em, 100%); }
+/* The lobby's controls, control for control: a small capital label, a row of
+   pills on a quiet track, a number with its unit after it. */
+.set { margin: 0 0 1rem; }
+.set h3 { font: 600 12px Figtree, system-ui, sans-serif; text-transform: uppercase;
+          letter-spacing: .08em; color: var(--muted-foreground); margin: 0 0 .45rem; }
+.pills { display: inline-flex; gap: 4px; background: var(--background);
+         border-radius: var(--radius-md); padding: 4px; }
+.pills input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.pill { font: 600 14px Figtree, system-ui, sans-serif; cursor: pointer;
+        color: var(--muted-foreground); padding: .45em 1em;
+        border-radius: var(--radius-md); }
+.pills input:checked + .pill { background: var(--primary);
+                               color: var(--primary-foreground); }
+.pills input:focus-visible + .pill { outline: 2px solid var(--foreground);
+                                     outline-offset: 2px; }
+.amount { display: flex; align-items: center; gap: .7em; margin: .6rem 0 0; }
+.amount input {
+  font: 400 15px Figtree, system-ui, sans-serif; color: var(--foreground);
+  background: var(--background); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: .5em .7em; width: 7em; }
+.amount .unit { font-size: 14px; color: var(--muted-foreground); }
 .weeks { display: flex; gap: 3px; overflow-x: auto; padding-bottom: .3rem; }
 .week { display: flex; flex-direction: column; gap: 3px; }
 .day { width: 11px; height: 11px; border-radius: 2px; background: var(--background); }
@@ -413,16 +460,6 @@ const EXTRA: &str = "
 .scale { display: flex; gap: 3px; align-items: center; margin: .3rem 0 0;
          font-size: 12px; color: var(--muted-foreground); }
 ";
-
-const TABLE_OPEN: &str = "<div class=\"tw\"><table>";
-const TABLE_CLOSE: &str = "</tbody></table></div>";
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
 
 #[cfg(test)]
 mod tests {
@@ -492,7 +529,12 @@ mod tests {
             !html.contains("What your games add up to"),
             "the record lives on the history page now"
         );
-        assert!(!html.contains("<script"), "no script on the account page");
+        assert_eq!(
+            html.matches("<script").count(),
+            1,
+            "one script, the self-saving forms, and nothing else"
+        );
+        assert!(!html.contains("Save table defaults"), "no button to forget");
     }
 
     #[test]
@@ -537,8 +579,8 @@ mod tests {
         // The page carries the form, prefilled.
         let html = page(&[], &NoAliases, "egonkey000000000", &signed_in("Egon"), &d);
         assert!(html.contains("action=\"/account/table\""));
-        assert!(html.contains("value=\"3\" selected"));
-        assert!(html.contains("value=\"chess\" selected"));
+        assert!(html.contains("name=\"seats\" value=\"3\" id=\"seats-3\" checked"));
+        assert!(html.contains("name=\"clock\" value=\"chess\" id=\"clock-chess\" checked"));
     }
 
     #[test]
