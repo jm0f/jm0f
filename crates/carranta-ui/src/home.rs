@@ -22,6 +22,7 @@ use std::fmt::Write as _;
 
 use carranta_core::state::{DISCS, TradeMode};
 
+use crate::analysis::MineLine;
 use crate::report::{CSS, ICON};
 use crate::store::Saved;
 
@@ -75,7 +76,7 @@ pub struct Who {
     pub name: String,
 }
 
-pub fn page(open: &[Open], mine: &[Saved], who: &Who, stayed: &[Option<bool>]) -> String {
+pub fn page(open: &[Open], who: &Who) -> String {
     let mut b = String::new();
     let _ = write!(
         b,
@@ -94,13 +95,9 @@ pub fn page(open: &[Open], mine: &[Saved], who: &Who, stayed: &[Option<bool>]) -
 
     b.push_str(&deal());
     b.push_str(&joining(open));
-    // A guest's games live here, because a guest has nowhere else they can
-    // reach them; an account's games live behind History, where the header
-    // already points, and repeating the list on the front page would make
-    // the door and the room the same place.
-    if !who.signed_in {
-        b.push_str(&played(mine, stayed, who.signed_in));
-    }
+    // No games list here any more, guest or not: everyone's games live
+    // behind History, which follows the cookie for a guest exactly as this
+    // page's list used to, and the header points there from every view.
     b.push_str("</main></body></html>");
     b
 }
@@ -440,7 +437,7 @@ fn joining(open: &[Open]) -> String {
 /// Absent rather than empty, for the same reason the table list is: a first
 /// visit has no history and does not need to be told twice that it has none.
 /// The page grows as somebody plays, and starts as the one thing they came for.
-pub(crate) fn played(mine: &[Saved], stayed: &[Option<bool>], signed_in: bool) -> String {
+pub(crate) fn played(mine: &[Saved], lines: &[MineLine], signed_in: bool) -> String {
     if mine.is_empty() {
         return String::new();
     }
@@ -458,7 +455,7 @@ pub(crate) fn played(mine: &[Saved], stayed: &[Option<bool>], signed_in: bool) -
              brings these with it."
         },
     ));
-    b.push_str(&list(mine, stayed));
+    b.push_str(&list(mine, lines, signed_in));
     b.push_str("</section>");
     b
 }
@@ -473,19 +470,24 @@ const SHOWN: usize = 24;
 
 /// A table of games, board and analytics either side of the result.
 ///
-/// `stayed` runs parallel to `games`: whether this viewer was still at the
-/// table when it ended, unsaid for a game that has not ended. Per game
+/// `lines` runs parallel to `games`: where the viewer finished and whether
+/// they were still there, unsaid for a game that has not ended. Per game
 /// rather than summarised, because a summary under the list answered a
-/// question the rows were already being read to ask. Still yours only, for
-/// the reason the old line was: a number about somebody else's reliability
-/// is a thing people would use on each other.
-fn list(games: &[Saved], stayed: &[Option<bool>]) -> String {
+/// question the rows were already being read to ask. Still yours only: a
+/// number about somebody else's reliability is a thing people would use on
+/// each other.
+///
+/// The console shows the lot and scrolls inside its own frame; the front
+/// page, which flows, is capped instead, since a hundredth row on a page
+/// read at a glance is not read at all.
+pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
+    let cap = if all { usize::MAX } else { SHOWN };
     let mut b = String::from(TABLE_OPEN);
     b.push_str(
-        "<thead><tr><th></th><th>seats</th><th>market</th><th>turns</th>\
-         <th>result</th><th>stayed</th><th></th></tr></thead><tbody>",
+        "<thead><tr><th></th><th>seats</th><th>turns</th>\
+         <th>result</th><th>place</th><th>stayed</th><th></th></tr></thead><tbody>",
     );
-    for (i, g) in games.iter().take(SHOWN).enumerate() {
+    for (i, g) in games.iter().take(cap).enumerate() {
         let result = match g.winner {
             // Seat nought is whoever was at the keyboard.
             Some(0) => "<span class=\"up\">won</span>".to_string(),
@@ -498,19 +500,26 @@ fn list(games: &[Saved], stayed: &[Option<bool>]) -> String {
         let over = g.winner.is_some();
         let board = if over { " quiet" } else { "" };
         let study = if over { "" } else { " quiet" };
+        let line = lines.get(i).copied().unwrap_or_default();
         let _ = write!(
             b,
-            "<tr><td>{name}</td><td>{seats}</td><td>{mode}</td><td>{turns}</td>\
-             <td>{result}</td><td>{stay}</td><td class=\"act\">\
+            "<tr><td>{name}</td><td>{seats}</td><td>{turns}</td>\
+             <td>{result}</td><td>{place}</td><td>{stay}</td><td class=\"act\">\
              <a class=\"go small{board}\" href=\"/{id}/\">Board</a> \
              <a class=\"go small{study}\" href=\"/{id}/analytics\">Analytics</a>\
              </td></tr>",
             name = named(g),
             seats = g.seats,
-            mode = market(g.mode),
             // Turns rather than moves: the same figure the analytics count by.
             turns = turns_of(g),
-            stay = match stayed.get(i).copied().flatten() {
+            place = match line.position {
+                Some(1) => "1st".to_string(),
+                Some(2) => "2nd".to_string(),
+                Some(3) => "3rd".to_string(),
+                Some(p) => format!("{p}th"),
+                None => "·".to_string(),
+            },
+            stay = match line.stayed {
                 Some(true) => "stayed",
                 Some(false) => "<span class=\"worth\">left</span>",
                 None => "·",
@@ -520,12 +529,12 @@ fn list(games: &[Saved], stayed: &[Option<bool>]) -> String {
     }
     b.push_str("</tbody>");
     b.push_str(TABLE_CLOSE);
-    if games.len() > SHOWN {
+    if games.len() > cap {
         let _ = write!(
             b,
             "<p class=\"note\">And {} older, still on disk and still at their \
              own addresses. This page shows the newest {SHOWN}.</p>",
-            games.len() - SHOWN
+            games.len() - cap
         );
     }
     b
@@ -567,14 +576,18 @@ fn table_name(t: &Open) -> String {
 }
 
 fn named(g: &Saved) -> String {
-    if g.name.is_empty() {
-        format!("<span class=\"worth\">{}</span>", esc(&g.id))
-    } else {
-        format!(
+    // The host, and what they called the game; the id is an address, and an
+    // address belongs in the address bar the row's own links already carry.
+    let title = g.setup.game.trim();
+    match (g.name.is_empty(), title.is_empty()) {
+        (false, false) => format!(
             "<strong>{}</strong> <span class=\"worth\">{}</span>",
             esc(&g.name),
-            esc(&g.id)
-        )
+            esc(title)
+        ),
+        (false, true) => format!("<strong>{}</strong>", esc(&g.name)),
+        (true, false) => format!("<strong>{}</strong>", esc(title)),
+        (true, true) => "<span class=\"worth\">a table</span>".to_string(),
     }
 }
 
@@ -695,34 +708,33 @@ mod tests {
     #[test]
     fn the_account_strip_says_one_of_three_things() {
         // A server with nothing configured offers nothing at all.
-        let html = page(&[], &[], &nobody(), &[]);
+        let html = page(&[], &nobody());
         assert!(!html.contains("Sign in"), "nothing offered");
         assert!(!html.contains("/signout"));
 
         // Offered, and not taken up: the way in is the last pill.
         let out = page(
             &[],
-            &[],
             &Who {
                 offered: true,
                 signed_in: false,
                 name: String::new(),
             },
-            &[],
         );
         assert!(out.contains("href=\"/signin\">Sign in</a>"));
-        assert!(!out.contains("/history"), "no door that bounces a guest");
+        assert!(
+            out.contains("href=\"/history\""),
+            "a guest has a history too, the browser's"
+        );
 
         // Taken up: the name is the pill, and it opens the account.
         let inn = page(
-            &[],
             &[],
             &Who {
                 offered: true,
                 signed_in: true,
                 name: "Egon".to_string(),
             },
-            &[],
         );
         assert!(inn.contains("href=\"/account\">Egon</a>"));
         assert!(inn.contains("href=\"/history\">History</a>"));
@@ -732,33 +744,48 @@ mod tests {
         // Signed in and never named.
         let unnamed = page(
             &[],
-            &[],
             &Who {
                 offered: true,
                 signed_in: true,
                 name: "   ".to_string(),
             },
-            &[],
         );
         assert!(unnamed.contains(">Signed in</a>"));
     }
 
     #[test]
     fn whether_you_stay_is_said_once_there_is_something_to_say() {
-        // Per game now, as a column: stayed, left, or nothing to say yet.
+        // Per game, as columns on the list itself, which now lives behind
+        // History and is exercised here through the shared renderer.
         let games = [
             game("bbbb-bbbb-bbbb", "Egon", Some(0)),
             game("cccc-cccc-cccc", "Egon", Some(1)),
             game("dddd-dddd-dddd", "Egon", None),
         ];
-        let html = page(&[], &games, &nobody(), &[Some(true), Some(false), None]);
+        let html = played(
+            &games,
+            &[
+                MineLine {
+                    position: Some(2),
+                    stayed: Some(true),
+                },
+                MineLine {
+                    position: Some(4),
+                    stayed: Some(false),
+                },
+                MineLine::default(),
+            ],
+            true,
+        );
         assert!(html.contains("<th>stayed</th>"), "the column exists");
-        assert!(html.contains("<td>stayed</td>"));
+        assert!(html.contains("<th>place</th>"), "and the place beside it");
+        assert!(html.contains("<td>2nd</td>"));
         assert!(html.contains(">left</span>"));
         assert!(
             html.contains("<td>·</td>"),
             "an unfinished game says nothing"
         );
+        assert!(!html.contains("<th>market</th>"), "always open goes unsaid");
         assert!(
             !html.contains("You finished all"),
             "the summary line is the column now"
@@ -770,13 +797,11 @@ mod tests {
         // It is somebody else's text, typed into a seat and kept on a person.
         let html = page(
             &[],
-            &[],
             &Who {
                 offered: true,
                 signed_in: true,
                 name: "<script>alert(1)</script>".to_string(),
             },
-            &[],
         );
         assert!(!html.contains("<script>alert"), "escaped");
         assert!(html.contains("&lt;script&gt;alert"));
@@ -835,7 +860,7 @@ mod tests {
 
     #[test]
     fn the_page_leads_with_the_one_thing_it_is_for() {
-        let html = page(&[], &[], &nobody(), &[]);
+        let html = page(&[], &nobody());
         // One button, and it leads to the lobby rather than dealing anything: the
         // settings live there, and a second form here would be half of them.
         assert!(html.contains("href=\"/lobby\">New game</a>"));
@@ -867,7 +892,7 @@ mod tests {
 
     #[test]
     fn every_tile_carries_a_marker_from_the_pool() {
-        let html = page(&[], &[], &nobody(), &[]);
+        let html = page(&[], &nobody());
         // One white marker per tile per deal, and nothing else drawn on them.
         assert_eq!(html.matches("class=\"chit\"").count(), LANDS * DEALS);
         // Six deals, each pointing at the next, and the last back at the first,
@@ -965,29 +990,19 @@ mod tests {
         // Two cards saying they have nothing in them is a hole in the page on
         // the one visit where it has the least to say. What is not there is not
         // mentioned; the sections arrive as somebody plays.
-        let html = page(&[], &[], &nobody(), &[]);
+        let html = page(&[], &nobody());
         assert!(!html.contains(">Tables</h2>"), "no empty table list");
         assert!(!html.contains(">Your games</h2>"), "and no empty history");
         assert!(!html.contains("Also on this server"));
         assert!(html.contains("New game"), "only the way to start one");
         // And they arrive the moment there is something to put in them.
         assert!(
-            page(
-                &[table("aaaa-aaaa-aaaa", true, false, None)],
-                &[],
-                &nobody(),
-                &[]
-            )
-            .contains(">Tables</h2>")
+            page(&[table("aaaa-aaaa-aaaa", true, false, None)], &nobody()).contains(">Tables</h2>")
         );
         assert!(
-            page(
-                &[],
-                &[game("bbbb-bbbb-bbbb", "Egon", Some(0))],
-                &nobody(),
-                &[]
-            )
-            .contains(">Your games</h2>")
+            played(&[game("bbbb-bbbb-bbbb", "Egon", Some(0))], &[], true)
+                .contains(">Your games</h2>"),
+            "the list renders wherever History mounts it"
         );
     }
 
@@ -996,7 +1011,7 @@ mod tests {
         let mine = table("aaaa-aaaa-aaaa", false, true, None);
         let theirs = table("bbbb-bbbb-bbbb", false, false, None);
         let listed = table("cccc-cccc-cccc", true, false, None);
-        let html = page(&[mine, theirs, listed], &[], &nobody(), &[]);
+        let html = page(&[mine, theirs, listed], &nobody());
         assert!(html.contains("aaaa-aaaa-aaaa"), "my own unlisted table");
         assert!(
             !html.contains("bbbb-bbbb-bbbb"),
@@ -1006,7 +1021,7 @@ mod tests {
         // Mine and published says both: one says why it is on my list, the other
         // says it is on everybody's, and that is the half that cannot be undone.
         let both = table("eeee-eeee-eeee", true, true, None);
-        let row = page(&[both], &[], &nobody(), &[]);
+        let row = page(&[both], &nobody());
         let row = row
             .split("eeee-eeee-eeee")
             .next()
@@ -1019,12 +1034,7 @@ mod tests {
     fn a_table_with_a_chair_free_says_so_and_offers_it() {
         // The one thing on this page you can be too late for, so it is the one
         // tag that is not quiet.
-        let html = page(
-            &[waiting_table("aaaa-aaaa-aaaa", false)],
-            &[],
-            &nobody(),
-            &[],
-        );
+        let html = page(&[waiting_table("aaaa-aaaa-aaaa", false)], &nobody());
         assert!(html.contains(">2 seats free</span>"));
         assert!(html.contains(">Sit down</a>"));
         // One reads as one.
@@ -1032,15 +1042,10 @@ mod tests {
             takeable: 1,
             ..waiting_table("bbbb-bbbb-bbbb", false)
         };
-        assert!(page(&[one], &[], &nobody(), &[]).contains(">a seat free</span>"));
+        assert!(page(&[one], &nobody()).contains(">a seat free</span>"));
         // Already in it: going back to your own game is not joining it, and
         // saying so twice would make the loud word mean nothing.
-        let html = page(
-            &[waiting_table("cccc-cccc-cccc", true)],
-            &[],
-            &nobody(),
-            &[],
-        );
+        let html = page(&[waiting_table("cccc-cccc-cccc", true)], &nobody());
         assert!(html.contains(">Back to it</a>"));
         assert!(!html.contains("seats free"));
         // A full table is somewhere to watch, quietly.
@@ -1049,7 +1054,7 @@ mod tests {
             seated: false,
             ..waiting_table("dddd-dddd-dddd", false)
         };
-        let html = page(&[full], &[], &nobody(), &[]);
+        let html = page(&[full], &nobody());
         assert!(html.contains(">Watch</a>"));
         assert!(html.contains("go small quiet"));
     }
@@ -1065,7 +1070,7 @@ mod tests {
             takeable: 0,
             ..table("eeee-eeee-eeee", false, false, None)
         };
-        let html = page(&[theirs], &[], &nobody(), &[]);
+        let html = page(&[theirs], &nobody());
         assert!(html.contains("eeee-eeee-eeee"), "it is on their page");
         assert!(
             !html.contains(">yours</span>"),
@@ -1080,7 +1085,7 @@ mod tests {
         // history card, which reads it off the store rather than out of memory.
         for mine in [true, false] {
             let over = table("dddd-dddd-dddd", true, mine, Some(1));
-            let html = page(&[over], &[], &nobody(), &[]);
+            let html = page(&[over], &nobody());
             assert!(!html.contains("dddd-dddd-dddd"), "mine: {mine}");
             assert!(!html.contains(">Tables</h2>"), "and no list at all");
         }
@@ -1089,7 +1094,7 @@ mod tests {
     #[test]
     fn a_played_game_offers_its_board_and_its_report() {
         let g = game("ffff-ffff-ffff", "Egon", Some(0));
-        let html = page(&[], std::slice::from_ref(&g), &nobody(), &[]);
+        let html = played(std::slice::from_ref(&g), &[], true);
         assert!(html.contains("href=\"/ffff-ffff-ffff/\""));
         assert!(html.contains("href=\"/ffff-ffff-ffff/analytics\""));
         // Turns, counted the way the report counts them, not moves.
@@ -1101,19 +1106,21 @@ mod tests {
 
     #[test]
     fn the_page_shows_nobody_elses_games() {
-        // There was a second card under the history listing every other game in
-        // the store. Fine while the store held six demo games; a browsable pile
-        // of other people's games on the front page once it holds theirs.
-        let g = game("1111-1111-1111", "", None);
-        let html = page(&[], std::slice::from_ref(&g), &nobody(), &[]);
-        assert!(html.contains("1111-1111-1111"), "mine is shown");
-        assert!(html.contains(">unfinished</span>"));
-        assert!(!html.contains("Also on this server"), "and only mine");
-        // Nor is there a header link to the page's own first button: the one
-        // link up there leads somewhere this page does not go itself.
+        // The front page carries no games list at all any more: everyone's
+        // games, a guest's included, live behind History, which follows the
+        // cookie exactly as this page's card used to.
+        let html = page(&[], &nobody());
+        assert!(
+            !html.contains("Your games"),
+            "the list lives behind History"
+        );
         let header = &html[..html.find("</header>").expect("a header")];
         assert!(!header.contains("href=\"/lobby\""));
         assert!(header.contains("href=\"/corpus\""));
+        assert!(
+            header.contains("href=\"/history\""),
+            "the pill shows to everyone now that everyone has a history"
+        );
         assert!(!html.contains("class=\"rail\""), "the rail stayed deleted");
     }
 
@@ -1122,11 +1129,14 @@ mod tests {
         let games: Vec<Saved> = (0..SHOWN + 3)
             .map(|i| game(&format!("{:04}-0000-0000", i + 1000), "Egon", Some(0)))
             .collect();
-        let html = page(&[], &games, &nobody(), &[]);
-        assert!(html.contains("1000-0000-0000"), "the newest is shown");
-        let last = format!("{:04}-0000-0000", SHOWN + 1002);
-        assert!(!html.contains(&last), "the oldest is not");
-        assert!(html.contains("And 3 older"));
+        // The flowing page is capped and says so; the console shows the lot
+        // inside its own scroll and has nothing to apologise for.
+        let capped = played(&games, &[], false);
+        assert_eq!(capped.matches("<tr>").count(), SHOWN + 1, "header and cap");
+        assert!(capped.contains("And 3 older"));
+        let all = played(&games, &[], true);
+        assert_eq!(all.matches("<tr>").count(), SHOWN + 3 + 1);
+        assert!(!all.contains("And 3 older"));
     }
 
     #[test]
@@ -1139,7 +1149,7 @@ mod tests {
             game: "<script>alert(1)</script>".to_string(),
             ..sneaky
         };
-        let html = page(&[sneaky], &[], &nobody(), &[]);
+        let html = page(&[sneaky], &nobody());
         assert!(!html.contains("<script"), "no script on the home page");
         assert!(html.contains("&lt;script&gt;"));
         assert!(!html.contains("onfocus=\"x"));
@@ -1149,7 +1159,7 @@ mod tests {
             name: "<b>bold</b>".to_string(),
             ..game("3333-3333-3333", "", Some(0))
         };
-        let html = page(&[], &[g], &nobody(), &[]);
+        let html = played(std::slice::from_ref(&g), &[], true);
         assert!(!html.contains("<b>bold</b>"));
         assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
     }

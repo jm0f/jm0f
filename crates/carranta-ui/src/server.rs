@@ -896,6 +896,9 @@ pub struct Champion {
     /// is what goes in the game file and what a rating is about (E-8).
     pub generation: u32,
     pub net: carranta_bot::net::Net,
+    /// The run the file says it came from, for the label a person reads;
+    /// nothing keys on it, since the generation is the identity (E-8).
+    pub run: Option<String>,
 }
 
 impl Champion {
@@ -978,7 +981,19 @@ impl Server {
             // The same name the analytics gives a seat, "trained v311", so a
             // bot chosen in the lobby and a bot named in a game report read as
             // one player rather than two things that happen to be related.
-            out.push((c.agent(), format!("Trained v{}", c.generation)));
+            // "Neat 6 · v462" when the file names its run, so two runs'
+            // shared generation numbers stop reading as one lineage.
+            let label = match &c.run {
+                Some(run) => {
+                    let pretty = match run.strip_prefix("neat-") {
+                        Some(n) => format!("Neat {n}"),
+                        None => run.clone(),
+                    };
+                    format!("{pretty} · v{}", c.generation)
+                }
+                None => format!("Trained v{}", c.generation),
+            };
+            out.push((c.agent(), label));
         }
         out
     }
@@ -1070,71 +1085,13 @@ impl Server {
             .collect();
         // A table in memory is also a file on disk once it has been moved in, so
         // one of the two lists has to give it up or a game appears twice, once as
-        // somewhere to sit and once as history. The line is whether it can still
-        // be played: an unfinished table belongs to the joining list and nowhere
-        // else, and a finished one is history whether or not it is still in
-        // memory, because there is nothing left to do at it.
-        let live: Vec<String> = open
-            .iter()
-            .filter(|t| t.winner.is_none())
-            .map(|t| t.id.clone())
-            .collect();
-        // Theirs only. Everything else in the store is somebody else's game and
-        // has no business on their front page.
-        //
-        // Theirs means played in, not dealt: a game somebody invited you to is
-        // one of your games, and the chairs are what say so. Before people could
-        // join, the two were the same question.
-        //
-        // Through the claims, or signing in would be a promise this page breaks
-        // on the very next load: the games a guest played still name the guest,
-        // for ever, and "these are yours now" is a thing resolved when somebody
-        // reads rather than a thing written back into a file (P-1).
-        let me = crate::people::Aliases::resolve(&self.people, player);
-        let mine: Vec<Saved> = self
-            .store
-            .all()
-            .into_iter()
-            .filter(|g| {
-                if live.contains(&g.id) || player.is_empty() {
-                    return false;
-                }
-                let is_mine = |key: &str| {
-                    !key.is_empty() && crate::people::Aliases::resolve(&self.people, key) == me
-                };
-                is_mine(&g.by)
-                    || g.setup
-                        .chairs
-                        .iter()
-                        .any(|c| c.is_person() && is_mine(&c.who))
-            })
-            .collect();
-        // Whether they were still there when each game ended, for the list's
-        // own column; a game with no end says nothing.
-        let stayed: Vec<Option<bool>> = mine
-            .iter()
-            .map(|g| {
-                if g.winner.is_none() {
-                    return None;
-                }
-                g.setup
-                    .chairs
-                    .iter()
-                    .find(|c| {
-                        c.is_person() && crate::people::Aliases::resolve(&self.people, &c.who) == me
-                    })
-                    .map(|c| !c.left)
-            })
-            .collect();
         crate::home::page(
             &open,
-            &mine,
             &crate::home::Who {
                 offered: self.provider.is_some(),
                 signed_in: self.people.has_account(player),
                 name: self.people.name(player),
             },
-            &stayed,
         )
     }
 
@@ -1254,6 +1211,29 @@ impl Server {
         let id = self.add(table);
         self.keep(&id);
         id
+    }
+
+    /// One person's games and their lines, the way every list of them counts:
+    /// played in or dealt, through the claims (P-1).
+    fn games_of(&self, principal: &str) -> (Vec<Saved>, Vec<crate::analysis::MineLine>) {
+        let me = crate::people::Aliases::resolve(&self.people, principal);
+        let mine: Vec<Saved> = self
+            .store
+            .all()
+            .into_iter()
+            .filter(|g| {
+                let is_mine = |key: &str| {
+                    !key.is_empty() && crate::people::Aliases::resolve(&self.people, key) == me
+                };
+                is_mine(&g.by)
+                    || g.setup
+                        .chairs
+                        .iter()
+                        .any(|c| c.is_person() && is_mine(&c.who))
+            })
+            .collect();
+        let lines = crate::analysis::mine_lines(&mine, &self.people, principal);
+        (mine, lines)
     }
 
     /// A seed for the next table, and the cursor moved on past it.
@@ -2383,63 +2363,88 @@ impl Server {
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::account::page(&history, &self.people, &player, &who, &defaults)
-                        .as_bytes(),
+                    crate::account::page(
+                        &history,
+                        &self.people,
+                        &player,
+                        &who,
+                        &defaults,
+                        self.people.is_public(&player),
+                    )
+                    .as_bytes(),
                 );
             }
-            ("GET", "/history") => {
-                if !self.people.has_account(&player) {
-                    return redirect_with(&mut stream, "/", "");
-                }
-                let who = crate::home::Who {
+            ("GET", profile) if profile.starts_with("/player/") => {
+                let wanted = decode(&profile["/player/".len()..]);
+                let owners = self.people.public_named(&wanted);
+                let [owner] = &owners[..] else {
+                    // Zero and several answer the same way: there is no *the*
+                    // profile at this name. A name is not a handle, and
+                    // guessing between two people would show somebody the
+                    // wrong one.
+                    return respond(
+                        &mut stream,
+                        404,
+                        "text/plain",
+                        if owners.is_empty() {
+                            b"no public profile under this name".as_slice()
+                        } else {
+                            b"more than one public profile answers to this name".as_slice()
+                        },
+                    );
+                };
+                let viewer = crate::home::Who {
                     offered: self.provider.is_some(),
-                    signed_in: true,
+                    signed_in: self.people.has_account(&player),
                     name: self.people.name(&player),
                 };
                 let mut history = self.store.all();
                 history.reverse();
-                // Their games, counted the way the home page counts them:
-                // played in or dealt, through the claims (P-1).
-                let me = crate::people::Aliases::resolve(&self.people, &player);
-                let mine: Vec<crate::store::Saved> = self
-                    .store
-                    .all()
-                    .into_iter()
-                    .filter(|g| {
-                        let is_mine = |key: &str| {
-                            !key.is_empty()
-                                && crate::people::Aliases::resolve(&self.people, key) == me
-                        };
-                        is_mine(&g.by)
-                            || g.setup
-                                .chairs
-                                .iter()
-                                .any(|c| c.is_person() && is_mine(&c.who))
-                    })
-                    .collect();
-                let stayed: Vec<Option<bool>> = mine
-                    .iter()
-                    .map(|g| {
-                        if g.winner.is_none() {
-                            return None;
-                        }
-                        g.setup
-                            .chairs
-                            .iter()
-                            .find(|c| {
-                                c.is_person()
-                                    && crate::people::Aliases::resolve(&self.people, &c.who) == me
-                            })
-                            .map(|c| !c.left)
-                    })
-                    .collect();
+                let (mine, lines) = self.games_of(owner);
                 return respond(
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::history::page(&history, &mine, &stayed, &self.people, &player, &who)
+                    crate::history::public_page(
+                        &self.people.name(owner),
+                        &history,
+                        &mine,
+                        &lines,
+                        &self.people,
+                        owner,
+                        &viewer,
+                    )
+                    .as_bytes(),
+                );
+            }
+            ("GET", "/history") => {
+                // Everyone has a history: an account's follows them anywhere,
+                // a guest's follows the browser's cookie, which is exactly
+                // what the front page's list used to do. Signing in is what
+                // turns the second into the first, and this page says so
+                // instead of bouncing the person who most needs to hear it.
+                let who = crate::home::Who {
+                    offered: self.provider.is_some(),
+                    signed_in: self.people.has_account(&player),
+                    name: self.people.name(&player),
+                };
+                let mut history = self.store.all();
+                history.reverse();
+                let (mine, lines) = self.games_of(&player);
+                return respond(
+                    &mut stream,
+                    200,
+                    "text/html; charset=utf-8",
+                    crate::history::page(&history, &mine, &lines, &self.people, &player, &who)
                         .as_bytes(),
                 );
+            }
+            ("POST", "/account/privacy") => {
+                if self.people.has_account(&player) {
+                    let public = param(&body, "profile").as_deref() == Some("public");
+                    self.people.set_public(&player, public);
+                }
+                redirect_with(&mut stream, "/account", "")
             }
             ("POST", "/account/name") => {
                 if self.people.has_account(&player) {
@@ -2606,6 +2611,17 @@ impl Server {
                     Some((_, bytes)) => respond_kept(&mut stream, "audio/mpeg", bytes),
                     None => respond(&mut stream, 404, "text/plain", b"not found"),
                 }
+            }
+            // Who the header should say you are, for the game app, whose
+            // header is drawn by the client and cannot read a cookie's
+            // meaning on its own. The name and two booleans: everything else
+            // about the person stays on the server.
+            ("GET", "/api/whoami") => {
+                let mut j = crate::json::Json::object();
+                j.bool("offered", self.provider.is_some());
+                j.bool("signedIn", self.people.has_account(&player));
+                j.str("name", &self.people.name(&player));
+                return respond(&mut stream, 200, "application/json", j.finish().as_bytes());
             }
             ("GET", "/api/state") => {
                 let id = game.clone().unwrap_or_default();
@@ -3524,6 +3540,7 @@ mod tests {
         let server = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
             generation: 9,
             net: net.clone(),
+            run: None,
         }]);
         // Offered, not seated: a table that does not ask gets the house bot,
         // which is the default worth having and the one every rating is
@@ -3567,8 +3584,11 @@ mod tests {
         }
 
         // A restarted server with the same champion puts it back in its seats.
-        let again = Server::new(4, 3, TradeMode::Full, &dir)
-            .with_champions(vec![Champion { generation: 9, net }]);
+        let again = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
+            generation: 9,
+            net,
+            run: None,
+        }]);
         assert!(again.seat(&id), "the game comes back onto a table");
         {
             let tables = again.tables.lock().unwrap();
@@ -3599,8 +3619,11 @@ mod tests {
             .collect();
         let net = carranta_bot::net::Net::assemble(carranta_bot::features::FEATURES, &links)
             .expect("acyclic");
-        let server = Server::new(4, 3, TradeMode::Full, &dir)
-            .with_champions(vec![Champion { generation: 7, net }]);
+        let server = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
+            generation: 7,
+            net,
+            run: None,
+        }]);
         let host = "keytest0000000000";
         let id = server.deal("", host);
 
@@ -3669,6 +3692,7 @@ mod tests {
             let server = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
                 generation: 7,
                 net: net.clone(),
+                run: None,
             }]);
             let id = server.deal("bot1=trained@7", host);
             {
@@ -3731,10 +3755,12 @@ mod tests {
             Champion {
                 generation: 12,
                 net: champion(5),
+                run: None,
             },
             Champion {
                 generation: 40,
                 net: champion(9),
+                run: None,
             },
         ];
 
@@ -3790,6 +3816,7 @@ mod tests {
         let half = Server::new(4, 3, TradeMode::Full, &dir).with_champions(vec![Champion {
             generation: 40,
             net: champion(9),
+            run: None,
         }]);
         assert!(half.seat(&id));
         {
@@ -6268,13 +6295,15 @@ mod tests {
             assert!(t.session.winner().is_some(), "the table reached a winner");
         }
         server.keep(&id);
+        // The front page no longer lists games; a finished one is reachable
+        // through History, which follows the same cookie the front page's
+        // card used to.
         let after = get(port, "/", &key);
-        let tables_card = after.split("Your games").next().expect("a tables card");
-        assert!(!tables_card.contains(&id), "no longer somewhere to sit");
-        assert!(after.contains(&id), "but still on the page");
+        assert!(!after.contains(&id), "the front page carries no list");
+        let history = get(port, "/history", &key);
         assert!(
-            after.contains(&format!("/{id}/analytics")),
-            "with its report, which is what a finished game has"
+            history.contains(&format!("/{id}/analytics")),
+            "with its report"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

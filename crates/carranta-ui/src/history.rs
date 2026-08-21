@@ -27,7 +27,7 @@ use crate::store::Saved;
 pub fn page(
     history: &[Saved],
     mine: &[Saved],
-    stayed: &[Option<bool>],
+    lines: &[crate::analysis::MineLine],
     aliases: &dyn Aliases,
     principal: &str,
     who: &Who,
@@ -57,10 +57,10 @@ pub fn page(
          </nav>",
     );
     b.push_str("<div class=\"pane paneOverview\">");
-    b.push_str(&record(history, aliases, me));
+    b.push_str(&record(history, aliases, me, "your", "you"));
     b.push_str("</div>");
     b.push_str("<div class=\"pane paneGames\">");
-    b.push_str(&crate::home::played(mine, stayed, true));
+    b.push_str(&crate::home::played(mine, lines, true));
     b.push_str("</div></div></main></body></html>");
     b
 }
@@ -70,7 +70,13 @@ pub fn page(
 /// Built by the same fold the across-games page uses, over only the games
 /// this person sat in, and read out of the same actor table, so the numbers
 /// here and the numbers there are one computation.
-fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
+fn record(
+    history: &[Saved],
+    aliases: &dyn Aliases,
+    me: u64,
+    possessive: &str,
+    name_word: &str,
+) -> String {
     let mut corpora: Vec<Corpus> = Vec::new();
     for saved in history {
         if !sat(saved, aliases, me) {
@@ -92,24 +98,28 @@ fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
         }
     }
 
-    let mut b = String::from(
-        "<section><h2 title=\"Your line of the corpus, one row per market. \
-         The interval on a win rate is clustered by game, and conversion is \
-         points scored above what your production predicts, the closest thing \
-         here to skill with the luck taken out.\">What your games add up to</h2>",
+    let mut b = format!(
+        "<section><h2 title=\"One row per market. The interval on a win rate \
+         is clustered by game, and conversion is points scored above what \
+         production predicts, the closest thing here to skill with the luck \
+         taken out.\">What {possessive} games add up to</h2>",
     );
     if corpora.is_empty() {
-        b.push_str(
+        let _ = write!(
+            b,
             "<p class=\"blurb\">Nothing yet: no finished game on this server \
-             has you at the table. The first one joins this page on its own.</p>\
-             </section>",
+             has {name_word} at the table. The first one joins this page on \
+             its own.</p></section>",
         );
         return b;
     }
     b.push_str(TABLE_OPEN);
     b.push_str(
-        "<thead><tr><th>market</th><th>games</th><th>wins</th><th>win rate</th>\
-         <th>mean VP</th><th>conversion</th></tr></thead><tbody>",
+        "<thead><tr><th>games</th><th>finished</th><th>wins</th><th>win rate</th>\
+         <th>mean VP</th>\
+         <th title=\"Points scored above what your production predicts: the \
+         closest thing here to skill with the luck taken out.\">conversion</th>\
+         </tr></thead><tbody>",
     );
     for c in &corpora {
         let Some(row) = c
@@ -125,9 +135,10 @@ fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
         };
         let _ = write!(
             b,
-            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{}</td></tr>",
-            c.config.trade_mode,
+            "<tr><td>{}</td><td>{}/{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{}</td></tr>",
             row.games,
+            c.finished,
+            c.games,
             row.wins,
             share,
             row.mean_vp,
@@ -141,6 +152,61 @@ fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
     b
 }
 
+/// Somebody's public profile: their history console, read by a visitor.
+///
+/// The same deck, the same tabs, the same renderers, because a public record
+/// that disagreed with the private one would be worse than none. What differs
+/// is the voice, their name where the private page says "your", and that
+/// nothing here is the visitor's to change.
+pub fn public_page(
+    display: &str,
+    history: &[Saved],
+    mine: &[Saved],
+    lines: &[crate::analysis::MineLine],
+    aliases: &dyn Aliases,
+    owner: &str,
+    viewer: &Who,
+) -> String {
+    let me = player_number(&aliases.resolve(owner));
+    let possessive = format!("{display}'s");
+
+    let mut b = String::new();
+    let _ = write!(
+        b,
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>{name} · Carranta</title>{ICON}\
+         <style>{CSS}{EXTRA}</style></head><body>\
+         {head}<main>",
+        name = crate::report::esc_text(display),
+        head = crate::report::masthead_as(display, &[], "", viewer),
+    );
+    b.push_str(
+        "<div class=\"deck\">\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabOverview\" \
+         tabindex=\"-1\">\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabGames\" \
+         tabindex=\"-1\" checked>\
+         <nav class=\"tabs\">\
+         <label for=\"tabOverview\">Overview</label>\
+         <label for=\"tabGames\">Games</label>\
+         </nav>",
+    );
+    b.push_str("<div class=\"pane paneOverview\">");
+    b.push_str(&record(history, aliases, me, &possessive, display));
+    b.push_str("</div>");
+    b.push_str("<div class=\"pane paneGames\">");
+    let _ = write!(
+        b,
+        "<section><h2>{} games</h2>",
+        crate::report::esc_text(&possessive)
+    );
+    b.push_str(&crate::home::list(mine, lines, true));
+    b.push_str("</section></div>");
+    b.push_str("</div></main></body></html>");
+    b
+}
+
 const TABLE_OPEN: &str = "<div class=\"tw\"><table>";
 const TABLE_CLOSE: &str = "</tbody></table></div>";
 
@@ -150,6 +216,10 @@ const EXTRA: &str = "
   background: var(--primary); color: var(--primary-foreground); }
 #tabOverview:checked ~ .paneOverview { display: block; }
 #tabGames:checked ~ .paneGames { display: block; }
+/* Only the list scrolls: the frame, the tabs and the heading hold still, and
+   the table's own header holds with them, riding sticky on the card. */
+.paneGames .tw { overflow-y: auto; max-height: calc(100vh - 22rem); }
+.paneGames thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
 ";
 
 #[cfg(test)]
@@ -215,8 +285,30 @@ mod tests {
         assert!(html.contains("id=\"tabGames\""), "the games tab");
         assert!(html.contains("Your games"), "the list moved in from home");
         assert!(html.contains("What your games add up to"));
-        assert!(html.contains("<td>Full</td>"), "their row, by market");
+        assert!(html.contains(">1/1<"), "finished over dealt, as a count");
         assert!(!html.contains("<script"), "no script on the history page");
+    }
+
+    #[test]
+    fn a_public_profile_reads_in_the_third_person() {
+        let history = vec![played(31, "egonkey000000000", "Egon")];
+        let lines = crate::analysis::mine_lines(&history, &NoAliases, "egonkey000000000");
+        let html = public_page(
+            "Egon",
+            &history,
+            &history,
+            &lines,
+            &NoAliases,
+            "egonkey000000000",
+            &signed_in("Somebody Else"),
+        );
+        assert!(html.contains("What Egon's games add up to"));
+        assert!(html.contains("Egon's games</h2>"));
+        assert!(
+            !html.contains("/account/"),
+            "nothing here is the visitor's to change"
+        );
+        assert!(!html.contains("<script"), "no script on a public profile");
     }
 
     #[test]

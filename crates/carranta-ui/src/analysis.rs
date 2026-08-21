@@ -93,6 +93,51 @@ pub fn seat_ids_as(saved: &Saved, who: &dyn Aliases) -> Vec<SeatId> {
         .collect()
 }
 
+/// One game of yours, as the games list describes it: where you finished,
+/// and whether you were still there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MineLine {
+    /// Your finishing place, one to four, for a game that ended with you
+    /// found at a chair; nothing for one still going.
+    pub position: Option<u8>,
+    /// Whether you were at the table when it ended.
+    pub stayed: Option<bool>,
+}
+
+/// The lines for a list of your games, in the list's order.
+///
+/// The place is read off a replay, which is what makes it honest: the store
+/// keeps moves rather than verdicts, and replay is cheap enough that a page
+/// of rows costs less than the request that asked for it. Ties rank by
+/// competition counting, everybody above you counts once.
+pub fn mine_lines(mine: &[Saved], who: &dyn Aliases, principal: &str) -> Vec<MineLine> {
+    let me = who.resolve(principal);
+    mine.iter()
+        .map(|g| {
+            let seat = g
+                .setup
+                .chairs
+                .iter()
+                .position(|c| c.is_person() && !c.who.is_empty() && who.resolve(&c.who) == me);
+            let Some(seat) = seat else {
+                return MineLine::default();
+            };
+            if g.winner.is_none() {
+                return MineLine::default();
+            }
+            let stayed = g.setup.chairs.get(seat).map(|c| !c.left);
+            let position = to_log_as(g, who)
+                .and_then(|log| game::analyse(&log).ok())
+                .and_then(|r| {
+                    let n = r.players as usize;
+                    (seat < n)
+                        .then(|| 1 + r.vp[..n].iter().filter(|&&v| v > r.vp[seat]).count() as u8)
+                });
+            MineLine { position, stayed }
+        })
+        .collect()
+}
+
 /// Whether this game says anything about anybody's rating.
 ///
 /// Two conditions, and both of them are about whether there is a result to read

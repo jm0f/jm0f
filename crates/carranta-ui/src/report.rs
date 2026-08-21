@@ -33,6 +33,11 @@ const DEV_NAMES: [&str; 5] = [
 ];
 
 /// Escape text going into the document.
+/// The escape, shared with the pages that print names of their own.
+pub(crate) fn esc_text(s: &str) -> String {
+    esc(s)
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -167,21 +172,20 @@ fn mast(
     }
     // The site's sections and the person, worn the way the consoles wear
     // their tabs: the one you are on is lit, and a page that is none of them
-    // lights none. History answers only to the signed in, so a guest is not
-    // offered a door that bounces them home; the last pill is whoever you
-    // are, the door to the account, or the way to become somebody.
+    // lights none. Everyone has a history now, an account's or a browser's,
+    // so that pill is not gated: the page it opens explains the difference.
+    // The last pill is whoever you are, the door to the account, or the way
+    // to become somebody.
     b.push_str("<nav class=\"headTabs\">");
-    if who.signed_in {
-        let _ = write!(
-            b,
-            "<a{} href=\"/history\">History</a>",
-            if active == "history" {
-                " class=\"on\""
-            } else {
-                ""
-            },
-        );
-    }
+    let _ = write!(
+        b,
+        "<a{} href=\"/history\">History</a>",
+        if active == "history" {
+            " class=\"on\""
+        } else {
+            ""
+        },
+    );
     let _ = write!(
         b,
         "<a{} href=\"/corpus\">Across games</a>",
