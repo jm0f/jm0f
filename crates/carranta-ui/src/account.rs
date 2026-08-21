@@ -359,6 +359,24 @@ fn dealing(d: &Defaults) -> String {
     );
     b.push_str("<form class=\"dealing autosave\" method=\"post\" action=\"/account/table\">");
 
+    // The lobby's own split, column for column: bot speed and visibility on
+    // the left where the lobby keeps them, the table rules on the right of
+    // the divider, in the lobby's order.
+    b.push_str("<div class=\"dcols\"><div class=\"dcol\">");
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Bot speed</h3><div class=\"pills\">{}{}{}</div></div>",
+        pill("pace", "slow", "slow", d.pace == "slow"),
+        pill("pace", "fast", "fast", d.pace == "fast"),
+        pill("pace", "instant", "instant", d.pace == "instant"),
+    );
+    let _ = write!(
+        b,
+        "<div class=\"set\"><h3>Visibility</h3><div class=\"pills\">{}{}</div></div>",
+        pill("visibility", "private", "private", !d.public),
+        pill("visibility", "public", "public", d.public),
+    );
+    b.push_str("</div><div class=\"dcol\">");
     let _ = write!(
         b,
         "<div class=\"set\"><h3>Mode</h3><div class=\"pills\">{}{}</div></div>",
@@ -400,20 +418,7 @@ fn dealing(d: &Defaults) -> String {
         pill("log", "on", "keep a log", d.log),
         pill("log", "off", "play from memory", !d.log),
     );
-    let _ = write!(
-        b,
-        "<div class=\"set\"><h3>Bot speed</h3><div class=\"pills\">{}{}{}</div></div>",
-        pill("pace", "slow", "slow", d.pace == "slow"),
-        pill("pace", "fast", "fast", d.pace == "fast"),
-        pill("pace", "instant", "instant", d.pace == "instant"),
-    );
-    let _ = write!(
-        b,
-        "<div class=\"set\"><h3>Visibility</h3><div class=\"pills\">{}{}</div></div>",
-        pill("visibility", "private", "private", !d.public),
-        pill("visibility", "public", "public", d.public),
-    );
-    b.push_str("</form></section>");
+    b.push_str("</div></div></form></section>");
     b
 }
 
@@ -455,7 +460,20 @@ const EXTRA: &str = "
   background: var(--background); border: 1px solid var(--border);
   border-radius: var(--radius-md); padding: .5em .7em; width: min(22em, 100%); }
 /* The lobby's controls, control for control: a small capital label, a row of
-   pills on a quiet track, a number with its unit after it. */
+   pills on a quiet track, a number with its unit after it. And the lobby's
+   columns, measure for measure: an even split, the divider drawn on the
+   second column so it is exactly as tall as the columns and disappears with
+   them on a narrow screen. */
+.dcols { display: grid; grid-template-columns: 1fr 1fr;
+         gap: 0 clamp(20px, 3vw, 44px); }
+.dcol { min-width: 0; }
+.dcol + .dcol { border-left: 1px solid var(--border);
+                padding-left: clamp(20px, 3vw, 44px); }
+.dcol .set:last-child { margin-bottom: 0; }
+@media (max-width: 720px) {
+  .dcols { grid-template-columns: 1fr; }
+  .dcol + .dcol { border-left: 0; padding-left: 0; }
+}
 .set { margin: 0 0 1rem; }
 .set h3 { font: 600 12px Figtree, system-ui, sans-serif; text-transform: uppercase;
           letter-spacing: .08em; color: var(--muted-foreground); margin: 0 0 .45rem; }
