@@ -97,11 +97,19 @@ pub(crate) const ICON: &str = "<link rel=\"icon\" href=\"data:image/svg+xml,\
      %3C/svg%3E\">";
 
 pub(crate) fn masthead(context: &str, links: &[(&str, &str)]) -> String {
+    masthead_as(context, links, "")
+}
+
+/// The same, carrying the account strip, which belongs at the top right of
+/// every page and not only the front one: signing in is about who you are
+/// wherever you are, and a strip that vanished when you left home read as
+/// being signed out.
+pub(crate) fn masthead_as(context: &str, links: &[(&str, &str)], account: &str) -> String {
     mast(
         "<a class=\"mark\" href=\"/\">Carranta</a>",
         context,
         links,
-        "",
+        account,
     )
 }
 
@@ -3617,7 +3625,7 @@ fn clock(millis: u32) -> String {
     }
 }
 
-pub fn page(saved: &Saved, study: &Study) -> String {
+pub fn page(saved: &Saved, study: &Study, account: &str) -> String {
     let r = &study.report;
     let seats = r.players as usize;
     let who = names(saved, seats);
@@ -3635,13 +3643,14 @@ pub fn page(saved: &Saved, study: &Study) -> String {
     );
 
     // ---- the header: which game, and what happened in it --------------------
-    b.push_str(&masthead(
+    b.push_str(&masthead_as(
         "",
         &[
             (&format!("/{}/", esc(&saved.id)), "The board"),
             ("/corpus", "Across games"),
             ("/lobby", "New game"),
         ],
+        account,
     ));
     let _ = write!(
         b,
@@ -5218,7 +5227,7 @@ mod tests {
     fn the_page_says_what_the_game_did() {
         let history: Vec<Saved> = (0..3u64).map(played).collect();
         let s = study(&history[1], &history).expect("it studies");
-        let html = page(&history[1], &s);
+        let html = page(&history[1], &s, "");
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.ends_with("</html>"));
         // Everybody at the table is named, and the board is a click away. The
@@ -5267,7 +5276,7 @@ mod tests {
     fn the_timeline_stands_under_the_score_it_explains() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         // The strip is read against the chart above it, so the two turn axes have
         // to be the same axis. Both drawings are laid out in the same coordinates
         // and given the same box, so their tick positions come out identical, and
@@ -5309,7 +5318,7 @@ mod tests {
             // rather than four numbers printed beside each other.
             assert!(d.residual().abs() < 1e-9, "seat {p}: {d:?}");
         }
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         assert!(html.contains("sd)"), "the dice column carries its own z");
         assert!(
             html.contains("only the dice column is chance"),
@@ -5321,7 +5330,7 @@ mod tests {
     fn every_tooltip_on_the_page_is_one_the_page_drew() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         // Not one native tooltip left: a `title` attribute anywhere, or a
         // `<title>` inside a drawing, is the browser's grey box coming back.
         assert!(!html.contains("title=\""), "no native tooltip attributes");
@@ -5355,7 +5364,7 @@ mod tests {
     fn a_scoring_column_says_how_many_and_what_they_were_worth() {
         let g = played(2);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         // Every column of the result table carries its own rule rather than a
         // paragraph under the table carrying all five.
         assert!(
@@ -5387,7 +5396,7 @@ mod tests {
     fn the_turns_are_a_table_and_nothing_else() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         // The bar is gone, and with it every trace of how it was drawn.
         for gone in ["class=\"seg", "class=\"bar\"", "flex-grow"] {
             assert!(!html.contains(gone), "{gone} went with the bar");
@@ -5409,7 +5418,7 @@ mod tests {
     fn a_chart_can_be_read_and_taken_apart() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         let turns = s.series.turns();
         // Coverage is sampled with production, so the two charts have the same
         // turns under them and a slot means the same thing on both.
@@ -5453,7 +5462,7 @@ mod tests {
     fn each_view_carries_its_own_table() {
         let g = played(5);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         let seats = s.report.players as usize;
         // One table a view, inside the view, so it switches with the chart.
         let views = &html[html.find("class=\"views\"").expect("the views")..];
@@ -5476,7 +5485,7 @@ mod tests {
     fn a_seat_wears_its_colour_left_of_its_name_in_every_table() {
         let history: Vec<Saved> = (10..12u64).map(played).collect();
         let s = study(&history[1], &history).expect("it studies");
-        let html = page(&history[1], &s);
+        let html = page(&history[1], &s, "");
         // Every table on the page names seats down its first column, so every
         // table has as many marks as it has seats, and each sits immediately
         // before the name rather than after it.
@@ -5497,7 +5506,7 @@ mod tests {
     fn the_rolls_are_drawn_against_what_was_owed() {
         let g = played(3);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         let r = &s.report;
         // A bar and a mark for each of the eleven numbers, and no total column
         // on the table under them.
@@ -5540,7 +5549,7 @@ mod tests {
     fn nothing_is_written_as_nothing() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         // No stand-in mark anywhere: a column with no value is blank, and the
         // blank already says it.
         assert!(
@@ -5555,7 +5564,7 @@ mod tests {
     fn a_total_is_shown_only_where_a_column_has_one() {
         let g = played(6);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         // Every table that claims a total has one row of them and no more.
         assert_eq!(
             html.matches("<tfoot>").count(),
@@ -5577,7 +5586,7 @@ mod tests {
         // Two games, so the dice card has something to compare against.
         let history: Vec<Saved> = (7..9u64).map(played).collect();
         let s = study(&history[1], &history).expect("it studies");
-        let html = page(&history[1], &s);
+        let html = page(&history[1], &s, "");
         // Seat win rates are a claim about many games, so they are not on a
         // report about one, whatever the corpus behind it.
         assert!(!html.contains("Across every game here"), "not on this page");
@@ -5606,7 +5615,7 @@ mod tests {
         // what its owner typed into their own seat and is somebody else's text.
         g.setup = sat("<script>alert(1)</script>");
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
-        let html = page(&g, &s);
+        let html = page(&g, &s, "");
         assert!(!html.contains("<script>alert"), "the name is escaped");
         assert!(html.contains("&lt;script&gt;alert"));
     }
@@ -5623,7 +5632,7 @@ mod tests {
     fn the_first_game_says_it_has_nothing_to_compare_with() {
         let only = played(9);
         let s = study(&only, std::slice::from_ref(&only)).expect("it studies");
-        let html = page(&only, &s);
+        let html = page(&only, &s, "");
         // Nothing to compare with, so the percentile is blank and the count of
         // games it would have been drawn from is nought. Withheld rather than
         // guessed: a percentile of one game is not a percentile.

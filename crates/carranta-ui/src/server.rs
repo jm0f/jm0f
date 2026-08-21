@@ -2409,6 +2409,11 @@ impl Server {
             // Rendered whole for the report's reason: nothing on it changes
             // without a request.
             ("GET", "/corpus") => {
+                let strip = crate::home::account(&crate::home::Who {
+                    offered: self.provider.is_some(),
+                    signed_in: self.people.has_account(&player),
+                    name: self.people.name(&player),
+                });
                 let mut history = self.store.all();
                 // Oldest first, so a person's newest chair names their row.
                 history.reverse();
@@ -2416,7 +2421,7 @@ impl Server {
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::corpus::page(&history, &self.people).as_bytes(),
+                    crate::corpus::page(&history, &self.people, &strip).as_bytes(),
                 );
             }
             // The analytics for one game (§10). Rendered here rather than
@@ -2438,12 +2443,17 @@ impl Server {
                 // Through the claims: a guest who has since signed up reads
                 // their old games as the account's, without a byte of those
                 // games having moved (P-1).
+                let strip = crate::home::account(&crate::home::Who {
+                    offered: self.provider.is_some(),
+                    signed_in: self.people.has_account(&player),
+                    name: self.people.name(&player),
+                });
                 match crate::analysis::study_as(&saved, &history, &self.people) {
                     Some(study) => respond(
                         &mut stream,
                         200,
                         "text/html; charset=utf-8",
-                        crate::report::page(&saved, &study).as_bytes(),
+                        crate::report::page(&saved, &study, &strip).as_bytes(),
                     ),
                     None => respond(
                         &mut stream,
