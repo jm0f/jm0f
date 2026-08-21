@@ -115,6 +115,27 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             "--mutation" => {
                 args.config.mutation = value()?.parse().map_err(|_| "bad --mutation")?
             }
+            "--trials-min" => {
+                let v: u32 = value()?.parse().map_err(|_| "bad --trials-min")?;
+                if v == 0 {
+                    return Err("--trials-min must be at least 1".to_string());
+                }
+                args.neat.trials_min = v;
+                if args.neat.trials < v {
+                    args.neat.trials = v;
+                }
+            }
+            "--payoff" => {
+                let v = value()?;
+                let parts: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                let [a, b, c, d] = parts[..] else {
+                    return Err("--payoff wants four numbers, winner first: 10,4,2,1".to_string());
+                };
+                if !(a > b && b > c && c > d) {
+                    return Err("--payoff must strictly fall from winner to fourth".to_string());
+                }
+                args.neat.payoff = Some([a, b, c, d]);
+            }
             "--win-bonus" => {
                 args.neat.win_bonus = value()?.parse().map_err(|_| "bad --win-bonus")?;
                 if !args.neat.win_bonus.is_finite() || args.neat.win_bonus < 0.0 {
@@ -175,6 +196,11 @@ carranta-evolve
   --population N       genomes per generation (48 es, 96 neat)
   --survivors N        es only: genomes that breed the next generation (12)
   --trials N           starting games per genome; adapts as the run converges
+  --trials-min N       the floor the budget may fall to (default 16); raise it
+                       to buy selection accuracy with games
+  --payoff A,B,C,D     score positions by a table, winner first (e.g. 10,4,2,1),
+                       instead of position less the win bonus; an unwon first
+                       place pays the second place rate
   --validation N       held-out games the champion is rated on (96)
   --sample N           validation games recorded and analysed (8; 0 to skip)
   --threads N          workers (all cores)
@@ -377,21 +403,30 @@ fn run_neat(args: Args) {
 
     let c = &trainer.config;
     println!(
-        "neat: population {}   market {:?} (give {}, want {}, asks {})   win bonus {}   workers {}   target species {}",
+        "neat: population {}   market {:?} (give {}, want {}, asks {})   {}   workers {}   target species {}",
         c.population,
         c.mode,
         c.give_cap.map_or("hand".to_string(), |n| n.to_string()),
         c.want_cap,
         c.ask_cap,
-        c.win_bonus,
+        match c.payoff {
+            Some([a, b, cc, d]) => format!("payoff {a}/{b}/{cc}/{d}"),
+            None => format!("win bonus {}", c.win_bonus),
+        },
         c.threads,
         c.params.target_species,
     );
     println!("writing to {}", args.out.display());
-    println!(
-        "  fitness is mean finishing position less {} a win, lower is better",
-        c.win_bonus
-    );
+    match c.payoff {
+        Some([a, b, cc, d]) => println!(
+            "  fitness is minus the payoff of the place taken ({a}, {b}, {cc}, {d}; an \
+             unwon first place pays {b}), lower is better"
+        ),
+        None => println!(
+            "  fitness is mean finishing position less {} a win, lower is better",
+            c.win_bonus
+        ),
+    }
     println!("  gap and wins are the champion's paired match against the anchor:");
     println!("  a negative gap and a win share above 50% are ahead, and either");
     println!("  one inside its interval has not been shown\n");

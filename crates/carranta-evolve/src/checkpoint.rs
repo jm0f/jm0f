@@ -30,7 +30,7 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 4;
+pub const NEAT_FORMAT: u32 = 5;
 
 /// The NEAT format before the ask allowance existed (E-15).
 ///
@@ -39,6 +39,10 @@ pub const NEAT_FORMAT: u32 = 4;
 /// was, which is what a resume is for. Writing always uses the current
 /// format.
 pub const NEAT_FORMAT_UNCAPPED: u32 = 2;
+
+/// The NEAT format before the payoff table existed (E-19): win bonus, no
+/// `payoff` line.
+pub const NEAT_FORMAT_FLAT_WIN: u32 = 4;
 
 /// The NEAT format before the win bonus existed (E-17).
 ///
@@ -300,6 +304,14 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
     let _ = writeln!(out, "want_cap {}", c.want_cap);
     let _ = writeln!(out, "ask_cap {}", c.ask_cap);
     let _ = writeln!(out, "win_bonus {}", c.win_bonus);
+    match c.payoff {
+        Some([a, b, cc, d]) => {
+            let _ = writeln!(out, "payoff {a} {b} {cc} {d}");
+        }
+        None => {
+            let _ = writeln!(out, "payoff none");
+        }
+    }
     let _ = writeln!(out, "cap {}", c.cap);
     let _ = writeln!(out, "mode {}", mode_name(c.mode));
     // Display for f64 emits the shortest string that parses back to the same
@@ -394,7 +406,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         .ok_or_else(|| bad(line, "not a carranta-evolve checkpoint"))?;
     if !matches!(
         version,
-        NEAT_FORMAT | NEAT_FORMAT_UNCAPPED | NEAT_FORMAT_POSITION_ONLY
+        NEAT_FORMAT | NEAT_FORMAT_FLAT_WIN | NEAT_FORMAT_UNCAPPED | NEAT_FORMAT_POSITION_ONLY
     ) {
         return Err(LoadError::Version(version));
     }
@@ -447,10 +459,25 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     // Formats 2 and 3 selected on finishing position alone, which is the
     // bonus at zero.
-    let win_bonus: f64 = if version == NEAT_FORMAT {
+    let win_bonus: f64 = if version >= NEAT_FORMAT_FLAT_WIN {
         num!("win_bonus")
     } else {
         0.0
+    };
+    // Older formats had no table; the bonus above is their whole story.
+    let payoff: Option<[f64; 4]> = if version == NEAT_FORMAT {
+        let (line, v) = scalar("payoff")?;
+        if v == "none" {
+            None
+        } else {
+            let parts: Vec<f64> = v.split(' ').filter_map(|x| x.parse().ok()).collect();
+            match parts[..] {
+                [a, b, c, d] => Some([a, b, c, d]),
+                _ => return Err(bad(line, "payoff wants `none` or four numbers")),
+            }
+        }
+    } else {
+        None
     };
     let cap: usize = num!("cap");
     let mode = {
@@ -492,6 +519,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         want_cap,
         ask_cap,
         win_bonus,
+        payoff,
         cap,
         mode,
         params,
@@ -784,9 +812,21 @@ mod tests {
             "the current format writes"
         );
         assert!(modern.contains("\nwin_bonus 1\n"), "both of them");
+        assert!(
+            modern.contains("\npayoff none\n"),
+            "and the table's absence"
+        );
+
+        // The same file as format 4 wrote it: version 4, no payoff line.
+        let four = modern
+            .replace("carranta-evolve 5", "carranta-evolve 4")
+            .replace("payoff none\n", "");
+        let back = decode_neat(&four).expect("a format four file still reads");
+        assert_eq!(back.config.payoff, None, "no table, as it was");
+        assert_eq!(back.config.win_bonus, 1.0, "the bonus it really had");
 
         // The same file as format 3 wrote it: version 3, no win_bonus line.
-        let three = modern
+        let three = four
             .replace("carranta-evolve 4", "carranta-evolve 3")
             .replace("win_bonus 1\n", "");
         let back = decode_neat(&three).expect("a format three file still reads");

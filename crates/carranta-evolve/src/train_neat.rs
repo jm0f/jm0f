@@ -39,6 +39,13 @@ pub struct NeatConfig {
     pub validation: u32,
     pub trials_min: u32,
     pub trials_max: u32,
+    /// A payoff per finishing position, highest place first, replacing the
+    /// position-minus-bonus score when set (E-19). Fitness becomes the
+    /// negated payoff, so lower still means better and everything reading
+    /// fitness is untouched. An unwon first place pays the second place
+    /// rate: the table's top entry is the price of a *win*, and a game
+    /// nobody won has none to sell.
+    pub payoff: Option<[f64; 4]>,
     pub hall_seats: usize,
     pub hall_size: usize,
     pub sample: u32,
@@ -73,6 +80,7 @@ impl Default for NeatConfig {
             validation: 96,
             trials_min: 16,
             trials_max: 8_192,
+            payoff: None,
             hall_seats: 1,
             hall_size: 24,
             sample: 8,
@@ -357,7 +365,16 @@ impl NeatTrainer {
                 let seat = t % MAX_PLAYERS;
                 let o = &outcomes[g * self.trials as usize + t];
                 let won = o.winner == Some(seat as u8);
-                let pos = o.position[seat] as f64 - if won { cfg.win_bonus } else { 0.0 };
+                let pos = match cfg.payoff {
+                    Some(pay) => {
+                        let mut place = o.position[seat] as usize - 1;
+                        if place == 0 && !won {
+                            place = 1;
+                        }
+                        -pay[place]
+                    }
+                    None => o.position[seat] as f64 - if won { cfg.win_bonus } else { 0.0 },
+                };
                 total += pos;
                 sq += pos * pos;
             }
