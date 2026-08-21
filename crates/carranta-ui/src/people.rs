@@ -68,6 +68,10 @@ pub struct Person {
     /// roster writes down what it was told and the server owns what the words
     /// mean, which is the same stance the game files take about chairs.
     pub table: String,
+    /// Whether this person's profile, their games and their statistics, may
+    /// be read by anybody who knows their name. Off unless they turned it on:
+    /// a record is theirs before it is anyone's.
+    pub public: bool,
     /// Recorded here and asked nowhere yet: the declaration is a flow with a
     /// screen, and chat is its trigger rather than the account. The field is
     /// here so that the flow has somewhere to write when it is built, and so
@@ -200,6 +204,7 @@ impl People {
                         name: String::new(),
                         declared_adult: false,
                         table: String::new(),
+                        public: false,
                     },
                 );
             }
@@ -269,6 +274,7 @@ impl People {
             name: String::new(),
             declared_adult: false,
             table: String::new(),
+            public: false,
         });
         let out = Arrival {
             principal,
@@ -311,6 +317,49 @@ impl People {
             person.table = table.to_string();
             write(&self.path, &book);
         }
+    }
+
+    /// Whether this person chose a public profile.
+    pub fn is_public(&self, principal: &str) -> bool {
+        self.book
+            .lock()
+            .unwrap()
+            .people
+            .get(principal)
+            .is_some_and(|p| p.public)
+    }
+
+    /// Turn the public profile on or off.
+    pub fn set_public(&self, principal: &str, public: bool) {
+        let mut book = self.book.lock().unwrap();
+        let Some(person) = book.people.get_mut(principal) else {
+            return;
+        };
+        if person.public != public {
+            person.public = public;
+            write(&self.path, &book);
+        }
+    }
+
+    /// Everyone with a public profile under this name, case folded.
+    ///
+    /// A name is not a handle: nothing stops two people calling themselves
+    /// the same thing, and the route that calls this refuses to guess
+    /// between them rather than showing somebody the wrong person.
+    pub fn public_named(&self, name: &str) -> Vec<String> {
+        let want = name.trim().to_lowercase();
+        if want.is_empty() {
+            return Vec::new();
+        }
+        let book = self.book.lock().unwrap();
+        let mut out: Vec<String> = book
+            .people
+            .values()
+            .filter(|p| p.public && p.name.trim().to_lowercase() == want)
+            .map(|p| p.id.clone())
+            .collect();
+        out.sort();
+        out
     }
 
     /// Set what somebody calls themselves, if it has changed.
@@ -404,6 +453,7 @@ impl People {
                         name: String::new(),
                         declared_adult: false,
                         table: String::new(),
+                        public: false,
                     },
                 );
                 book.credentials
@@ -486,6 +536,7 @@ impl People {
             name: String::new(),
             declared_adult: false,
             table: String::new(),
+            public: false,
         });
         write(&self.path, &book);
     }
@@ -667,6 +718,9 @@ fn encode(book: &Book) -> String {
         if !p.table.is_empty() {
             let _ = writeln!(out, "table {} {}", p.id, p.table);
         }
+        if p.public {
+            let _ = writeln!(out, "public {}", p.id);
+        }
     }
     let mut devices: Vec<(&String, &String)> = book.devices.iter().collect();
     devices.sort();
@@ -717,6 +771,7 @@ fn decode(text: &str) -> Option<Book> {
                         name: String::new(),
                         declared_adult,
                         table: String::new(),
+                        public: false,
                     },
                 );
             }
@@ -730,6 +785,11 @@ fn decode(text: &str) -> Option<Book> {
                 let (id, table) = rest.split_once(' ')?;
                 if let Some(p) = book.people.get_mut(id) {
                     p.table = table.to_string();
+                }
+            }
+            "public" => {
+                if let Some(p) = book.people.get_mut(rest) {
+                    p.public = true;
                 }
             }
             "device" => {

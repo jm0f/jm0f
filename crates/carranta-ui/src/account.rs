@@ -135,6 +135,7 @@ pub fn page(
     principal: &str,
     who: &Who,
     defaults: &Defaults,
+    public: bool,
 ) -> String {
     let me = player_number(&aliases.resolve(principal));
     let called = who.name.trim();
@@ -161,9 +162,12 @@ pub fn page(
          tabindex=\"-1\" checked>\
          <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabDealing\" \
          tabindex=\"-1\">\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabPrivacy\" \
+         tabindex=\"-1\">\
          <nav class=\"tabs\">\
          <label for=\"tabAccount\">Account</label>\
          <label for=\"tabDealing\">Default game settings</label>\
+         <label for=\"tabPrivacy\">Privacy</label>\
          </nav>",
     );
 
@@ -195,6 +199,37 @@ pub fn page(
         "<form class=\"headOut\" method=\"post\" action=\"/signout\">\
          <button class=\"go small quiet\" type=\"submit\">Sign out</button></form>",
     );
+    b.push_str("</section></div>");
+
+    // ---- the Privacy pane ---------------------------------------------------
+    b.push_str("<div class=\"pane panePrivacy\">");
+    b.push_str(
+        "<section><h2 title=\"A public profile, its games and its statistics, \
+         is readable by anybody at /player/ followed by your name. Private is \
+         only you, which is where everybody starts.\">Profile</h2>",
+    );
+    let on = |yes: bool| if yes { " checked" } else { "" };
+    let _ = write!(
+        b,
+        "<form class=\"privacy autosave\" method=\"post\" action=\"/account/privacy\">\
+         <div class=\"pills\">\
+         <input type=\"radio\" name=\"profile\" value=\"private\" \
+         id=\"profile-private\"{}>\
+         <label class=\"pill\" for=\"profile-private\">private</label>\
+         <input type=\"radio\" name=\"profile\" value=\"public\" \
+         id=\"profile-public\"{}>\
+         <label class=\"pill\" for=\"profile-public\">public</label>\
+         </div></form>",
+        on(!public),
+        on(public),
+    );
+    if public && !called.is_empty() {
+        let _ = write!(
+            b,
+            "<p class=\"blurb\">Yours is at <a href=\"/player/{n}\">/player/{n}</a>.</p>",
+            n = esc(called),
+        );
+    }
     b.push_str("</section></div>");
 
     // ---- the Default game settings pane -------------------------------------
@@ -327,7 +362,7 @@ fn dealing(d: &Defaults) -> String {
          when you press New game. The lobby can still change any of them for \
          one table; changes here save themselves.\">How you deal</h2>",
     );
-    b.push_str("<form class=\"dealing\" method=\"post\" action=\"/account/table\">");
+    b.push_str("<form class=\"dealing autosave\" method=\"post\" action=\"/account/table\">");
 
     let _ = write!(
         b,
@@ -394,9 +429,9 @@ fn dealing(d: &Defaults) -> String {
 /// everything again: the form is the state and the server stores whatever the
 /// last post said.
 const SAVES_ITSELF: &str = "<script>\
-const d=document.querySelector('.dealing');\
-if(d){d.addEventListener('change',()=>\
-fetch(d.action,{method:'POST',body:new URLSearchParams(new FormData(d))}))}\
+document.querySelectorAll('form.autosave').forEach(f=>\
+f.addEventListener('change',()=>\
+fetch(f.action,{method:'POST',body:new URLSearchParams(new FormData(f))})));\
 const r=document.querySelector('.rename');\
 if(r){const i=r.querySelector('input');let t;\
 const save=()=>fetch(r.action,{method:'POST',body:new URLSearchParams(new FormData(r))});\
@@ -417,6 +452,9 @@ const EXTRA: &str = "
   background: var(--primary); color: var(--primary-foreground); }
 #tabAccount:checked ~ .paneAccount { display: block; }
 #tabDealing:checked ~ .paneDealing { display: block; }
+#tabPrivacy:checked ~ .tabs label[for=\"tabPrivacy\"] {
+  background: var(--primary); color: var(--primary-foreground); }
+#tabPrivacy:checked ~ .panePrivacy { display: block; }
 /* Air inside the scroll container, so a focus ring is drawn rather than
    shaved off at the pane's edge. */
 .pane { padding: 4px 6px; }
@@ -514,12 +552,18 @@ mod tests {
             "egonkey000000000",
             &signed_in("Egon"),
             &Defaults::default(),
+            false,
         );
         assert!(html.contains("value=\"Egon\""), "the name, editable");
         assert!(html.contains("action=\"/account/name\""));
         assert!(html.contains("action=\"/signout\""));
         assert!(html.contains("id=\"tabAccount\""), "the account tab");
         assert!(html.contains("id=\"tabDealing\""), "the settings tab");
+        assert!(html.contains("id=\"tabPrivacy\""), "the privacy tab");
+        assert!(
+            html.contains("id=\"profile-private\" checked"),
+            "private is where everybody starts"
+        );
         assert!(html.contains("class=\"weeks\""), "the activity graph");
         assert!(
             !html.contains("What your games add up to"),
@@ -542,6 +586,7 @@ mod tests {
             "egonkey000000000",
             &signed_in("Egon"),
             &Defaults::default(),
+            false,
         );
         assert!(
             html.contains("0 games in the last half year"),
@@ -573,7 +618,14 @@ mod tests {
         assert_eq!(mangled.discard_secs, 600, "clamped, not trusted");
         assert_eq!(mangled.pace, "fast");
         // The page carries the form, prefilled.
-        let html = page(&[], &NoAliases, "egonkey000000000", &signed_in("Egon"), &d);
+        let html = page(
+            &[],
+            &NoAliases,
+            "egonkey000000000",
+            &signed_in("Egon"),
+            &d,
+            true,
+        );
         assert!(html.contains("action=\"/account/table\""));
         assert!(html.contains("name=\"seats\" value=\"3\" id=\"seats-3\" checked"));
         assert!(html.contains("name=\"clock\" value=\"chess\" id=\"clock-chess\" checked"));
@@ -587,6 +639,7 @@ mod tests {
             "egonkey000000000",
             &signed_in("<script>alert(1)</script>"),
             &Defaults::default(),
+            false,
         );
         assert!(!html.contains("<script>alert"));
         assert!(html.contains("&lt;script&gt;"));
