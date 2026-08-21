@@ -1109,6 +1109,23 @@ impl Server {
                         .any(|c| c.is_person() && is_mine(&c.who))
             })
             .collect();
+        // Whether they were still there when each game ended, for the list's
+        // own column; a game with no end says nothing.
+        let stayed: Vec<Option<bool>> = mine
+            .iter()
+            .map(|g| {
+                if g.winner.is_none() {
+                    return None;
+                }
+                g.setup
+                    .chairs
+                    .iter()
+                    .find(|c| {
+                        c.is_person() && crate::people::Aliases::resolve(&self.people, &c.who) == me
+                    })
+                    .map(|c| !c.left)
+            })
+            .collect();
         crate::home::page(
             &open,
             &mine,
@@ -1117,11 +1134,7 @@ impl Server {
                 signed_in: self.people.has_account(player),
                 name: self.people.name(player),
             },
-            // Whether they stay at the tables they sit down at, which is the
-            // number the rating deliberately does not carry. Read over the same
-            // list the section below it shows, and through the claims, so a
-            // guest's record follows them to their account.
-            crate::analysis::finishing(&mine, player, &self.people),
+            &stayed,
         )
     }
 
@@ -2404,12 +2417,27 @@ impl Server {
                                 .any(|c| c.is_person() && is_mine(&c.who))
                     })
                     .collect();
-                let staying = crate::analysis::finishing(&mine, &player, &self.people);
+                let stayed: Vec<Option<bool>> = mine
+                    .iter()
+                    .map(|g| {
+                        if g.winner.is_none() {
+                            return None;
+                        }
+                        g.setup
+                            .chairs
+                            .iter()
+                            .find(|c| {
+                                c.is_person()
+                                    && crate::people::Aliases::resolve(&self.people, &c.who) == me
+                            })
+                            .map(|c| !c.left)
+                    })
+                    .collect();
                 return respond(
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::history::page(&history, &mine, staying, &self.people, &player, &who)
+                    crate::history::page(&history, &mine, &stayed, &self.people, &player, &who)
                         .as_bytes(),
                 );
             }
@@ -2497,11 +2525,11 @@ impl Server {
             // Rendered whole for the report's reason: nothing on it changes
             // without a request.
             ("GET", "/corpus") => {
-                let strip = crate::home::account(&crate::home::Who {
+                let viewer = crate::home::Who {
                     offered: self.provider.is_some(),
                     signed_in: self.people.has_account(&player),
                     name: self.people.name(&player),
-                });
+                };
                 let mut history = self.store.all();
                 // Oldest first, so a person's newest chair names their row.
                 history.reverse();
@@ -2509,13 +2537,7 @@ impl Server {
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    crate::corpus::page(
-                        &history,
-                        &self.people,
-                        &strip,
-                        self.people.has_account(&player),
-                    )
-                    .as_bytes(),
+                    crate::corpus::page(&history, &self.people, &viewer).as_bytes(),
                 );
             }
             // The analytics for one game (§10). Rendered here rather than
@@ -2537,23 +2559,17 @@ impl Server {
                 // Through the claims: a guest who has since signed up reads
                 // their old games as the account's, without a byte of those
                 // games having moved (P-1).
-                let strip = crate::home::account(&crate::home::Who {
+                let viewer = crate::home::Who {
                     offered: self.provider.is_some(),
                     signed_in: self.people.has_account(&player),
                     name: self.people.name(&player),
-                });
+                };
                 match crate::analysis::study_as(&saved, &history, &self.people) {
                     Some(study) => respond(
                         &mut stream,
                         200,
                         "text/html; charset=utf-8",
-                        crate::report::page(
-                            &saved,
-                            &study,
-                            &strip,
-                            self.people.has_account(&player),
-                        )
-                        .as_bytes(),
+                        crate::report::page(&saved, &study, &viewer).as_bytes(),
                     ),
                     None => respond(
                         &mut stream,

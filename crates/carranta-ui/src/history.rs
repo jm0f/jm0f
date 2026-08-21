@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use carranta_analytics::corpus::{Config, Corpus, Who as Actor};
 
 use crate::account::sat;
-use crate::analysis::{Finishing, player_number, to_log_as};
+use crate::analysis::{player_number, to_log_as};
 use crate::home::Who;
 use crate::people::Aliases;
 use crate::report::{CSS, ICON};
@@ -27,7 +27,7 @@ use crate::store::Saved;
 pub fn page(
     history: &[Saved],
     mine: &[Saved],
-    staying: Finishing,
+    stayed: &[Option<bool>],
     aliases: &dyn Aliases,
     principal: &str,
     who: &Who,
@@ -42,21 +42,15 @@ pub fn page(
          <title>Your history · Carranta</title>{ICON}\
          <style>{CSS}{EXTRA}</style></head><body>\
          {head}<main>",
-        head = crate::report::masthead_as(
-            "your history",
-            &[],
-            &crate::home::account(who),
-            "history",
-            true,
-        ),
+        head = crate::report::masthead_as("your history", &[], "history", who),
     );
 
     b.push_str(
         "<div class=\"deck\">\
          <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabOverview\" \
-         tabindex=\"-1\" checked>\
-         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabGames\" \
          tabindex=\"-1\">\
+         <input class=\"tabPick\" type=\"radio\" name=\"tab\" id=\"tabGames\" \
+         tabindex=\"-1\" checked>\
          <nav class=\"tabs\">\
          <label for=\"tabOverview\">Overview</label>\
          <label for=\"tabGames\">Games</label>\
@@ -66,7 +60,7 @@ pub fn page(
     b.push_str(&record(history, aliases, me));
     b.push_str("</div>");
     b.push_str("<div class=\"pane paneGames\">");
-    b.push_str(&crate::home::played(mine, staying, true));
+    b.push_str(&crate::home::played(mine, stayed, true));
     b.push_str("</div></div></main></body></html>");
     b
 }
@@ -98,7 +92,12 @@ fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
         }
     }
 
-    let mut b = String::from("<section><h2>What your games add up to</h2>");
+    let mut b = String::from(
+        "<section><h2 title=\"Your line of the corpus, one row per market. \
+         The interval on a win rate is clustered by game, and conversion is \
+         points scored above what your production predicts, the closest thing \
+         here to skill with the luck taken out.\">What your games add up to</h2>",
+    );
     if corpora.is_empty() {
         b.push_str(
             "<p class=\"blurb\">Nothing yet: no finished game on this server \
@@ -107,12 +106,6 @@ fn record(history: &[Saved], aliases: &dyn Aliases, me: u64) -> String {
         );
         return b;
     }
-    b.push_str(
-        "<p class=\"blurb\">Your line of the corpus, one row per market. The \
-         interval on a win rate is clustered by game, and conversion is points \
-         scored above what your production predicts, the closest thing here \
-         to skill with the luck taken out.</p>",
-    );
     b.push_str(TABLE_OPEN);
     b.push_str(
         "<thead><tr><th>market</th><th>games</th><th>wins</th><th>win rate</th>\
@@ -213,7 +206,7 @@ mod tests {
         let html = page(
             &history,
             &history,
-            Finishing::default(),
+            &[],
             &NoAliases,
             "egonkey000000000",
             &signed_in("Egon"),
@@ -231,7 +224,7 @@ mod tests {
         let html = page(
             &[],
             &[],
-            Finishing::default(),
+            &[],
             &NoAliases,
             "egonkey000000000",
             &signed_in("Egon"),

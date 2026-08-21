@@ -147,8 +147,7 @@ pub fn page(
          <title>Your account · Carranta</title>{ICON}\
          <style>{CSS}{EXTRA}</style></head><body>\
          {head}<main>",
-        head =
-            crate::report::masthead_as("your account", &[], &crate::home::account(who), "", true,),
+        head = crate::report::masthead_as("your account", &[], "account", who),
     );
 
     // The deck: one card the width of the window, the lobby's own shape, with
