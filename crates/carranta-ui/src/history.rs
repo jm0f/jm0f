@@ -201,7 +201,7 @@ pub fn public_page(
         "<section><h2>{} games</h2>",
         crate::report::esc_text(&possessive)
     );
-    b.push_str(&crate::home::list(mine, lines, true));
+    b.push_str(&crate::home::list(mine, lines, true, Some(display)));
     b.push_str("</section></div>");
     b.push_str("</div></main></body></html>");
     b

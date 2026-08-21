@@ -102,6 +102,12 @@ pub struct MineLine {
     pub position: Option<u8>,
     /// Whether you were at the table when it ended.
     pub stayed: Option<bool>,
+    /// The seat the draw gave you, one-based, seat 1 playing first; nothing
+    /// when no chair of the game was yours.
+    pub seat: Option<u8>,
+    /// Your victory points when it ended, from the same replay the place is
+    /// read off.
+    pub vp: Option<u32>,
     /// Whether the winner was you. Said by the chairs after the draw, which
     /// is what the old label got wrong: seat nought stopped being "whoever
     /// was at the keyboard" the day seats were drawn.
@@ -149,22 +155,30 @@ pub fn mine_lines(mine: &[Saved], who: &dyn Aliases, principal: &str) -> Vec<Min
             };
             if g.winner.is_none() {
                 return MineLine {
+                    seat: Some(seat as u8 + 1),
                     you_won,
                     winner_name,
                     ..MineLine::default()
                 };
             }
             let stayed = g.setup.chairs.get(seat).map(|c| !c.left);
-            let position = to_log_as(g, who)
+            let (position, vp) = to_log_as(g, who)
                 .and_then(|log| game::analyse(&log).ok())
                 .and_then(|r| {
                     let n = r.players as usize;
-                    (seat < n)
-                        .then(|| 1 + r.vp[..n].iter().filter(|&&v| v > r.vp[seat]).count() as u8)
-                });
+                    (seat < n).then(|| {
+                        (
+                            1 + r.vp[..n].iter().filter(|&&v| v > r.vp[seat]).count() as u8,
+                            r.vp[seat],
+                        )
+                    })
+                })
+                .map_or((None, None), |(place, vp)| (Some(place), Some(vp)));
             MineLine {
                 position,
                 stayed,
+                seat: Some(seat as u8 + 1),
+                vp,
                 you_won,
                 winner_name,
             }

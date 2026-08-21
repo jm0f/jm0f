@@ -455,7 +455,7 @@ pub(crate) fn played(mine: &[Saved], lines: &[MineLine], signed_in: bool) -> Str
              brings these with it."
         },
     ));
-    b.push_str(&list(mine, lines, signed_in));
+    b.push_str(&list(mine, lines, signed_in, None));
     b.push_str("</section>");
     b
 }
@@ -480,12 +480,24 @@ const SHOWN: usize = 24;
 /// The console shows the lot and scrolls inside its own frame; the front
 /// page, which flows, is capped instead, since a hundredth row on a page
 /// read at a glance is not read at all.
-pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
+/// `owner` is the page's subject when it is not the reader: the public
+/// profile names them where the reader's own page says "you".
+pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool, owner: Option<&str>) -> String {
     let cap = if all { usize::MAX } else { SHOWN };
     let mut b = String::from(TABLE_OPEN);
     b.push_str(
-        "<thead><tr><th></th><th>players</th><th>turns</th>\
-         <th>result</th><th>place</th><th>stayed</th><th></th></tr></thead><tbody>",
+        "<thead><tr><th></th>\
+         <th title=\"How many seats the table had.\">players</th>\
+         <th title=\"The seat the draw gave, seat 1 playing first.\">seat</th>\
+         <th title=\"Turns the game ran, counted the way the analytics count \
+         them.\">turns</th>\
+         <th title=\"Who won: the row's player in green, another person by \
+         name, or a bot.\">result</th>\
+         <th title=\"The finishing place, read off a replay of the game; \
+         ties share a place.\">place</th>\
+         <th title=\"Victory points when it ended.\">VP</th>\
+         <th title=\"Still at the table at the end, or left early.\">stayed</th>\
+         <th></th></tr></thead><tbody>",
     );
     for (i, g) in games.iter().take(cap).enumerate() {
         let line = lines.get(i).cloned().unwrap_or_default();
@@ -493,7 +505,10 @@ pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
         // was wrong besides: the draw moves people, and seat nought stopped
         // being the keyboard the day it did.
         let result = match g.winner {
-            Some(_) if line.you_won => "<span class=\"up\">you won</span>".to_string(),
+            Some(_) if line.you_won => format!(
+                "<span class=\"up\">{} won</span>",
+                owner.map_or("you".to_string(), esc),
+            ),
             Some(_) if !line.winner_name.is_empty() => {
                 format!("{} won", esc(&line.winner_name))
             }
@@ -508,13 +523,21 @@ pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
         let study = if over { "" } else { " quiet" };
         let _ = write!(
             b,
-            "<tr><td>{name}</td><td>{seats}</td><td>{turns}</td>\
-             <td>{result}</td><td>{place}</td><td>{stay}</td><td class=\"act\">\
+            "<tr><td>{name}</td><td>{seats}</td><td>{seat}</td><td>{turns}</td>\
+             <td>{result}</td><td>{place}</td><td>{vp}</td><td>{stay}</td>\
+             <td class=\"act\">\
              <a class=\"go small{board}\" href=\"/{id}/\">Board</a> \
              <a class=\"go small{study}\" href=\"/{id}/analytics\">Analytics</a>\
              </td></tr>",
             name = named(g),
             seats = g.seats,
+            seat = match line.seat {
+                Some(1) => "1st".to_string(),
+                Some(2) => "2nd".to_string(),
+                Some(3) => "3rd".to_string(),
+                Some(n) => format!("{n}th"),
+                None => "·".to_string(),
+            },
             // Turns rather than moves: the same figure the analytics count by.
             turns = turns_of(g),
             place = match line.position {
@@ -524,6 +547,7 @@ pub(crate) fn list(games: &[Saved], lines: &[MineLine], all: bool) -> String {
                 Some(p) => format!("{p}th"),
                 None => "·".to_string(),
             },
+            vp = line.vp.map_or("·".to_string(), |v| v.to_string()),
             stay = match line.stayed {
                 Some(true) => "stayed",
                 Some(false) => "<span class=\"worth\">left</span>",
@@ -784,8 +808,10 @@ mod tests {
             ],
             true,
         );
-        assert!(html.contains("<th>stayed</th>"), "the column exists");
-        assert!(html.contains("<th>place</th>"), "and the place beside it");
+        assert!(html.contains(">stayed</th>"), "the column exists");
+        assert!(html.contains(">place</th>"), "and the place beside it");
+        assert!(html.contains(">seat</th>"), "and the seat the draw gave");
+        assert!(html.contains(">VP</th>"), "and the points themselves");
         assert!(html.contains("<td>2nd</td>"));
         assert!(html.contains(">left</span>"));
         assert!(
@@ -1120,6 +1146,7 @@ mod tests {
             stayed: Some(true),
             you_won: true,
             winner_name: String::new(),
+            ..MineLine::default()
         };
         let html = played(std::slice::from_ref(&g), std::slice::from_ref(&yours), true);
         assert!(html.contains(">you won</span>"), "your win says so plainly");
@@ -1130,6 +1157,7 @@ mod tests {
             stayed: Some(true),
             you_won: false,
             winner_name: "Ines".to_string(),
+            ..MineLine::default()
         };
         let html = played(
             std::slice::from_ref(&g),
@@ -1143,9 +1171,21 @@ mod tests {
             stayed: Some(true),
             you_won: false,
             winner_name: String::new(),
+            ..MineLine::default()
         };
         let html = played(std::slice::from_ref(&g), std::slice::from_ref(&bots), true);
         assert!(html.contains("<td>a bot won</td>"));
+
+        // On a public profile the subject is named, never "you": the reader
+        // is somebody else.
+        let html = list(
+            std::slice::from_ref(&g),
+            std::slice::from_ref(&yours),
+            true,
+            Some("Egon"),
+        );
+        assert!(html.contains(">Egon won</span>"), "third person by name");
+        assert!(!html.contains("you won"));
     }
 
     #[test]
