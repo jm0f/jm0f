@@ -3699,37 +3699,75 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     let seats = r.players as usize;
     let who = names(saved, seats);
     let place = places(r, seats);
-    let mut b = String::new();
+    // The console's table of contents, in the order the tabs read, which is
+    // not the order the panes are built in below: building keeps the file's
+    // long-standing narrative order, and this list is free to disagree.
+    const TABS: [(&str, &str); 16] = [
+        ("tabOverview", "Overview"),
+        ("tabResult", "Result"),
+        ("tabOpening", "Opening"),
+        ("tabTurns", "Turns"),
+        ("tabRatings", "Ratings"),
+        ("tabDice", "Dice"),
+        ("tabProduction", "Production"),
+        ("tabPerTurn", "Production per turn"),
+        ("tabEngine", "Engine"),
+        ("tabCoverage", "Coverage"),
+        ("tabDeviation", "Deviation"),
+        ("tabMilitia", "Militia"),
+        ("tabTrades", "Trades"),
+        ("tabBuilding", "Building"),
+        ("tabDevCards", "Development cards"),
+        ("tabBoard", "Board"),
+    ];
+    let mut extra = String::new();
+    for (id, _) in TABS {
+        let _ = write!(
+            extra,
+            "#{id}:checked ~ .tabs label[for=\"{id}\"] {{ \
+             background: var(--primary); color: var(--primary-foreground); }}\
+             #{id}:checked ~ .pane{pane} {{ display: block; }}\n",
+            pane = &id[3..],
+        );
+    }
 
+    let mut out = String::new();
     let _ = write!(
-        b,
+        out,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>Carranta, game {id}</title>{ICON}\
-         <style>{css}</style></head><body>",
+         <style>{css}{extra}</style></head><body>",
         id = esc(&saved.id),
         css = CSS
     );
 
     // ---- the header: which game, and what happened in it --------------------
     let board = format!("/{}/", esc(&saved.id));
-    b.push_str(&masthead_as(
-        "",
+    out.push_str(&masthead_as(
+        &format!("game {}", esc(&saved.id)),
         &[(board.as_str(), "The board"), ("/lobby", "New game")],
         "",
         viewer,
     ));
+    out.push_str("<main>");
+
+    // Each pane is banked here as the buffer reaches a seam; the deck at the
+    // end deals them out in the tab order above.
+    let mut panes: Vec<(&str, String)> = Vec::new();
+    let mut b = String::new();
     let _ = write!(
         b,
-        "<main><h1>Game {id}</h1>\
+        "<section><h1>Game {id}</h1>\
          <p class=\"lede\">{seats} players, {mode} market, seed {seed}. \
-         {turns} turns, {actions} actions.</p>",
+         {turns} turns, {actions} actions.</p></section>",
         id = esc(&saved.id),
         mode = format!("{:?}", saved.mode).to_lowercase(),
         seed = crate::game::seed_code(saved.seed),
         turns = r.turns,
         actions = r.actions,
     );
+    panes.push(("Overview", std::mem::take(&mut b)));
 
     // ---- the result ---------------------------------------------------------
     // The five things that score (R-11.3), each as how many were held and, in
@@ -3796,8 +3834,12 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(&race(study, &who, &place, seats));
     b.push_str("</section>");
 
+    panes.push(("Result", std::mem::take(&mut b)));
+
     // ---- the turns ----------------------------------------------------------
     b.push_str(&turn_bar(study, &who, &place, seats));
+
+    panes.push(("Turns", std::mem::take(&mut b)));
 
     // ---- ratings ------------------------------------------------------------
     b.push_str("<section>");
@@ -3886,6 +3928,8 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
         b.push_str(T_CLOSE);
     }
     b.push_str("</section>");
+
+    panes.push(("Ratings", std::mem::take(&mut b)));
 
     // ---- the dice -----------------------------------------------------------
     let total: u32 = r.rolls.iter().sum();
@@ -4009,6 +4053,8 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
     b.push_str("</section>");
+
+    panes.push(("Dice", std::mem::take(&mut b)));
 
     // ---- production ---------------------------------------------------------
     // Every card that reached a hand or left it, by what moved it. This is the
@@ -4162,13 +4208,19 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(&thrown(study, &who, &place, seats));
     b.push_str("</section>");
 
+    panes.push(("Production", std::mem::take(&mut b)));
+
     // ---- production per turn -------------------------------------------------
     b.push_str(&curves(study, &who, &place, seats));
+
+    panes.push(("Production per turn", std::mem::take(&mut b)));
 
     // ---- what became of the expectation --------------------------------------
     // The deviation column above is three causes in one number, and the engine
     // has always known which was which (§10.2).
     b.push_str(&deviation_card(study, &who, &place, seats));
+
+    panes.push(("Deviation", std::mem::take(&mut b)));
 
     // ---- the militia --------------------------------------------------------
     b.push_str("<section>");
@@ -4208,6 +4260,8 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(T_CLOSE);
     b.push_str(&blockade(study, &who, &place, seats));
     b.push_str("</section>");
+
+    panes.push(("Militia", std::mem::take(&mut b)));
 
     // ---- the market ---------------------------------------------------------
     b.push_str("<section>");
@@ -4270,9 +4324,13 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(&demand(study, &who, &place, seats));
     b.push_str("</section>");
 
+    panes.push(("Trades", std::mem::take(&mut b)));
+
     // ---- building -----------------------------------------------------------
     // Where the cards went, which the ledger's built row could not say.
     b.push_str(&building(study, &who, &place, seats));
+
+    panes.push(("Building", std::mem::take(&mut b)));
 
     // ---- development cards --------------------------------------------------
     b.push_str("<section>");
@@ -4337,6 +4395,8 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(T_CLOSE);
     b.push_str(&waiting(study));
     b.push_str("</section>");
+
+    panes.push(("Development cards", std::mem::take(&mut b)));
 
     // ---- the board ----------------------------------------------------------
     b.push_str("<section>");
@@ -4500,6 +4560,8 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(&deal(study));
     b.push_str("</section>");
 
+    panes.push(("Board", std::mem::take(&mut b)));
+
     // ---- the opening --------------------------------------------------------
     b.push_str("<section>");
     b.push_str(&card_head(
@@ -4563,8 +4625,12 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     b.push_str(T_CLOSE);
     b.push_str("</section>");
 
+    panes.push(("Opening", std::mem::take(&mut b)));
+
     // ---- the engine ---------------------------------------------------------
     b.push_str(&engine_card(study, &who, &place, seats));
+
+    panes.push(("Engine", std::mem::take(&mut b)));
 
     // ---- coverage -----------------------------------------------------------
     // How often the board paid, turn by turn, under the opening it started
@@ -4577,9 +4643,36 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     // claim about many games, and a report on one game is the wrong place to
     // make it. It belongs on a page that reads the whole store, which is the
     // cumulative statistics work still to come.
+    panes.push(("Coverage", std::mem::take(&mut b)));
 
-    b.push_str("</main></body></html>");
-    b
+    // ---- the deck -----------------------------------------------------------
+    // The same console every other screen wears: tabs on top, one pane shown,
+    // only the pane scrolling. Result opens, because "who won" is the first
+    // question anybody brings to a finished game.
+    out.push_str("<div class=\"deck\">");
+    for (id, _) in TABS {
+        let _ = write!(
+            out,
+            "<input class=\"tabPick\" type=\"radio\" name=\"tab\" \
+             id=\"{id}\" tabindex=\"-1\"{}>",
+            if id == "tabResult" { " checked" } else { "" },
+        );
+    }
+    out.push_str("<nav class=\"tabs\">");
+    for (id, label) in TABS {
+        let _ = write!(out, "<label for=\"{id}\">{label}</label>");
+    }
+    out.push_str("</nav>");
+    for (id, label) in TABS {
+        let body = panes
+            .iter()
+            .find(|(name, _)| *name == label)
+            .map(|(_, html)| html.as_str())
+            .unwrap_or("");
+        let _ = write!(out, "<div class=\"pane pane{}\">{body}</div>", &id[3..]);
+    }
+    out.push_str("</div></main></body></html>");
+    out
 }
 
 /// The page's own styles.
@@ -4786,7 +4879,7 @@ main:has(.deck) { max-width: none; width: 100%; flex: 1;
          background: var(--primary); border-radius: 1px; }
 .tabPick { position: absolute; width: 1px; height: 1px; opacity: 0;
            pointer-events: none; }
-.tabs { display: flex; gap: 4px; align-self: flex-start;
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; align-self: flex-start;
         background: var(--background); border-radius: var(--radius-md);
         padding: 4px; margin-bottom: .6rem; }
 .tabs label { font: 600 14px Figtree, system-ui, sans-serif; cursor: pointer;
@@ -5282,6 +5375,15 @@ mod tests {
             !PAGE.contains(">New game</button>"),
             "one label, one destination, one kind of element"
         );
+        // And the order is the masthead's: plain links first, the pills after,
+        // on the board exactly as on every server-rendered page.
+        let link = PAGE
+            .find("href=\"/lobby\">New game")
+            .expect("the board offers a new game");
+        let pills = PAGE
+            .find("<nav class=\"headTabs\">")
+            .expect("the board wears the pills");
+        assert!(link < pills, "links precede the pills");
         // And the rules the two stylesheets share are named the same in both.
         for rule in [".headLinks", ".headLink", ".gameName"] {
             assert!(CSS.contains(rule), "the report styles {rule}");
@@ -5435,10 +5537,13 @@ mod tests {
         // to be the same axis. Both drawings are laid out in the same coordinates
         // and given the same box, so their tick positions come out identical, and
         // this is what fails if either drifts.
-        let card = html
-            .split("</section>")
-            .next()
-            .expect("the result card is the first section");
+        // The result lives in its pane now, between its marker and the next
+        // pane in the deal order.
+        let start = html.find("pane paneResult").expect("a result pane");
+        let end = html[start..]
+            .find("pane paneOpening")
+            .expect("the next pane follows");
+        let card = &html[start..start + end];
         let ticks = |from: &str| -> Vec<String> {
             from.match_indices("class=\"axis mid\" x=\"")
                 .map(|(at, key)| {
