@@ -1124,141 +1124,6 @@ fn cost(v: f64) -> String {
     }
 }
 
-/// The game as a race: who led, for how long, and how long the last stretch took.
-///
-/// A final score says who won and by how much. It cannot say who was in front for
-/// most of the game and lost it, or whether the winner was clear from turn forty,
-/// or how many turns the table had to stop them once they were within two points.
-/// The chart above shows all of that and asks to be read; this says it.
-///
-/// The true score throughout, hidden cards and all, because that is what actually
-/// decided the game. The table could not see it, which is what the dotted lines
-/// on the chart are for.
-fn race(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -> String {
-    let rows = &study.score;
-    let turns = rows.len();
-    if turns < 2 || seats == 0 {
-        return String::new();
-    }
-    // Two points short of the target: the point at which a seat can win inside
-    // one turn, and so the point from which the rest of the table is out of time.
-    let near = carranta_core::state::WINNING_VP.saturating_sub(2);
-    // The first turn a seat's score reached a mark, counting from one.
-    let reached = |p: usize, mark: u32| {
-        (0..turns)
-            .find(|i| rows[*i][p] >= mark)
-            .map(|i| i as u32 + 1)
-    };
-    // Turns this seat held the lead outright. A tie is nobody's lead: two seats
-    // level on eight are both in front of the other two and neither is ahead.
-    let led = |p: usize| {
-        (0..turns)
-            .filter(|i| {
-                let mine = rows[*i][p];
-                mine > 0 && (0..seats).all(|q| q == p || rows[*i][q] < mine)
-            })
-            .count() as u32
-    };
-
-    let mut b = String::from(T_OPEN);
-    b.push_str("<thead>");
-    b.push_str(&head_row(&[
-        ("", ""),
-        (
-            "halfway",
-            "The turn this seat first reached half the target. Early here is a \
-             fast start and nothing more: the opening pays from the first roll and \
-             the first few points are the cheap ones.",
-        ),
-        (
-            "in reach",
-            "The turn they first came within two points of the target, which is \
-             the point from which they can win inside a single turn. Blank for a \
-             seat that never got that close. The foot carries the first seat to \
-             get there and how many turns the rest of the table then had to stop \
-             them, which is the length of the endgame.",
-        ),
-        (
-            "in front",
-            "Turns they held the lead outright, with their share of the game in \
-             brackets. A tie is nobody's lead: two seats level are both ahead of \
-             the others and neither is ahead of the other.",
-        ),
-        (
-            "last in front",
-            "The last turn they led. For everybody but the winner this is the \
-             turn the game got away from them.",
-        ),
-    ]));
-    b.push_str("</thead><tbody>");
-    for p in 0..seats {
-        let front = led(p);
-        let last = (0..turns).rev().find(|i| {
-            let mine = rows[*i][p];
-            mine > 0 && (0..seats).all(|q| q == p || rows[*i][q] < mine)
-        });
-        b.push_str(&row(
-            &[
-                placed(p, &who[p], place[p]),
-                match reached(p, carranta_core::state::WINNING_VP / 2) {
-                    Some(t) => t.to_string(),
-                    None => NONE.to_string(),
-                },
-                match reached(p, near) {
-                    Some(t) => t.to_string(),
-                    None => NONE.to_string(),
-                },
-                if front == 0 {
-                    NONE.to_string()
-                } else {
-                    format!(
-                        "{front} <span class=\"worth\">({:.0}%)</span>",
-                        100.0 * f64::from(front) / turns as f64
-                    )
-                },
-                match last {
-                    Some(i) => (i as u32 + 1).to_string(),
-                    None => NONE.to_string(),
-                },
-            ],
-            false,
-        ));
-    }
-    b.push_str("</tbody>");
-    // How long the endgame lasted: from the first seat coming within two points
-    // to the win. A long last stretch is a table that saw it coming and could not
-    // stop it; a short one is a game decided in a single turn.
-    let first_near = (0..seats).filter_map(|p| reached(p, near)).min();
-    let ties = (0..turns)
-        .filter(|i| {
-            let top = (0..seats).map(|q| rows[*i][q]).max().unwrap_or(0);
-            top > 0 && (0..seats).filter(|q| rows[*i][*q] == top).count() > 1
-        })
-        .count() as u32;
-    b.push_str(&totals(&[
-        "the game".to_string(),
-        NONE.to_string(),
-        // How long the last stretch lasted, which is the figure the card exists
-        // for: a long one is a table that saw it coming and could not stop it, a
-        // short one is a game decided inside a single turn.
-        match first_near {
-            Some(t) => format!(
-                "{t} <span class=\"worth\">({} turns left)</span>",
-                turns as u32 - t
-            ),
-            None => NONE.to_string(),
-        },
-        if ties == 0 {
-            NONE.to_string()
-        } else {
-            format!("<span class=\"worth\">{ties} level</span>")
-        },
-        turns.to_string(),
-    ]));
-    b.push_str(T_CLOSE);
-    b
-}
-
 /// What each seat built, what it cost them, and what stopped them.
 ///
 /// The ledger's built row is one number for four different decisions. A seat that
@@ -1468,142 +1333,6 @@ fn walls(study: &Study, who: &[String], place: &[Option<usize>], seats: usize) -
     }
     b.push_str("</tbody>");
     b.push_str(T_CLOSE);
-    b
-}
-
-/// What happened and when: a lane a seat, a mark a thing.
-///
-/// Every chart on this page provokes the same question and none of them can
-/// answer it: a line steps up around turn ninety and nothing says why. This is
-/// the answer, on the same turn axis as the chart above it, so the two read
-/// together: settlements, cities, cards bought, and the two tiles arriving.
-///
-/// A strip rather than another line chart, because these are events and not
-/// quantities. Nothing is being measured up the page, so nothing pretends to be.
-fn timeline(study: &Study, who: &[String], seats: usize) -> String {
-    const W: f64 = 720.0;
-    const PAD: f64 = 36.0;
-    const LANE: f64 = 26.0;
-    const FOOT: f64 = 22.0;
-
-    let turns = study.score.len();
-    if study.events.is_empty() || turns < 2 || seats == 0 {
-        return String::new();
-    }
-    let h = LANE * seats as f64 + FOOT + 10.0;
-    let x = |turn: u32| {
-        let i = (turn.max(1) - 1) as f64;
-        PAD + (W - PAD * 2.0) * i / (turns - 1).max(1) as f64
-    };
-    let y = |seat: usize| 8.0 + LANE * seat as f64 + LANE / 2.0;
-
-    let mut b = format!(
-        "<div class=\"strip\"><div class=\"frame\"><svg viewBox=\"0 0 {W} {h:.0}\" \
-         role=\"img\" aria-label=\"What each seat did, turn by turn\">"
-    );
-    // A rule a seat to hang the marks on, so an empty lane reads as a seat that
-    // built nothing rather than as a missing row.
-    for p in 0..seats {
-        let _ = write!(
-            b,
-            "<line class=\"lane\" x1=\"{PAD}\" x2=\"{r}\" y1=\"{ly:.1}\" \
-             y2=\"{ly:.1}\"/>",
-            r = W - PAD,
-            ly = y(p),
-        );
-    }
-    let base = LANE * seats as f64 + 8.0;
-    let step = nice_step(turns);
-    let mut ticks: Vec<usize> = (0..turns).step_by(step).collect();
-    if ticks.last() != Some(&(turns - 1)) {
-        if ticks.last().is_some_and(|last| turns - 1 - last < step / 2) {
-            ticks.pop();
-        }
-        ticks.push(turns - 1);
-    }
-    for i in ticks {
-        let _ = write!(
-            b,
-            "<line class=\"tick\" x1=\"{tx:.1}\" x2=\"{tx:.1}\" y1=\"{base:.1}\" \
-             y2=\"{end:.1}\"/><text class=\"axis mid\" x=\"{tx:.1}\" \
-             y=\"{ly:.1}\">{n}</text>",
-            tx = x(i as u32 + 1),
-            end = base + 5.0,
-            ly = base + 18.0,
-            n = i + 1,
-        );
-    }
-
-    // The marks, and a tooltip a mark, in the layer over the drawing.
-    let mut tips = String::from("<div class=\"over\">");
-    let mut shape = 0;
-    for e in &study.events {
-        if e.seat >= seats {
-            continue;
-        }
-        let (class, said) = e.what.mark();
-        // A tile rides just above the lane rather than on it. It is not a
-        // building and it lands on the same turn as one often enough that on the
-        // line the two marks sat on top of each other.
-        let lift = if matches!(e.what, crate::analysis::Happened::Tile) {
-            8.0
-        } else {
-            0.0
-        };
-        let (cx, cy) = (x(e.turn), y(e.seat) - lift);
-        // Four shapes rather than four colours, since the colour is already
-        // saying which seat: a filled square is a building, the bigger one a
-        // city, a ring is a card bought, and a diamond is a tile changing hands.
-        let side = size(e.what);
-        let turned = matches!(e.what, crate::analysis::Happened::Tile);
-        let _ = write!(
-            b,
-            "<rect class=\"beat {class} f{p} k{shape}\" x=\"{:.1}\" y=\"{:.1}\" \
-             width=\"{side:.1}\" height=\"{side:.1}\" rx=\"{rx:.1}\"{spin}/>",
-            cx - side / 2.0,
-            cy - side / 2.0,
-            p = e.seat,
-            rx = match e.what {
-                crate::analysis::Happened::Card => side / 2.0,
-                // Sharp corners on the diamond, or it reads as a small square
-                // that somebody nudged.
-                crate::analysis::Happened::Tile => 0.0,
-                _ => 1.0,
-            },
-            spin = if turned {
-                format!(" transform=\"rotate(45 {cx:.1} {cy:.1})\"")
-            } else {
-                String::new()
-            },
-        );
-        tips.push_str(&over_tip(
-            shape,
-            cx,
-            cy,
-            W,
-            h,
-            &format!("Turn {}: {} took {said}", e.turn, who[e.seat]),
-        ));
-        shape += 1;
-    }
-    b.push_str("</svg>");
-    tips.push_str("</div>");
-    b.push_str(&tips);
-    b.push_str(&tip_rules(".strip", shape));
-    b.push_str("</div>");
-
-    // No names on the lanes. They needed an inset to fit, the inset pushed this
-    // drawing's turn axis out of step with the chart above it, and being read
-    // against that chart is the whole reason the strip exists. The legend between
-    // the two already says which colour is whom.
-    b.push_str(
-        "<div class=\"key shapes\">\
-         <span class=\"legend\"><span class=\"beat beat-house\"></span>settlement</span>\
-         <span class=\"legend\"><span class=\"beat beat-city\"></span>city</span>\
-         <span class=\"legend\"><span class=\"beat beat-card\"></span>card</span>\
-         <span class=\"legend\"><span class=\"beat beat-tile\"></span>tile</span></div>",
-    );
-    b.push_str("</div>");
     b
 }
 
@@ -2452,6 +2181,63 @@ fn score_plot(study: &Study, who: &[String], place: &[Option<usize>], seats: usi
             );
         }
     }
+    // What happened, on the line it happened to: the strip's marks, moved
+    // onto the score itself, each at the turn it landed and the height the
+    // seat's true score stood at. Four shapes rather than four colours, since
+    // the colour already says which seat; a tile rides just above the line
+    // because it lands on the same turn as a building often enough to sit on
+    // top of one. Their hover classes are e-letters, because the score lines
+    // already own the k-letters.
+    let mut mark_tips = String::new();
+    let mut rules = String::from("<style>");
+    let mut m = 0;
+    for e in &study.events {
+        if e.seat >= seats {
+            continue;
+        }
+        let i = (e.turn.max(1) as usize - 1).min(turns - 1);
+        let v = f64::from(rows[i][e.seat]);
+        let (class, said) = e.what.mark();
+        let lift = if matches!(e.what, crate::analysis::Happened::Tile) {
+            8.0
+        } else {
+            0.0
+        };
+        let (cx, cy) = (x(i), y(v) - lift);
+        let side = size(e.what);
+        let turned = matches!(e.what, crate::analysis::Happened::Tile);
+        let _ = write!(
+            b,
+            "<rect class=\"beat {class} f{p} e{m}\" x=\"{:.1}\" y=\"{:.1}\" \
+             width=\"{side:.1}\" height=\"{side:.1}\" rx=\"{rx:.1}\"{spin}/>",
+            cx - side / 2.0,
+            cy - side / 2.0,
+            p = e.seat,
+            rx = match e.what {
+                crate::analysis::Happened::Card => side / 2.0,
+                crate::analysis::Happened::Tile => 0.0,
+                _ => 1.0,
+            },
+            spin = if turned {
+                format!(" transform=\"rotate(45 {cx:.1} {cy:.1})\"")
+            } else {
+                String::new()
+            },
+        );
+        let _ = write!(
+            mark_tips,
+            "<div class=\"tipat te{m}{}{}\" style=\"left:{lx:.2}%;top:{ly:.2}%\">\
+             <span class=\"tipin\">{}</span></div>",
+            if cx > W / 2.0 { " to-left" } else { "" },
+            if cy > H / 2.0 { " up" } else { "" },
+            esc(&format!("Turn {}: {} took {said}", e.turn, who[e.seat])),
+            lx = 100.0 * cx / W,
+            ly = 100.0 * cy / H,
+        );
+        let _ = write!(rules, ".view:has(.e{m}:hover) .te{m}{{display:block}}");
+        m += 1;
+    }
+    rules.push_str("</style>");
     b.push_str("</svg>");
 
     let slot = (W - PAD * 2.0) / (turns - 1).max(1) as f64;
@@ -2477,8 +2263,18 @@ fn score_plot(study: &Study, who: &[String], place: &[Option<usize>], seats: usi
             lh = 100.0 * (base - PAD) / H,
         );
     }
-    b.push_str("</div></div>");
+    b.push_str("</div>");
+    let _ = write!(b, "<div class=\"over\">{mark_tips}</div>{rules}");
+    b.push_str("</div>");
     b.push_str(&key(who, place, seats, "sc"));
+    // The shapes' own legend, kept from the strip the marks came from.
+    b.push_str(
+        "<div class=\"key shapes\">\
+         <span class=\"legend\"><span class=\"beat beat-house\"></span>settlement</span>\
+         <span class=\"legend\"><span class=\"beat beat-city\"></span>city</span>\
+         <span class=\"legend\"><span class=\"beat beat-card\"></span>card</span>\
+         <span class=\"legend\"><span class=\"beat beat-tile\"></span>tile</span></div>",
+    );
     b.push_str("</div>");
     b
 }
@@ -3746,7 +3542,9 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     let board = format!("/{}/", esc(&saved.id));
     out.push_str(&masthead_as(
         &format!("game {}", esc(&saved.id)),
-        &[(board.as_str(), "The board"), ("/lobby", "New game")],
+        // One link: the board this report is about. New game lives on every
+        // page's pills already, and a report is not a place to start one from.
+        &[(board.as_str(), "Board")],
         "",
         viewer,
     ));
@@ -3829,9 +3627,6 @@ pub fn page(saved: &Saved, study: &Study, viewer: &crate::home::Who) -> String {
     // Under the table, the same figures turn by turn: whether the game was ever
     // close is not in a final score, and it is the first thing anybody asks.
     b.push_str(&score_plot(study, &who, &place, seats));
-    // And what was happening while those lines moved, on the same turn axis.
-    b.push_str(&timeline(study, &who, seats));
-    b.push_str(&race(study, &who, &place, seats));
     b.push_str("</section>");
 
     panes.push(("Result", std::mem::take(&mut b)));
@@ -5211,19 +5006,16 @@ tbody tr.sub:hover { background: transparent; }
    A lane a seat and a mark a thing, on the same turn axis as the chart above it.
    Events rather than quantities, so nothing is measured up the page and nothing
    pretends to be: the marks differ in shape and size rather than in height. */
-.strip { position: relative; margin: 1rem 0 0; }
-.strip svg { display: block; width: 100%; height: auto; overflow: visible; }
-/* No inset: this drawing's turn axis has to sit under the chart above it, and a
-   margin here would put every mark a few turns off. */
-.lane { stroke: var(--border); stroke-width: 1; }
 /* Prefixed names throughout, because `mark` is the header's wordmark and `tile`
    is the opening's hex, and an SVG rect takes CSS `width` and `height` over its
-   own attributes: reusing `tile` flattened every diamond here to nothing. */
+   own attributes: reusing `tile` flattened every diamond here to nothing. The
+   marks live on the score chart now, so their seat colours are scoped to any
+   drawing that carries a beat. */
 .beat-house, .beat-city { fill: currentColor; }
 .beat-card { fill: var(--card); stroke: currentColor; stroke-width: 1.5; }
 .beat-tile { fill: currentColor; stroke: var(--card); stroke-width: 1; }
-.strip .beat.f0 { color: var(--p0); } .strip .beat.f1 { color: var(--p1); }
-.strip .beat.f2 { color: var(--p2); } .strip .beat.f3 { color: var(--p3); }
+svg .beat.f0 { color: var(--p0); } svg .beat.f1 { color: var(--p1); }
+svg .beat.f2 { color: var(--p2); } svg .beat.f3 { color: var(--p3); }
 /* A key to the four shapes, drawn as the shapes themselves rather than named. */
 .key.shapes { color: var(--muted-foreground); }
 .legend { display: inline-flex; align-items: center; gap: .4em; }
@@ -5529,39 +5321,28 @@ mod tests {
     }
 
     #[test]
-    fn the_timeline_stands_under_the_score_it_explains() {
+    fn the_marks_ride_the_score_they_explain() {
         let g = played(4);
         let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
         let html = page(&g, &s, &nobody_who());
-        // The strip is read against the chart above it, so the two turn axes have
-        // to be the same axis. Both drawings are laid out in the same coordinates
-        // and given the same box, so their tick positions come out identical, and
-        // this is what fails if either drifts.
-        // The result lives in its pane now, between its marker and the next
-        // pane in the deal order.
         let start = html.find("pane paneResult").expect("a result pane");
         let end = html[start..]
             .find("pane paneOpening")
             .expect("the next pane follows");
         let card = &html[start..start + end];
-        let ticks = |from: &str| -> Vec<String> {
-            from.match_indices("class=\"axis mid\" x=\"")
-                .map(|(at, key)| {
-                    let rest = &from[at + key.len()..];
-                    rest[..rest.find('"').unwrap_or(0)].to_string()
-                })
-                .collect()
-        };
-        let (chart, strip) = card
-            .split_once("class=\"strip\"")
-            .expect("the card carries both drawings");
-        let (above, below) = (ticks(chart), ticks(strip));
-        assert!(above.len() >= 4, "the chart is labelled along its length");
-        assert_eq!(above, below, "the two axes are one axis");
-        // And the marks are prefixed, because the plain names belong to the
-        // header's wordmark and to the opening's hexes, and reusing either
-        // silently flattens every mark on the strip.
-        assert!(strip.contains("class=\"beat beat-"), "prefixed marks");
+        // The strip is gone: its marks live on the score lines now, in the
+        // chart's own drawing, with the shapes legend kept beside the seats'.
+        assert!(!html.contains("class=\"strip\""), "no separate strip");
+        let chart = card
+            .split_once("class=\"view\"")
+            .expect("the score chart")
+            .1;
+        assert!(chart.contains("class=\"beat beat-"), "marks on the chart");
+        assert!(chart.contains("class=\"key shapes\""), "and their legend");
+        // Their hover classes are e-letters, because the score lines already
+        // own the k-letters and a shared letter would cross the tooltips.
+        assert!(chart.contains(" e0\""), "marks carry their own hover class");
+        assert!(!chart.contains(":has(.k0:hover)"), "and never the lines'");
         for taken in ["class=\"mark beat", "beat tile\""] {
             assert!(!html.contains(taken), "{taken} collides with something");
         }
