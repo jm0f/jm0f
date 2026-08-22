@@ -918,6 +918,26 @@ mod tests {
         assert!(t.hall.len() <= 2, "which kept its own size");
         let restored = decode_neat(&encode_neat(&t)).expect("it reads back");
         assert_eq!(restored.pinned, t.pinned, "the pin survives the trip");
+
+        // With the anchor held out, the freed featured seat belongs to the
+        // pinned members: the outsider is met every generation, which shows
+        // up as a sampling weight learned for it.
+        let refined = crate::train_neat::NeatConfig {
+            hall_size: 2,
+            margin: true,
+            halving: true,
+            pfsp: true,
+            rotate: true,
+            held_out_anchor: true,
+            ..quick_neat()
+        };
+        let mut t = NeatTrainer::new(refined, 22);
+        let id = t.seed_baseline(NeatGenome::default(), 642);
+        t.step();
+        assert!(
+            t.hall_weight.contains_key(&id),
+            "the pinned outsider was met in the field"
+        );
     }
 
     #[test]

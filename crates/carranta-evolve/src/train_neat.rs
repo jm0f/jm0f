@@ -450,6 +450,19 @@ impl NeatTrainer {
                             // the measuring stick for the gap column should
                             // not also be one third of the training set.
                             (0, 0) if !cfg.held_out_anchor => Seat::Rated(ANCHOR),
+                            // Held out, the arm belongs to the pinned members
+                            // (E-26). Guaranteed rather than weighted, because
+                            // the sampling weights are averaged over the whole
+                            // population, and to the average junior every
+                            // strong opponent is equally unbeatable: the one
+                            // opponent the run was given to answer measured no
+                            // more games than the scar tissue beside it. An
+                            // exploiter is in the field to be met, and this
+                            // arm is a third of the featured seats meeting it.
+                            (0, 0) if !self.pinned.is_empty() => {
+                                let pick = rng.below(Stream::Board, self.pinned.len() as u32);
+                                Seat::Rated(self.pinned[pick as usize])
+                            }
                             _ if !pool.is_empty()
                                 && (slot < cfg.hall_seats
                                     || (slot == 0 && d as usize % 3 <= 1)) =>
