@@ -377,6 +377,11 @@ pub struct Session {
     /// comes back to the same person: the last player to place in the deal
     /// places first in the second round and then moves first in play.
     was_preroll: bool,
+    /// Whose pre-roll most recently started a turn. A militia played before
+    /// the roll leaves the pre-roll phase and comes back to it (R-9.5), and
+    /// that return is the same turn resuming, not a new one starting: the
+    /// turn has started when the pre-roll is a different player's.
+    preroll_owner: u8,
     was_placing: bool,
     /// Whether the table keeps a visible record. A table rule rather than a
     /// personal setting: playing from memory only works if nobody has the log.
@@ -514,6 +519,7 @@ impl Session {
             turns: 1,
             turn_ms: Vec::new(),
             was_preroll: false,
+            preroll_owner: u8::MAX,
             // The game opens on a placement, which is turn one rather than a
             // boundary into it.
             was_placing: true,
@@ -1038,7 +1044,12 @@ impl Session {
         let deciding = self.state.decider();
         let preroll = matches!(self.state.phase, Phase::PreRoll);
         let placing = matches!(self.state.phase, Phase::SetupSettlement { .. });
-        let starting_a_turn = (preroll && !self.was_preroll) || (placing && !self.was_placing);
+        let starting_a_turn =
+            (preroll && !self.was_preroll && self.state.to_act != self.preroll_owner)
+                || (placing && !self.was_placing);
+        if preroll && starting_a_turn {
+            self.preroll_owner = self.state.to_act;
+        }
         self.was_preroll = preroll;
         self.was_placing = placing;
         if starting_a_turn {
@@ -3283,6 +3294,118 @@ mod tests {
             s.time_left(1),
             Some(600),
             "a seat not moving spends nothing"
+        );
+    }
+
+    #[test]
+    fn a_militia_before_the_roll_still_leaves_a_rolled_line() {
+        // The screenshot that raised it: a turn reading militia, robber,
+        // trade, build, and no roll anywhere. The engine demands the roll
+        // (R-9.5 returns the turn to pre-roll), so if the line is missing it
+        // is the log's fault; this walks the exact sequence and reads the log.
+        use carranta_core::state::DevCard;
+        let mut s = Session::new(4, 11, TradeMode::Full);
+        // Walk the setup out until the human's first pre-roll moment.
+        while !matches!(s.state.phase, Phase::PreRoll) || s.state.decider() != HUMAN {
+            let v = s.version();
+            let done = s.choices().is_empty() || s.act(0, v).is_err();
+            assert!(!done, "never reached the human's pre-roll");
+        }
+        // Hand the human a militia they did not buy this turn.
+        s.state.dev_held[HUMAN as usize][DevCard::Militia as usize] += 1;
+        let logged_before = s.log().len();
+        let mut play = |label: &str, s: &mut Session| {
+            let choices = s.choices();
+            let i = choices
+                .iter()
+                .position(|c| match c {
+                    Choice::Play(a) => describe(a, &s.state, HUMAN as usize).starts_with(label),
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("no choice starting with {label}"));
+            let v = s.version();
+            s.act(i, v).expect(label);
+        };
+        play("Play Militia", &mut s);
+        play("Move robber", &mut s);
+        assert!(
+            matches!(s.state.phase, Phase::PreRoll),
+            "a pre-roll militia returns to pre-roll: {:?}",
+            s.state.phase
+        );
+        play("Roll", &mut s);
+        let said: Vec<&str> = s.log()[logged_before..]
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect();
+        assert!(
+            said.iter().any(|t| t.starts_with("Played Militia")),
+            "the card play is logged: {said:?}"
+        );
+        assert!(
+            said.iter().any(|t| t.starts_with("Rolled")),
+            "and so is the roll that followed: {said:?}"
+        );
+    }
+
+    #[test]
+    fn a_bot_militia_before_the_roll_still_leaves_a_rolled_line() {
+        // The same sequence as the human test, walked by a bot through
+        // run_bots, because the turn in the screenshot may have been the
+        // bot playing under a person's chair name.
+        use carranta_core::state::DevCard;
+        let mut s = Session::new(4, 11, TradeMode::Full);
+        // Give every bot a militia up front; whoever's pre-roll comes first
+        // with the card in hand may play it before rolling.
+        for seat in 1..4usize {
+            s.state.dev_held[seat][DevCard::Militia as usize] += 2;
+        }
+        // Drive the game a while at instant pace, humans acting first-choice.
+        for _ in 0..2000 {
+            if s.winner().is_some() {
+                break;
+            }
+            let v = s.version();
+            if !s.choices().is_empty() {
+                let _ = s.act(0, v);
+            } else {
+                s.tick();
+            }
+        }
+        // Wherever a militia was played from pre-roll, a Rolled line follows
+        // before that seat's turn ends. Walk the log: after any "Played
+        // Militia" with no earlier "Rolled" since the last "Ended the turn"
+        // or forced end, a "Rolled" must appear before the next turn ends.
+        let mut rolled_this_turn = false;
+        let mut militia_pre_roll = false;
+        let mut checked = 0;
+        let mut turn_lines: Vec<String> = Vec::new();
+        for l in s.log() {
+            let t = l.text.as_str();
+            turn_lines.push(t.to_string());
+            if t.starts_with("Rolled") || t.contains("rolled") {
+                rolled_this_turn = true;
+            }
+            if t.starts_with("Played Militia") && !rolled_this_turn {
+                militia_pre_roll = true;
+            }
+            if t.starts_with("Ended the turn") || t.contains("turn was ended") {
+                if militia_pre_roll {
+                    assert!(
+                        rolled_this_turn,
+                        "a turn with a pre-roll militia ended without a Rolled \
+                         line: {turn_lines:#?}"
+                    );
+                    checked += 1;
+                }
+                rolled_this_turn = false;
+                militia_pre_roll = false;
+                turn_lines.clear();
+            }
+        }
+        assert!(
+            checked > 0,
+            "no pre-roll militia occurred; seed needs changing"
         );
     }
 

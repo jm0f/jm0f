@@ -917,8 +917,11 @@ fn series_of(saved: &Saved) -> Sampled {
     }
     // The winning turn never ends, so its cards would be missing from the last
     // point and the chart would stop short of what the ledger counts. A closing
-    // sample carries them, and is only added when there is something to carry.
-    if out.actual.last() != Some(&actual) {
+    // sample carries them, and is only added when the position moved past the
+    // last one taken. The score is what is asked, not the production: a win is
+    // points by definition, where the winning turn's roll can pay nobody and
+    // leave the cards exactly as the last sample had them.
+    if score.last() != Some(&scored(&state)) {
         out.actual.push(actual);
         out.expected.push(expected);
         cover.live.push(production::coverage(&state, true));

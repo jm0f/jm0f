@@ -5411,8 +5411,19 @@ mod tests {
 
     #[test]
     fn a_scoring_column_says_how_many_and_what_they_were_worth() {
-        let g = played(2);
-        let s = study(&g, std::slice::from_ref(&g)).expect("it studies");
+        // Any seed whose game holds a city at the end: pinned seeds drift
+        // whenever the rules move, and the assertion is about the column,
+        // not about one game.
+        let (g, s) = (2..40)
+            .find_map(|seed| {
+                let g = played(seed);
+                let s = study(&g, std::slice::from_ref(&g))?;
+                s.points[..s.report.players as usize]
+                    .iter()
+                    .any(|p| p.cities.held > 0)
+                    .then_some((g, s))
+            })
+            .expect("some game builds a city");
         let html = page(&g, &s, &nobody_who());
         // Every column of the result table carries its own rule rather than a
         // paragraph under the table carrying all five.

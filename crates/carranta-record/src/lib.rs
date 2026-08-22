@@ -27,7 +27,13 @@ pub use fog::{Fog, Seen, SeenResolved, Viewer};
 /// Mandatory on every game rather than nullable: design decisions and options
 /// change actual gameplay, so an aggregate that mixes revisions is comparing
 /// incomparable games.
-pub const RULES_VERSION: u16 = 1;
+///
+/// Revision 2: the dice reset at the turn boundary, so a militia played
+/// before the roll no longer skips the roll, and with it the table's
+/// production, the way stale dice let it from turn two onwards under
+/// revision 1. Revision 1 games where that fired do not replay under the
+/// current engine and are counted out loud wherever they are read.
+pub const RULES_VERSION: u16 = 2;
 
 /// The engine build that produced a game. Bumped when behaviour changes.
 ///

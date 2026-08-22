@@ -1071,6 +1071,12 @@ impl State {
         self.dev_fresh[p] = [0; 5];
         self.dev_played_this_turn = false;
         self.free_roads = 0;
+        // The dice are the turn's, not the game's: a militia played before
+        // the roll asks whether this turn has rolled yet, and it asks by
+        // looking at them (R-9.5). Left standing from the previous turn they
+        // answered yes for ever, and a pre-roll militia skipped the roll,
+        // and with it the whole table's production, from turn two onwards.
+        self.dice = [0, 0];
         self.to_act = (self.to_act + 1) % self.players;
         self.phase = Phase::PreRoll;
     }
