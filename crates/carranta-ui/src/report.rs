@@ -4752,12 +4752,15 @@ header .build { font: 400 12px/1 Figtree, system-ui, sans-serif;
    differently with the display, and the difference read as a design. Same
    width as the lobby's card and its table talk together, the height only
    what the content needs, capped at what the header leaves so only the pane
-   inside ever scrolls, and centred both ways in that space. */
+   inside ever scrolls. Anchored to the top rather than centred: panes have
+   different heights, and a card centred on its height moves its own tab
+   strip every time a tab is picked, so the one thing being clicked would
+   never hold still. */
 body:has(.deck) { display: flex; flex-direction: column; }
 /* Explicit width, because the base main centres itself with auto margins and
    a flex item with auto cross margins shrinks to its content instead. */
 main:has(.deck) { max-width: none; width: 100%; flex: 1;
-                  justify-content: center; padding-bottom: 1.5rem; }
+                  padding-top: 1rem; padding-bottom: 1.5rem; }
 .deck { display: flex; flex-direction: column;
         width: min(calc(880px + clamp(8px, .8vw, 16px) + clamp(260px, 18.5vw, 400px)), 100%);
         margin: 0 auto;
