@@ -386,6 +386,13 @@ pub struct Session {
     /// How long bots wait between moves, and when the next one may go.
     pace: Pace,
     bot_ready: std::time::Instant,
+    /// Staged wait already charged to the turn in flight, in milliseconds.
+    /// The pacing is theatre, and a turn gets a budget of it: a trading bot
+    /// can put three offers to a table and collect nine answers in one turn,
+    /// and at full beats that is most of a minute of nobody moving. Once the
+    /// budget is spent the remaining beats collapse to a quick ripple, so the
+    /// table is seen to think once and then gets on with it.
+    beat_spent: u64,
     /// Draws the waits. Its own generator, so pacing never disturbs the dice.
     tempo: Rng,
     /// The position before a development card that opens a second decision,
@@ -499,6 +506,7 @@ impl Session {
             // it has no reason to care about.
             pace: Pace::Instant,
             bot_ready: std::time::Instant::now(),
+            beat_spent: 0,
             tempo: Rng::new(seed ^ 0x9E37_79B9_7F4A_7C15),
             undo: None,
             game: String::new(),
@@ -1066,6 +1074,8 @@ impl Session {
             self.turn_holder = deciding;
             self.turn_at = now;
             self.turn_began = now;
+            // A fresh turn gets a fresh allowance of staged waiting.
+            self.beat_spent = 0;
             // A fresh turn owes nothing to the last one's interruptions, and a
             // hold still running belongs to the turn that is starting.
             self.turn_paused = std::time::Duration::ZERO;
@@ -1978,7 +1988,15 @@ impl Session {
         // Its own generator, so which stream it draws from does not matter:
         // nothing else reads this one. The same convention the forfeit picker
         // uses.
-        let wait = lo + self.tempo.below(Stream::Steal, span as u32) as u64;
+        let mut wait = lo + self.tempo.below(Stream::Steal, span as u32) as u64;
+        // The turn's theatre allowance. Inside it, beats land at reading
+        // speed; past it, they ripple: still ordered, still visible as a
+        // sequence on the page, no longer holding the table.
+        if self.beat_spent >= self.pace.budget() {
+            wait = 150;
+        } else {
+            self.beat_spent += wait;
+        }
         self.bot_ready = now + std::time::Duration::from_millis(wait);
         true
     }
@@ -2393,8 +2411,22 @@ impl Pace {
     fn answer_window(self) -> (u64, u64) {
         match self {
             Pace::Instant => (0, 0),
-            Pace::Fast => (900, 1800),
+            Pace::Fast => (650, 1200),
             Pace::Slow => (2200, 4000),
+        }
+    }
+
+    /// Staged wait a single turn may spend, in milliseconds.
+    ///
+    /// Enough for a move or two and one offer answered at full beats. The
+    /// trained champions made the cap necessary: they work the market hard,
+    /// and a table of them could put a person forty seconds from their next
+    /// decision while everybody watched refusals land at reading speed.
+    fn budget(self) -> u64 {
+        match self {
+            Pace::Instant => 0,
+            Pace::Fast => 3_500,
+            Pace::Slow => 9_000,
         }
     }
 }
@@ -3252,6 +3284,39 @@ mod tests {
             Some(600),
             "a seat not moving spends nothing"
         );
+    }
+
+    #[test]
+    fn a_turn_spends_its_theatre_allowance_and_then_ripples() {
+        // A trading champion can put a person most of a minute from their
+        // next decision at full beats. The budget caps the theatre: inside
+        // it, beats land at reading speed; past it, they ripple.
+        let mut s = Session::new(4, 7, TradeMode::Full);
+        s.pace = Pace::Fast;
+        let mut beats = 0;
+        while s.beat_spent < Pace::Fast.budget() {
+            s.bot_ready = std::time::Instant::now();
+            assert!(s.beat_due(Pace::Fast.window()), "the beat is due");
+            beats += 1;
+            assert!(beats < 100, "the budget is finite");
+        }
+        assert!(beats >= 3, "the allowance covers a move or two: {beats}");
+        // Past the budget, an answer that would have taken over a second is
+        // armed as a ripple instead.
+        s.bot_ready = std::time::Instant::now();
+        assert!(s.beat_due(Pace::Fast.answer_window()));
+        let wait = s
+            .bot_ready
+            .saturating_duration_since(std::time::Instant::now());
+        assert!(
+            wait <= std::time::Duration::from_millis(160),
+            "a ripple, not a beat: {wait:?}"
+        );
+        // Instant pace never waits and never charges.
+        s.pace = Pace::Instant;
+        s.beat_spent = 0;
+        assert!(s.beat_due(Pace::Instant.window()));
+        assert_eq!(s.beat_spent, 0, "no theatre, no charge");
     }
 
     #[test]
