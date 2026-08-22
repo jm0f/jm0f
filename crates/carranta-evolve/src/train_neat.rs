@@ -163,6 +163,11 @@ pub struct NeatTrainer {
     pub(crate) delta: f64,
     pub(crate) inn: Innovations,
     pub(crate) hall: Vec<u64>,
+    /// Ladder ids that stay in the opponent field for ever (E-26): enrolled
+    /// outsiders such as a shipped baseline or an exploiter. The hall is a
+    /// rolling window of recent champions and evicts; these do not, because
+    /// they are in the field to hold a standard, not to represent recency.
+    pub(crate) pinned: Vec<u64>,
     pub(crate) generation: u32,
     pub(crate) trials: u32,
     pub(crate) run_seed: u64,
@@ -196,6 +201,7 @@ impl NeatTrainer {
             species: Vec::new(),
             inn: Innovations::new(),
             hall: Vec::new(),
+            pinned: Vec::new(),
             generation: 0,
             run_seed: seed,
             champion: ANCHOR,
@@ -203,13 +209,14 @@ impl NeatTrainer {
         }
     }
 
-    /// Enrol an outside network as the run's opening incumbent: into the
-    /// ladder at the generation its file names, and into the hall, so a
-    /// fresh population trains against the best already shipped rather than
-    /// rediscovering it (E-25).
+    /// Enrol an outside network into the permanent field (E-25, E-26): into
+    /// the ladder at the generation its file names, and into the pinned list,
+    /// which the hall's eviction never touches. A fresh run's baseline and a
+    /// mid-run exploiter both come through here: each is in the field to hold
+    /// a standard the population must answer, not to represent recency.
     pub fn seed_baseline(&mut self, genome: NeatGenome, generation: u32) -> u64 {
         let id = self.ladder.enrol(genome, generation);
-        self.hall.push(id);
+        self.pinned.push(id);
         id
     }
 
@@ -236,6 +243,7 @@ impl NeatTrainer {
             delta,
             inn,
             hall,
+            pinned: Vec::new(),
             generation,
             trials,
             run_seed,
@@ -328,13 +336,20 @@ impl NeatTrainer {
         // Slot 0 is the anchor, played by the heuristic itself. Slots
         // 1..=population are the live genomes. Hall-of-fame versions follow,
         // in the order their ids appear in the hall, compiled from the ladder.
-        let mut roster: Vec<Brain> = Vec::with_capacity(1 + cfg.population + self.hall.len());
+        // The opponent pool: the pinned members first, then the rolling hall.
+        let pool: Vec<u64> = self
+            .pinned
+            .iter()
+            .chain(self.hall.iter())
+            .copied()
+            .collect();
+        let mut roster: Vec<Brain> = Vec::with_capacity(1 + cfg.population + pool.len());
         roster.push(Brain::Anchor);
         for g in &self.population {
             roster.push(Brain::Net(g.compile()));
         }
         let mut rated_slot = std::collections::HashMap::new();
-        for &id in &self.hall {
+        for &id in &pool {
             if id == ANCHOR || rated_slot.contains_key(&id) {
                 continue;
             }
@@ -383,8 +398,7 @@ impl NeatTrainer {
         // a resume, which relearns the weights in one generation.
         let hall_cum: Vec<f64> = {
             let mut total = 0.0;
-            self.hall
-                .iter()
+            pool.iter()
                 .map(|id| {
                     total += if cfg.pfsp {
                         self.hall_weight.get(id).copied().unwrap_or(1.0)
@@ -436,11 +450,11 @@ impl NeatTrainer {
                             // the measuring stick for the gap column should
                             // not also be one third of the training set.
                             (0, 0) if !cfg.held_out_anchor => Seat::Rated(ANCHOR),
-                            _ if !self.hall.is_empty()
+                            _ if !pool.is_empty()
                                 && (slot < cfg.hall_seats
                                     || (slot == 0 && d as usize % 3 <= 1)) =>
                             {
-                                Seat::Rated(pick_hall(&mut rng, &self.hall, &hall_cum))
+                                Seat::Rated(pick_hall(&mut rng, &pool, &hall_cum))
                             }
                             _ => {
                                 let pick = rng.below(Stream::Board, cfg.population as u32);

@@ -30,7 +30,12 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 6;
+pub const NEAT_FORMAT: u32 = 7;
+
+/// The NEAT format before the pinned field members existed (E-26): a
+/// selection line and sampling weights, but every outsider still rode the
+/// rolling hall, so it reads back with nothing pinned.
+pub const NEAT_FORMAT_NO_PINS: u32 = 6;
 
 /// The NEAT format before the selection line existed (E-20 to E-24): payoff
 /// table, but classic evaluation only, so it reads back with every selection
@@ -389,6 +394,14 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         let _ = writeln!(out, "{id}");
     }
 
+    // The pinned field members (E-26): outsiders enrolled to stay, which the
+    // hall's eviction never touches.
+    let _ = writeln!(out, "\n# pinned field members: ladder ids");
+    let _ = writeln!(out, "pinned {}", trainer.pinned.len());
+    for id in &trainer.pinned {
+        let _ = writeln!(out, "{id}");
+    }
+
     // PFSP sampling weights (E-22), id then weight, sorted by id so the
     // encoding is a pure function of the state. Without them a resume would
     // sample the hall uniformly for one generation and diverge from the run
@@ -446,6 +459,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     if !matches!(
         version,
         NEAT_FORMAT
+            | NEAT_FORMAT_NO_PINS
             | NEAT_FORMAT_CLASSIC_SELECTION
             | NEAT_FORMAT_FLAT_WIN
             | NEAT_FORMAT_UNCAPPED
@@ -524,7 +538,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     // Format 5 and earlier evaluated the classic way; the selection line
     // (E-20 to E-24) says which refinements a format 6 run trains under.
-    let (margin, halving, pfsp, rotate, held_out_anchor) = if version >= NEAT_FORMAT {
+    let (margin, halving, pfsp, rotate, held_out_anchor) = if version >= NEAT_FORMAT_NO_PINS {
         let (line, v) = scalar("selection")?;
         let mut flags = (false, false, false, false, false);
         for word in v.split(' ') {
@@ -665,10 +679,24 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         );
     }
 
+    // The pinned field members (E-26), format 7 on; older files pinned
+    // nothing, so nothing is what they read back with.
+    let mut pinned = Vec::new();
+    if version >= NEAT_FORMAT {
+        let n = count(&mut lines, "pinned")?;
+        for _ in 0..n {
+            let (line, text) = lines.next().ok_or(LoadError::Missing("pinned entry"))?;
+            pinned.push(
+                text.parse::<u64>()
+                    .map_err(|_| bad(line, "not a ladder id"))?,
+            );
+        }
+    }
+
     // The sampling weights (E-22), format 6 on. Older files have none, and
     // resume with a uniform hall for one generation, which is what they did.
     let mut hall_weight = std::collections::HashMap::new();
-    if version >= NEAT_FORMAT {
+    if version >= NEAT_FORMAT_NO_PINS {
         let n = count(&mut lines, "weights")?;
         for _ in 0..n {
             let (line, text) = lines.next().ok_or(LoadError::Missing("weight entry"))?;
@@ -735,6 +763,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         champion,
     );
     trainer.hall_weight = hall_weight;
+    trainer.pinned = pinned;
     Ok(trainer)
 }
 
@@ -870,6 +899,28 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_outsider_survives_the_round_trip_and_the_hall() {
+        // An enrolled exploiter is pinned (E-26): it survives the checkpoint
+        // round trip, and it survives the hall's eviction, which is the whole
+        // reason the pinned list exists.
+        let config = crate::train_neat::NeatConfig {
+            hall_size: 2,
+            ..quick_neat()
+        };
+        let mut t = NeatTrainer::new(config, 21);
+        let outsider = NeatGenome::default();
+        let id = t.seed_baseline(outsider, 642);
+        for _ in 0..4 {
+            t.step();
+        }
+        assert!(t.pinned.contains(&id), "pinned through four evictions");
+        assert!(!t.hall.contains(&id), "and never in the rolling hall");
+        assert!(t.hall.len() <= 2, "which kept its own size");
+        let restored = decode_neat(&encode_neat(&t)).expect("it reads back");
+        assert_eq!(restored.pinned, t.pinned, "the pin survives the trip");
+    }
+
+    #[test]
     fn a_refined_run_round_trips_its_selection_and_resumes_exactly() {
         // The refined flags (E-20 to E-24) are how the run evaluates, so
         // losing one across a resume would silently change the objective.
@@ -954,9 +1005,9 @@ mod tests {
             "and the table's absence"
         );
 
-        // The same file as format 5 wrote it: version 5, no selection line
-        // and no weights section.
-        let strip_weights = |text: &str| -> String {
+        // Peel the format ladder one rung at a time, dropping the section
+        // each rung added.
+        let strip = |text: &str, key: &str| -> String {
             let mut out = String::new();
             let mut skip = 0usize;
             for l in text.lines() {
@@ -965,8 +1016,8 @@ mod tests {
                     skip -= 1;
                     continue;
                 }
-                if let Some(n) = t.strip_prefix("weights ") {
-                    skip = n.parse().expect("a weights count");
+                if let Some(n) = t.strip_prefix(key) {
+                    skip = n.parse().expect("a section count");
                     continue;
                 }
                 out.push_str(l);
@@ -974,7 +1025,15 @@ mod tests {
             }
             out
         };
-        let five = strip_weights(&modern)
+
+        // The same file as format 6 wrote it: version 6, no pinned section.
+        let six = strip(&modern, "pinned ").replace("carranta-evolve 7", "carranta-evolve 6");
+        let back = decode_neat(&six).expect("a format six file still reads");
+        assert!(back.pinned.is_empty(), "nothing pinned, as it was");
+
+        // The same file as format 5 wrote it: version 5, no selection line
+        // and no weights section.
+        let five = strip(&six, "weights ")
             .replace("carranta-evolve 6", "carranta-evolve 5")
             .replace("selection classic\n", "");
         let back = decode_neat(&five).expect("a format five file still reads");

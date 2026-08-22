@@ -63,6 +63,13 @@ struct Args {
     trials_min_given: bool,
     /// The same for --stagnation.
     stagnation_given: bool,
+    /// The same for --add-node and --add-conn.
+    add_node_given: bool,
+    add_conn_given: bool,
+    /// Network files to enrol into the permanent opponent field (E-26), on a
+    /// fresh run or a resume alike: an exploiter the population must answer,
+    /// or a standard it must hold. Pinned, so the hall never evicts them.
+    enrol: Vec<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -83,6 +90,9 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         baseline: None,
         trials_min_given: false,
         stagnation_given: false,
+        add_node_given: false,
+        add_conn_given: false,
+        enrol: Vec::new(),
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -182,6 +192,26 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                 args.neat.held_out_anchor = true;
             }
             "--baseline" => args.baseline = Some(std::path::PathBuf::from(value()?)),
+            "--enrol" => args.enrol.push(std::path::PathBuf::from(value()?)),
+            // The structural mutation odds, per offspring: how often a new
+            // node or a new connection is tried. The levers for a run whose
+            // topology has stopped moving.
+            "--add-node" => {
+                let v: f64 = value()?.parse().map_err(|_| "bad --add-node")?;
+                if !(0.0..=1.0).contains(&v) {
+                    return Err("--add-node is a probability".to_string());
+                }
+                args.neat.params.add_node_p = v;
+                args.add_node_given = true;
+            }
+            "--add-conn" => {
+                let v: f64 = value()?.parse().map_err(|_| "bad --add-conn")?;
+                if !(0.0..=1.0).contains(&v) {
+                    return Err("--add-conn is a probability".to_string());
+                }
+                args.neat.params.add_conn_p = v;
+                args.add_conn_given = true;
+            }
             "--give-cap" => {
                 let v = value()?;
                 args.neat.give_cap = if v == "hand" {
@@ -400,6 +430,46 @@ fn export_champion(ckpt: &std::path::Path, which: &str, to: Option<&std::path::P
     );
 }
 
+/// A network file as an enrollable genome, with the generation it names.
+///
+/// The genome is the link list itself, re-numbered: an enrolled outsider
+/// sits in the field and never breeds, so its innovation numbers only have
+/// to be internally consistent.
+fn genome_of_net(path: &std::path::Path) -> (carranta_evolve::neat::NeatGenome, u32) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("cannot read {}: {e}", path.display());
+            std::process::exit(1);
+        }
+    };
+    let Some((_, generation, _)) = carranta_bot::net::Net::parse_meta(&text) else {
+        eprintln!("{} is not a champion network file", path.display());
+        std::process::exit(1);
+    };
+    let genes = text
+        .lines()
+        .filter_map(|l| {
+            let mut p = l.split_whitespace();
+            (p.next() == Some("link")).then(|| {
+                Some(carranta_evolve::neat::Gene {
+                    innov: 0,
+                    from: p.next()?.parse().ok()?,
+                    to: p.next()?.parse().ok()?,
+                    weight: p.next()?.parse().ok()?,
+                    enabled: true,
+                })
+            })?
+        })
+        .enumerate()
+        .map(|(i, mut g)| {
+            g.innov = i as u32;
+            g
+        })
+        .collect();
+    (carranta_evolve::neat::NeatGenome { genes }, generation)
+}
+
 /// The phase-two loop: the same rhythm as phase one, plus a champion export.
 fn run_neat(args: Args) {
     let ckpt = args.out.join("checkpoint.txt");
@@ -435,6 +505,14 @@ fn run_neat(args: Args) {
                         t.config.params.stagnation
                     );
                 }
+                if args.add_node_given {
+                    t.config.params.add_node_p = args.neat.params.add_node_p;
+                    println!("add-node odds now {}", t.config.params.add_node_p);
+                }
+                if args.add_conn_given {
+                    t.config.params.add_conn_p = args.neat.params.add_conn_p;
+                    println!("add-conn odds now {}", t.config.params.add_conn_p);
+                }
                 println!(
                     "resumed {} at generation {}",
                     ckpt.display(),
@@ -465,41 +543,8 @@ fn run_neat(args: Args) {
         // hall before the first deal, so a fresh population is measured
         // against the best there is from generation one.
         if let Some(path) = &args.baseline {
-            let text = match std::fs::read_to_string(path) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("cannot read {}: {e}", path.display());
-                    std::process::exit(1);
-                }
-            };
-            let Some((_, generation, _)) = carranta_bot::net::Net::parse_meta(&text) else {
-                eprintln!("{} is not a champion network file", path.display());
-                std::process::exit(1);
-            };
-            // The genome is the link list itself, re-numbered: a baseline
-            // sits in the hall and never breeds, so its innovation numbers
-            // only have to be internally consistent.
-            let genes = text
-                .lines()
-                .filter_map(|l| {
-                    let mut p = l.split_whitespace();
-                    (p.next() == Some("link")).then(|| {
-                        Some(carranta_evolve::neat::Gene {
-                            innov: 0,
-                            from: p.next()?.parse().ok()?,
-                            to: p.next()?.parse().ok()?,
-                            weight: p.next()?.parse().ok()?,
-                            enabled: true,
-                        })
-                    })?
-                })
-                .enumerate()
-                .map(|(i, mut g)| {
-                    g.innov = i as u32;
-                    g
-                })
-                .collect();
-            let id = fresh.seed_baseline(carranta_evolve::neat::NeatGenome { genes }, generation);
+            let (genome, generation) = genome_of_net(path);
+            let id = fresh.seed_baseline(genome, generation);
             println!(
                 "baseline {} enrolled as the opening incumbent (ladder id {id}, generation {generation})",
                 path.display()
@@ -507,6 +552,18 @@ fn run_neat(args: Args) {
         }
         fresh
     };
+
+    // Outsiders pinned into the field (E-26), fresh run or resumed alike: an
+    // exploiter the population has to answer stays in the field until it has
+    // been answered, because the hall's eviction cannot reach it.
+    for path in &args.enrol {
+        let (genome, generation) = genome_of_net(path);
+        let id = trainer.seed_baseline(genome, generation);
+        println!(
+            "{} pinned into the field (ladder id {id}, generation {generation})",
+            path.display()
+        );
+    }
 
     let c = &trainer.config;
     println!(
@@ -925,6 +982,22 @@ mod tests {
         let a = parse("--method neat").expect("bare");
         assert!(!a.trials_min_given && !a.stagnation_given);
         assert!(parse("--stagnation 0").is_err());
+    }
+
+    #[test]
+    fn the_field_levers_parse_and_remember_being_said() {
+        let a = parse(
+            "--method neat --enrol runs/x/champions/gen-00642.net \
+             --add-node 0.08 --add-conn 0.15",
+        )
+        .expect("the levers parse");
+        assert_eq!(a.enrol.len(), 1);
+        assert!(a.add_node_given && a.add_conn_given);
+        assert_eq!(a.neat.params.add_node_p, 0.08);
+        assert_eq!(a.neat.params.add_conn_p, 0.15);
+        let a = parse("--method neat").expect("bare");
+        assert!(!a.add_node_given && !a.add_conn_given && a.enrol.is_empty());
+        assert!(parse("--add-node 1.5").is_err(), "a probability");
     }
 
     #[test]
