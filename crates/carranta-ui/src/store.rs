@@ -668,7 +668,14 @@ impl Store {
         let path = self
             .path(&g.id)
             .ok_or_else(|| std::io::Error::other("not a game id"))?;
-        std::fs::write(path, encode(g))
+        // Via a temporary file and a rename, the same promise the training
+        // checkpoints make: a crash mid-write leaves the previous save intact
+        // rather than a torn file that will not replay. The temporary sits in
+        // the same directory, because a rename is only atomic within one
+        // filesystem.
+        let temp = path.with_extension("tmp");
+        std::fs::write(&temp, encode(g))?;
+        std::fs::rename(&temp, path)
     }
 
     pub fn load(&self, id: &str) -> Option<Saved> {
@@ -1142,6 +1149,15 @@ mod tests {
             store.save(&g).expect("it writes");
             let back = store.load(&g.id).expect("it reads");
             assert_eq!(back, g, "seed {seed}: the file is the game");
+            // The write goes through a temporary and a rename, and the
+            // temporary does not outlive it: a directory of leftovers is how
+            // an atomic save quietly stops being one.
+            let leftovers = std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "tmp"))
+                .count();
+            assert_eq!(leftovers, 0, "seed {seed}: no temporary left behind");
             let session = Session::resume(back.seats, back.seed, back.mode, &back.moves)
                 .expect("and the game replays");
             let said = |x: &Session| x.log().iter().map(|l| l.text.clone()).collect::<Vec<_>>();
