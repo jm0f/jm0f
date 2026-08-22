@@ -57,6 +57,12 @@ struct Args {
     /// (E-25): into the hall and the ladder, so the population trains against
     /// the best already shipped instead of rediscovering it.
     baseline: Option<PathBuf>,
+    /// Whether --trials-min was said out loud. A resume takes its
+    /// configuration from the checkpoint, so a flag only overrides what the
+    /// person actually typed, never what a default happens to be.
+    trials_min_given: bool,
+    /// The same for --stagnation.
+    stagnation_given: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -75,6 +81,8 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         export: None,
         export_to: None,
         baseline: None,
+        trials_min_given: false,
+        stagnation_given: false,
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -126,9 +134,22 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                     return Err("--trials-min must be at least 1".to_string());
                 }
                 args.neat.trials_min = v;
+                args.trials_min_given = true;
                 if args.neat.trials < v {
                     args.neat.trials = v;
                 }
+            }
+            // How many generations a species may go without improving before
+            // it stops breeding. The canonical fifteen was never sensitivity
+            // tested, and a fresh topology can need longer than that to grow
+            // into itself; raising this is the lever for structural patience.
+            "--stagnation" => {
+                let v: u32 = value()?.parse().map_err(|_| "bad --stagnation")?;
+                if v == 0 {
+                    return Err("--stagnation must be at least 1".to_string());
+                }
+                args.neat.params.stagnation = v;
+                args.stagnation_given = true;
             }
             "--payoff" => {
                 let v = value()?;
@@ -399,6 +420,21 @@ fn run_neat(args: Args) {
         match checkpoint::load_neat(&ckpt) {
             Ok(Ok(mut t)) => {
                 t.config.threads = args.neat.threads;
+                // The budget floor and the species patience are training
+                // knobs a plateau is allowed to turn mid-run: both change
+                // how hard the run looks, not what it is looking at. Only
+                // when said out loud, so a bare resume stays exact.
+                if args.trials_min_given {
+                    t.config.trials_min = args.neat.trials_min;
+                    println!("trials floor raised to {}", t.config.trials_min);
+                }
+                if args.stagnation_given {
+                    t.config.params.stagnation = args.neat.params.stagnation;
+                    println!(
+                        "species stagnation window now {}",
+                        t.config.params.stagnation
+                    );
+                }
                 println!(
                     "resumed {} at generation {}",
                     ckpt.display(),
@@ -875,6 +911,20 @@ mod tests {
         assert!(a.neat.rotate && a.neat.pfsp);
         assert!(!a.neat.margin && !a.neat.halving && !a.neat.held_out_anchor);
         assert!(a.baseline.is_none());
+    }
+
+    #[test]
+    fn mid_run_knobs_remember_whether_they_were_said() {
+        // A resume takes its configuration from the checkpoint, so these
+        // flags only override when actually typed: the booleans are what
+        // the resume branch reads.
+        let a = parse("--method neat --trials-min 64 --stagnation 25").expect("both flags parse");
+        assert!(a.trials_min_given && a.stagnation_given);
+        assert_eq!(a.neat.trials_min, 64);
+        assert_eq!(a.neat.params.stagnation, 25);
+        let a = parse("--method neat").expect("bare");
+        assert!(!a.trials_min_given && !a.stagnation_given);
+        assert!(parse("--stagnation 0").is_err());
     }
 
     #[test]
