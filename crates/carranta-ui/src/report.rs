@@ -4682,7 +4682,12 @@ main:has(.deck) { max-width: none; width: 100%; flex: 1;
               border-radius: var(--radius-md); }
 .pane { display: none; overflow-y: auto; min-height: 0; }
 .pane section { border: 0; background: none; box-shadow: none;
-                padding: .4rem 0 .9rem; margin: 0; }
+                padding: .8rem 0 1.8rem; margin: 0; }
+/* Air between the things a pane stacks: a table, a drawing, a legend each
+   get room to be read as their own element. */
+.pane .tw { margin: .9rem 0; }
+.pane .frame { margin-top: .9rem; }
+.pane .key { margin-top: 1.1rem; }
 .pane h2 { font: 600 12px Figtree, system-ui, sans-serif; text-transform: uppercase;
            letter-spacing: .08em; color: var(--muted-foreground); margin: 0 0 .5rem; }
 a.headWho { text-decoration: none; }
@@ -4818,7 +4823,11 @@ tfoot [data-tip]::after, tbody tr:last-child [data-tip]::after {
    hangs off the corner the server picked, which is always the one that opens
    inwards. The layer takes no pointer events: the shapes underneath are what
    the reader is pointing at. */
-.frame { position: relative; }
+/* Near its drawn size, however wide the console: an SVG's lettering scales
+   with its box, and at the full console width it towered over the tables it
+   sits between. Centred at close to natural size, the axis figures read at
+   the tables' own 14px. */
+.frame { position: relative; max-width: 880px; margin-left: auto; margin-right: auto; }
 .over { position: absolute; inset: 0; pointer-events: none; }
 .tipat { display: none; position: absolute; z-index: 20; }
 .tipat.to-left { transform: translateX(-100%); }
@@ -4872,7 +4881,7 @@ tbody tr.sub:hover { background: transparent; }
    thick as the cards that moved along it. Laid out on the server, since every
    position is a fraction of a total known the moment the game ends. */
 .flow svg { display: block; width: 100%; height: auto; }
-.flow .frame { margin: 0 0 1rem; }
+.flow .frame { margin: 0 auto 1rem; }
 .ribbon { opacity: .45; }
 .ribbon:hover { opacity: .8; }
 /* A name inside a drawing, which is the page's own markup in a foreignObject
@@ -5001,7 +5010,7 @@ tbody tr.sub:hover { background: transparent; }
    and the table was squeezed out of its own columns; the card has one measure
    and both of them want all of it. */
 .ring svg { display: block; width: 100%; height: auto; }
-.ring .frame { margin: 0 0 1rem; }
+.ring .frame { margin: 0 auto 1rem; }
 /* ---- the timeline ----
    A lane a seat and a mark a thing, on the same turn axis as the chart above it.
    Events rather than quantities, so nothing is measured up the page and nothing
@@ -5041,7 +5050,7 @@ svg .beat.f2 { color: var(--p2); } svg .beat.f3 { color: var(--p3); }
 .stop.last.f0 { fill: var(--p0); } .stop.last.f1 { fill: var(--p1); }
 .stop.last.f2 { fill: var(--p2); } .stop.last.f3 { fill: var(--p3); }
 .trails svg { display: block; width: 100%; height: auto; overflow: visible; }
-.trails .frame { margin: 1rem 0 0; }
+.trails .frame { margin: 1rem auto 0; }
 .chord { opacity: .4; }
 .chord:hover { opacity: .75; }
 .rim.supply { fill: var(--muted-foreground); }
