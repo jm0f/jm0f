@@ -4739,7 +4739,21 @@ function renderOffers(v, host, offers, decline) {
         b.style.background = COLOURS[o.from];
         b.style.color = onColour(SEAT_HEX[o.from]);
       }
-      b.onclick = () => act(c.i);
+      // The click is the decision, and the page says so at once: the chip
+      // flips and the buttons go before the server has confirmed a thing.
+      // The response that lands a beat later is authoritative and redraws
+      // this same picture, or corrects it if the table moved first.
+      b.onclick = () => {
+        if (!o.mine) {
+          (o.answers || []).forEach(a => { if (a.seat === v.you) a.said = 'yes'; });
+          v.choices = v.choices.filter(x => x.label !== 'No thanks'
+            && !/^Accept offer /.test(x.label));
+        } else {
+          v.offers = (v.offers || []).filter(x => x !== o);
+        }
+        render();
+        act(c.i);
+      };
       row.appendChild(b);
     }
   });
@@ -4755,7 +4769,20 @@ function renderOffers(v, host, offers, decline) {
     const b = document.createElement('button');
     b.className = 'btn-secondary btn-sm';
     b.textContent = theirs > 1 ? `no thanks, all ${theirs}` : 'no thanks';
-    b.onclick = () => act(decline.i);
+    // Declining moves nothing on the board, so there is nothing to wait for:
+    // my chips turn to declined and the buttons go on the click itself.
+    b.onclick = () => {
+      offers.forEach(o => {
+        if (o.mine) return;
+        (o.answers || []).forEach(a => {
+          if (a.seat === v.you && a.said !== 'yes') a.said = 'no';
+        });
+      });
+      v.choices = v.choices.filter(x => x.label !== 'No thanks'
+        && !/^Accept offer /.test(x.label));
+      render();
+      act(decline.i);
+    };
     row.appendChild(b);
   }
   if (row.firstChild) {

@@ -2777,8 +2777,12 @@ impl Server {
                 };
                 let payload = t.seen_by(Some(seat), &player, note.as_deref());
                 drop(tables);
+                // Answer first, save after: the save is for a restart, not for
+                // this request, and a disk with a slow moment was adding
+                // itself to every click.
+                let sent = respond(&mut stream, 200, "application/json", payload.as_bytes());
                 self.keep(&id);
-                respond(&mut stream, 200, "application/json", payload.as_bytes())
+                sent
             }
             // Put back a development card whose action was never finished.
             ("POST", "/api/cancel") => {
