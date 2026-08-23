@@ -63,6 +63,8 @@ struct Args {
     trials_min_given: bool,
     /// The same for --stagnation.
     stagnation_given: bool,
+    /// The same for --deep-eval.
+    deep_eval_given: bool,
     /// The same for --add-node and --add-conn.
     add_node_given: bool,
     add_conn_given: bool,
@@ -90,6 +92,7 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         baseline: None,
         trials_min_given: false,
         stagnation_given: false,
+        deep_eval_given: false,
         add_node_given: false,
         add_conn_given: false,
         enrol: Vec::new(),
@@ -183,6 +186,13 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             "--pfsp" => args.neat.pfsp = true,
             "--rotate" => args.neat.rotate = true,
             "--held-out-anchor" => args.neat.held_out_anchor = true,
+            // Deep evaluation of the finalists (E-28): the last halving
+            // rounds play inside the beamed search, so selection breeds
+            // evaluators for the condition the table deploys them under.
+            "--deep-eval" => {
+                args.neat.deep_eval = true;
+                args.deep_eval_given = true;
+            }
             // The whole refined-selection bundle (E-20 to E-24) in one word.
             "--refined" => {
                 args.neat.margin = true;
@@ -505,6 +515,10 @@ fn run_neat(args: Args) {
                         t.config.params.stagnation
                     );
                 }
+                if args.deep_eval_given {
+                    t.config.deep_eval = true;
+                    println!("finalists now evaluated a ply deep");
+                }
                 if args.add_node_given {
                     t.config.params.add_node_p = args.neat.params.add_node_p;
                     println!("add-node odds now {}", t.config.params.add_node_p);
@@ -588,6 +602,7 @@ fn run_neat(args: Args) {
             (c.pfsp, "pfsp"),
             (c.rotate, "rotate"),
             (c.held_out_anchor, "held-out-anchor"),
+            (c.deep_eval, "deep-eval"),
         ]
         .into_iter()
         .filter_map(|(on, w)| on.then_some(w))
@@ -975,8 +990,10 @@ mod tests {
         // A resume takes its configuration from the checkpoint, so these
         // flags only override when actually typed: the booleans are what
         // the resume branch reads.
-        let a = parse("--method neat --trials-min 64 --stagnation 25").expect("both flags parse");
-        assert!(a.trials_min_given && a.stagnation_given);
+        let a = parse("--method neat --trials-min 64 --stagnation 25 --deep-eval")
+            .expect("the flags parse");
+        assert!(a.trials_min_given && a.stagnation_given && a.deep_eval_given);
+        assert!(a.neat.deep_eval);
         assert_eq!(a.neat.trials_min, 64);
         assert_eq!(a.neat.params.stagnation, 25);
         let a = parse("--method neat").expect("bare");

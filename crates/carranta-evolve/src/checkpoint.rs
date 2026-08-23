@@ -332,6 +332,7 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         (c.pfsp, "pfsp"),
         (c.rotate, "rotate"),
         (c.held_out_anchor, "held-out-anchor"),
+        (c.deep_eval, "deep-eval"),
     ] {
         if on {
             if !selection.is_empty() {
@@ -538,24 +539,28 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     // Format 5 and earlier evaluated the classic way; the selection line
     // (E-20 to E-24) says which refinements a format 6 run trains under.
-    let (margin, halving, pfsp, rotate, held_out_anchor) = if version >= NEAT_FORMAT_NO_PINS {
-        let (line, v) = scalar("selection")?;
-        let mut flags = (false, false, false, false, false);
-        for word in v.split(' ') {
-            match word {
-                "classic" => {}
-                "margin" => flags.0 = true,
-                "halving" => flags.1 = true,
-                "pfsp" => flags.2 = true,
-                "rotate" => flags.3 = true,
-                "held-out-anchor" => flags.4 = true,
-                other => return Err(bad(line, &format!("unknown selection word `{other}`"))),
+    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval) =
+        if version >= NEAT_FORMAT_NO_PINS {
+            let (line, v) = scalar("selection")?;
+            let mut flags = (false, false, false, false, false, false);
+            for word in v.split(' ') {
+                match word {
+                    "classic" => {}
+                    "margin" => flags.0 = true,
+                    "halving" => flags.1 = true,
+                    "pfsp" => flags.2 = true,
+                    "rotate" => flags.3 = true,
+                    "held-out-anchor" => flags.4 = true,
+                    "deep-eval" => flags.5 = true,
+                    other => {
+                        return Err(bad(line, &format!("unknown selection word `{other}`")));
+                    }
+                }
             }
-        }
-        flags
-    } else {
-        (false, false, false, false, false)
-    };
+            flags
+        } else {
+            (false, false, false, false, false, false)
+        };
     let cap: usize = num!("cap");
     let mode = {
         let (line, v) = scalar("mode")?;
@@ -605,6 +610,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         pfsp,
         rotate,
         held_out_anchor,
+        deep_eval,
     };
 
     // A genome block: `gene` lines up to `end`.
@@ -952,6 +958,7 @@ mod tests {
             pfsp: true,
             rotate: true,
             held_out_anchor: true,
+            deep_eval: true,
             ..quick_neat()
         };
         let mut straight = NeatTrainer::new(refined, 4_242);
@@ -962,7 +969,7 @@ mod tests {
         }
         let text = encode_neat(&interrupted);
         assert!(
-            text.contains("\nselection margin halving pfsp rotate held-out-anchor\n"),
+            text.contains("\nselection margin halving pfsp rotate held-out-anchor deep-eval\n"),
             "the selection line names every refinement"
         );
         let Ok(mut resumed) = decode_neat(&text) else {
@@ -970,8 +977,8 @@ mod tests {
         };
         let c = &resumed.config;
         assert!(
-            c.margin && c.halving && c.pfsp && c.rotate && c.held_out_anchor,
-            "all five flags survive the trip"
+            c.margin && c.halving && c.pfsp && c.rotate && c.held_out_anchor && c.deep_eval,
+            "all six flags survive the trip"
         );
         for _ in 0..2 {
             let a = straight.step();

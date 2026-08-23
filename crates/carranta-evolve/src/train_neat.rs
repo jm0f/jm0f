@@ -94,6 +94,14 @@ pub struct NeatConfig {
     /// stick for the gap column, and a stick the population trains against
     /// is one third training set.
     pub held_out_anchor: bool,
+    /// Evaluate the finalists a ply deep (E-28): in the last two halving
+    /// rounds every network at the table, candidate and field alike, plays
+    /// inside the beamed search. The Baldwinian form: search improves the
+    /// measurement, the genome stays a network, and selection breeds
+    /// evaluators that are good to search with, which is the condition the
+    /// table now deploys them under. The early rounds stay shallow, because
+    /// ranking a hundred and fifty juniors does not need the depth.
+    pub deep_eval: bool,
 }
 
 impl Default for NeatConfig {
@@ -121,6 +129,7 @@ impl Default for NeatConfig {
             pfsp: false,
             rotate: false,
             held_out_anchor: false,
+            deep_eval: false,
         }
     }
 }
@@ -357,6 +366,20 @@ impl NeatTrainer {
             rated_slot.insert(id, roster.len() as u32);
             roster.push(Brain::Net(genome.compile()));
         }
+        // The finalists' roster (E-28): the same brains a ply deep, used in
+        // the last halving rounds when deep evaluation is on. The anchor
+        // stays itself; it is a heuristic, not a net, and held out besides.
+        let roster_deep: Vec<Brain> = if cfg.deep_eval {
+            roster
+                .iter()
+                .map(|b| match b {
+                    Brain::Net(n) => Brain::Deep(n.clone()),
+                    other => other.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let slot_of = |seat: &Seat| -> u32 {
             match *seat {
                 Seat::Rated(ANCHOR) => 0,
@@ -499,7 +522,11 @@ impl NeatTrainer {
                     }
                 }
             }
-            let outcomes = arena.play_net_all(&roster, &jobs, cfg.threads);
+            // The last two rounds are the finalists' (E-28): with deep
+            // evaluation on, those games are played inside the search.
+            let deep_round = cfg.deep_eval && round + 2 >= rounds.len();
+            let table = if deep_round { &roster_deep } else { &roster };
+            let outcomes = arena.play_net_all(table, &jobs, cfg.threads);
             total_jobs += jobs.len() as u32;
 
             // ---- Score (E-6, E-17, E-20) ----
