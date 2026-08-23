@@ -65,6 +65,8 @@ struct Args {
     stagnation_given: bool,
     /// The same for --deep-eval.
     deep_eval_given: bool,
+    /// The same for --trials-max.
+    trials_max_given: bool,
     /// The same for --add-node and --add-conn.
     add_node_given: bool,
     add_conn_given: bool,
@@ -93,6 +95,7 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         trials_min_given: false,
         stagnation_given: false,
         deep_eval_given: false,
+        trials_max_given: false,
         add_node_given: false,
         add_conn_given: false,
         enrol: Vec::new(),
@@ -151,6 +154,18 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                 if args.neat.trials < v {
                     args.neat.trials = v;
                 }
+            }
+            // The ceiling on the adaptive budget. A field competitive enough
+            // that the finalists genuinely do not separate doubles the
+            // budget for ever; the ceiling is where more resolution stops
+            // being worth more generations.
+            "--trials-max" => {
+                let v: u32 = value()?.parse().map_err(|_| "bad --trials-max")?;
+                if v < args.neat.trials_min {
+                    return Err("--trials-max must be at least --trials-min".to_string());
+                }
+                args.neat.trials_max = v;
+                args.trials_max_given = true;
             }
             // How many generations a species may go without improving before
             // it stops breeding. The canonical fifteen was never sensitivity
@@ -518,6 +533,10 @@ fn run_neat(args: Args) {
                 if args.deep_eval_given {
                     t.config.deep_eval = true;
                     println!("finalists now evaluated a ply deep");
+                }
+                if args.trials_max_given {
+                    t.config.trials_max = args.neat.trials_max;
+                    println!("budget ceiling now {}", t.config.trials_max);
                 }
                 if args.add_node_given {
                     t.config.params.add_node_p = args.neat.params.add_node_p;
@@ -990,10 +1009,16 @@ mod tests {
         // A resume takes its configuration from the checkpoint, so these
         // flags only override when actually typed: the booleans are what
         // the resume branch reads.
-        let a = parse("--method neat --trials-min 64 --stagnation 25 --deep-eval")
+        let a = parse("--method neat --trials-min 64 --stagnation 25 --deep-eval --trials-max 512")
             .expect("the flags parse");
         assert!(a.trials_min_given && a.stagnation_given && a.deep_eval_given);
+        assert!(a.trials_max_given);
+        assert_eq!(a.neat.trials_max, 512);
         assert!(a.neat.deep_eval);
+        assert!(
+            parse("--trials-min 64 --trials-max 32").is_err(),
+            "ceiling under floor"
+        );
         assert_eq!(a.neat.trials_min, 64);
         assert_eq!(a.neat.params.stagnation, 25);
         let a = parse("--method neat").expect("bare");

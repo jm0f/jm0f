@@ -610,7 +610,15 @@ impl NeatTrainer {
         let champion = self.ladder.enrol(champion_genome.clone(), self.generation);
         self.champion = champion;
         let champion_slot = roster.len() as u32;
-        roster.push(Brain::Net(champion_genome.compile()));
+        // Validated the way it is deployed (E-28): a deep-eval run breeds
+        // evaluators for the search, and reading one shallow misstates it by
+        // about a position. On such a run the gap column is a deep ruler,
+        // comparable within the run and deliberately not with shallow ones.
+        roster.push(if cfg.deep_eval {
+            Brain::Deep(champion_genome.compile())
+        } else {
+            Brain::Net(champion_genome.compile())
+        });
 
         // ---- Validate the champion (E-16) ----
         //
