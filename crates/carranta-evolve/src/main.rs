@@ -74,6 +74,10 @@ struct Args {
     /// fresh run or a resume alike: an exploiter the population must answer,
     /// or a standard it must hold. Pinned, so the hall never evicts them.
     enrol: Vec<PathBuf>,
+    /// Generations whose pinned members leave the field on this resume: a
+    /// member dominated by another dilutes the seats of the one that still
+    /// teaches.
+    unpin: Vec<u32>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -99,6 +103,7 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         add_node_given: false,
         add_conn_given: false,
         enrol: Vec::new(),
+        unpin: Vec::new(),
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -218,6 +223,9 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             }
             "--baseline" => args.baseline = Some(std::path::PathBuf::from(value()?)),
             "--enrol" => args.enrol.push(std::path::PathBuf::from(value()?)),
+            "--unpin" => args
+                .unpin
+                .push(value()?.parse().map_err(|_| "bad --unpin")?),
             // The structural mutation odds, per offspring: how often a new
             // node or a new connection is tried. The levers for a run whose
             // topology has stopped moving.
@@ -586,6 +594,10 @@ fn run_neat(args: Args) {
         fresh
     };
 
+    for &generation in &args.unpin {
+        let gone = trainer.unpin(generation);
+        println!("unpinned {gone} member(s) of generation {generation} from the field");
+    }
     // Outsiders pinned into the field (E-26), fresh run or resumed alike: an
     // exploiter the population has to answer stays in the field until it has
     // been answered, because the hall's eviction cannot reach it.

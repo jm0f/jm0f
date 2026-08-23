@@ -925,6 +925,14 @@ mod tests {
         let restored = decode_neat(&encode_neat(&t)).expect("it reads back");
         assert_eq!(restored.pinned, t.pinned, "the pin survives the trip");
 
+        // And a pin can be lifted by the generation it was enrolled under,
+        // leaving the ladder's record intact.
+        let mut t2 = restored;
+        assert_eq!(t2.unpin(999), 0, "nothing of that generation");
+        assert_eq!(t2.unpin(642), 1, "the exploiter leaves the field");
+        assert!(t2.pinned.is_empty());
+        assert!(t2.ladder.get(id).is_some(), "the ladder remembers it");
+
         // With the anchor held out, the freed featured seat belongs to the
         // pinned members: the outsider is met every generation, which shows
         // up as a sampling weight learned for it.

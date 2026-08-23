@@ -229,6 +229,21 @@ impl NeatTrainer {
         id
     }
 
+    /// Take every pinned member of the named generation out of the field.
+    ///
+    /// The DELPHI lesson (E-26): the field should hold opponents that make
+    /// distinctions between learners, and a pinned member dominated by
+    /// another teaches lessons the population has already learned while
+    /// diluting the seats of the one it has not. The ladder keeps the
+    /// member's record; only the field forgets it.
+    pub fn unpin(&mut self, generation: u32) -> usize {
+        let before = self.pinned.len();
+        let ladder = &self.ladder;
+        self.pinned
+            .retain(|&id| ladder.get(id).is_none_or(|v| v.generation != generation));
+        before - self.pinned.len()
+    }
+
     /// Rebuild a run from a checkpoint. See [`crate::checkpoint`].
     #[allow(clippy::too_many_arguments)] // a checkpoint is a flat record
     pub fn restore(
