@@ -8,7 +8,7 @@
 //! reads the raw state would grow a habit the server then has to unpick.
 
 use carranta_bot::net::Net;
-use carranta_bot::policy_net::NetPolicy;
+use carranta_bot::policy_net::DeepNetPolicy;
 use carranta_bot::{Heuristic, Policy};
 use carranta_core::action::{Action, Illegal};
 use carranta_core::rng::{Rng, Stream};
@@ -436,8 +436,11 @@ enum Brain {
     House(Heuristic),
     /// A trained champion, carrying the generation it came from. The number is
     /// the player's identity rather than a label: two generations of one run
-    /// are two players, and the chair records which one sat here.
-    Trained(NetPolicy, u32),
+    /// are two players, and the chair records which one sat here. Played a
+    /// ply deep (E-27): the same network the run bred, inside the beamed
+    /// search, because the table deserves the strongest reading of it and a
+    /// decision still costs under a millisecond.
+    Trained(DeepNetPolicy, u32),
 }
 
 impl Brain {
@@ -644,7 +647,7 @@ impl Session {
             return;
         };
         *slot = Brain::Trained(
-            NetPolicy::new(net.clone(), seat_seed(self.seed, seat)),
+            DeepNetPolicy::new(net.clone(), seat_seed(self.seed, seat)),
             generation,
         );
         self.state.offer_shapes = OfferShapes::Mixed {
