@@ -235,6 +235,9 @@ impl Policy for NetPolicy {
 pub struct DeepNetPolicy {
     inner: NetPolicy,
     beam: usize,
+    /// Whether market answers get the second ply too. On by default; the
+    /// flat-market variant exists so the difference can be measured.
+    deep_market: bool,
     /// Scratch for the second ply's legal actions, reused per expansion.
     buf: Vec<Action>,
     scored: Vec<(f64, usize)>,
@@ -250,8 +253,18 @@ impl DeepNetPolicy {
         DeepNetPolicy {
             inner: NetPolicy::new(net, seed),
             beam: BEAM,
+            deep_market: true,
             buf: Vec::new(),
             scored: Vec::new(),
+        }
+    }
+
+    /// The ablation: deep moves, one-ply market answers. Kept so the worth
+    /// of the deep answer can be measured rather than assumed.
+    pub fn flat_market(net: Net, seed: u64) -> Self {
+        DeepNetPolicy {
+            deep_market: false,
+            ..Self::new(net, seed)
         }
     }
 
@@ -369,7 +382,56 @@ impl Policy for DeepNetPolicy {
     }
 
     fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
-        self.inner.accepts(state, seat, offer)
+        if !self.deep_market {
+            return self.inner.accepts(state, seat, offer);
+        }
+        // The active seat's accepts go through `choose` and are already deep;
+        // this is the passive seat answering somebody's offer. One ply asked
+        // "is the swap alone better than standing pat"; the second ply asks
+        // what the swap enables, and in an open market one accept can enable
+        // another (R-7.19). The guards are the one-ply policy's own.
+        let Some(o) = state.live_offers().get(offer) else {
+            return false;
+        };
+        if !state.may_accept(seat, o) || !state.holds(seat, &o.want) {
+            return false;
+        }
+        let take = Action::AcceptTrade {
+            offer: offer as u8,
+            by: seat as u8,
+        };
+        let mut s2 = *state;
+        if s2.apply(take).is_err() {
+            return false;
+        }
+        let ctx = Decision {
+            standing: [0.0; carranta_core::state::MAX_PLAYERS],
+            asked: 0.0,
+        };
+        // Both sides of the question get the same optimism, or the maximum
+        // flatters whichever side carries it: the best plan after taking the
+        // offer, against the best plan while letting it stand, which includes
+        // taking a different one.
+        let mut plan = |s: &State, skip: Option<usize>| -> f64 {
+            let mut best = self.inner.value(s, seat, Pending::default());
+            self.buf.clear();
+            s.legal_for(seat as u8, &mut self.buf);
+            let candidates = std::mem::take(&mut self.buf);
+            for &a2 in &candidates {
+                if let Action::AcceptTrade { offer: o2, .. } = a2 {
+                    if skip == Some(o2 as usize) {
+                        continue;
+                    }
+                    let v = self.inner.score(s, seat, a2, &ctx);
+                    if v > best {
+                        best = v;
+                    }
+                }
+            }
+            self.buf = candidates;
+            best
+        };
+        plan(&s2, None) > plan(state, Some(offer))
     }
 }
 
@@ -435,7 +497,7 @@ mod tests {
         // the beam is decoration.
         let net = minimal_net(5);
         let mut a = DeepNetPolicy::new(net.clone(), 11);
-        let mut b = NetPolicy::new(net.clone(), 12);
+        let mut b = DeepNetPolicy::flat_market(net.clone(), 12);
         let mut c = NetPolicy::new(net.clone(), 13);
         let mut d = NetPolicy::new(net.clone(), 14);
         let (_, actions) = play(31, &mut [&mut a, &mut b, &mut c, &mut d]);

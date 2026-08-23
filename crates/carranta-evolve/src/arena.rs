@@ -89,6 +89,8 @@ pub enum Brain {
     /// The same network one ply deeper (E-27): the evolved evaluation inside
     /// a beamed two-ply search, for measuring what depth buys.
     Deep(Net),
+    /// The ablation of the deep market answer: deep moves, one-ply accepts.
+    DeepFlatMarket(Net),
 }
 
 /// One network game to play: a board seed and four roster indices.
@@ -313,6 +315,9 @@ fn net_seats(arena: &Arena, roster: &[Brain], job: &NetJob) -> Vec<Box<dyn Polic
                 Brain::Anchor => Box::new(Heuristic::new(seed)) as Box<dyn Policy>,
                 Brain::Net(n) => Box::new(NetPolicy::new(n.clone(), seed)) as Box<dyn Policy>,
                 Brain::Deep(n) => Box::new(DeepNetPolicy::new(n.clone(), seed)) as Box<dyn Policy>,
+                Brain::DeepFlatMarket(n) => {
+                    Box::new(DeepNetPolicy::flat_market(n.clone(), seed)) as Box<dyn Policy>
+                }
             }
         })
         .collect()

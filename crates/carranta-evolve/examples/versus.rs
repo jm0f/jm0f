@@ -72,6 +72,8 @@ fn main() {
     let mut solo = false;
     let mut deep_champion = false;
     let mut deep_against = false;
+    let mut flat_market_champion = false;
+    let mut flat_market_against = false;
     let mut rounds = 500usize;
     let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut seed = 90_210u64;
@@ -92,6 +94,11 @@ fn main() {
             // same weights on both sides.
             "--deep" => deep_champion = true,
             "--deep-against" => deep_against = true,
+            // The market-answer ablation: that side plays deep moves but
+            // answers offers at one ply, so the deep answer's worth can be
+            // measured on its own.
+            "--flat-market" => flat_market_champion = true,
+            "--flat-market-against" => flat_market_against = true,
             "--rounds" => rounds = value().parse().unwrap_or(rounds),
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
@@ -160,21 +167,31 @@ fn main() {
         },
         ..Arena::default()
     };
-    let deepen = |b: Brain, deep: bool| match (b, deep) {
+    let deepen = |b: Brain, deep: bool, flat: bool| match (b, deep) {
+        (Brain::Net(n), true) if flat => Brain::DeepFlatMarket(n),
         (Brain::Net(n), true) => Brain::Deep(n),
         (b, _) => b,
     };
     let (them, them_name) = match &opponent {
         Some((net, generation)) => (
-            deepen(Brain::Net(net.clone()), deep_against),
+            deepen(Brain::Net(net.clone()), deep_against, flat_market_against),
             format!(
                 "trained@{generation}{}",
-                if deep_against { " (deep)" } else { "" }
+                if !deep_against {
+                    ""
+                } else if flat_market_against {
+                    " (deep, flat market)"
+                } else {
+                    " (deep)"
+                }
             ),
         ),
         None => (Brain::Anchor, "the pinned heuristic".to_string()),
     };
-    let roster = [them, deepen(Brain::Net(net), deep_champion)];
+    let roster = [
+        them,
+        deepen(Brain::Net(net), deep_champion, flat_market_champion),
+    ];
 
     let seatings: &[[u32; 4]] = if solo { &SOLO } else { &ARRANGEMENTS };
     let jobs: Vec<NetJob> = (0..rounds)
