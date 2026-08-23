@@ -22,7 +22,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use carranta_bot::net::Net;
-use carranta_bot::policy_net::NetPolicy;
+use carranta_bot::policy_net::{DeepNetPolicy, NetPolicy};
 use carranta_bot::{Heuristic, Policy, settle_market};
 use carranta_core::Action;
 use carranta_core::state::{MAX_PLAYERS, OfferShapes, Phase, State, TradeMode};
@@ -86,6 +86,9 @@ impl Default for Arena {
 pub enum Brain {
     Anchor,
     Net(Net),
+    /// The same network one ply deeper (E-27): the evolved evaluation inside
+    /// a beamed two-ply search, for measuring what depth buys.
+    Deep(Net),
 }
 
 /// One network game to play: a board seed and four roster indices.
@@ -309,6 +312,7 @@ fn net_seats(arena: &Arena, roster: &[Brain], job: &NetJob) -> Vec<Box<dyn Polic
             match &roster[job.seats[s] as usize] {
                 Brain::Anchor => Box::new(Heuristic::new(seed)) as Box<dyn Policy>,
                 Brain::Net(n) => Box::new(NetPolicy::new(n.clone(), seed)) as Box<dyn Policy>,
+                Brain::Deep(n) => Box::new(DeepNetPolicy::new(n.clone(), seed)) as Box<dyn Policy>,
             }
         })
         .collect()

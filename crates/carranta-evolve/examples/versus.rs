@@ -70,6 +70,8 @@ fn main() {
     let mut champion = String::new();
     let mut against = String::new();
     let mut solo = false;
+    let mut deep_champion = false;
+    let mut deep_against = false;
     let mut rounds = 500usize;
     let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut seed = 90_210u64;
@@ -85,6 +87,11 @@ fn main() {
             "--champion" => champion = value(),
             "--against" => against = value(),
             "--solo" => solo = true,
+            // The lookahead question (E-27): wrap that side's network in the
+            // beamed two-ply search, so search-vs-greedy is measured with the
+            // same weights on both sides.
+            "--deep" => deep_champion = true,
+            "--deep-against" => deep_against = true,
             "--rounds" => rounds = value().parse().unwrap_or(rounds),
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
@@ -153,11 +160,21 @@ fn main() {
         },
         ..Arena::default()
     };
+    let deepen = |b: Brain, deep: bool| match (b, deep) {
+        (Brain::Net(n), true) => Brain::Deep(n),
+        (b, _) => b,
+    };
     let (them, them_name) = match &opponent {
-        Some((net, generation)) => (Brain::Net(net.clone()), format!("trained@{generation}")),
+        Some((net, generation)) => (
+            deepen(Brain::Net(net.clone()), deep_against),
+            format!(
+                "trained@{generation}{}",
+                if deep_against { " (deep)" } else { "" }
+            ),
+        ),
         None => (Brain::Anchor, "the pinned heuristic".to_string()),
     };
-    let roster = [them, Brain::Net(net)];
+    let roster = [them, deepen(Brain::Net(net), deep_champion)];
 
     let seatings: &[[u32; 4]] = if solo { &SOLO } else { &ARRANGEMENTS };
     let jobs: Vec<NetJob> = (0..rounds)
@@ -170,7 +187,8 @@ fn main() {
         .collect();
 
     println!(
-        "trained@{generation}{} against {}{them_name}",
+        "trained@{generation}{}{} against {}{them_name}",
+        if deep_champion { " (deep)" } else { "" },
         if solo { " alone" } else { "" },
         if solo { "three of " } else { "" },
     );

@@ -211,6 +211,168 @@ impl Policy for NetPolicy {
     }
 }
 
+/// The same network, one ply deeper.
+///
+/// Blondie24's lesson at the smallest useful depth: an evolved evaluation
+/// inside a search is worth more than the same evaluation used greedily,
+/// because a candidate is finally worth what it enables rather than what it
+/// is. A one-ply policy cannot see that a port trade buys the settlement it
+/// could not otherwise afford; a two-ply one prices the pair.
+///
+/// The information rules are [`NetPolicy`]'s, kept by construction: only
+/// candidates whose true `apply` reveals nothing are expanded to the second
+/// ply. Rolling, buying a development card and moving the robber all resolve
+/// chance the seat is not entitled to see, so they keep their calibrated
+/// one-ply scores, exactly as before. Proposals keep theirs too: an offer's
+/// value is the credited swap, and a follow-up from an untaken offer would
+/// price a different question.
+///
+/// Depth is bought with a beam rather than breadth: every candidate is
+/// scored at one ply first, and only the strongest few are expanded, since
+/// the ordering is decided among the leaders. Follow-up proposals are not
+/// generated at the second ply: their credit machinery costs a table of
+/// evaluations per expansion and asking-later is nearly free.
+pub struct DeepNetPolicy {
+    inner: NetPolicy,
+    beam: usize,
+    /// Scratch for the second ply's legal actions, reused per expansion.
+    buf: Vec<Action>,
+    scored: Vec<(f64, usize)>,
+}
+
+/// How many candidates the beam expands. Eight covers every build and bank
+/// trade a hand can usually afford while keeping a decision under a
+/// millisecond; the long tail is proposals, which are never expanded.
+const BEAM: usize = 8;
+
+impl DeepNetPolicy {
+    pub fn new(net: Net, seed: u64) -> Self {
+        DeepNetPolicy {
+            inner: NetPolicy::new(net, seed),
+            beam: BEAM,
+            buf: Vec::new(),
+            scored: Vec::new(),
+        }
+    }
+
+    /// Whether this candidate's true `apply` reveals no chance outcome, so
+    /// the position after it is honest to look at.
+    fn expandable(a: &Action) -> bool {
+        !matches!(
+            a,
+            Action::Roll
+                | Action::BuyDev
+                | Action::MoveRobber { .. }
+                | Action::ProposeTrade { .. }
+                | Action::EndTurn
+        )
+    }
+
+    /// The best own follow-up from the position `a1` produces, or the
+    /// one-ply score when the position is not this seat's to continue.
+    fn second_ply(&mut self, state: &State, me: usize, a1: Action, fallback: f64) -> f64 {
+        let mut s2 = *state;
+        if s2.apply(a1).is_err() {
+            return f64::NEG_INFINITY;
+        }
+        if s2.decider() as usize != me {
+            return fallback;
+        }
+        self.buf.clear();
+        s2.legal_into(&mut self.buf);
+        // Proposals are skipped (see the type note); everything else is
+        // scored by the same fair one-ply rules, so the leaf values of the
+        // second ply are the values the first ply has always produced.
+        let ctx = Decision {
+            standing: [0.0; carranta_core::state::MAX_PLAYERS],
+            asked: 0.0,
+        };
+        let mut best = f64::NEG_INFINITY;
+        let candidates = std::mem::take(&mut self.buf);
+        for &a2 in &candidates {
+            if matches!(a2, Action::ProposeTrade { .. }) {
+                continue;
+            }
+            let v = self.inner.score(&s2, me, a2, &ctx);
+            if v > best {
+                best = v;
+            }
+        }
+        self.buf = candidates;
+        if best == f64::NEG_INFINITY {
+            // Nothing to continue with: the position's own value stands.
+            self.inner.value(&s2, me, Pending::default())
+        } else {
+            best
+        }
+    }
+}
+
+impl Policy for DeepNetPolicy {
+    fn choose(&mut self, state: &State, legal: &[Action]) -> Action {
+        debug_assert!(!legal.is_empty());
+        let me = state.decider() as usize;
+        let ctx = Decision {
+            standing: core::array::from_fn(|q| {
+                if q < state.players as usize {
+                    self.inner.value(state, q, Pending::default())
+                } else {
+                    0.0
+                }
+            }),
+            asked: {
+                let mut asked = *state;
+                asked.offers_made[me] += 1;
+                self.inner.value(&asked, me, Pending::default())
+            },
+        };
+        // Every candidate at one ply first.
+        self.scored.clear();
+        for (i, &a) in legal.iter().enumerate() {
+            self.scored.push((self.inner.score(state, me, a, &ctx), i));
+        }
+        let mut scored = std::mem::take(&mut self.scored);
+        // The strongest expandable candidates go a ply deeper. Sorting the
+        // whole list costs nothing next to one network evaluation.
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut expanded = 0;
+        for k in 0..scored.len() {
+            if expanded >= self.beam {
+                break;
+            }
+            let (one_ply, i) = scored[k];
+            if one_ply == f64::NEG_INFINITY || !Self::expandable(&legal[i]) {
+                continue;
+            }
+            scored[k].0 = self.second_ply(state, me, legal[i], one_ply);
+            expanded += 1;
+        }
+        self.scored = Vec::new();
+        // Reservoir over exact ties, as the one-ply policy does.
+        let mut best = f64::NEG_INFINITY;
+        let mut ties = 0u32;
+        let mut chosen = legal[0];
+        for &(s, i) in &scored {
+            if s > best {
+                best = s;
+                ties = 1;
+                chosen = legal[i];
+            } else if s == best {
+                ties += 1;
+                if self.inner.rng.below(Stream::Dice, ties) == 0 {
+                    chosen = legal[i];
+                }
+            }
+        }
+        self.scored = scored;
+        chosen
+    }
+
+    fn accepts(&mut self, state: &State, seat: usize, offer: usize) -> bool {
+        self.inner.accepts(state, seat, offer)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +425,58 @@ mod tests {
             _ => None,
         };
         (winner, actions)
+    }
+
+    #[test]
+    fn the_deep_policy_plays_legally_and_is_not_the_shallow_one_renamed() {
+        // A whole game with a deep seat at the table: every action legal, the
+        // game terminating. And the depth has to matter: on the same net and
+        // the same positions, two plies must sometimes disagree with one, or
+        // the beam is decoration.
+        let net = minimal_net(5);
+        let mut a = DeepNetPolicy::new(net.clone(), 11);
+        let mut b = NetPolicy::new(net.clone(), 12);
+        let mut c = NetPolicy::new(net.clone(), 13);
+        let mut d = NetPolicy::new(net.clone(), 14);
+        let (_, actions) = play(31, &mut [&mut a, &mut b, &mut c, &mut d]);
+        assert!(actions > 50, "the game was played out");
+
+        // Disagreement, measured on real positions: walk a game and compare
+        // the two policies' picks on every decision. RNG seeds are equal so
+        // tie-breaking cannot manufacture a difference.
+        let mut deep = DeepNetPolicy::new(net.clone(), 77);
+        let mut shallow = NetPolicy::new(net, 77);
+        let mut state = State::new(4, 8)
+            .with_trade_mode(TradeMode::Full)
+            .with_offer_shapes(OfferShapes::Mixed {
+                give: Some(2),
+                want: 2,
+            });
+        let mut buf = Vec::new();
+        let (mut seen, mut differed) = (0, 0);
+        for _ in 0..4_000 {
+            if matches!(state.phase, Phase::GameOver { .. }) {
+                break;
+            }
+            state.legal_into(&mut buf);
+            if buf.is_empty() {
+                break;
+            }
+            let deep_pick = deep.choose(&state, &buf);
+            let shallow_pick = shallow.choose(&state, &buf);
+            seen += 1;
+            if deep_pick != shallow_pick {
+                differed += 1;
+            }
+            // The game advances by the shallow pick either way, so both see
+            // identical positions throughout.
+            state.apply(shallow_pick).expect("legal");
+        }
+        assert!(seen > 100, "enough decisions to compare: {seen}");
+        assert!(
+            differed > 0,
+            "two plies never disagreed with one across {seen} decisions"
+        );
     }
 
     #[test]
