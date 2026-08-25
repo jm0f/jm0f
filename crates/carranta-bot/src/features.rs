@@ -21,10 +21,18 @@
 
 use carranta_core::longest_road::longest_road;
 use carranta_core::state::{PORT_KINDS, State};
-use carranta_core::topology::{HEX_COUNT, hex_vertices};
+use carranta_core::topology::{
+    ALL_VERTICES, HEX_COUNT, edges_at, endpoints_of, hex_vertices, iter_vertices, neighbors,
+    vertex_bit,
+};
 
 /// Width of the observation vector.
-pub const FEATURES: usize = 32;
+///
+/// Grew from 32 when the frontier senses were added. A network file carries
+/// its own input count, and an older, narrower network reads the first slice
+/// of this vector, so the first 32 entries keep their exact meaning and
+/// anything new is appended.
+pub const FEATURES: usize = 38;
 
 /// The pending consequences of a candidate action. See the module note.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,6 +81,102 @@ pub fn production(state: &State, p: usize) -> ([f64; 5], u32) {
     (pips, kinds)
 }
 
+/// Expected yield of every intersection at once: each vertex's entry is the
+/// pips of the hexes it touches, robber-aware, the same arithmetic as
+/// [`production`] counts for a settlement standing there.
+///
+/// One pass over the hexes, because this backs [`frontier`] and `encode` runs
+/// for every candidate action of every decision: asking per vertex would walk
+/// the board a hundred times per evaluation and was measured to cost a third
+/// of the whole game rate.
+fn vertex_pips(state: &State) -> [f64; 54] {
+    let mut pips = [0.0f64; 54];
+    for h in 0..HEX_COUNT as u8 {
+        if h == state.robber || state.number[h as usize] == 0 {
+            continue;
+        }
+        if state.terrain[h as usize].yields().is_none() {
+            continue;
+        }
+        let worth = (6 - (7i32 - state.number[h as usize] as i32).abs()) as f64;
+        for v in iter_vertices(hex_vertices(h)) {
+            pips[v as usize] += worth;
+        }
+    }
+    pips
+}
+
+/// Where one seat's network can still grow: the best open intersection at
+/// each road-distance, and how much room is left before the frontier closes.
+///
+/// This is the sense the first 32 features lack. Without it two candidate
+/// roads read identically unless one lengthens the measured route, so a road
+/// toward a rich open intersection and a road into a dead corner scored the
+/// same and the network built dead wood. With it, the road toward the rich
+/// spot raises "best one road away" in the very next evaluation, which is the
+/// same one-ply loop that already makes settlement placement look considered.
+///
+/// `now` is the best spot buildable this instant, `after_one` the best
+/// after laying one legal road, `after_two` after two, and `room` counts the
+/// open spots worth having within one road of the network.
+struct Frontier {
+    now: f64,
+    after_one: f64,
+    after_two: f64,
+    room: u32,
+}
+
+fn frontier(state: &State, p: usize, pips: &[f64; 54]) -> Frontier {
+    // Open under the distance rule (R-8.5): not built on, not adjacent to a
+    // building. The same set `settlement_spots` starts from.
+    let taken = state.all_buildings();
+    let mut forbidden = taken;
+    for v in iter_vertices(taken) {
+        forbidden |= neighbors(v);
+    }
+    let open = ALL_VERTICES & !forbidden;
+
+    let best = |spots: u64| {
+        iter_vertices(spots)
+            .map(|v| pips[v as usize])
+            .fold(0.0f64, f64::max)
+    };
+
+    // Buildable now: open spots on the network (R-8.4).
+    let ends = endpoints_of(state.roads[p]);
+    let now = best(open & ends);
+
+    // One road away: the far ends of every road that may legally be laid.
+    let legal_roads = state.road_spots(p);
+    let reach_one = endpoints_of(legal_roads);
+    let after_one = best(open & reach_one);
+
+    // Two roads away: grow one more edge from there, not through an
+    // opponent's building (R-8.3) and not along a road already laid.
+    let occupied = state.all_roads();
+    let mut second = 0u128;
+    for v in iter_vertices(reach_one & !state.blocking(p)) {
+        second |= edges_at(v);
+    }
+    let reach_two = endpoints_of(second & !occupied);
+    let after_two = best(open & (reach_one | reach_two));
+
+    // Expansion room: open spots within one road that produce at all well. A
+    // frontier of one great spot and a frontier of four are different
+    // positions even when their best is equal, and the difference is what an
+    // opponent's next settlement takes away.
+    let room = iter_vertices(open & (ends | reach_one))
+        .filter(|&v| pips[v as usize] >= 5.0)
+        .count() as u32;
+
+    Frontier {
+        now,
+        after_one,
+        after_two,
+        room,
+    }
+}
+
 /// Encode one seat's view of a position.
 ///
 /// Public information plus this seat's own hand: exactly what a person at the
@@ -99,6 +203,9 @@ pub fn encode(state: &State, me: usize, pending: Pending) -> [f64; FEATURES] {
     }
     f[13] = state.hand_size(me).saturating_sub(7) as f64 / 7.0;
 
+    // Every intersection's yield, once: both frontiers below read it.
+    let spot_pips = vertex_pips(state);
+
     // ---- The strongest opponent ----
     //
     // By victory points, pips breaking ties, seat number breaking those, so
@@ -124,7 +231,26 @@ pub fn encode(state: &State, me: usize, pending: Pending) -> [f64; FEATURES] {
         f[20] = qpips / 30.0;
         f[21] = longest_road(state.roads[q], state.blocking(q)) as f64 / 10.0;
         f[22] = state.militia_played[q] as f64 / 5.0;
+        // ---- The rival's frontier ----
+        //
+        // What the strongest opponent can still reach, so a road or a
+        // settlement that closes their best expansion reads as the position
+        // change it is rather than a wasted turn.
+        let theirs = frontier(state, q, &spot_pips);
+        f[36] = theirs.now / 15.0;
+        f[37] = theirs.after_one / 15.0;
     }
+
+    // ---- My frontier ----
+    //
+    // Where this network can still grow. A candidate road toward a rich open
+    // intersection raises `after_one` in the next evaluation; a dead-end road
+    // raises nothing, and now reads as the nothing it is.
+    let mine = frontier(state, me, &spot_pips);
+    f[32] = mine.now / 15.0;
+    f[33] = mine.after_one / 15.0;
+    f[34] = mine.after_two / 15.0;
+    f[35] = mine.room as f64 / 6.0;
 
     // ---- The table ----
     for r in 0..5 {
@@ -194,5 +320,88 @@ mod tests {
         // And nothing else moves: the flags are channels, not modifiers.
         assert_eq!(&base[..29], &bought[..29]);
         assert_eq!(&base[..29], &stealing[..29]);
+    }
+
+    #[test]
+    fn two_roads_from_one_settlement_no_longer_read_the_same() {
+        // The blindness the frontier senses exist to cure: before them, a
+        // road toward a rich open intersection and a road into a dead corner
+        // produced identical observations unless one lengthened the measured
+        // route, so the evaluation could not prefer the one a person would
+        // pick. Lay each candidate road from one settlement and the frontier
+        // features must now tell at least two of them apart, and the road
+        // whose reach holds the richest open spot must read best.
+        let mut distinguished = 0;
+        for seed in 0..6u64 {
+            let mut state = State::new(4, seed);
+            let v0 = 18u8; // an inland intersection on every board
+            state.settlements[0] |= vertex_bit(v0);
+            let mut best_read = f64::MIN;
+            let mut best_reach = f64::MIN;
+            let mut reads = Vec::new();
+            for e in carranta_core::topology::iter_edges(edges_at(v0)) {
+                let mut laid = state.clone();
+                laid.roads[0] |= carranta_core::topology::edge_bit(e);
+                let f = encode(&laid, 0, Pending::default());
+                // The richest open spot this road's network can reach in one
+                // more road, computed independently of the encoder.
+                let taken = laid.all_buildings();
+                let mut forbidden = taken;
+                for v in iter_vertices(taken) {
+                    forbidden |= neighbors(v);
+                }
+                let open = ALL_VERTICES & !forbidden;
+                let reach = endpoints_of(laid.road_spots(0));
+                let table = vertex_pips(&laid);
+                let richest = iter_vertices(open & reach)
+                    .map(|v| table[v as usize])
+                    .fold(0.0f64, f64::max);
+                if f[33] > best_read {
+                    best_read = f[33];
+                    best_reach = richest;
+                }
+                reads.push((f[33], richest));
+            }
+            if reads.iter().any(|&(r, _)| (r - reads[0].0).abs() > 1e-9) {
+                distinguished += 1;
+                let top = reads.iter().map(|&(_, p)| p).fold(0.0f64, f64::max);
+                assert!(
+                    (best_reach - top).abs() < 1e-9,
+                    "the road reading best reaches {best_reach} pips, \
+                     but {top} was reachable (seed {seed})"
+                );
+            }
+        }
+        assert!(
+            distinguished >= 3,
+            "roads read identically on nearly every board: {distinguished}/6"
+        );
+    }
+
+    #[test]
+    fn the_frontier_senses_ride_behind_the_original_thirty_two() {
+        // The append-only contract: a network trained at 32 inputs reads the
+        // first slice of today's vector, so those entries may never move.
+        // Spot-check the seam: the last original feature and the first new
+        // one are both live, on their own sides of it.
+        let state = State::new(4, 5);
+        let f = encode(&state, 0, Pending::default());
+        assert_eq!(FEATURES, 38, "the width this test pins down");
+        assert!(f.len() == FEATURES);
+        // A fresh deal has no buildings, so every frontier entry is at its
+        // floor; a settlement wakes them.
+        let mut built = state.clone();
+        built.settlements[0] |= vertex_bit(18);
+        built.roads[0] |= carranta_core::topology::edge_bit(
+            carranta_core::topology::iter_edges(edges_at(18))
+                .next()
+                .expect("an edge"),
+        );
+        let g = encode(&built, 0, Pending::default());
+        assert!(
+            g[32] > 0.0 || g[33] > 0.0,
+            "a settled network has a frontier: {:?}",
+            &g[32..]
+        );
     }
 }

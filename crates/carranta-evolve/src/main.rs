@@ -476,10 +476,28 @@ fn genome_of_net(path: &std::path::Path) -> (carranta_evolve::neat::NeatGenome, 
             std::process::exit(1);
         }
     };
-    let Some((_, generation, _)) = carranta_bot::net::Net::parse_meta(&text) else {
+    let Some((net, generation, _)) = carranta_bot::net::Net::parse_meta(&text) else {
         eprintln!("{} is not a champion network file", path.display());
         std::process::exit(1);
     };
+    // Node ids are positional: inputs, then bias, then output, then hidden.
+    // A file written when the observation was narrower numbers its bias,
+    // output and hidden nodes lower than this build does, so its ids are
+    // shifted up into today's numbering. The network is unchanged: its links
+    // still touch only the inputs it was trained on, and the senses added
+    // since are inputs it never reads.
+    let theirs = net.inputs();
+    let ours = carranta_evolve::neat::INPUTS;
+    if theirs > ours {
+        eprintln!(
+            "{} reads {theirs} inputs and this build observes {ours}: a network from a wider \
+             observation cannot be narrowed",
+            path.display()
+        );
+        std::process::exit(1);
+    }
+    let lift = (ours - theirs) as u32;
+    let renumber = |id: u32| if id >= theirs as u32 { id + lift } else { id };
     let genes = text
         .lines()
         .filter_map(|l| {
@@ -487,8 +505,8 @@ fn genome_of_net(path: &std::path::Path) -> (carranta_evolve::neat::NeatGenome, 
             (p.next() == Some("link")).then(|| {
                 Some(carranta_evolve::neat::Gene {
                     innov: 0,
-                    from: p.next()?.parse().ok()?,
-                    to: p.next()?.parse().ok()?,
+                    from: renumber(p.next()?.parse().ok()?),
+                    to: renumber(p.next()?.parse().ok()?),
                     weight: p.next()?.parse().ok()?,
                     enabled: true,
                 })
@@ -961,6 +979,49 @@ mod tests {
 
     fn parse(line: &str) -> Result<Args, String> {
         parse_from(line.split_whitespace().map(str::to_string))
+    }
+
+    #[test]
+    fn an_enrolled_narrow_champion_is_the_same_player_it_was() {
+        // League members enrol as genomes, and genome node ids are
+        // positional: a file written when the observation was 32 wide numbers
+        // its bias, output and hidden nodes lower than this build does.
+        // `genome_of_net` lifts those ids into today's numbering, and the
+        // proof it lifted correctly is behavioural: the compiled genome must
+        // value positions exactly as the file's own network does reading its
+        // own slice.
+        let narrow = 32usize;
+        let out32 = carranta_bot::net::Net::output_id(narrow as u32 as usize);
+        let bias32 = carranta_bot::net::Net::bias_id(narrow);
+        let hidden = out32 + 1; // first hidden id in the narrow numbering
+        let mut links: Vec<(u32, u32, f64)> = vec![
+            (0, hidden, 0.4),
+            (5, hidden, -0.3),
+            (bias32, hidden, 0.2),
+            (hidden, out32, 0.9),
+        ];
+        links.extend((1..5u32).map(|i| (i, out32, i as f64 / 10.0)));
+        let old = carranta_bot::net::Net::assemble(narrow, &links).expect("acyclic");
+        let path = std::env::temp_dir().join(format!("carranta-enrol-{}.net", std::process::id()));
+        std::fs::write(&path, old.show_from(642, "neat-8")).expect("written");
+
+        let (genome, generation) = genome_of_net(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(generation, 642, "the file's generation survives");
+        let wide = genome.compile();
+        let state = carranta_core::state::State::new(4, 21);
+        for me in 0..4 {
+            let obs = carranta_bot::features::encode(
+                &state,
+                me,
+                carranta_bot::features::Pending::default(),
+            );
+            assert_eq!(
+                wide.eval(&obs),
+                old.eval(&obs[..narrow]),
+                "seat {me}: the lifted genome and the file disagree"
+            );
+        }
     }
 
     #[test]

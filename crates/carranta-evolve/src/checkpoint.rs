@@ -30,7 +30,15 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 7;
+pub const NEAT_FORMAT: u32 = 8;
+
+/// The NEAT format before the observation carried its width (the frontier
+/// senses, E-29). Every genome in one is wired for 32 inputs, and a build
+/// whose observation is wider reads those node ids as different nodes, so
+/// these checkpoints refuse to resume rather than resume as scrambled
+/// networks. Their champions were exported as `.net` files, which carry
+/// their own width and keep playing.
+pub const NEAT_FORMAT_NARROW: u32 = 7;
 
 /// The NEAT format before the pinned field members existed (E-26): a
 /// selection line and sampling weights, but every outsider still rode the
@@ -296,6 +304,10 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "carranta-evolve {NEAT_FORMAT}");
     let _ = writeln!(out, "method neat");
+    // The width every genome in this file is wired for. Node ids are
+    // positional (inputs, bias, output, hidden), so a genome read at another
+    // width is a different network, not the same one seeing more.
+    let _ = writeln!(out, "inputs {}", crate::neat::INPUTS);
     let _ = writeln!(out, "run_seed {}", trainer.run_seed);
     let _ = writeln!(out, "generation {}", trainer.generation);
     let _ = writeln!(out, "trials {}", trainer.trials);
@@ -460,6 +472,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     if !matches!(
         version,
         NEAT_FORMAT
+            | NEAT_FORMAT_NARROW
             | NEAT_FORMAT_NO_PINS
             | NEAT_FORMAT_CLASSIC_SELECTION
             | NEAT_FORMAT_FLAT_WIN
@@ -471,6 +484,34 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     let (line, method) = lines.next().ok_or(LoadError::Missing("method"))?;
     if method != "method neat" {
         return Err(bad(line, "this format requires `method neat`"));
+    }
+    // Genomes are wired for one observation width, and this build has one
+    // observation width. A mismatch is not a resumable run: node ids past the
+    // inputs mean different nodes, so the population would come back as
+    // scrambled networks that evaluate without erring. Formats before the
+    // line were all written at 32.
+    let written: usize = if version >= NEAT_FORMAT {
+        let (line, v) = {
+            let (line, text) = lines.next().ok_or(LoadError::Missing("inputs"))?;
+            let value = text
+                .strip_prefix("inputs ")
+                .ok_or_else(|| bad(line, &format!("expected `inputs <n>`, got `{text}`")))?;
+            (line, value.to_string())
+        };
+        v.parse().map_err(|_| bad(line, "bad inputs"))?
+    } else {
+        32
+    };
+    if written != crate::neat::INPUTS {
+        return Err(bad(
+            line,
+            &format!(
+                "this checkpoint's genomes are wired for {written} inputs and this build \
+                 observes {}: the run cannot resume under a changed observation, only its \
+                 exported champions can keep playing",
+                crate::neat::INPUTS
+            ),
+        ));
     }
 
     let mut scalar = |key: &'static str| -> Result<(usize, String), LoadError> {
@@ -688,7 +729,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     // The pinned field members (E-26), format 7 on; older files pinned
     // nothing, so nothing is what they read back with.
     let mut pinned = Vec::new();
-    if version >= NEAT_FORMAT {
+    if version >= NEAT_FORMAT_NARROW {
         let n = count(&mut lines, "pinned")?;
         for _ in 0..n {
             let (line, text) = lines.next().ok_or(LoadError::Missing("pinned entry"))?;
@@ -1020,93 +1061,53 @@ mod tests {
     }
 
     #[test]
-    fn an_older_checkpoint_resumes_as_the_run_it_was() {
-        // Format 2 predates the ask allowance (E-15) and format 3 the win
-        // bonus (E-17). Those runs trained in the uncapped market and
-        // selected on position alone, so reading one back must restore what
-        // it had, and never today's training defaults: a resume that quietly
-        // changed the market or the objective would be a different run
-        // wearing the same directory.
+    fn a_checkpoint_wired_for_another_observation_refuses_to_resume() {
+        // Every format before 8 was written when the observation was 32 wide,
+        // and this build observes wider: the frontier senses (E-29) appended
+        // inputs, which renumbers the bias, output and hidden nodes. Reading
+        // an old population under today's numbering would not fail, it would
+        // evaluate scrambled networks with straight faces, so the refusal has
+        // to happen at the door. The format ladder below 8 is still decoded,
+        // for any future build whose width matches what those files hold;
+        // what this test pins down is that a mismatch is refused, not
+        // resumed, whichever rung it arrives on.
         let mut t = NeatTrainer::new(quick_neat(), 9);
         t.step();
         let modern = encode_neat(&t);
+        let width = format!("inputs {}\n", crate::neat::INPUTS);
         assert!(
-            modern.contains("\nask_cap 3\n"),
-            "the current format writes"
-        );
-        assert!(modern.contains("\nwin_bonus 1\n"), "both of them");
-        assert!(
-            modern.contains("\npayoff none\n"),
-            "and the table's absence"
+            modern.contains(&width),
+            "the current format writes its width"
         );
 
-        // Peel the format ladder one rung at a time, dropping the section
-        // each rung added.
-        let strip = |text: &str, key: &str| -> String {
-            let mut out = String::new();
-            let mut skip = 0usize;
-            for l in text.lines() {
-                let t = l.trim();
-                if skip > 0 && !t.is_empty() && !t.starts_with('#') {
-                    skip -= 1;
-                    continue;
-                }
-                if let Some(n) = t.strip_prefix(key) {
-                    skip = n.parse().expect("a section count");
-                    continue;
-                }
-                out.push_str(l);
-                out.push('\n');
-            }
-            out
-        };
+        // The same run as format 7 wrote it: version 7, no inputs line. Its
+        // genomes would be read as 32-wide, which this build is not.
+        let seven = modern
+            .replace("carranta-evolve 8", "carranta-evolve 7")
+            .replace(&width, "");
+        match decode_neat(&seven) {
+            Err(LoadError::Malformed { what, .. }) => assert!(
+                what.contains("wired for 32"),
+                "the refusal names the widths: {what}"
+            ),
+            Err(other) => panic!("a narrow checkpoint must refuse with the widths, got {other:?}"),
+            Ok(_) => panic!("a narrow checkpoint must refuse, not resume"),
+        }
 
-        // The same file as format 6 wrote it: version 6, no pinned section.
-        let six = strip(&modern, "pinned ").replace("carranta-evolve 7", "carranta-evolve 6");
-        let back = decode_neat(&six).expect("a format six file still reads");
-        assert!(back.pinned.is_empty(), "nothing pinned, as it was");
+        // A format 8 file whose width line disagrees outright.
+        let wrong = modern.replace(&width, "inputs 9999\n");
+        match decode_neat(&wrong) {
+            Err(LoadError::Malformed { what, .. }) => assert!(
+                what.contains("wired for 9999"),
+                "the refusal names the widths: {what}"
+            ),
+            Err(other) => panic!("a mismatched width must refuse with the widths, got {other:?}"),
+            Ok(_) => panic!("a mismatched width must refuse, not resume"),
+        }
 
-        // The same file as format 5 wrote it: version 5, no selection line
-        // and no weights section.
-        let five = strip(&six, "weights ")
-            .replace("carranta-evolve 6", "carranta-evolve 5")
-            .replace("selection classic\n", "");
-        let back = decode_neat(&five).expect("a format five file still reads");
-        assert!(
-            !back.config.margin && !back.config.halving && !back.config.rotate,
-            "classic evaluation, as it was"
-        );
-        assert_eq!(back.config.payoff, None, "and the table it really had");
-
-        // The same file as format 4 wrote it: version 4, no payoff line.
-        let four = five
-            .replace("carranta-evolve 5", "carranta-evolve 4")
-            .replace("payoff none\n", "");
-        let back = decode_neat(&four).expect("a format four file still reads");
-        assert_eq!(back.config.payoff, None, "no table, as it was");
-        assert_eq!(back.config.win_bonus, 1.0, "the bonus it really had");
-
-        // The same file as format 3 wrote it: version 3, no win_bonus line.
-        let three = four
-            .replace("carranta-evolve 4", "carranta-evolve 3")
-            .replace("win_bonus 1\n", "");
-        let back = decode_neat(&three).expect("a format three file still reads");
-        assert_eq!(back.config.win_bonus, 0.0, "position alone, as it was");
-        assert_eq!(back.config.ask_cap, 3, "and the cap it really had");
+        // And the current file itself reads straight back.
+        let back = decode_neat(&modern).expect("today's file resumes");
         assert_eq!(back.generation(), t.generation(), "the same run");
-
-        // And as format 2 wrote it: no ask_cap either.
-        let two = three
-            .replace("carranta-evolve 3", "carranta-evolve 2")
-            .replace("ask_cap 3\n", "");
-        let back = decode_neat(&two).expect("a format two file still reads");
-        assert_eq!(
-            back.config.ask_cap,
-            carranta_core::state::OFFERS_PER_TURN,
-            "an uncapped run resumes uncapped"
-        );
-        assert_eq!(back.config.win_bonus, 0.0);
-        assert_eq!(back.generation(), t.generation());
     }
 
     #[test]

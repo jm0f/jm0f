@@ -51,7 +51,11 @@ impl NetPolicy {
     }
 
     fn value(&self, state: &State, me: usize, pending: Pending) -> f64 {
-        self.net.eval(&features::encode(state, me, pending))
+        // A network trained before a sense was added reads the first slice,
+        // which is unchanged: features are appended, never reordered, so an
+        // old champion plays today exactly as it played the day it shipped.
+        let obs = features::encode(state, me, pending);
+        self.net.eval(&obs[..self.net.inputs().min(obs.len())])
     }
 
     /// Score one candidate action. Mirrors the heuristic's information rules;
@@ -569,6 +573,41 @@ mod tests {
             play(9, &mut ps)
         };
         assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn a_network_trained_before_a_sense_was_added_still_reads_its_own_slice() {
+        // Champions ship as files that carry their own input count, and the
+        // observation only ever grows by appending. A 32-input champion
+        // handed today's wider vector must read the first 32 entries and
+        // value the position exactly as a 32-wide evaluation would: the
+        // senses it predates do not exist for it.
+        let narrow = 32usize;
+        let out = Net::output_id(narrow);
+        let links: Vec<(u32, u32, f64)> = (0..narrow as u32)
+            .map(|i| (i, out, (i as f64 - 16.0) / 20.0))
+            .collect();
+        let old = Net::assemble(narrow, &links).expect("acyclic");
+        let policy = NetPolicy::new(old.clone(), 7);
+        let state = State::new(4, 11);
+        for me in 0..4 {
+            let obs = features::encode(&state, me, Pending::default());
+            assert_eq!(
+                policy.value(&state, me, Pending::default()),
+                old.eval(&obs[..narrow]),
+                "seat {me} reads the first {narrow} features and nothing else"
+            );
+        }
+        // And it plays whole games against modern-width policies without
+        // tripping over the seam.
+        let modern = Net::assemble(features::FEATURES, &[]).expect("a network");
+        let mut a = NetPolicy::new(old, 1);
+        let mut b = NetPolicy::new(modern.clone(), 2);
+        let mut c = NetPolicy::new(modern.clone(), 3);
+        let mut d = NetPolicy::new(modern, 4);
+        let mut ps: Vec<&mut dyn Policy> = vec![&mut a, &mut b, &mut c, &mut d];
+        let (_, actions) = play(6, &mut ps);
+        assert!(actions > 0);
     }
 
     #[test]
