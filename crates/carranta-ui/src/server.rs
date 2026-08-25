@@ -884,9 +884,20 @@ pub struct Server {
     /// table, chosen in its lobby.
     ///
     /// The house bot is not in here. It needs no file, is always available,
-    /// and is what a chair plays when nobody has said otherwise, which is the
-    /// right default for the one player every rating is measured against.
+    /// and is what a chair plays when no champion has been declared the
+    /// strongest, which is the one player every rating is measured against.
     champions: Vec<Champion>,
+    /// The generation of the champion an empty chair plays when nobody has
+    /// said otherwise: the strongest network this server holds.
+    ///
+    /// Declared, never inferred. Strength here is cyclic, so the generation
+    /// number is not a ranking: an exploiter can beat the reigning champion
+    /// head to head while collapsing against the heuristic field, and two runs
+    /// number their generations separately, so a later number can be the
+    /// weaker player. Which one is strongest is the answer to a measurement,
+    /// and a measurement is something a person did, so it is written down
+    /// rather than guessed at from the catalogue.
+    flagship: Option<u32>,
 }
 
 /// One trained network this server can put in a chair.
@@ -905,6 +916,26 @@ impl Champion {
     /// What a game file calls it, and what a lobby sends back to ask for it.
     pub fn agent(&self) -> String {
         format!("{}@{}", carranta_bot::TRAINED, self.generation)
+    }
+}
+
+/// What a person reads in the lobby for one champion.
+///
+/// The same name the analytics gives a seat, "Trained v311", so a bot chosen
+/// in the lobby and a bot named in a game report read as one player rather
+/// than two things that happen to be related. "Neat 6 · v462" when the file
+/// names its run, so two runs' shared generation numbers stop reading as one
+/// lineage.
+fn label_of(c: &Champion) -> String {
+    match &c.run {
+        Some(run) => {
+            let pretty = match run.strip_prefix("neat-") {
+                Some(n) => format!("Neat {n}"),
+                None => run.clone(),
+            };
+            format!("{pretty} · v{}", c.generation)
+        }
+        None => format!("Trained v{}", c.generation),
     }
 }
 
@@ -950,6 +981,7 @@ impl Server {
                 .map(|g| Box::new(g) as Box<dyn crate::signin::Exchange>),
             pending: crate::signin::Pending::new(),
             champions: Vec::new(),
+            flagship: None,
         }
     }
 
@@ -972,28 +1004,41 @@ impl Server {
         self
     }
 
-    /// Everything that can sit in a chair, house bot first, then champions
-    /// oldest to newest. The order the lobby offers them in, and the house
-    /// leads because it is the default and the yardstick.
+    /// Name the champion an empty chair plays when the link says nothing.
+    ///
+    /// Answers whether the generation is one this server actually holds, so a
+    /// caller can refuse to start rather than run on with a default that
+    /// silently fell back to the house bot: a server told to lead with its
+    /// strongest player and quietly not doing so is the kind of wrong nobody
+    /// notices until the games are already recorded.
+    #[must_use]
+    pub fn with_flagship(mut self, generation: u32) -> (Self, bool) {
+        let known = self.champions.iter().any(|c| c.generation == generation);
+        self.flagship = known.then_some(generation);
+        (self, known)
+    }
+
+    /// The champion an empty chair plays by default, when one is declared.
+    fn flagship(&self) -> Option<&Champion> {
+        let g = self.flagship?;
+        self.champions.iter().find(|c| c.generation == g)
+    }
+
+    /// Everything that can sit in a chair: the declared strongest champion
+    /// first when there is one, then the house bot, then the rest oldest to
+    /// newest. The order the lobby offers them in, and the default leads,
+    /// which is the house bot until a champion has been measured past it.
     pub fn roster(&self) -> Vec<(String, String)> {
-        let mut out = vec![(house_agent(), "House bot".to_string())];
+        let mut out = Vec::with_capacity(self.champions.len() + 1);
+        if let Some(f) = self.flagship() {
+            out.push((f.agent(), label_of(f)));
+        }
+        out.push((house_agent(), "House bot".to_string()));
         for c in &self.champions {
-            // The same name the analytics gives a seat, "trained v311", so a
-            // bot chosen in the lobby and a bot named in a game report read as
-            // one player rather than two things that happen to be related.
-            // "Neat 6 · v462" when the file names its run, so two runs'
-            // shared generation numbers stop reading as one lineage.
-            let label = match &c.run {
-                Some(run) => {
-                    let pretty = match run.strip_prefix("neat-") {
-                        Some(n) => format!("Neat {n}"),
-                        None => run.clone(),
-                    };
-                    format!("{pretty} · v{}", c.generation)
-                }
-                None => format!("Trained v{}", c.generation),
-            };
-            out.push((c.agent(), label));
+            if Some(c.generation) == self.flagship {
+                continue;
+            }
+            out.push((c.agent(), label_of(c)));
         }
         out
     }
@@ -1014,7 +1059,18 @@ impl Server {
         let (seats, _, _) = session.table();
         for seat in 0..seats {
             let asked = param(query, &format!("bot{seat}")).unwrap_or_default();
-            match self.champion(&decode(&asked)) {
+            // What the link asked for, and the strongest champion when it
+            // asked for nothing: whoever opens a table without choosing should
+            // meet the best player this server has, not the oldest one it
+            // kept. Silence is the only thing the default answers. A link that
+            // names the house bot means the house bot, and one that names
+            // something this server does not hold still falls back to it.
+            let choice = if asked.is_empty() {
+                self.flagship()
+            } else {
+                self.champion(&decode(&asked))
+            };
+            match choice {
                 Some(c) => session.seat_trained(seat, &c.net, c.generation),
                 None => session.seat_house(seat),
             }
@@ -3727,6 +3783,99 @@ mod tests {
             seen.len() > 1,
             "the champion sat in only seat {seen:?} across forty draws"
         );
+    }
+
+    #[test]
+    fn a_table_dealt_without_choosing_meets_the_strongest_champion() {
+        // The point of measuring a champion past the ones before it is that
+        // people play it. A lobby that keeps the answer and seats the house bot
+        // anyway has done the work and thrown it away.
+        let dir = std::env::temp_dir().join(format!("carranta-flag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let net = |spread: u32| {
+            let out = carranta_bot::net::Net::output_id(carranta_bot::features::FEATURES);
+            let links: Vec<(u32, u32, f64)> = (0..=carranta_bot::features::FEATURES as u32)
+                .map(|i| (i, out, ((i % spread) as f64 - 2.0) / 10.0))
+                .collect();
+            carranta_bot::net::Net::assemble(carranta_bot::features::FEATURES, &links)
+                .expect("acyclic")
+        };
+        let pair = vec![
+            Champion {
+                generation: 12,
+                net: net(5),
+                run: None,
+            },
+            Champion {
+                generation: 40,
+                net: net(9),
+                run: Some("neat-9".to_string()),
+            },
+        ];
+
+        // Without a declaration the house bot keeps the chair: a catalogue
+        // nobody has ranked is not a ranking.
+        let plain = Server::new(4, 3, TradeMode::Full, &dir).with_champions(pair.clone());
+        let id = plain.deal("", "keytest0000000000");
+        assert_eq!(
+            seat_agent(&plain, &id, 1),
+            "house@1",
+            "undeclared, so no champion is presumed strongest"
+        );
+
+        // Declared, and every chair nobody asked about plays it. Note the
+        // strongest is not the newest here: 12 is declared over 40, which is
+        // the case a catalogue ordering would get wrong.
+        let (server, known) = Server::new(4, 3, TradeMode::Full, &dir)
+            .with_champions(pair)
+            .with_flagship(12);
+        assert!(known, "12 is loaded");
+        let id = server.deal("", "keytest0000000000");
+        for seat in 1..4 {
+            assert_eq!(
+                seat_agent(&server, &id, seat),
+                "trained@12",
+                "seat {seat} was not asked about, so it plays the strongest"
+            );
+        }
+        // And a link that does ask still wins: the default is what to do when
+        // nobody said, not an override of somebody who did.
+        let asked = server.deal("bot1=house@1&bot2=trained@40", "keytest0000000000");
+        assert_eq!(seat_agent(&server, &asked, 1), "house@1", "asked for");
+        assert_eq!(seat_agent(&server, &asked, 2), "trained@40", "asked for");
+        assert_eq!(seat_agent(&server, &asked, 3), "trained@12", "not asked");
+
+        // The lobby offers it first and only once.
+        assert_eq!(
+            server
+                .roster()
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["trained@12", "house@1", "trained@40"],
+            "the default leads, and nobody is listed twice"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn declaring_a_champion_nobody_loaded_is_refused_rather_than_ignored() {
+        // Falling back to the house bot here would be the failure that hides:
+        // the server runs, the lobby looks right, and every table dealt
+        // without a choice quietly plays the wrong opponent.
+        let dir = std::env::temp_dir().join(format!("carranta-flagx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (server, known) = Server::new(4, 3, TradeMode::Full, &dir).with_flagship(1369);
+        assert!(
+            !known,
+            "no champion is loaded, so none can be the strongest"
+        );
+        assert_eq!(
+            server.roster().first().map(|(id, _)| id.as_str()),
+            Some("house@1"),
+            "and the roster does not claim one"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Who plays one seat of a table this server is holding.

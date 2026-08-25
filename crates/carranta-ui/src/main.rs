@@ -126,8 +126,9 @@ fn main() {
     // A directory that is not there is no champions, not a failure: an empty
     // catalogue is the state every build was in before the first one existed,
     // and a laptop running without one should still start.
-    if let Some(dir) = bots.filter(|d| d.exists()) {
-        match std::fs::read_dir(&dir) {
+    let bots = bots.filter(|d| d.exists());
+    if let Some(dir) = &bots {
+        match std::fs::read_dir(dir) {
             Ok(entries) => {
                 let mut found: Vec<_> = entries
                     .flatten()
@@ -176,6 +177,28 @@ fn main() {
             });
         }
         server = server.with_champions(champions);
+        // Which of them an empty chair plays. Declared in a file beside them
+        // rather than worked out from the catalogue, because the catalogue
+        // cannot answer it: the strongest champion is the answer to a
+        // measurement somebody ran, and a higher generation number is not the
+        // same claim. A named generation that is not loaded stops the server,
+        // for the same reason an unreadable champion file does.
+        if let Some(dir) = &bots {
+            if let Some(generation) = flagship_declared(&dir.join("FLAGSHIP")) {
+                let (s, known) = server.with_flagship(generation);
+                server = s;
+                if !known {
+                    eprintln!(
+                        "{} names trained@{generation} as the strongest champion, which is not \
+                         loaded: a table dealt without a choice would quietly get the house bot \
+                         instead",
+                        dir.join("FLAGSHIP").display()
+                    );
+                    std::process::exit(1);
+                }
+                println!("  empty chairs play trained@{generation}");
+            }
+        }
         let named: Vec<String> = server.roster().into_iter().map(|(id, _)| id).collect();
         println!("  chairs can be played by {}", named.join(", "));
     }
@@ -190,4 +213,65 @@ fn main() {
         println!("  played /{id}/analytics");
     }
     server.serve(listener);
+}
+
+/// The generation a `FLAGSHIP` file names, if the file is there and says one.
+///
+/// Blank lines and `#` comments are skipped, so the file can carry the
+/// measurement that earned the place beside the number that took it. No file
+/// is not an error: a catalogue nobody has ranked yet is the state every build
+/// was in before the first champion was measured past the house bot.
+fn flagship_declared(path: &std::path::Path) -> Option<u32> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|w| w.trim_start_matches("trained@").parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flagship_declared;
+
+    /// Write one throwaway file and read it back through the parser.
+    fn declared(body: &str) -> Option<u32> {
+        let path = std::env::temp_dir().join(format!(
+            "carranta-flagship-{}-{}",
+            std::process::id(),
+            body.len()
+        ));
+        std::fs::write(&path, body).expect("a temporary file");
+        let got = flagship_declared(&path);
+        let _ = std::fs::remove_file(&path);
+        got
+    }
+
+    #[test]
+    fn a_declaration_is_a_generation_under_whatever_earned_it() {
+        // The file is worth reading as well as parsing: the measurement that
+        // won the chair belongs beside the number that took it.
+        assert_eq!(declared("1369\n"), Some(1369));
+        assert_eq!(
+            declared("# vs 1526: -0.159, 55.5%\n\n1369\n"),
+            Some(1369),
+            "comments and blank lines carry the reasoning, not the answer"
+        );
+        assert_eq!(
+            declared("trained@1369\n"),
+            Some(1369),
+            "the agent spelling is the same claim"
+        );
+        // Nothing to say is not the same as saying something wrong: no file
+        // and an empty file both leave the house bot in the chair, while a
+        // file that says something unreadable is a mistake worth surfacing as
+        // absent rather than guessing a generation out of.
+        assert_eq!(declared("# nothing but a note\n"), None);
+        assert_eq!(declared(""), None);
+        assert_eq!(declared("strongest\n"), None);
+        assert_eq!(
+            flagship_declared(&std::env::temp_dir().join("carranta-flagship-absent")),
+            None
+        );
+    }
 }
