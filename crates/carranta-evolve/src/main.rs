@@ -367,7 +367,7 @@ dev_bought,militia,production\n";
 fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
     let b = &r.behaviour;
     format!(
-        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
         r.generation,
         r.trials,
         r.games,
@@ -377,6 +377,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
         r.species,
         r.champion_nodes,
         r.champion_genes,
+        r.champion_ears,
         r.gap,
         r.gap_ci,
         r.wins,
@@ -398,7 +399,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
 }
 
 const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
-species,champion_nodes,champion_genes,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
+species,champion_nodes,champion_genes,champion_ears,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
 /// Take one past champion out of a run and write it as a network file.
@@ -684,7 +685,7 @@ fn run_neat(args: Args) {
     println!("  a negative gap and a win share above 50% are ahead, and either");
     println!("  one inside its interval has not been shown\n");
     println!(
-        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes        gap (E-16)        wins (E-17)   trades   secs"
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears        gap (E-16)        wins (E-17)   trades   secs"
     );
 
     let started = std::time::Instant::now();
@@ -705,7 +706,7 @@ fn run_neat(args: Args) {
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
         println!(
-            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
             r.generation,
             r.trials,
             r.games,
@@ -716,6 +717,7 @@ fn run_neat(args: Args) {
             r.species,
             r.champion_nodes,
             r.champion_genes,
+            r.champion_ears,
             r.gap,
             r.gap_ci,
             100.0 * r.wins,

@@ -159,6 +159,12 @@ pub struct NeatReport {
     pub species: usize,
     pub champion_nodes: usize,
     pub champion_genes: usize,
+    /// How many of the observation's senses the champion actually listens
+    /// to: distinct inputs with at least one enabled outgoing gene. Under
+    /// the sparse genesis (E-34) this starts near the spine and grows as
+    /// crossover wakes dormant senses that earn their keep, which makes the
+    /// annealing visible rather than assumed.
+    pub champion_ears: usize,
     pub behaviour: Behaviour,
     pub seconds: f64,
 }
@@ -949,6 +955,17 @@ impl NeatTrainer {
                 nodes.len()
             },
             champion_genes: champion_genome.genes.len(),
+            champion_ears: {
+                let mut ears: Vec<u32> = champion_genome
+                    .genes
+                    .iter()
+                    .filter(|g| g.enabled && (g.from as usize) < crate::neat::INPUTS)
+                    .map(|g| g.from)
+                    .collect();
+                ears.sort_unstable();
+                ears.dedup();
+                ears.len()
+            },
             behaviour: sampler.finish(),
             seconds: started.elapsed().as_secs_f64(),
         }
