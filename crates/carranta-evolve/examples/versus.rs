@@ -74,6 +74,8 @@ fn main() {
     let mut deep_against = false;
     let mut flat_market_champion = false;
     let mut flat_market_against = false;
+    let mut flat_setup_champion = false;
+    let mut flat_setup_against = false;
     let mut rounds = 500usize;
     let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut seed = 90_210u64;
@@ -99,6 +101,8 @@ fn main() {
             // measured on its own.
             "--flat-market" => flat_market_champion = true,
             "--flat-market-against" => flat_market_against = true,
+            "--flat-setup" => flat_setup_champion = true,
+            "--flat-setup-against" => flat_setup_against = true,
             "--rounds" => rounds = value().parse().unwrap_or(rounds),
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
@@ -167,20 +171,31 @@ fn main() {
         },
         ..Arena::default()
     };
-    let deepen = |b: Brain, deep: bool, flat: bool| match (b, deep) {
+    // A deep seat plays the full deployment search, setup rollout included
+    // (E-31); --flat-setup keeps the two-ply beam but drops the rollout,
+    // which is the ablation that measures what planning the setup is worth.
+    let deepen = |b: Brain, deep: bool, flat: bool, flat_setup: bool| match (b, deep) {
         (Brain::Net(n), true) if flat => Brain::DeepFlatMarket(n),
-        (Brain::Net(n), true) => Brain::Deep(n),
+        (Brain::Net(n), true) if flat_setup => Brain::Deep(n),
+        (Brain::Net(n), true) => Brain::DeepPlanned(n),
         (b, _) => b,
     };
     let (them, them_name) = match &opponent {
         Some((net, generation)) => (
-            deepen(Brain::Net(net.clone()), deep_against, flat_market_against),
+            deepen(
+                Brain::Net(net.clone()),
+                deep_against,
+                flat_market_against,
+                flat_setup_against,
+            ),
             format!(
                 "trained@{generation}{}",
                 if !deep_against {
                     ""
                 } else if flat_market_against {
                     " (deep, flat market)"
+                } else if flat_setup_against {
+                    " (deep, flat setup)"
                 } else {
                     " (deep)"
                 }
@@ -190,7 +205,12 @@ fn main() {
     };
     let roster = [
         them,
-        deepen(Brain::Net(net), deep_champion, flat_market_champion),
+        deepen(
+            Brain::Net(net),
+            deep_champion,
+            flat_market_champion,
+            flat_setup_champion,
+        ),
     ];
 
     let seatings: &[[u32; 4]] = if solo { &SOLO } else { &ARRANGEMENTS };

@@ -24,7 +24,7 @@
 
 use carranta_core::action::{Action, DEV_COST};
 use carranta_core::rng::{Rng, Stream};
-use carranta_core::state::State;
+use carranta_core::state::{Phase, State};
 
 use crate::Policy;
 use crate::features::{self, Pending};
@@ -242,8 +242,14 @@ pub struct DeepNetPolicy {
     /// Whether market answers get the second ply too. On by default; the
     /// flat-market variant exists so the difference can be measured.
     deep_market: bool,
+    /// Whether setup placements are planned by rolling the whole setup out
+    /// (E-31). On by default; the flat-setup variant exists both to measure
+    /// the difference and because training's inner loop cannot afford it.
+    plan_setup: bool,
     /// Scratch for the second ply's legal actions, reused per expansion.
     buf: Vec<Action>,
+    /// Scratch for the setup rollout's legal actions, one level deeper.
+    roll_buf: Vec<Action>,
     scored: Vec<(f64, usize)>,
 }
 
@@ -252,13 +258,20 @@ pub struct DeepNetPolicy {
 /// millisecond; the long tail is proposals, which are never expanded.
 const BEAM: usize = 8;
 
+/// How many placement candidates the setup rollout follows to the end of the
+/// setup. Wider than the ordinary beam because a placement is the least
+/// reversible decision in the game and the phase happens four times a seat.
+const SETUP_BEAM: usize = 12;
+
 impl DeepNetPolicy {
     pub fn new(net: Net, seed: u64) -> Self {
         DeepNetPolicy {
             inner: NetPolicy::new(net, seed),
             beam: BEAM,
             deep_market: true,
+            plan_setup: true,
             buf: Vec::new(),
+            roll_buf: Vec::new(),
             scored: Vec::new(),
         }
     }
@@ -270,6 +283,117 @@ impl DeepNetPolicy {
             deep_market: false,
             ..Self::new(net, seed)
         }
+    }
+
+    /// The same search without the setup rollout: placements fall back to
+    /// the two-ply beam like every other move. Training's inner loop plays
+    /// this, because a rollout per placement across tens of thousands of
+    /// games buys accuracy where selection does not need it; and the
+    /// difference between the two is a thing to measure, not to assume.
+    pub fn flat_setup(net: Net, seed: u64) -> Self {
+        DeepNetPolicy {
+            plan_setup: false,
+            ..Self::new(net, seed)
+        }
+    }
+
+    /// Plan a setup placement by playing the setup out (E-31).
+    ///
+    /// Setup is the one stretch of the game with no chance in it: no dice,
+    /// no draws, and the starting resources of the second settlement follow
+    /// from the board. What remains between my placements is other seats'
+    /// choices, so the lookahead is a rollout under a model of them, and the
+    /// model is the standard one this search already rests on: everybody
+    /// places greedily by the same evaluation. Under that model one rollout
+    /// per candidate is exact, which is why this is sound here and nowhere
+    /// else: everywhere the dice are live, a single line through the future
+    /// is a sample; here it is the future.
+    ///
+    /// So: beam my candidates by their one-ply scores, roll each forward,
+    /// every seat placing greedily, until the setup ends, and judge my
+    /// position then. Variable depth, exactly the phase's shape: about seven
+    /// plies for the first settlement, none for the last road. The question
+    /// it answers is the one the frontier senses can only estimate: not
+    /// "could somebody take that spot" but "given everything better they
+    /// could do instead, will they".
+    fn setup_plan(&mut self, state: &State, legal: &[Action], me: usize) -> Action {
+        // Trades do not exist during setup, so the decision context is
+        // inert; the one-ply scores are plain applied-position values.
+        let ctx = Decision {
+            standing: [0.0; carranta_core::state::MAX_PLAYERS],
+            asked: 0.0,
+        };
+        self.scored.clear();
+        for (i, &a) in legal.iter().enumerate() {
+            self.scored.push((self.inner.score(state, me, a, &ctx), i));
+        }
+        let mut scored = std::mem::take(&mut self.scored);
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+        // Every beamed candidate is rolled to the end of the setup.
+        for slot in scored.iter_mut().take(SETUP_BEAM) {
+            let (one_ply, i) = *slot;
+            if one_ply == f64::NEG_INFINITY {
+                continue;
+            }
+            let mut s2 = *state;
+            if s2.apply(legal[i]).is_err() {
+                slot.0 = f64::NEG_INFINITY;
+                continue;
+            }
+            // Greedy placements for whoever is to act, mine included: my
+            // choice under test is the root's, and the rollout's job is what
+            // follows from it. Ties inside the rollout break on the first
+            // best, so a replayed game replays.
+            let mut steps = 0;
+            while matches!(
+                s2.phase,
+                Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+            ) {
+                steps += 1;
+                debug_assert!(steps <= 32, "a setup ends within sixteen placements");
+                if steps > 32 {
+                    break;
+                }
+                let seat = s2.decider() as usize;
+                let mut moves = std::mem::take(&mut self.roll_buf);
+                moves.clear();
+                s2.legal_into(&mut moves);
+                let mut best = f64::NEG_INFINITY;
+                let mut pick = None;
+                for &a in &moves {
+                    let v = self.inner.score(&s2, seat, a, &ctx);
+                    if v > best {
+                        best = v;
+                        pick = Some(a);
+                    }
+                }
+                self.roll_buf = moves;
+                let Some(a) = pick else { break };
+                if s2.apply(a).is_err() {
+                    break;
+                }
+            }
+            slot.0 = self.inner.value(&s2, me, Pending::default());
+        }
+        // Reservoir over exact ties, as `choose` does everywhere else.
+        let mut best = f64::NEG_INFINITY;
+        let mut ties = 0u32;
+        let mut chosen = legal[0];
+        for &(s, i) in &scored {
+            if s > best {
+                best = s;
+                ties = 1;
+                chosen = legal[i];
+            } else if s == best {
+                ties += 1;
+                if self.inner.rng.below(Stream::Dice, ties) == 0 {
+                    chosen = legal[i];
+                }
+            }
+        }
+        self.scored = scored;
+        chosen
     }
 
     /// Whether this candidate's true `apply` reveals no chance outcome, so
@@ -329,6 +453,14 @@ impl Policy for DeepNetPolicy {
     fn choose(&mut self, state: &State, legal: &[Action]) -> Action {
         debug_assert!(!legal.is_empty());
         let me = state.decider() as usize;
+        if self.plan_setup
+            && matches!(
+                state.phase,
+                Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+            )
+        {
+            return self.setup_plan(state, legal, me);
+        }
         let ctx = Decision {
             standing: core::array::from_fn(|q| {
                 if q < state.players as usize {
@@ -491,6 +623,54 @@ mod tests {
             _ => None,
         };
         (winner, actions)
+    }
+
+    #[test]
+    fn the_setup_planner_is_deterministic_and_not_the_flat_search_renamed() {
+        // The rollout is deterministic by construction: no dice in the
+        // phase, greedy ties broken first-best. Two policies on one seed must
+        // place identically, and the planner must sometimes place differently
+        // from the flat two-ply search, or the rollout is decoration.
+        let net = minimal_net(5);
+        let mut disagreed = 0;
+        for seed in 0..8u64 {
+            let fresh = || State::new(4, seed).with_trade_mode(TradeMode::Full);
+            let mut buf = Vec::new();
+            // Twins walk one setup and must never differ.
+            let mut p1 = DeepNetPolicy::new(net.clone(), 21);
+            let mut p2 = DeepNetPolicy::new(net.clone(), 21);
+            let mut flat = DeepNetPolicy::flat_setup(net.clone(), 21);
+            let mut state = fresh();
+            while matches!(
+                state.phase,
+                Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+            ) {
+                state.legal_into(&mut buf);
+                let a = p1.choose(&state, &buf);
+                assert_eq!(
+                    a,
+                    p2.choose(&state, &buf),
+                    "twin planners split on seed {seed}"
+                );
+                assert!(buf.contains(&a), "the planner picked a legal placement");
+                if a != flat.choose(&state, &buf) {
+                    disagreed += 1;
+                }
+                state.apply(a).expect("its own pick applies");
+            }
+            // The rollout ended the setup: the game stands at the first roll.
+            assert!(
+                !matches!(
+                    state.phase,
+                    Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+                ),
+                "setup completed under the planner"
+            );
+        }
+        assert!(
+            disagreed > 0,
+            "the planner never once placed differently from the flat search"
+        );
     }
 
     #[test]
