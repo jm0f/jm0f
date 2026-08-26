@@ -26,6 +26,12 @@ use std::collections::HashMap;
 /// Inputs every network reads. Fixed by the observation contract.
 pub const INPUTS: usize = FEATURES;
 
+/// How much of the observation generation zero listens to (E-34): the first
+/// 38 senses, the width whose fully wired birth produced the fastest start
+/// ever recorded (anchor parity at generation 7). Everything past it is born
+/// present and asleep; see [`NeatGenome::minimal`].
+pub const GENESIS_SPINE: usize = 38;
+
 /// One connection gene.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Gene {
@@ -183,23 +189,51 @@ fn chance(rng: &mut Rng, p: f64) -> bool {
 }
 
 impl NeatGenome {
-    /// The minimal starting network: every input and the bias wired straight
-    /// to the single output, weights small and random, no hidden nodes.
+    /// The starting network: every input and the bias carried as a gene to
+    /// the single output, weights small and random, no hidden nodes, and
+    /// only the proven spine of the observation switched on (E-34).
     ///
     /// Innovation numbers for these genes are fixed by position, `0..=INPUTS`,
     /// so every genome in every run agrees on them without consulting the
-    /// history. That is what makes generation zero one species.
+    /// history. That is what makes generation zero one species: the flags
+    /// differ between genomes, the genes do not, and compatibility reads
+    /// genes.
+    ///
+    /// The sparse start is FS-NEAT's lesson sized to this observation's
+    /// history. A fully wired birth at the full width buries the signal
+    /// under scores of random weights, which is measurable here: parity
+    /// with the anchor came at generation 7 for the 38-input run and 24 for
+    /// the 78-input one, same senses plus dilution. So generation zero
+    /// listens to the first [`GENESIS_SPINE`] senses, the slice that carried
+    /// the fastest start ever recorded, plus a few random others per genome
+    /// so selection hears about the rest from the first deal. Nothing is
+    /// lost: the dormant genes are present, their weights keep evolving,
+    /// crossover wakes a sleeping gene a quarter of the time, and a wake
+    /// that helps is kept by the only judge that matters. Density anneals
+    /// back in as the population earns it, which is the schedule the wide
+    /// runs needed and never had.
     pub fn minimal(rng: &mut Rng) -> NeatGenome {
         let out = Net::output_id(INPUTS);
-        let genes = (0..=INPUTS as u32)
+        let bias = Net::bias_id(INPUTS) as u32;
+        let spine = GENESIS_SPINE.min(INPUTS) as u32;
+        let mut genes: Vec<Gene> = (0..=INPUTS as u32)
             .map(|i| Gene {
                 innov: i,
                 from: i,
                 to: out,
                 weight: uniform(rng),
-                enabled: true,
+                enabled: i < spine || i == bias,
             })
             .collect();
+        // A few ears beyond the spine, different ones per genome: across a
+        // population every dormant sense is born awake somewhere.
+        let dormant = INPUTS as u32 - spine;
+        for _ in 0..3 {
+            if dormant > 0 {
+                let pick = spine + rng.below(Stream::Board, dormant);
+                genes[pick as usize].enabled = true;
+            }
+        }
         NeatGenome { genes }
     }
 
@@ -568,6 +602,46 @@ mod tests {
     }
 
     #[test]
+    fn generation_zero_listens_to_the_spine_and_carries_the_rest_asleep() {
+        // The sparse genesis (E-34): every sense present as a gene, the
+        // proven spine and the bias awake, a few random ears beyond it, and
+        // the same gene set in every genome so generation zero stays one
+        // species whatever the flags say.
+        let mut r = rng(7);
+        let a = NeatGenome::minimal(&mut r);
+        let b = NeatGenome::minimal(&mut r);
+        assert_eq!(a.genes.len(), INPUTS + 1, "every input and the bias");
+        assert_eq!(
+            a.genes.iter().map(|g| g.innov).collect::<Vec<_>>(),
+            b.genes.iter().map(|g| g.innov).collect::<Vec<_>>(),
+            "identical gene sets, whatever is awake"
+        );
+        let bias = Net::bias_id(INPUTS) as u32;
+        for g in &a.genes {
+            if g.innov < GENESIS_SPINE as u32 || g.innov == bias {
+                assert!(g.enabled, "the spine is awake: {}", g.innov);
+            }
+        }
+        let awake_beyond = |g: &NeatGenome| {
+            g.genes
+                .iter()
+                .filter(|g| g.enabled && g.innov >= GENESIS_SPINE as u32 && g.innov != bias)
+                .count()
+        };
+        assert!(awake_beyond(&a) >= 1, "a few ears past the spine");
+        assert!(awake_beyond(&a) <= 3);
+        // And the ears differ between genomes often enough that a population
+        // hears every sense somewhere.
+        let mut r2 = rng(7);
+        let twin = NeatGenome::minimal(&mut r2);
+        assert_eq!(
+            twin.genes.iter().map(|g| g.enabled).collect::<Vec<_>>(),
+            a.genes.iter().map(|g| g.enabled).collect::<Vec<_>>(),
+            "the same rng births the same genome"
+        );
+    }
+
+    #[test]
     fn splitting_a_gene_keeps_the_computation_and_grows_the_topology() {
         let mut r = rng(2);
         let mut inn = Innovations::new();
@@ -583,7 +657,20 @@ mod tests {
             }
         }
         let m = split.expect("a split happens within 500 tries");
-        let disabled: Vec<&Gene> = m.genes.iter().filter(|g| !g.enabled).collect();
+        // Genesis carries dormant genes (E-34), so the split's contribution
+        // is one *more* disabled gene: the one that was awake before and is
+        // bridged now.
+        let was_disabled: Vec<u32> = g
+            .genes
+            .iter()
+            .filter(|g| !g.enabled)
+            .map(|g| g.innov)
+            .collect();
+        let disabled: Vec<&Gene> = m
+            .genes
+            .iter()
+            .filter(|g| !g.enabled && !was_disabled.contains(&g.innov))
+            .collect();
         assert_eq!(disabled.len(), 1, "the split gene is disabled, not gone");
         let old = disabled[0];
         let incoming = m

@@ -1039,10 +1039,14 @@ mod tests {
         }
         let roster = t.roster();
         assert_eq!(roster.len(), 3, "one champion enrolled per generation");
-        // Best rated first, and the anchor is not in the list: it is the
-        // heuristic, and has no network to write down.
+        // Best rated first, conservatively (mu less three sigma, the order
+        // the ladder actually stands on), and the anchor is not in the list:
+        // it is the heuristic, and has no network to write down.
         for pair in roster.windows(2) {
-            assert!(pair[0].2 >= pair[1].2, "sorted by rating");
+            assert!(
+                pair[0].2 - 3.0 * pair[0].3 >= pair[1].2 - 3.0 * pair[1].3,
+                "sorted by conservative rating"
+            );
         }
 
         // By generation, by label, and by rating, all naming a real network.
