@@ -939,7 +939,12 @@ impl State {
     }
 
     /// Pay out a roll, applying the shortage rule (R-5.6).
-    fn distribute(&mut self, roll: u8) {
+    /// Pay out one roll's production (R-5.4 to R-5.6).
+    ///
+    /// Public so an evaluation pricing a roll before it happens applies the
+    /// same payout the engine will, shortage rule included: the two must not
+    /// drift, for the same reason `production` is public.
+    pub fn distribute(&mut self, roll: u8) {
         let owed = self.production(roll);
         let seats = self.players as usize;
         for r in 0..5 {

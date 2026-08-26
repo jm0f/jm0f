@@ -96,6 +96,9 @@ pub enum Brain {
     DeepPlanned(Net),
     /// The ablation of the deep market answer: deep moves, one-ply accepts.
     DeepFlatMarket(Net),
+    /// The ablation of the priced roll (E-32): the full deployment search
+    /// with rolling valued as the standing position, the way it always was.
+    DeepFlatRoll(Net),
 }
 
 /// One network game to play: a board seed and four roster indices.
@@ -324,6 +327,9 @@ fn net_seats(arena: &Arena, roster: &[Brain], job: &NetJob) -> Vec<Box<dyn Polic
                 }
                 Brain::DeepPlanned(n) => {
                     Box::new(DeepNetPolicy::new(n.clone(), seed)) as Box<dyn Policy>
+                }
+                Brain::DeepFlatRoll(n) => {
+                    Box::new(DeepNetPolicy::flat_roll(n.clone(), seed)) as Box<dyn Policy>
                 }
                 Brain::DeepFlatMarket(n) => {
                     Box::new(DeepNetPolicy::flat_market(n.clone(), seed)) as Box<dyn Policy>

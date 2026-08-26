@@ -246,6 +246,10 @@ pub struct DeepNetPolicy {
     /// (E-31). On by default; the flat-setup variant exists both to measure
     /// the difference and because training's inner loop cannot afford it.
     plan_setup: bool,
+    /// Whether rolling is priced by the dice distribution (E-32) rather than
+    /// as the standing position. On by default; the flat-roll variant is the
+    /// ablation that measures the difference.
+    expect_roll: bool,
     /// Scratch for the second ply's legal actions, reused per expansion.
     buf: Vec<Action>,
     /// Scratch for the setup rollout's legal actions, one level deeper.
@@ -270,6 +274,7 @@ impl DeepNetPolicy {
             beam: BEAM,
             deep_market: true,
             plan_setup: true,
+            expect_roll: true,
             buf: Vec::new(),
             roll_buf: Vec::new(),
             scored: Vec::new(),
@@ -295,6 +300,50 @@ impl DeepNetPolicy {
             plan_setup: false,
             ..Self::new(net, seed)
         }
+    }
+
+    /// The same search with rolling priced as the standing position, the way
+    /// it always was. Kept so the worth of pricing the dice can be measured.
+    pub fn flat_roll(net: Net, seed: u64) -> Self {
+        DeepNetPolicy {
+            expect_roll: false,
+            ..Self::new(net, seed)
+        }
+    }
+
+    /// The expected value of rolling (E-32).
+    ///
+    /// The one chance node whose distribution is fully known: eleven sums,
+    /// fixed weights, and every non-7 payout public and deterministic under
+    /// the engine's own `distribute`, shortage rule included. So rolling is
+    /// worth the weighted average of the eleven positions it can produce,
+    /// not the position it is rolled from. A 7's aftermath is decisions,
+    /// discards this seat cannot see and a robber it will place later, so
+    /// that branch keeps the standing value, conservative and fair.
+    ///
+    /// This is what makes the pre-roll choice honest: with the robber parked
+    /// on this seat's best hex, rolling now prices in the production it will
+    /// not receive, and playing the militia first finally reads as the
+    /// better line for the reason it is one.
+    fn roll_expectation(&self, state: &State, me: usize) -> f64 {
+        let standing = self.inner.value(state, me, Pending::default());
+        let mut ev = 0.0;
+        for sum in 2..=12u8 {
+            let ways = (6 - (7i32 - sum as i32).abs()) as f64;
+            let v = if sum == 7 {
+                standing
+            } else {
+                let mut next = *state;
+                next.distribute(sum);
+                // The dice read as thrown, so the observation's turn clock
+                // agrees with the position the payout claims to be.
+                let a = sum.saturating_sub(6).max(1);
+                next.dice = [a, sum - a];
+                self.inner.value(&next, me, Pending::default())
+            };
+            ev += ways / 36.0 * v;
+        }
+        ev
     }
 
     /// Plan a setup placement by playing the setup out (E-31).
@@ -475,10 +524,17 @@ impl Policy for DeepNetPolicy {
                 self.inner.value(&asked, me, Pending::default())
             },
         };
-        // Every candidate at one ply first.
+        // Every candidate at one ply first. Rolling is the exception (E-32):
+        // its one-ply score is the expectation over the dice, not the
+        // standing position.
         self.scored.clear();
         for (i, &a) in legal.iter().enumerate() {
-            self.scored.push((self.inner.score(state, me, a, &ctx), i));
+            let s = if self.expect_roll && matches!(a, Action::Roll) {
+                self.roll_expectation(state, me)
+            } else {
+                self.inner.score(state, me, a, &ctx)
+            };
+            self.scored.push((s, i));
         }
         let mut scored = std::mem::take(&mut self.scored);
         // The strongest expandable candidates go a ply deeper. Sorting the
@@ -623,6 +679,71 @@ mod tests {
             _ => None,
         };
         (winner, actions)
+    }
+
+    #[test]
+    fn rolling_is_worth_what_the_dice_say_it_is() {
+        // A net that wants cards: positive weight on every hand count,
+        // nothing else. Under it the expectation over the dice must price a
+        // roll above the standing position whenever production is coming,
+        // and the pre-roll choice must turn on where the robber sits.
+        let out = Net::output_id(features::FEATURES);
+        let links: Vec<(u32, u32, f64)> = (8..13u32).map(|i| (i, out, 1.0)).collect();
+        let net = Net::assemble(features::FEATURES, &links).expect("acyclic");
+
+        // A seat with production and a playable militia, at the pre-roll.
+        let mut state = State::new(4, 3);
+        let hex = (0..carranta_core::topology::HEX_COUNT as u8)
+            .find(|&h| {
+                state.number[h as usize] != 0 && state.terrain[h as usize].yields().is_some()
+            })
+            .expect("a producing hex");
+        let corner =
+            carranta_core::topology::iter_vertices(carranta_core::topology::hex_vertices(hex))
+                .next()
+                .expect("a corner");
+        state.settlements[0] |= carranta_core::topology::vertex_bit(corner);
+        state.dev_held[0][0] = 1; // a militia, not fresh, so it is playable
+        state.phase = Phase::PreRoll;
+        state.to_act = 0;
+        state.dice = [0, 0];
+        // The robber parked away from my hex: rolling should read better
+        // than playing the card first, because the yield is coming.
+        state.robber = (0..carranta_core::topology::HEX_COUNT as u8)
+            .find(|&h| h != hex && state.terrain[h as usize].yields().is_none())
+            .unwrap_or((hex + 1) % carranta_core::topology::HEX_COUNT as u8);
+
+        let mut legal = Vec::new();
+        state.legal_into(&mut legal);
+        assert!(
+            legal.contains(&Action::Roll),
+            "the pre-roll offers the dice"
+        );
+        assert!(
+            legal.len() > 1,
+            "the militia is on the table too: {legal:?}"
+        );
+        let mut planner = DeepNetPolicy::new(net.clone(), 5);
+        assert_eq!(
+            planner.choose(&state, &legal),
+            Action::Roll,
+            "with the robber elsewhere, the yield is worth rolling for"
+        );
+
+        // The same seat with the robber squatting on its only hex: the
+        // expectation collapses to the standing value, and the flat and
+        // priced scores agree, so nothing regresses where nothing produces.
+        let mut squatted = state;
+        squatted.robber = hex;
+        let mut a = DeepNetPolicy::new(net.clone(), 5);
+        let mut b = DeepNetPolicy::flat_roll(net, 5);
+        let mut legal2 = Vec::new();
+        squatted.legal_into(&mut legal2);
+        assert_eq!(
+            a.choose(&squatted, &legal2),
+            b.choose(&squatted, &legal2),
+            "no production anywhere means the dice price at the standing value"
+        );
     }
 
     #[test]

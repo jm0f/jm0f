@@ -76,6 +76,8 @@ fn main() {
     let mut flat_market_against = false;
     let mut flat_setup_champion = false;
     let mut flat_setup_against = false;
+    let mut flat_roll_champion = false;
+    let mut flat_roll_against = false;
     let mut rounds = 500usize;
     let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut seed = 90_210u64;
@@ -103,6 +105,8 @@ fn main() {
             "--flat-market-against" => flat_market_against = true,
             "--flat-setup" => flat_setup_champion = true,
             "--flat-setup-against" => flat_setup_against = true,
+            "--flat-roll" => flat_roll_champion = true,
+            "--flat-roll-against" => flat_roll_against = true,
             "--rounds" => rounds = value().parse().unwrap_or(rounds),
             "--threads" => threads = value().parse().unwrap_or(threads),
             "--seed" => seed = value().parse().unwrap_or(seed),
@@ -174,12 +178,14 @@ fn main() {
     // A deep seat plays the full deployment search, setup rollout included
     // (E-31); --flat-setup keeps the two-ply beam but drops the rollout,
     // which is the ablation that measures what planning the setup is worth.
-    let deepen = |b: Brain, deep: bool, flat: bool, flat_setup: bool| match (b, deep) {
-        (Brain::Net(n), true) if flat => Brain::DeepFlatMarket(n),
-        (Brain::Net(n), true) if flat_setup => Brain::Deep(n),
-        (Brain::Net(n), true) => Brain::DeepPlanned(n),
-        (b, _) => b,
-    };
+    let deepen =
+        |b: Brain, deep: bool, flat: bool, flat_setup: bool, flat_roll: bool| match (b, deep) {
+            (Brain::Net(n), true) if flat => Brain::DeepFlatMarket(n),
+            (Brain::Net(n), true) if flat_setup => Brain::Deep(n),
+            (Brain::Net(n), true) if flat_roll => Brain::DeepFlatRoll(n),
+            (Brain::Net(n), true) => Brain::DeepPlanned(n),
+            (b, _) => b,
+        };
     let (them, them_name) = match &opponent {
         Some((net, generation)) => (
             deepen(
@@ -187,6 +193,7 @@ fn main() {
                 deep_against,
                 flat_market_against,
                 flat_setup_against,
+                flat_roll_against,
             ),
             format!(
                 "trained@{generation}{}",
@@ -196,6 +203,8 @@ fn main() {
                     " (deep, flat market)"
                 } else if flat_setup_against {
                     " (deep, flat setup)"
+                } else if flat_roll_against {
+                    " (deep, flat roll)"
                 } else {
                     " (deep)"
                 }
@@ -210,6 +219,7 @@ fn main() {
             deep_champion,
             flat_market_champion,
             flat_setup_champion,
+            flat_roll_champion,
         ),
     ];
 
