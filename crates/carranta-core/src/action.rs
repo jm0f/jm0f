@@ -366,6 +366,53 @@ impl State {
     }
 
     fn apply_inner(&mut self, action: Action, src: Source, out: &mut Resolved) -> Result {
+        // The public record (E-33): every hand change an action makes is
+        // folded into the table's shared belief afterwards, from the hand
+        // diff, which is exactly what the table saw, with one exception. A
+        // robber's steal moves a card only two seats see, so its diff would
+        // leak the identity; it is folded in as the expectation spread it
+        // actually is to everyone else. The belief update happens on the
+        // applied state, so a search probing a candidate carries its beliefs
+        // through the probe.
+        let before = self.hand;
+        self.apply_dispatch(action, src, out)?;
+        let stolen = matches!(
+            action,
+            Action::MoveRobber {
+                victim: Some(_),
+                ..
+            }
+        );
+        let mut thief_victim: Option<(usize, usize, u32)> = None;
+        for q in 0..self.players as usize {
+            let was: i32 = before[q].iter().map(|&n| n as i32).sum();
+            let now: i32 = self.hand[q].iter().map(|&n| n as i32).sum();
+            if stolen && now == was - 1 {
+                let t = thief_victim.map_or(usize::MAX, |(t, _, _)| t);
+                thief_victim = Some((t, q, was as u32));
+            } else if stolen && now == was + 1 {
+                let (v, sz) = thief_victim.map_or((usize::MAX, 0), |(_, v, sz)| (v, sz));
+                thief_victim = Some((q, v, sz));
+            }
+        }
+        match thief_victim {
+            Some((t, v, size)) if t != usize::MAX && v != usize::MAX => {
+                self.counting.steal(t, v, size);
+            }
+            _ => {
+                for q in 0..self.players as usize {
+                    let delta: [i32; 5] =
+                        core::array::from_fn(|r| self.hand[q][r] as i32 - before[q][r] as i32);
+                    if delta != [0; 5] {
+                        self.counting.public(q, delta);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_dispatch(&mut self, action: Action, src: Source, out: &mut Resolved) -> Result {
         let p = self.to_act as usize;
         match (self.phase, action) {
             (Phase::GameOver { .. }, _) => Err(Illegal::GameOver),
@@ -1101,6 +1148,16 @@ impl State {
                 "resource {r} leaked"
             );
         }
+        // The public record's one promise (E-33): each seat's belief row sums
+        // to its true hand size, exactly. Sizes are public, so keeping this
+        // is what makes the record read as a hand and not a drift.
+        for p in 0..self.players as usize {
+            assert_eq!(
+                self.counting.expected[p].iter().sum::<u32>(),
+                self.hand_size(p) * crate::counting::SCALE,
+                "seat {p}'s public record drifted from its hand size"
+            );
+        }
         let mut dev_out = 0u32;
         for p in 0..self.players as usize {
             dev_out += self.dev_count(p) + self.militia_played[p] as u32;
@@ -1419,6 +1476,7 @@ mod tests {
         s.hand[1][Resource::Ore as usize] = 3;
         s.hand[2][Resource::Ore as usize] = 2;
         s.hand[3][Resource::Wood as usize] = 4;
+        s.assume_hands_public();
         s.supply[Resource::Ore as usize] = 14;
         s.supply[Resource::Wood as usize] = 15;
 
@@ -1591,11 +1649,13 @@ mod tests {
         c
     }
 
-    /// Deal cards from the supply, so conservation still holds.
+    /// Deal cards from the supply, so conservation still holds. The whole
+    /// table watched it happen, so the public record hears about it too.
     fn deal(s: &mut State, seat: usize, cards: [u8; 5]) {
         for (r, &n) in cards.iter().enumerate() {
             s.hand[seat][r] += n;
             s.supply[r] -= n;
+            s.counting.expected[seat][r] += n as u32 * crate::counting::SCALE;
         }
     }
 
@@ -1835,6 +1895,7 @@ mod tests {
         s.settlements[0] |= vertex_bit(v);
         s.settlements_left[0] -= 1;
         pay(&mut s, 0, &SETTLEMENT_COST);
+        s.assume_hands_public();
 
         assert_eq!(
             s.apply(Action::AcceptTrade { offer: 0, by: 1 }),

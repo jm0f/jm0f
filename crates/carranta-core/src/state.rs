@@ -268,6 +268,10 @@ pub struct State {
     pub offer_count: u8,
     /// Offers each seat has made this turn, against the R-7.20 cap.
     pub offers_made: [u8; MAX_PLAYERS],
+    /// The table's shared belief about every hand, from the public record
+    /// alone (E-33). Engine-kept so replays rebuild it and search probes
+    /// carry it forward; see [`crate::counting`].
+    pub counting: crate::counting::Counting,
 
     pub rng: Rng,
 }
@@ -394,6 +398,7 @@ impl State {
             offers: [Offer::default(); MAX_OFFERS],
             offer_count: 0,
             offers_made: [0; MAX_PLAYERS],
+            counting: crate::counting::Counting::default(),
             rng,
         }
     }
@@ -556,6 +561,20 @@ impl State {
             spots &= crate::topology::endpoints_of(self.roads[p]);
         }
         spots
+    }
+
+    /// Declare every card currently held to be publicly known (E-33).
+    ///
+    /// A test fixture's convenience: hands written directly into the struct
+    /// bypassed [`crate::state::State::apply`], so the public record never
+    /// saw them arrive. Real games never need this, cards arrive through
+    /// actions and the record watches them do it.
+    pub fn assume_hands_public(&mut self) {
+        for p in 0..self.players as usize {
+            for r in 0..5 {
+                self.counting.expected[p][r] = self.hand[p][r] as u32 * crate::counting::SCALE;
+            }
+        }
     }
 
     /// Edges where `p` may legally build a road.
@@ -823,7 +842,10 @@ mod tests {
         fn assert_copy<T: Copy>() {}
         assert_copy::<State>();
         let size = core::mem::size_of::<State>();
-        assert!(size <= 512, "state grew to {size} bytes");
+        // 80 of these bytes are the public record (E-33), a belief a search
+        // probe must carry through a copy, which is exactly why it lives
+        // here and costs what it costs.
+        assert!(size <= 576, "state grew to {size} bytes");
     }
 
     #[test]

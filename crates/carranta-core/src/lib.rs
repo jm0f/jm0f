@@ -5,6 +5,7 @@
 //! tight rollout loop does not belong here.
 
 pub mod action;
+pub mod counting;
 pub mod longest_road;
 pub mod rng;
 pub mod state;

@@ -34,7 +34,12 @@ use carranta_core::topology::{
 /// the standing market. A network file carries its own input count, and an
 /// older, narrower network reads the first slice of this vector, so existing
 /// entries keep their exact meaning and anything new is appended.
-pub const FEATURES: usize = 78;
+///
+/// 78 to 93 added the public record (E-33): each ranked opponent's expected
+/// hand per resource, counted by the engine from the public card movements
+/// the whole table saw. What a person who pays attention knows, the network
+/// now reads.
+pub const FEATURES: usize = 93;
 
 /// The pending consequences of a candidate action. See the module note.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -250,6 +255,15 @@ pub fn encode(state: &State, me: usize, pending: Pending) -> [f64; FEATURES] {
     for (rank, &(vp, _, q, qpips)) in ranked.iter().enumerate() {
         let theirs = frontier(state, q, &spot_pips, open, occupied);
         their_reach |= theirs.reach01;
+        // ---- The public record (E-33) ----
+        //
+        // What this opponent's hand is expected to hold, counted from the
+        // card movements everyone at the table watched. This is what prices
+        // a robbery by what it can take, a Monopoly by what it will gather,
+        // and an offer by whether the taker can actually pay.
+        for r in 0..5 {
+            f[78 + rank * 5 + r] = state.counting.cards(q, r) / 7.0;
+        }
         if rank == 0 {
             // The strongest opponent keeps the slots it has had since the
             // observation was 32 wide: older networks read these.
@@ -465,6 +479,43 @@ mod tests {
     }
 
     #[test]
+    fn the_public_record_reaches_the_observation_and_a_steal_stays_blurred() {
+        // An opponent's cards arrived in public, so their rank slot must say
+        // what they hold; a robbery moves one card only two seats saw, so
+        // after it the record must spread, never name.
+        let mut state = State::new(4, 5);
+        // Seat 2 publicly gains three brick and one ore, and leads on VPs.
+        state.settlements[2] |= vertex_bit(18);
+        state.hand[2] = [3, 0, 0, 0, 1];
+        state.counting.public(2, [3, 0, 0, 0, 1]);
+        let f = encode(&state, 0, Pending::default());
+        // Seat 2 is the only opponent with a settlement, so it ranks first:
+        // its expected brick sits at f[78].
+        assert!((f[78] - 3.0 / 7.0).abs() < 1e-9, "three brick, watched");
+        assert!((f[82] - 1.0 / 7.0).abs() < 1e-9, "one ore, watched");
+
+        // Seat 1 steals one of the four. The table saw a card move and no
+        // more: seat 2's brick belief drops fractionally, and no cell of
+        // seat 1's row claims a whole known card.
+        state.hand[1][0] += 1;
+        state.hand[2][0] -= 1;
+        state.counting.steal(1, 2, 4);
+        let g = encode(&state, 0, Pending::default());
+        assert!(
+            g[78] < f[78] && g[78] > 2.0 / 7.0,
+            "the victim's brick belief blurred rather than resolved: {}",
+            g[78]
+        );
+        // The thief ranks below the leader; its row holds one card's worth
+        // of fractional belief, most of it brick, none of it certain.
+        let thief_brick = state.counting.cards(1, 0);
+        assert!(
+            thief_brick > 0.5 && thief_brick < 1.0,
+            "the table suspects brick without knowing it: {thief_brick}"
+        );
+    }
+
+    #[test]
     fn the_race_for_a_spot_is_a_fact_of_its_own() {
         // Two networks one road from the same rich intersection is the
         // position "build there before they do". Before E-30 the observation
@@ -649,7 +700,7 @@ mod tests {
         // one are both live, on their own sides of it.
         let state = State::new(4, 5);
         let f = encode(&state, 0, Pending::default());
-        assert_eq!(FEATURES, 78, "the width this test pins down");
+        assert_eq!(FEATURES, 93, "the width this test pins down");
         assert!(f.len() == FEATURES);
         // A fresh deal has no buildings, so every frontier entry is at its
         // floor; a settlement wakes them.
