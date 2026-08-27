@@ -2,17 +2,18 @@
 # table is dealt without choosing. One generation, and the measurement that
 # earned it the chair.
 #
-# Never inferred from the catalogue. Strength here is cyclic, so a generation
-# number is not a ranking: gen-642 beats reigning champions head to head while
-# collapsing against the heuristic field, and two runs number their own
-# generations, so neat-9's 1369 is the stronger player and the lower number.
-# A champion takes this line by passing the full profile against the one that
-# holds it: head to head, against the anchor, solo against three heuristics,
+# Never inferred from the catalogue. Strength here is cyclic and runs number
+# their own generations, so only the full profile against the incumbent can
+# answer: head to head, against the anchor, solo against three heuristics,
 # and against the known exploiter.
 #
-# 1369 (neat-9), measured 2026-08-25 over 400 rounds a side, deep both sides:
-#   vs trained-1526  -0.159 [-0.216, -0.103]   55.5% [53.4, 57.7]
-#   vs anchor        -1.180                    87.3% [85.9, 88.8]
-#   solo 1v3         -1.247                    67.0% [64.5, 69.5]  (record)
-#   vs gen-642       -0.675                    74.4% [72.3, 76.4]
-1369
+# 196 (neat-10), measured 2026-08-27 over 400 rounds a side, deep both sides,
+# found by scanning every archived champion after the overnight baseline run:
+#   vs trained-1369  +0.022 [-0.029, +0.073]   54.5% [52.3, 56.7]
+#   vs anchor        -1.243                    92.0% [90.8, 93.2]
+#   solo 1v3         -1.342                    74.4% [72.1, 76.8]  (record,
+#                    confirmed 73.6% on a second seed)
+#   vs gen-642       -0.028                    60.3% [58.0, 62.7]
+#   vs gen-214 (the other finalist) head-to-head: a tie, 49.5%; 196 takes
+#   the chair on the solo record and the anchor.
+196
