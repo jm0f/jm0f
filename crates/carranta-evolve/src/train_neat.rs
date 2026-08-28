@@ -24,6 +24,13 @@ use crate::ladder::{ANCHOR, Ladder};
 use crate::neat::{Innovations, NeatGenome, Params, Species, speciate};
 use crate::train::generation_rng;
 
+/// How eagerly a simplifying phase sheds (E-35), how long it tolerates no
+/// progress before giving way, and how much room the next complexifying
+/// phase is given above the floor it reached.
+const SIMPLIFY_DELETE_P: f64 = 0.35;
+const SIMPLIFY_PATIENCE: u32 = 10;
+const COMPLEXITY_MARGIN: f64 = 50.0;
+
 /// Who is sitting in an opponent seat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Seat {
@@ -102,6 +109,15 @@ pub struct NeatConfig {
     /// table now deploys them under. The early rounds stay shallow, because
     /// ranking a hundred and fifty juniors does not need the depth.
     pub deep_eval: bool,
+    /// Alternate complexifying and simplifying phases (E-35).
+    ///
+    /// Additive mutation alone makes genome size a ratchet: a plateau removes
+    /// the only downward pressure there ever was, so the search keeps adding
+    /// dimensions exactly when it is already struggling to find a good one.
+    /// A simplifying phase turns the additive operators off, turns deletion
+    /// on, and suspends crossover, because otherwise the genes one parent
+    /// sheds are handed straight back by the other.
+    pub phased: bool,
 }
 
 impl Default for NeatConfig {
@@ -130,6 +146,7 @@ impl Default for NeatConfig {
             rotate: false,
             held_out_anchor: false,
             deep_eval: false,
+            phased: false,
         }
     }
 }
@@ -165,6 +182,10 @@ pub struct NeatReport {
     /// crossover wakes dormant senses that earn their keep, which makes the
     /// annealing visible rather than assumed.
     pub champion_ears: usize,
+    /// Mean enabled genes across the population it just bred, and whether it
+    /// bred under the simplifying rules (E-35).
+    pub mpc: f64,
+    pub simplifying: bool,
     pub behaviour: Behaviour,
     pub seconds: f64,
 }
@@ -193,6 +214,16 @@ pub struct NeatTrainer {
     /// sampled the hall uniformly for a generation would diverge from the
     /// run it claims to continue.
     pub(crate) hall_weight: std::collections::HashMap<u64, f64>,
+    /// Whether this generation breeds under the simplifying rules (E-35).
+    pub(crate) simplifying: bool,
+    /// Mean enabled genes above which a complexifying phase gives way to a
+    /// simplifying one.
+    pub(crate) ceiling: f64,
+    /// The lowest mean complexity this simplifying phase has reached, and how
+    /// many generations it has failed to beat: the phase ends when
+    /// simplification stops paying, not after a fixed count.
+    pub(crate) mpc_floor: f64,
+    pub(crate) stalled: u32,
 }
 
 impl NeatTrainer {
@@ -221,6 +252,10 @@ impl NeatTrainer {
             run_seed: seed,
             champion: ANCHOR,
             hall_weight: std::collections::HashMap::new(),
+            simplifying: false,
+            ceiling: 0.0,
+            mpc_floor: f64::INFINITY,
+            stalled: 0,
         }
     }
 
@@ -279,11 +314,40 @@ impl NeatTrainer {
             run_seed,
             champion,
             hall_weight: std::collections::HashMap::new(),
+            simplifying: false,
+            ceiling: 0.0,
+            mpc_floor: f64::INFINITY,
+            stalled: 0,
         }
     }
 
     pub fn generation(&self) -> u32 {
         self.generation
+    }
+
+    /// Begin a simplifying phase now (E-35).
+    ///
+    /// What `--phased` does when it is switched on mid-run: the reason to
+    /// reach for it is a genome already too big, so the run starts by
+    /// shedding rather than by waiting to cross a ceiling it is past.
+    pub fn begin_simplifying(&mut self) {
+        self.simplifying = true;
+        self.mpc_floor = f64::INFINITY;
+        self.stalled = 0;
+    }
+
+    /// The phase, its ceiling, the floor it is chasing and how long it has
+    /// failed to beat it: state a resume must carry, or a run comes back
+    /// mid-phase with no memory of why.
+    pub fn phase_state(&self) -> (bool, f64, f64, u32) {
+        (self.simplifying, self.ceiling, self.mpc_floor, self.stalled)
+    }
+
+    pub fn restore_phase(&mut self, simplifying: bool, ceiling: f64, floor: f64, stalled: u32) {
+        self.simplifying = simplifying;
+        self.ceiling = ceiling;
+        self.mpc_floor = floor;
+        self.stalled = stalled;
     }
 
     pub fn trials(&self) -> u32 {
@@ -852,6 +916,22 @@ impl NeatTrainer {
         // (elitism), then fills the rest by crossover within itself, parents
         // drawn from its better half.
         self.inn.begin_generation();
+        // What mutation may do this generation (E-35). A simplifying phase
+        // turns the additive operators off and deletion on; a complexifying
+        // one is the run as it always was.
+        let params = if cfg.phased && self.simplifying {
+            Params {
+                add_node_p: 0.0,
+                add_conn_p: 0.0,
+                del_conn_p: SIMPLIFY_DELETE_P,
+                ..params
+            }
+        } else {
+            Params {
+                del_conn_p: 0.0,
+                ..params
+            }
+        };
         let mut next: Vec<NeatGenome> = Vec::with_capacity(cfg.population);
         for (si, s) in species.iter().enumerate() {
             let n = quota[si];
@@ -870,12 +950,19 @@ impl NeatTrainer {
                 } else {
                     (pb, pa)
                 };
-                let child = NeatGenome::cross(
-                    &self.population[fit],
-                    &self.population[other],
-                    &mut rng,
-                    &params,
-                );
+                // Crossover is suspended while simplifying (E-35): what one
+                // parent sheds, the other hands straight back, and the phase
+                // would never finish.
+                let child = if cfg.phased && self.simplifying {
+                    self.population[fit].clone()
+                } else {
+                    NeatGenome::cross(
+                        &self.population[fit],
+                        &self.population[other],
+                        &mut rng,
+                        &params,
+                    )
+                };
                 next.push(child.mutate(&mut rng, &params, &mut self.inn));
             }
         }
@@ -895,6 +982,35 @@ impl NeatTrainer {
             .enumerate()
             .filter(|(si, _)| quota[*si] > 0)
             .count();
+
+        // Where the phase stands now that the children exist (E-35). Mean
+        // enabled genes is the measure, because a sleeping gene costs the
+        // network nothing and is not the dimension a mutation must search
+        // around.
+        let mpc = next.iter().map(|g| g.enabled_len() as f64).sum::<f64>() / next.len() as f64;
+        if cfg.phased {
+            if self.simplifying {
+                if mpc < self.mpc_floor - 0.5 {
+                    self.mpc_floor = mpc;
+                    self.stalled = 0;
+                } else {
+                    self.stalled += 1;
+                }
+                // The phase ends when shedding stops paying, not on a count.
+                if self.stalled >= SIMPLIFY_PATIENCE {
+                    self.simplifying = false;
+                    self.ceiling = mpc + COMPLEXITY_MARGIN;
+                    self.stalled = 0;
+                }
+            } else {
+                if self.ceiling <= 0.0 {
+                    self.ceiling = mpc + COMPLEXITY_MARGIN;
+                }
+                if mpc > self.ceiling {
+                    self.begin_simplifying();
+                }
+            }
+        }
 
         self.population = next;
         self.species = species;
@@ -955,6 +1071,8 @@ impl NeatTrainer {
                 nodes.len()
             },
             champion_genes: champion_genome.genes.len(),
+            mpc,
+            simplifying: cfg.phased && self.simplifying,
             champion_ears: {
                 let mut ears: Vec<u32> = champion_genome
                     .genes
@@ -976,6 +1094,71 @@ impl NeatTrainer {
 mod tests {
     use super::*;
     use carranta_bot::net::Net;
+
+    #[test]
+    fn a_simplifying_phase_sheds_and_gives_way_when_shedding_stops_paying() {
+        // The ratchet and its release (E-35). A run that only ever adds must
+        // grow; the phased controller must actually shrink it, and must not
+        // shrink for ever, or the population dissolves into nothing.
+        let mut cfg = quick();
+        cfg.phased = true;
+        cfg.params.add_conn_p = 0.9; // grow fast, so there is something to shed
+        let mut t = NeatTrainer::new(cfg, 11);
+        // Sparse genesis (E-34) starts most genes asleep, so the baseline is
+        // what this run itself began with, not the width of the observation.
+        let born = t.step().mpc;
+        for _ in 0..6 {
+            t.step();
+        }
+        let grown = t.step().mpc;
+        assert!(
+            grown > born,
+            "the complexifying phase added something to shed: {grown} against {born}"
+        );
+
+        // Switch on the shedding, as a resume with --phased does.
+        t.begin_simplifying();
+        let mut smallest = f64::INFINITY;
+        let mut simplified_for = 0;
+        let mut gave_way = false;
+        for _ in 0..40 {
+            let r = t.step();
+            if r.simplifying {
+                simplified_for += 1;
+                smallest = smallest.min(r.mpc);
+            } else {
+                gave_way = true;
+                break;
+            }
+        }
+        assert!(simplified_for > 0, "it simplified at all");
+        assert!(
+            smallest < grown,
+            "simplifying shed nothing: {smallest} against {grown}"
+        );
+        assert!(
+            gave_way,
+            "the phase never ended; it would shrink the population away"
+        );
+        // And what it hands back is a ceiling above where it landed, so the
+        // next complexifying phase has somewhere to go.
+        let (simplifying, ceiling, _, _) = t.phase_state();
+        assert!(!simplifying);
+        assert!(ceiling > smallest, "the ceiling leaves room: {ceiling}");
+    }
+
+    #[test]
+    fn an_unphased_run_never_deletes() {
+        // The controller is opt-in: without it the run breeds exactly as it
+        // always did, which is what makes the comparison honest.
+        let mut t = NeatTrainer::new(quick(), 11);
+        for _ in 0..5 {
+            let r = t.step();
+            assert!(!r.simplifying, "no phase without being asked");
+        }
+        let (simplifying, ceiling, _, _) = t.phase_state();
+        assert!(!simplifying && ceiling == 0.0, "no phase state accrued");
+    }
 
     /// Tiny and quick: a truncated cap and no market, because these tests
     /// assert the mechanics of the loop, not the quality of play. The market

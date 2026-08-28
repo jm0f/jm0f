@@ -30,7 +30,17 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 8;
+pub const NEAT_FORMAT: u32 = 9;
+
+/// The NEAT format before the phased controller existed (E-35): no phase
+/// line, so it reads back complexifying with no ceiling, which is the run it
+/// was, and `--phased` on the resume is what starts one.
+pub const NEAT_FORMAT_UNPHASED: u32 = 8;
+
+/// The first NEAT format to record its observation width. Older files are
+/// all 32 wide; this is a floor, not the current format, so bumping the
+/// format does not turn every width-bearing checkpoint into a 32.
+pub const NEAT_FORMAT_WIDTH: u32 = 8;
 
 /// The NEAT format before the observation carried its width (the frontier
 /// senses, E-29). Every genome in one is wired for 32 inputs, and a build
@@ -345,6 +355,7 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         (c.rotate, "rotate"),
         (c.held_out_anchor, "held-out-anchor"),
         (c.deep_eval, "deep-eval"),
+        (c.phased, "phased"),
     ] {
         if on {
             if !selection.is_empty() {
@@ -362,6 +373,24 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
     // Display for f64 emits the shortest string that parses back to the same
     // value, so every one of these survives the round trip exactly.
     let _ = writeln!(out, "delta {}", trainer.delta);
+    // Where the phased controller stands (E-35): a resume mid-phase must
+    // remember which phase, the ceiling it is measured against, the floor it
+    // is chasing and how long it has failed to beat it.
+    {
+        let (simplifying, ceiling, floor, stalled) = trainer.phase_state();
+        let _ = writeln!(
+            out,
+            "phase {} {} {} {}",
+            if simplifying {
+                "simplify"
+            } else {
+                "complexify"
+            },
+            ceiling,
+            if floor.is_finite() { floor } else { -1.0 },
+            stalled
+        );
+    }
     let _ = writeln!(out, "champion {}", trainer.champion);
     let _ = writeln!(out, "next_innov {}", trainer.inn.next_innov);
     let _ = writeln!(out, "next_node {}", trainer.inn.next_node);
@@ -472,6 +501,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     if !matches!(
         version,
         NEAT_FORMAT
+            | NEAT_FORMAT_UNPHASED
             | NEAT_FORMAT_NARROW
             | NEAT_FORMAT_NO_PINS
             | NEAT_FORMAT_CLASSIC_SELECTION
@@ -490,7 +520,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     // inputs mean different nodes, so the population would come back as
     // scrambled networks that evaluate without erring. Formats before the
     // line were all written at 32.
-    let written: usize = if version >= NEAT_FORMAT {
+    let written: usize = if version >= NEAT_FORMAT_WIDTH {
         let (line, v) = {
             let (line, text) = lines.next().ok_or(LoadError::Missing("inputs"))?;
             let value = text
@@ -580,10 +610,10 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     // Format 5 and earlier evaluated the classic way; the selection line
     // (E-20 to E-24) says which refinements a format 6 run trains under.
-    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval) =
+    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval, phased) =
         if version >= NEAT_FORMAT_NO_PINS {
             let (line, v) = scalar("selection")?;
-            let mut flags = (false, false, false, false, false, false);
+            let mut flags = (false, false, false, false, false, false, false);
             for word in v.split(' ') {
                 match word {
                     "classic" => {}
@@ -593,6 +623,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
                     "rotate" => flags.3 = true,
                     "held-out-anchor" => flags.4 = true,
                     "deep-eval" => flags.5 = true,
+                    "phased" => flags.6 = true,
                     other => {
                         return Err(bad(line, &format!("unknown selection word `{other}`")));
                     }
@@ -600,7 +631,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
             }
             flags
         } else {
-            (false, false, false, false, false, false)
+            (false, false, false, false, false, false, false)
         };
     let cap: usize = num!("cap");
     let mode = {
@@ -608,6 +639,37 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         mode_from(&v).ok_or_else(|| bad(line, &format!("unknown trade mode `{v}`")))?
     };
     let delta: f64 = num!("delta");
+    // The phase, format 9 on; older files were never in one.
+    let phase_state: Option<(bool, f64, f64, u32)> = if version >= NEAT_FORMAT {
+        let (line, v) = scalar("phase")?;
+        let mut f = v.split_whitespace();
+        let which = f.next().unwrap_or("");
+        let simplifying = match which {
+            "simplify" => true,
+            "complexify" => false,
+            other => return Err(bad(line, &format!("unknown phase `{other}`"))),
+        };
+        let ceiling: f64 = f
+            .next()
+            .and_then(|x| x.parse().ok())
+            .ok_or_else(|| bad(line, "bad phase ceiling"))?;
+        let floor: f64 = f
+            .next()
+            .and_then(|x| x.parse().ok())
+            .ok_or_else(|| bad(line, "bad phase floor"))?;
+        let stalled: u32 = f
+            .next()
+            .and_then(|x| x.parse().ok())
+            .ok_or_else(|| bad(line, "bad phase stall count"))?;
+        Some((
+            simplifying,
+            ceiling,
+            if floor < 0.0 { f64::INFINITY } else { floor },
+            stalled,
+        ))
+    } else {
+        None
+    };
     let champion: u64 = num!("champion");
     let next_innov: u32 = num!("next_innov");
     let next_node: u32 = num!("next_node");
@@ -617,6 +679,10 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         power: num!("power"),
         fresh: num!("fresh"),
         add_conn_p: num!("add_conn_p"),
+        // Deletion is a phase, not a stored rate (E-35): the controller sets
+        // it while simplifying and zeroes it otherwise, so a checkpoint has
+        // nothing of its own to remember here.
+        del_conn_p: 0.0,
         add_node_p: num!("add_node_p"),
         c1: num!("c1"),
         c2: num!("c2"),
@@ -651,6 +717,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         pfsp,
         rotate,
         held_out_anchor,
+        phased,
         deep_eval,
     };
 
@@ -811,6 +878,9 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     );
     trainer.hall_weight = hall_weight;
     trainer.pinned = pinned;
+    if let Some((simplifying, ceiling, floor, stalled)) = phase_state {
+        trainer.restore_phase(simplifying, ceiling, floor, stalled);
+    }
     Ok(trainer)
 }
 
@@ -1080,11 +1150,21 @@ mod tests {
             "the current format writes its width"
         );
 
-        // The same run as format 7 wrote it: version 7, no inputs line. Its
-        // genomes would be read as 32-wide, which this build is not.
+        // The same run as a pre-width format wrote it: no inputs line, and
+        // no phase line either, since that came later still. Its genomes
+        // would be read as 32-wide, which this build is not. The version is
+        // rewritten from whatever the current one is, so a later format bump
+        // does not quietly turn this test into a different question.
+        let header = format!("carranta-evolve {NEAT_FORMAT}");
+        let phase_line = modern
+            .lines()
+            .find(|l| l.starts_with("phase "))
+            .map(|l| format!("{l}\n"))
+            .expect("the current format writes its phase");
         let seven = modern
-            .replace("carranta-evolve 8", "carranta-evolve 7")
-            .replace(&width, "");
+            .replace(&header, "carranta-evolve 7")
+            .replace(&width, "")
+            .replace(&phase_line, "");
         match decode_neat(&seven) {
             Err(LoadError::Malformed { what, .. }) => assert!(
                 what.contains("wired for 32"),
@@ -1094,7 +1174,7 @@ mod tests {
             Ok(_) => panic!("a narrow checkpoint must refuse, not resume"),
         }
 
-        // A format 8 file whose width line disagrees outright.
+        // A current-format file whose width line disagrees outright.
         let wrong = modern.replace(&width, "inputs 9999\n");
         match decode_neat(&wrong) {
             Err(LoadError::Malformed { what, .. }) => assert!(

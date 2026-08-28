@@ -68,6 +68,12 @@ pub struct Params {
     pub add_conn_p: f64,
     /// Chance of one split (new node) per offspring.
     pub add_node_p: f64,
+    /// Chance of removing one enabled connection per offspring (E-35).
+    ///
+    /// Zero in the complexifying phase, which is every generation of a run
+    /// that never simplifies: additive mutation alone makes genome size a
+    /// ratchet, and a plateau removes the only thing that ever pushed back.
+    pub del_conn_p: f64,
     /// Compatibility coefficients: excess, disjoint, mean weight difference.
     pub c1: f64,
     pub c2: f64,
@@ -94,6 +100,7 @@ impl Default for Params {
             fresh: 2.0,
             add_conn_p: 0.08,
             add_node_p: 0.03,
+            del_conn_p: 0.0,
             c1: 1.0,
             c2: 1.0,
             c3: 0.4,
@@ -237,6 +244,12 @@ impl NeatGenome {
         NeatGenome { genes }
     }
 
+    /// How many genes actually compute: the size a search has to work
+    /// around, and what the phased controller (E-35) measures.
+    pub fn enabled_len(&self) -> usize {
+        self.genes.iter().filter(|g| g.enabled).count()
+    }
+
     /// The enabled genes, as the network compiler wants them.
     pub fn links(&self) -> Vec<(u32, u32, f64)> {
         self.genes
@@ -334,6 +347,22 @@ impl NeatGenome {
                     weight: old.weight,
                     enabled: true,
                 });
+            }
+        } else if chance(rng, params.del_conn_p) {
+            // Take an enabled connection back out (E-35). Enabled ones only:
+            // a sleeping gene costs the network nothing to carry and is the
+            // reservoir the sparse genesis deliberately keeps, while an
+            // enabled one is a dimension every later mutation has to search
+            // around. Removed rather than disabled, because a disabled gene
+            // is still carried, still counted, and still woken by crossover.
+            let enabled: Vec<usize> = (0..out.genes.len())
+                .filter(|&i| out.genes[i].enabled)
+                .collect();
+            // Never dissolve a genome entirely: something has to reach the
+            // output for the network to be a network.
+            if enabled.len() > 2 {
+                let pick = enabled[rng.below(Stream::Board, enabled.len() as u32) as usize];
+                out.genes.remove(pick);
             }
         } else if chance(rng, params.add_conn_p) {
             // A few attempts at a random legal connection, then give up

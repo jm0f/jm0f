@@ -61,6 +61,9 @@ struct Args {
     /// configuration from the checkpoint, so a flag only overrides what the
     /// person actually typed, never what a default happens to be.
     trials_min_given: bool,
+    /// Whether --phased was said out loud, so a resume only starts a phase
+    /// cycle when somebody asked for one.
+    phased_given: bool,
     /// The same for --stagnation.
     stagnation_given: bool,
     /// The same for --deep-eval.
@@ -97,6 +100,7 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         export_to: None,
         baseline: None,
         trials_min_given: false,
+        phased_given: false,
         stagnation_given: false,
         deep_eval_given: false,
         trials_max_given: false,
@@ -209,6 +213,10 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
             // Deep evaluation of the finalists (E-28): the last halving
             // rounds play inside the beamed search, so selection breeds
             // evaluators for the condition the table deploys them under.
+            "--phased" => {
+                args.neat.phased = true;
+                args.phased_given = true;
+            }
             "--deep-eval" => {
                 args.neat.deep_eval = true;
                 args.deep_eval_given = true;
@@ -301,6 +309,11 @@ carranta-evolve
   --trials N           starting games per genome; adapts as the run converges
   --trials-min N       the floor the budget may fall to (default 16); raise it
                        to buy selection accuracy with games
+  --phased             alternate complexifying and simplifying phases: when
+                       mean complexity passes a ceiling, additive mutation
+                       stops, deletion starts and crossover is suspended
+                       until shedding stops paying. Given on a resume, the
+                       run begins by simplifying
   --payoff A,B,C,D     score positions by a table, winner first (e.g. 10,4,2,1),
                        instead of position less the win bonus; an unwon first
                        place pays the second place rate
@@ -367,7 +380,7 @@ dev_bought,militia,production\n";
 fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
     let b = &r.behaviour;
     format!(
-        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.2},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
         r.generation,
         r.trials,
         r.games,
@@ -378,6 +391,12 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
         r.champion_nodes,
         r.champion_genes,
         r.champion_ears,
+        r.mpc,
+        if r.simplifying {
+            "simplify"
+        } else {
+            "complexify"
+        },
         r.gap,
         r.gap_ci,
         r.wins,
@@ -399,7 +418,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
 }
 
 const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
-species,champion_nodes,champion_genes,champion_ears,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
+species,champion_nodes,champion_genes,champion_ears,mpc,phase,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
 /// Take one past champion out of a run and write it as a network file.
@@ -550,6 +569,14 @@ fn run_neat(args: Args) {
                     t.config.trials_min = args.neat.trials_min;
                     println!("trials floor raised to {}", t.config.trials_min);
                 }
+                // Switching the phased controller on mid-run starts by
+                // shedding (E-35): the reason to reach for it is a genome
+                // already too big, not a ceiling still ahead.
+                if args.phased_given && !t.config.phased {
+                    t.config.phased = true;
+                    t.begin_simplifying();
+                    println!("phased search on, simplifying from here");
+                }
                 if args.stagnation_given {
                     t.config.params.stagnation = args.neat.params.stagnation;
                     println!(
@@ -685,7 +712,7 @@ fn run_neat(args: Args) {
     println!("  a negative gap and a win share above 50% are ahead, and either");
     println!("  one inside its interval has not been shown\n");
     println!(
-        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears        gap (E-16)        wins (E-17)   trades   secs"
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears    mpc        gap (E-16)        wins (E-17)   trades   secs"
     );
 
     let started = std::time::Instant::now();
@@ -706,7 +733,7 @@ fn run_neat(args: Args) {
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
         println!(
-            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>5.1}{}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
             r.generation,
             r.trials,
             r.games,
@@ -718,6 +745,10 @@ fn run_neat(args: Args) {
             r.champion_nodes,
             r.champion_genes,
             r.champion_ears,
+            r.mpc,
+            // A simplifying generation is marked where it happens, so the
+            // shedding and what it cost sit on the same line.
+            if r.simplifying { "-" } else { " " },
             r.gap,
             r.gap_ci,
             100.0 * r.wins,
