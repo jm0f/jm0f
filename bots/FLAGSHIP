@@ -5,15 +5,16 @@
 # Never inferred from the catalogue. Strength here is cyclic and runs number
 # their own generations, so only the full profile against the incumbent can
 # answer: head to head, against the anchor, solo against three heuristics,
-# and against the known exploiter.
+# and against the known exploiter. A candidate takes this line by winning
+# all four; winning some of them earns a place on the roster instead, which
+# is what trained-921 has.
 #
-# 196 (neat-10), measured 2026-08-27 over 400 rounds a side, deep both sides,
-# found by scanning every archived champion after the overnight baseline run:
-#   vs trained-1369  +0.022 [-0.029, +0.073]   54.5% [52.3, 56.7]
-#   vs anchor        -1.243                    92.0% [90.8, 93.2]
-#   solo 1v3         -1.342                    74.4% [72.1, 76.8]  (record,
-#                    confirmed 73.6% on a second seed)
-#   vs gen-642       -0.028                    60.3% [58.0, 62.7]
-#   vs gen-214 (the other finalist) head-to-head: a tie, 49.5%; 196 takes
-#   the chair on the solo record and the anchor.
-196
+# 987 (neat-12), measured 2026-08-29 over 400 rounds a side, deep both
+# sides, the first network to beat the incumbent on every axis:
+#   vs trained-196   -0.260 / -0.227   56.8% / 56.2%  (two seeds)
+#   solo 1v3         -1.460 / -1.426   78.6% / 76.9%  (record, two seeds)
+#   vs anchor        -1.353            92.7%          (record)
+#   vs gen-642       -0.086            61.3%
+# The first shipped champion to read the whole 93-sense observation: the
+# frontier senses, the table context and the public card record.
+987
