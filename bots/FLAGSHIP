@@ -6,15 +6,19 @@
 # their own generations, so only the full profile against the incumbent can
 # answer: head to head, against the anchor, solo against three heuristics,
 # and against the known exploiter. A candidate takes this line by winning
-# all four; winning some of them earns a place on the roster instead, which
-# is what trained-921 has.
+# it; winning some axes earns a place on the roster instead, which is what
+# trained-921 has.
 #
-# 987 (neat-12), measured 2026-08-29 over 400 rounds a side, deep both
-# sides, the first network to beat the incumbent on every axis:
-#   vs trained-196   -0.260 / -0.227   56.8% / 56.2%  (two seeds)
-#   solo 1v3         -1.460 / -1.426   78.6% / 76.9%  (record, two seeds)
-#   vs anchor        -1.353            92.7%          (record)
-#   vs gen-642       -0.086            61.3%
-# The first shipped champion to read the whole 93-sense observation: the
-# frontier senses, the table context and the public card record.
-987
+# 1159 (neat-12), measured 2026-08-30 over 400 rounds a side, deep both
+# sides, against the incumbent 987:
+#   vs trained-987   -0.177 / -0.214   57.2% / 58.2%  (two seeds)
+#   solo 1v3         -1.424 / -1.422   77.6% / 77.6%  (two seeds, level
+#                    with 987's 78.6/76.9, intervals overlapping)
+#   vs gen-642       -0.478            76.1%          (record, past 987's
+#                    61.3%)
+#   vs anchor        -1.249            92.0%          (the one axis 987
+#                    holds, 92.7%, and by a small margin)
+# Bred 42 generations after the league refresh that pinned 987 itself into
+# the field: the population beat its own shipped champion by being made to
+# face it.
+1159
