@@ -2057,6 +2057,10 @@ impl Server {
         if table.settling() {
             table.shuffle();
         }
+        // The clock starts here, not when the table was dealt. Everything
+        // between the two is the lobby: arriving, talking, pressing ready,
+        // and none of it is anybody's move.
+        table.session.begin_play();
         if short > 0 {
             table.session.note_to_table(if short == 1 {
                 "The last seat went to the house bot".to_string()
@@ -3215,10 +3219,20 @@ fn roll_below(n: u64) -> u64 {
     if n <= 1 {
         return 0;
     }
+    // A counter, because the clock alone is not enough. Three draws of one
+    // shuffle happen inside a few instructions, and the system clock does not
+    // always advance between them: reading it per call handed the same number
+    // to each, which made the draws a function of one value rather than three
+    // independent ones. That has a signature, and the draw wore it, seat two
+    // of four taking half the share it should. The counter guarantees every
+    // call mixes something the last one did not have.
+    static TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tick = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut x = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos() as u64)
-        ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ tick.wrapping_mul(0xD6E8_FEB8_6659_FD93);
     // A round of mixing, because consecutive nanosecond readings differ in their
     // low bits only and a shuffle taking them modulo four would barely move.
     x ^= x >> 33;
@@ -3783,6 +3797,42 @@ mod tests {
             seen.len() > 1,
             "the champion sat in only seat {seen:?} across forty draws"
         );
+    }
+
+    #[test]
+    fn the_host_does_not_keep_the_first_seat() {
+        // The order is drawn when the room closes, and the draw has to be a
+        // draw. The host sits in chair nought while the lobby fills, so if
+        // the shuffle were biased or skipped they would open every game, and
+        // placing first is a real advantage.
+        let dir = std::env::temp_dir().join(format!("carranta-draw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::new(4, 3, TradeMode::Full, &dir);
+        let mut landed = [0u32; 4];
+        let runs = 400;
+        for r in 0..runs {
+            let key = format!("keydraw{r:010}");
+            let id = server.deal("", &key);
+            server.ready(&id, &key);
+            let tables = server.tables.lock().unwrap();
+            let t = tables.iter().find(|t| t.id == id).expect("dealt");
+            let seat = t.seat_of(&key).expect("the host has a seat") as usize;
+            landed[seat] += 1;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        // A fair draw over four seats puts about a quarter in each. The bound
+        // is a quarter either side of that, wide enough that an honest draw
+        // will not trip it and narrow enough to catch the bug this test was
+        // written for: drawing every seat from one clock reading starved the
+        // second seat to half its share, 16.7% against 25%, and a looser
+        // bound let that pass.
+        let expected = runs / 4;
+        for (seat, &n) in landed.iter().enumerate() {
+            assert!(
+                n > expected * 3 / 4 && n < expected * 5 / 4,
+                "seat {seat} took {n} of {runs} draws, expected about {expected}: {landed:?}"
+            );
+        }
     }
 
     #[test]

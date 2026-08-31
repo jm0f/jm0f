@@ -548,6 +548,24 @@ impl Session {
         self.measured_at().saturating_duration_since(mark)
     }
 
+    /// Start the clock, because play is starting.
+    ///
+    /// A table is dealt long before it is played: people arrive, talk, and
+    /// press ready, and all of that sits between `with_clock` winding the
+    /// allowance and anybody being able to use it. The first placement is
+    /// the one turn no turn precedes, so nothing else in the session marks
+    /// its beginning, and without this the seat that places first walked in
+    /// having already spent the lobby's wait.
+    pub fn begin_play(&mut self) {
+        let now = std::time::Instant::now();
+        self.turn_began = now;
+        self.last_settle = now;
+        self.turn_at = now;
+        self.turn_paused = std::time::Duration::ZERO;
+        self.paused_settled = std::time::Duration::ZERO;
+        self.turn_holder = self.state.decider();
+    }
+
     /// Put this game on a clock.
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
@@ -3410,6 +3428,34 @@ mod tests {
             checked > 0,
             "no pre-roll militia occurred; seed needs changing"
         );
+    }
+
+    #[test]
+    fn the_first_placement_gets_its_whole_allowance_however_long_the_lobby_sat() {
+        // A table is dealt, then it waits: people arrive, chat, press ready.
+        // The clock belongs to the game, not to the wait, and the seat that
+        // places first must not walk in with it already spent.
+        let mut s = Session::new(4, 7, TradeMode::Full).with_clock(Clock::PerTurn(60));
+        assert!(
+            matches!(s.state.phase, Phase::SetupSettlement { .. }),
+            "a fresh table opens on a placement"
+        );
+        // Ten minutes in the lobby, which is what a slow room costs.
+        let waited = std::time::Duration::from_secs(600);
+        s.turn_began -= waited;
+        s.last_settle -= waited;
+        s.turn_at -= waited;
+
+        // Play begins.
+        s.begin_play();
+
+        let seat = s.on_clock();
+        assert_eq!(
+            s.time_left(seat),
+            Some(60),
+            "the first placer starts on a full allowance, not on what the lobby left"
+        );
+        assert!(!s.out_of_time(seat), "and is not already out of time");
     }
 
     #[test]
