@@ -27,6 +27,18 @@ use crate::train::generation_rng;
 /// How eagerly a simplifying phase sheds (E-35), how long it tolerates no
 /// progress before giving way, and how much room the next complexifying
 /// phase is given above the floor it reached.
+/// Age layers (E-36): how many, how many generations of age each spans, and
+/// how many of the bottom layer's seats are refilled with fresh genomes every
+/// generation. The point of the scheme is that a young lineage never has to
+/// out-breed a champion three hundred generations older than it.
+const ALPS_LAYERS: usize = 5;
+const ALPS_AGE_GAP: u32 = 20;
+/// The nursery is a share of the population rather than a count, so the
+/// scheme behaves the same at any size.
+fn alps_nursery(population: usize) -> usize {
+    (population / ALPS_LAYERS / 2).max(1)
+}
+
 const SIMPLIFY_DELETE_P: f64 = 0.35;
 const SIMPLIFY_PATIENCE: u32 = 10;
 const COMPLEXITY_MARGIN: f64 = 50.0;
@@ -118,6 +130,15 @@ pub struct NeatConfig {
     /// on, and suspends crossover, because otherwise the genes one parent
     /// sheds are handed straight back by the other.
     pub phased: bool,
+    /// Breed in age layers (E-36), refilling the youngest continuously.
+    ///
+    /// Without it a population converges on whatever holds the crown and
+    /// every newcomer is measured against it immediately, which is how a
+    /// three-hundred-generation incumbent survives two league surgeries. A
+    /// layer is a band of genotype age; competition and breeding happen
+    /// inside one, so a lineage gets time to become good before it has to be
+    /// better than the best thing in the run.
+    pub alps: bool,
 }
 
 impl Default for NeatConfig {
@@ -147,6 +168,7 @@ impl Default for NeatConfig {
             held_out_anchor: false,
             deep_eval: false,
             phased: false,
+            alps: false,
         }
     }
 }
@@ -186,6 +208,10 @@ pub struct NeatReport {
     /// bred under the simplifying rules (E-35).
     pub mpc: f64,
     pub simplifying: bool,
+    /// Mean genotype age of the population just bred (E-36). Under the layers
+    /// it should sit well below the incumbent's, which is the whole point:
+    /// most of the run is younger than whatever is winning.
+    pub mean_age: f64,
     pub behaviour: Behaviour,
     pub seconds: f64,
 }
@@ -224,6 +250,10 @@ pub struct NeatTrainer {
     /// simplification stops paying, not after a fixed count.
     pub(crate) mpc_floor: f64,
     pub(crate) stalled: u32,
+    /// Each genome's age in generations, for the layers (E-36). Parallel to
+    /// `population`, and kept beside it rather than inside the genome so a
+    /// champion's file stays what it always was.
+    pub(crate) ages: Vec<u32>,
 }
 
 impl NeatTrainer {
@@ -256,6 +286,7 @@ impl NeatTrainer {
             ceiling: 0.0,
             mpc_floor: f64::INFINITY,
             stalled: 0,
+            ages: Vec::new(),
         }
     }
 
@@ -318,6 +349,7 @@ impl NeatTrainer {
             ceiling: 0.0,
             mpc_floor: f64::INFINITY,
             stalled: 0,
+            ages: Vec::new(),
         }
     }
 
@@ -932,47 +964,202 @@ impl NeatTrainer {
                 ..params
             }
         };
+        // Ages, for the layers (E-36). A resume or a first generation finds
+        // none and starts everybody at nothing, which is the truth: the run
+        // has no record of who is older than whom.
+        if self.ages.len() != self.population.len() {
+            self.ages = vec![0; self.population.len()];
+        }
         let mut next: Vec<NeatGenome> = Vec::with_capacity(cfg.population);
-        for (si, s) in species.iter().enumerate() {
-            let n = quota[si];
-            if n == 0 {
-                continue;
+        let mut next_ages: Vec<u32> = Vec::with_capacity(cfg.population);
+        let layer_of = |age: u32| (age / ALPS_AGE_GAP).min(ALPS_LAYERS as u32 - 1) as usize;
+
+        if cfg.alps {
+            // One band of age at a time. Everything inside a band competes
+            // and breeds only with itself, so a lineage twenty generations
+            // old is measured against its own kind rather than against the
+            // best thing the run has ever made.
+            let per_layer = cfg.population / ALPS_LAYERS;
+            // Oldest band first, and every seat an empty band cannot use
+            // goes to the youngest, not to the next band down. Early on the
+            // upper bands are empty because nothing is old enough for them,
+            // and handing their seats to the eldest band that does exist
+            // would make age the thing the scheme rewards.
+            let mut carry = 0usize;
+            for layer in (0..ALPS_LAYERS).rev() {
+                // The species still do the sharing; the layer only says who
+                // is eligible, so a young species is protected twice over.
+                let groups: Vec<Vec<usize>> = species
+                    .iter()
+                    .enumerate()
+                    .filter(|(si, _)| !stagnant.contains(si))
+                    .map(|(_, sp)| {
+                        sp.members
+                            .iter()
+                            .copied()
+                            .filter(|&m| layer_of(self.ages[m]) == layer)
+                            .collect::<Vec<usize>>()
+                    })
+                    .filter(|g| !g.is_empty())
+                    .collect();
+
+                let mut slots = if layer == 0 {
+                    per_layer + carry
+                } else {
+                    per_layer
+                };
+                if layer == 0 {
+                    // The nursery, refilled every generation. This is the
+                    // part that guarantees the run never fully converges.
+                    let fresh = alps_nursery(cfg.population).min(slots);
+                    for _ in 0..fresh {
+                        next.push(NeatGenome::minimal(&mut rng));
+                        next_ages.push(0);
+                    }
+                    slots -= fresh;
+                }
+                if groups.is_empty() {
+                    // Nobody of this age yet. The seats go to the youngest
+                    // band, which is where a run with room to grow wants
+                    // them.
+                    if layer == 0 {
+                        for _ in 0..slots {
+                            next.push(NeatGenome::minimal(&mut rng));
+                            next_ages.push(0);
+                        }
+                    } else {
+                        carry += slots;
+                    }
+                    continue;
+                }
+
+                // Shared fitness, inside the band.
+                let scores: Vec<f64> = groups
+                    .iter()
+                    .map(|g| g.iter().map(|&m| score(fitness[m])).sum::<f64>() / g.len() as f64)
+                    .collect();
+                let sum: f64 = scores.iter().sum();
+                let mut share: Vec<usize> = scores
+                    .iter()
+                    .map(|&sc| {
+                        if sum > 0.0 {
+                            ((sc / sum) * slots as f64).floor() as usize
+                        } else {
+                            0
+                        }
+                    })
+                    .collect();
+                let mut left = slots.saturating_sub(share.iter().sum());
+                let mut frac: Vec<(usize, f64)> = scores
+                    .iter()
+                    .enumerate()
+                    .map(|(gi, &sc)| {
+                        let exact = if sum > 0.0 {
+                            (sc / sum) * slots as f64
+                        } else {
+                            0.0
+                        };
+                        (gi, exact - exact.floor())
+                    })
+                    .collect();
+                frac.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                for (gi, _) in frac {
+                    if left == 0 {
+                        break;
+                    }
+                    share[gi] += 1;
+                    left -= 1;
+                }
+
+                for (gi, g) in groups.iter().enumerate() {
+                    let n = share[gi];
+                    if n == 0 {
+                        continue;
+                    }
+                    let mut members = g.clone();
+                    members.sort_by(|&a, &b| fitness[a].total_cmp(&fitness[b]).then(a.cmp(&b)));
+                    // The band's own best carries over untouched, and ages.
+                    next.push(self.population[members[0]].clone());
+                    next_ages.push(self.ages[members[0]] + 1);
+                    let parents = &members[..members.len().div_ceil(2)];
+                    for _ in 1..n {
+                        let pa = parents[rng.below(Stream::Board, parents.len() as u32) as usize];
+                        let pb = parents[rng.below(Stream::Board, parents.len() as u32) as usize];
+                        let (fit, other) = if fitness[pa] <= fitness[pb] {
+                            (pa, pb)
+                        } else {
+                            (pb, pa)
+                        };
+                        let child = if cfg.phased && self.simplifying {
+                            self.population[fit].clone()
+                        } else {
+                            NeatGenome::cross(
+                                &self.population[fit],
+                                &self.population[other],
+                                &mut rng,
+                                &params,
+                            )
+                        };
+                        next.push(child.mutate(&mut rng, &params, &mut self.inn));
+                        // A child is as old as its oldest parent: age tracks
+                        // the lineage, not the individual, or every child
+                        // would be new and the layers would mean nothing.
+                        next_ages.push(self.ages[fit].max(self.ages[other]) + 1);
+                    }
+                }
             }
-            let mut members: Vec<usize> = s.members.clone();
-            members.sort_by(|&a, &b| fitness[a].total_cmp(&fitness[b]).then(a.cmp(&b)));
-            next.push(self.population[members[0]].clone());
-            let parents = &members[..members.len().div_ceil(2)];
-            for _ in 1..n {
-                let pa = parents[rng.below(Stream::Board, parents.len() as u32) as usize];
-                let pb = parents[rng.below(Stream::Board, parents.len() as u32) as usize];
-                let (fit, other) = if fitness[pa] <= fitness[pb] {
-                    (pa, pb)
-                } else {
-                    (pb, pa)
-                };
-                // Crossover is suspended while simplifying (E-35): what one
-                // parent sheds, the other hands straight back, and the phase
-                // would never finish.
-                let child = if cfg.phased && self.simplifying {
-                    self.population[fit].clone()
-                } else {
-                    NeatGenome::cross(
-                        &self.population[fit],
-                        &self.population[other],
-                        &mut rng,
-                        &params,
-                    )
-                };
+            // Short of a full house, the youngest blood fills the gap: under
+            // this scheme the answer to a shortfall is never more of the
+            // incumbent.
+            while next.len() < cfg.population {
+                next.push(NeatGenome::minimal(&mut rng));
+                next_ages.push(0);
+            }
+            next.truncate(cfg.population);
+            next_ages.truncate(cfg.population);
+        } else {
+            for (si, s) in species.iter().enumerate() {
+                let n = quota[si];
+                if n == 0 {
+                    continue;
+                }
+                let mut members: Vec<usize> = s.members.clone();
+                members.sort_by(|&a, &b| fitness[a].total_cmp(&fitness[b]).then(a.cmp(&b)));
+                next.push(self.population[members[0]].clone());
+                let parents = &members[..members.len().div_ceil(2)];
+                for _ in 1..n {
+                    let pa = parents[rng.below(Stream::Board, parents.len() as u32) as usize];
+                    let pb = parents[rng.below(Stream::Board, parents.len() as u32) as usize];
+                    let (fit, other) = if fitness[pa] <= fitness[pb] {
+                        (pa, pb)
+                    } else {
+                        (pb, pa)
+                    };
+                    // Crossover is suspended while simplifying (E-35): what one
+                    // parent sheds, the other hands straight back, and the phase
+                    // would never finish.
+                    let child = if cfg.phased && self.simplifying {
+                        self.population[fit].clone()
+                    } else {
+                        NeatGenome::cross(
+                            &self.population[fit],
+                            &self.population[other],
+                            &mut rng,
+                            &params,
+                        )
+                    };
+                    next.push(child.mutate(&mut rng, &params, &mut self.inn));
+                }
+            }
+            // Rounding or culling can leave the count short; the overall best
+            // genome's line fills the gap.
+            while next.len() < cfg.population {
+                let child = self.population[order[0]].clone();
                 next.push(child.mutate(&mut rng, &params, &mut self.inn));
             }
+            next.truncate(cfg.population);
+            next_ages = vec![0; next.len()];
         }
-        // Rounding or culling can leave the count short; the overall best
-        // genome's line fills the gap.
-        while next.len() < cfg.population {
-            let child = self.population[order[0]].clone();
-            next.push(child.mutate(&mut rng, &params, &mut self.inn));
-        }
-        next.truncate(cfg.population);
 
         let best_fitness = fitness[order[0]];
         let median_fitness = fitness[order[order.len() / 2]];
@@ -1013,6 +1200,7 @@ impl NeatTrainer {
         }
 
         self.population = next;
+        self.ages = next_ages;
         self.species = species;
 
         self.hall.push(champion);
@@ -1073,6 +1261,11 @@ impl NeatTrainer {
             champion_genes: champion_genome.genes.len(),
             mpc,
             simplifying: cfg.phased && self.simplifying,
+            mean_age: if self.ages.is_empty() {
+                0.0
+            } else {
+                self.ages.iter().map(|&a| a as f64).sum::<f64>() / self.ages.len() as f64
+            },
             champion_ears: {
                 let mut ears: Vec<u32> = champion_genome
                     .genes
@@ -1145,6 +1338,53 @@ mod tests {
         let (simplifying, ceiling, _, _) = t.phase_state();
         assert!(!simplifying);
         assert!(ceiling > smallest, "the ceiling leaves room: {ceiling}");
+    }
+
+    #[test]
+    fn age_layers_keep_the_population_young_and_the_nursery_full() {
+        // The scheme's promise (E-36): however long one lineage holds the
+        // crown, most of the run is younger than it, because the youngest
+        // band is refilled every generation and nobody breeds across bands.
+        let mut cfg = quick();
+        cfg.alps = true;
+        cfg.population = 30;
+        let mut t = NeatTrainer::new(cfg, 5);
+        let mut oldest_seen = 0u32;
+        for _ in 0..40 {
+            let r = t.step();
+            oldest_seen = oldest_seen.max(t.ages.iter().copied().max().unwrap_or(0));
+            assert_eq!(t.ages.len(), t.population.len(), "an age for every genome");
+            // Somebody is always brand new: that is the nursery.
+            assert!(
+                t.ages.iter().any(|&a| a == 0),
+                "the youngest band was not refilled"
+            );
+            assert!(
+                r.mean_age <= oldest_seen as f64,
+                "the mean cannot exceed the oldest"
+            );
+        }
+        // Lineages do accumulate age, or the layers would be decoration.
+        assert!(oldest_seen > 5, "nothing ever grew old: {oldest_seen}");
+        // And a real share of the run is always in the youngest band, which
+        // is what stops an incumbent crowding it out.
+        let young = t.ages.iter().filter(|&&a| a < ALPS_AGE_GAP).count();
+        assert!(
+            young * 4 >= t.ages.len(),
+            "only {young} of {} genomes were young: {:?}",
+            t.ages.len(),
+            t.ages
+        );
+    }
+
+    #[test]
+    fn an_unlayered_run_keeps_breeding_as_it_always_did() {
+        // The scheme is opt-in, so without it nothing about breeding moves.
+        let mut t = NeatTrainer::new(quick(), 5);
+        for _ in 0..5 {
+            let r = t.step();
+            assert_eq!(r.mean_age, 0.0, "no ages accrue without the layers");
+        }
     }
 
     #[test]

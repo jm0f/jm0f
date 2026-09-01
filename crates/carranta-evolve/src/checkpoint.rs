@@ -30,7 +30,12 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 9;
+pub const NEAT_FORMAT: u32 = 10;
+
+/// The NEAT format before the age layers existed (E-36): no ages section, so
+/// a run reads back with everybody the same age, which is what a run that
+/// never tracked age actually knows.
+pub const NEAT_FORMAT_UNLAYERED: u32 = 9;
 
 /// The NEAT format before the phased controller existed (E-35): no phase
 /// line, so it reads back complexifying with no ceiling, which is the run it
@@ -356,6 +361,7 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         (c.held_out_anchor, "held-out-anchor"),
         (c.deep_eval, "deep-eval"),
         (c.phased, "phased"),
+        (c.alps, "alps"),
     ] {
         if on {
             if !selection.is_empty() {
@@ -420,6 +426,14 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         let _ = writeln!(out, "genome");
         out.push_str(&g.show());
         let _ = writeln!(out, "end");
+    }
+
+    // The layers' ages (E-36), one per genome and in the same order, so a
+    // resume comes back knowing which lineages are old.
+    let _ = writeln!(out, "\n# ages: one per genome, generations");
+    let _ = writeln!(out, "ages {}", trainer.ages.len());
+    for age in &trainer.ages {
+        let _ = writeln!(out, "{age}");
     }
 
     let _ = writeln!(out, "\n# species: representative, best-ever, staleness");
@@ -501,6 +515,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     if !matches!(
         version,
         NEAT_FORMAT
+            | NEAT_FORMAT_UNLAYERED
             | NEAT_FORMAT_UNPHASED
             | NEAT_FORMAT_NARROW
             | NEAT_FORMAT_NO_PINS
@@ -610,10 +625,10 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     // Format 5 and earlier evaluated the classic way; the selection line
     // (E-20 to E-24) says which refinements a format 6 run trains under.
-    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval, phased) =
+    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval, phased, alps) =
         if version >= NEAT_FORMAT_NO_PINS {
             let (line, v) = scalar("selection")?;
-            let mut flags = (false, false, false, false, false, false, false);
+            let mut flags = (false, false, false, false, false, false, false, false);
             for word in v.split(' ') {
                 match word {
                     "classic" => {}
@@ -624,6 +639,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
                     "held-out-anchor" => flags.4 = true,
                     "deep-eval" => flags.5 = true,
                     "phased" => flags.6 = true,
+                    "alps" => flags.7 = true,
                     other => {
                         return Err(bad(line, &format!("unknown selection word `{other}`")));
                     }
@@ -631,7 +647,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
             }
             flags
         } else {
-            (false, false, false, false, false, false, false)
+            (false, false, false, false, false, false, false, false)
         };
     let cap: usize = num!("cap");
     let mode = {
@@ -640,7 +656,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     let delta: f64 = num!("delta");
     // The phase, format 9 on; older files were never in one.
-    let phase_state: Option<(bool, f64, f64, u32)> = if version >= NEAT_FORMAT {
+    let phase_state: Option<(bool, f64, f64, u32)> = if version >= NEAT_FORMAT_UNLAYERED {
         let (line, v) = scalar("phase")?;
         let mut f = v.split_whitespace();
         let which = f.next().unwrap_or("");
@@ -718,6 +734,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         rotate,
         held_out_anchor,
         phased,
+        alps,
         deep_eval,
     };
 
@@ -756,6 +773,17 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
             return Err(bad(line, "expected `genome`"));
         }
         population.push(genome_block(&mut lines)?);
+    }
+
+    // Ages, format 10 on. An older file never tracked them, and reads back
+    // with everybody the same age, which is exactly what it knows.
+    let mut ages: Vec<u32> = Vec::new();
+    if version >= NEAT_FORMAT {
+        let n = count(&mut lines, "ages")?;
+        for _ in 0..n {
+            let (line, text) = lines.next().ok_or(LoadError::Missing("age"))?;
+            ages.push(text.parse().map_err(|_| bad(line, "not an age"))?);
+        }
     }
 
     let n = count(&mut lines, "species")?;
@@ -878,6 +906,9 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     );
     trainer.hall_weight = hall_weight;
     trainer.pinned = pinned;
+    if ages.len() == trainer.population.len() {
+        trainer.ages = ages;
+    }
     if let Some((simplifying, ceiling, floor, stalled)) = phase_state {
         trainer.restore_phase(simplifying, ceiling, floor, stalled);
     }
