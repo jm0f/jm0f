@@ -954,6 +954,41 @@ impl Session {
         (self.turn_no(), self.in_setup())
     }
 
+    /// Which sound a line of history calls for, if any.
+    ///
+    /// The cue is a property of what happened, so it is decided here beside
+    /// the words rather than by the page reading them back. That is also what
+    /// lets a table played without the record still make a noise: the page is
+    /// sent the cues whether or not it is sent the history, and a cue carries
+    /// no more than somebody sitting at the table would hear.
+    pub fn cue_for(text: &str) -> Option<&'static str> {
+        let t = text.strip_prefix("Time ran out, ").unwrap_or(text);
+        let starts = |p: &str| t.len() >= p.len() && t[..p.len()].eq_ignore_ascii_case(p);
+        // First match wins, and the order is the page's: the specific readings
+        // of "took" come before the bare one.
+        if starts("rolled ") {
+            Some("roll")
+        } else if starts("offered ") {
+            Some("offer")
+        } else if starts("passed on ") || starts("declined the offers") {
+            Some("deny")
+        } else if starts("took a card, unseen") {
+            Some("deal")
+        } else if starts("took ") && t.contains(" from seat ") && t.contains(" for ") {
+            Some("accept")
+        } else if starts("placed a ")
+            || starts("built a ")
+            || starts("upgraded to a city")
+            || starts("moved the robber")
+        {
+            Some("place")
+        } else if starts("collected ") || starts("bought a development card") || starts("took ") {
+            Some("deal")
+        } else {
+            None
+        }
+    }
+
     /// Add a line of history under the turn it belongs to.
     fn note_at(&mut self, (turn, setup): (u32, bool), seat: Option<u8>, text: String) {
         self.log.push(LogLine {

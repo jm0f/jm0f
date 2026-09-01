@@ -2301,20 +2301,10 @@ const SOUNDS = {
 // the general ones. Two pairs depend on that: a trade taken is not the same
 // event as a card being dealt even though a trade deals cards, and a card
 // stolen by the robber says "Took" exactly like a trade does.
-const SOUND_FOR = [
-  [/^rolled /i, 'roll'],
-  [/^offered /i, 'offer'],
-  [/^passed on /i, 'deny'],
-  [/^declined the offers/i, 'deny'],
-  [/^took a card, unseen/i, 'deal'],
-  [/^took .* from seat \d+ for /i, 'accept'],
-  [/^(placed|built) a /i, 'place'],
-  [/^upgraded to a city/i, 'place'],
-  [/^moved the robber/i, 'place'],
-  [/^collected /i, 'deal'],
-  [/^bought a development card/i, 'deal'],
-  [/^took /i, 'deal'],
-];
+// Which sound a move calls for is decided by the server, in `Session::cue_for`,
+// because it is a fact about what happened rather than a reading of the prose.
+// Keeping a copy of the patterns here is what made the sounds disappear with
+// the record: the page could only hear what it could read.
 
 const sound = {
   // On unless it has been turned off, and the choice is remembered between
@@ -2371,20 +2361,17 @@ function playSound(name) {
 // arrives with the whole history in hand, and playing it back would be a minute
 // of dice.
 function soundTheLog(v) {
-  const log = v.log || [];
-  if (sound.first || log.length < sound.heard) {
-    sound.heard = log.length;
+  // The cues, not the history. They arrive whether or not the record does,
+  // so a table played from memory still sounds like a table; the server
+  // decides which cue a move calls for, beside the words that describe it.
+  const cues = v.cues || [];
+  if (sound.first || cues.length < sound.heard) {
+    sound.heard = cues.length;
     return;
   }
-  const fresh = log.slice(sound.heard);
-  sound.heard = log.length;
-  const heard = new Set();
-  for (const l of fresh) {
-    const line = l.t.replace(/^Time ran out, /, '');
-    for (const [pattern, name] of SOUND_FOR) {
-      if (pattern.test(line)) { heard.add(name); break; }
-    }
-  }
+  const fresh = cues.slice(sound.heard);
+  sound.heard = cues.length;
+  const heard = new Set(fresh.map(c => c.n));
   // In the order they happen at a table: the dice, then whatever went down on
   // the board, then the cards that moved because of it, then the market, an
   // offer going up and the answers coming back.

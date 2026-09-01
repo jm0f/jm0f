@@ -562,6 +562,18 @@ fn render_room(
             .bool("setup", line.setup)
             .opt_int("seat", line.seat.map(|x| x as i64));
     });
+    // The sounds, always, whatever the record setting says. Playing from
+    // memory and playing in silence are different choices, and hanging the
+    // cues on the log quietly made one of them mean the other. A cue is a
+    // name and nothing else: it says a die was rolled, not what it showed.
+    let cues: Vec<&'static str> = session
+        .log()
+        .iter()
+        .filter_map(|l| crate::game::Session::cue_for(&l.text))
+        .collect();
+    j.array("cues", cues.iter(), |o, name| {
+        o.str("n", name);
+    });
     let _ = MAX_PLAYERS;
     j.finish()
 }
@@ -751,6 +763,64 @@ mod tests {
             s = out;
         }
         s
+    }
+
+    #[test]
+    fn a_table_played_from_memory_still_makes_a_noise() {
+        // Turning the record off should mean not reading the history, not
+        // playing in silence. The cues go out either way, and they carry a
+        // name and nothing else: that a die was rolled, never what it showed.
+        let mut s = Session::new(4, 7, TradeMode::Full);
+        for _ in 0..400 {
+            if s.choices().is_empty() {
+                break;
+            }
+            let v = s.version();
+            let _ = s.act(0, v);
+        }
+        assert!(
+            s.log().len() > 20,
+            "the game did something: {}",
+            s.log().len()
+        );
+
+        let shown = render(&s);
+        let hidden = {
+            // The same session, told not to show its record.
+            let mut quiet = Session::new(4, 7, TradeMode::Full).with_log(false);
+            for _ in 0..400 {
+                if quiet.choices().is_empty() {
+                    break;
+                }
+                let v = quiet.version();
+                let _ = quiet.act(0, v);
+            }
+            render(&quiet)
+        };
+        assert!(shown.contains("\"cues\""), "the cues are sent");
+        assert!(
+            hidden.contains("\"cues\""),
+            "and sent without the record too"
+        );
+        // The same cues either way: the sound of a table does not depend on
+        // whether anybody is reading about it.
+        let cues_of = |j: &str| {
+            let at = j.find("\"cues\"").expect("a cues array");
+            let rest = &j[at..];
+            let end = rest.find(']').expect("a closed array");
+            rest[..end].to_string()
+        };
+        assert_eq!(
+            cues_of(&shown),
+            cues_of(&hidden),
+            "cues do not follow the log"
+        );
+        // And the history really is withheld.
+        assert!(shown.contains("\"t\":"), "the record is sent when shown");
+        assert!(
+            !hidden.contains("\"t\":"),
+            "the record is withheld when it is not"
+        );
     }
 
     #[test]
