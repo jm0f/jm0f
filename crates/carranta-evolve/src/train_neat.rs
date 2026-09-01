@@ -964,11 +964,19 @@ impl NeatTrainer {
                 ..params
             }
         };
-        // Ages, for the layers (E-36). A resume or a first generation finds
-        // none and starts everybody at nothing, which is the truth: the run
-        // has no record of who is older than whom.
+        // Ages, for the layers (E-36), spread across the bands rather than
+        // started together. A population bred from one ancestor ages in
+        // lockstep: everybody crosses a band boundary in the same
+        // generation, the youngest band empties, and its seats go to fresh
+        // genomes, which is a partial wipe every twenty generations. It
+        // showed as mean complexity sawing between 160 and 78 with the mean
+        // age resetting on the same rows. Staggering the start breaks the
+        // cohort, and from then on the ages spread on their own.
         if self.ages.len() != self.population.len() {
-            self.ages = vec![0; self.population.len()];
+            let span = (ALPS_LAYERS as u32 * ALPS_AGE_GAP).max(1);
+            self.ages = (0..self.population.len())
+                .map(|i| (i as u32 * span) / self.population.len().max(1) as u32)
+                .collect();
         }
         let mut next: Vec<NeatGenome> = Vec::with_capacity(cfg.population);
         let mut next_ages: Vec<u32> = Vec::with_capacity(cfg.population);
@@ -1387,6 +1395,18 @@ mod tests {
         );
         // Lineages do accumulate age, or the layers would be decoration.
         assert!(oldest_seen > 5, "nothing ever grew old: {oldest_seen}");
+        // And every band is occupied, which is what stops the run aging as
+        // one cohort and emptying a band all at once.
+        let bands = t
+            .ages
+            .iter()
+            .map(|&a| (a / ALPS_AGE_GAP).min(ALPS_LAYERS as u32 - 1))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            bands.len() >= 2,
+            "the whole run sat in one band: {:?}",
+            t.ages
+        );
         // And a real share of the run is always in the youngest band, which
         // is what stops an incumbent crowding it out.
         let young = t.ages.iter().filter(|&&a| a < ALPS_AGE_GAP).count();
