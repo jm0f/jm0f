@@ -989,11 +989,17 @@ impl NeatTrainer {
             for layer in (0..ALPS_LAYERS).rev() {
                 // The species still do the sharing; the layer only says who
                 // is eligible, so a young species is protected twice over.
+                // Stagnation does not cull here, and applying it as well
+                // nearly emptied the run the first time this was switched
+                // on: after a long drought most species are stale, so every
+                // band came up empty and its seats went to fresh genomes,
+                // which replaced the population and left the champion
+                // scoring against near-random opponents. Age is this
+                // scheme's own turnover, and the oldest band's fixed size
+                // already caps how much of the run one old lineage may hold.
                 let groups: Vec<Vec<usize>> = species
                     .iter()
-                    .enumerate()
-                    .filter(|(si, _)| !stagnant.contains(si))
-                    .map(|(_, sp)| {
+                    .map(|sp| {
                         sp.members
                             .iter()
                             .copied()
@@ -1364,6 +1370,21 @@ mod tests {
                 "the mean cannot exceed the oldest"
             );
         }
+        // The run keeps its accumulated structure: the layers are turnover,
+        // not a restart. Switching them on once wiped the population, because
+        // stagnation culled the bands empty and the seats went to fresh
+        // genomes, and a population of near-random genomes is also the
+        // opponent field, so the fitness signal went with it.
+        let mean_genes = t
+            .population
+            .iter()
+            .map(|g| g.enabled_len() as f64)
+            .sum::<f64>()
+            / t.population.len() as f64;
+        assert!(
+            mean_genes > crate::neat::GENESIS_SPINE as f64 * 1.2,
+            "the population collapsed to minimal genomes: mean {mean_genes}"
+        );
         // Lineages do accumulate age, or the layers would be decoration.
         assert!(oldest_seen > 5, "nothing ever grew old: {oldest_seen}");
         // And a real share of the run is always in the youngest band, which
