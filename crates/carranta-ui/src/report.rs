@@ -5158,6 +5158,11 @@ mod tests {
             assert!(html.contains("<header>"), "a header");
             assert!(html.contains("class=\"mark\""), "one name for the mark");
             assert!(html.contains("class=\"headLinks\""));
+        }
+        // The plain links are the server-rendered pages'. The board carries
+        // none: what it offered were three ways out of the game you are in,
+        // and the pills are the navigation the application actually has.
+        for html in [report.as_str(), home.as_str()] {
             assert!(html.contains("class=\"headLink\""));
         }
         // The mark leads home from everywhere it is a link, and is the heading on
@@ -5165,28 +5170,38 @@ mod tests {
         assert!(report.contains("<a class=\"mark\" href=\"/\">"));
         assert!(home.contains("<h1 class=\"mark\">"));
         assert!(!home.contains("<a class=\"mark\""), "no link to this page");
-        // New game means the lobby, on every page that offers it, and it is a
-        // link rather than a button on all of them.
-        assert!(PAGE.contains("<a class=\"headLink\" href=\"/lobby\">New game</a>"));
+        // New game means the lobby wherever it is offered, and it is a link
+        // rather than a button: the lobby has an address, so offering it as
+        // anything else is a second way to reach one place.
         assert!(home.contains("href=\"/lobby\">New game</a>"));
-        // A New game button would be that: the lobby has an address, so offering
-        // it as anything but a link is a second way to reach one place. Leaving
-        // a seat is a button because it is not somewhere to go.
         assert!(
             !PAGE.contains(">New game</button>"),
             "one label, one destination, one kind of element"
         );
-        // And the order is the masthead's: plain links first, the pills after,
-        // on the board exactly as on every server-rendered page.
-        let link = PAGE
-            .find("href=\"/lobby\">New game")
-            .expect("the board offers a new game");
-        let pills = PAGE
-            .find("<nav class=\"headTabs\">")
-            .expect("the board wears the pills");
-        assert!(link < pills, "links precede the pills");
+        // The board's header is the pills and nothing else. Leaving the game,
+        // the report and a new game were three exits crowding the one screen
+        // you are meant to be looking at, and every one of them is reachable
+        // from the places the pills lead to.
+        assert!(
+            PAGE.contains("<nav class=\"headTabs\">"),
+            "the board wears the pills"
+        );
+        for gone in ["New game", "How it is going", "Leave the"] {
+            assert!(
+                !PAGE.contains(&format!("headLink\" href=\"/lobby\">{gone}")),
+                "the board offers no {gone}"
+            );
+        }
+        assert!(
+            !PAGE.contains("id=\"leave\""),
+            "no leave button on the board"
+        );
+        assert!(
+            !PAGE.contains("id=\"analytics\""),
+            "no report link on the board"
+        );
         // And the rules the two stylesheets share are named the same in both.
-        for rule in [".headLinks", ".headLink", ".gameName"] {
+        for rule in [".headLinks", ".gameName"] {
             assert!(CSS.contains(rule), "the report styles {rule}");
             assert!(PAGE.contains(rule), "the board styles {rule}");
         }

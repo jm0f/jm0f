@@ -466,8 +466,17 @@
      is a lift clear of the disc's top edge, in board units, which is what a
      transform on an SVG element is measured in. Slower than the tiles' lift,
      because it is a deliberate look rather than a hover cue. */
-  #board .robberPiece { transition: transform .16s ease-out; }
-  #board .robberPiece:hover { transform: translateY(-31px); }
+  /* The hit area does not move; the drawing does. Hanging the hover on the
+     piece itself made it lift out from under the cursor, which un-hovered it,
+     which dropped it back: Firefox flickered and Safari, which is stricter
+     about transforms on a nested svg, did nothing at all. A still rect the
+     size of the piece at rest keeps the pointer over the same element the
+     whole way up, and a group is the one thing every browser agrees it can
+     transform. */
+  #board .robberSpot { cursor: pointer; }
+  #board .robberSpot rect { fill: transparent; }
+  #board .robberArt { transition: transform .16s ease-out; }
+  #board .robberSpot:hover .robberArt { transform: translateY(-31px); }
   #board { flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; display: block; }
   .col {
     display: flex; flex-direction: column; gap: clamp(8px, .8vw, 16px);
@@ -1395,12 +1404,6 @@
        rather than a button opening the lobby over the board: one label, one
        destination, on every page that carries this header. -->
   <div class="headLinks">
-    <!-- Standing up from a seat. Shown only while sitting in one, and it says
-         which of the two things it will do, because before the game starts it
-         gives the chair back to the table and after it hands it to a bot. -->
-    <button class="headLink" id="leave" type="button" hidden>Leave the table</button>
-    <a class="headLink" id="analytics" href="/">How it is going</a>
-    <a class="headLink" href="/lobby">New game</a>
     <!-- The site's own places, worn the way every server-rendered header
          wears them: plain links first, then the sections as pills, all quiet
          here because a board is no section, exactly the order the
@@ -2174,7 +2177,30 @@ function draw() {
     // Lift it under the cursor, far enough to read the number it is standing
     // on. The robber covers the disc almost exactly, so the one thing you want
     // to know about the hex it has shut down is the one thing it hides.
-    if (thief) thief.setAttribute('class', 'robberPiece');
+    //
+    // The lift is hung on a group inside a group: the outer one carries a
+    // still rect that catches the pointer, the inner one carries the drawing
+    // and moves. Only the rest position is covered, never the travel, or the
+    // area would reach into the hex above and swallow clicks meant for it.
+    if (thief) {
+      const x = parseFloat(thief.getAttribute('x'));
+      const y = parseFloat(thief.getAttribute('y'));
+      const w = parseFloat(thief.getAttribute('width'));
+      const h = parseFloat(thief.getAttribute('height'));
+      const pad = 5;
+      const spot = el('g', { class: 'robberSpot' });
+      const art = el('g', { class: 'robberArt' });
+      svg.removeChild(thief);
+      art.appendChild(thief);
+      spot.appendChild(el('rect', {
+        x: x - pad,
+        y: y - pad,
+        width: w + pad * 2,
+        height: h + pad * 2,
+      }));
+      spot.appendChild(art);
+      svg.appendChild(spot);
+    }
   }
 
   // Where you may build, shown as a ghost of the piece you would get rather
@@ -2487,14 +2513,6 @@ function render() {
   // move can be made until the seats are settled, so the only thing on offer is
   // the one that settles them.
   document.body.classList.toggle('waiting', !!v.inLobby);
-  {
-    const out = document.getElementById('leave');
-    out.hidden = v.you < 0 || v.winner !== null;
-    out.textContent = v.started ? 'Leave the game' : 'Leave the table';
-    out.title = v.started
-      ? 'The house bot plays your seat until you come back to it.'
-      : 'The seat goes back to the table for somebody else.';
-  }
   // The lobby, or the game: one payload, two screens, and `inLobby` is the
   // switch. While the table is a room the board is not shown at all, because
   // it does not exist as far as the people gathering are concerned: the host
@@ -5178,21 +5196,6 @@ const api = (path) => `/${GAME}${path}`;
 // `/lobby` used to be this page with no game behind it; opening it now mints a
 // table server-side and redirects here, so every visit to this page has a game
 // id in the path and one loop serves the lobby, the board and the finished game.
-
-// The header's way through to this game's report. Written once, because the
-// address does not change while the game is being played.
-{
-  const a = document.getElementById('analytics');
-  if (a) a.href = api('/analytics');
-}
-
-document.getElementById('leave').onclick = async () => {
-  await fetch(api('/api/leave'), { method: 'POST' });
-  // Home rather than staying to watch: leaving is a decision to be somewhere
-  // else, and a board you have just stood up from is not it. The seat is still
-  // yours to come back to if the game had started, and the link still works.
-  location.assign('/');
-};
 
 // The table this page is about has been closed. Said on the page rather than by
 // bouncing to the home page, because a tab that silently became a different

@@ -766,7 +766,13 @@ impl Session {
         if !name.is_empty() {
             self.name = name.chars().take(24).collect();
         }
-        self.names[HUMAN as usize] = self.name.clone();
+        // Whose name this is, not where they sit. It used to be stamped on
+        // seat nought as well, from when one person always sat there, and the
+        // draw stopped that being true: dealing and drawing both clear every
+        // seat before naming the chairs, so the stamp was invisible until a
+        // path that does neither came along. Reloading a saved game is that
+        // path, and a table came back with a bot in seat nought wearing the
+        // name of the person now sitting in seat one.
         self
     }
 
