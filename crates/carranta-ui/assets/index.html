@@ -3231,7 +3231,10 @@ function renderActions(v) {
     // aria-disabled rather than disabled, so the button keeps its place in the
     // tab order and still answers "why not?" to a keyboard or a thumb.
     if (!live) b.setAttribute('aria-disabled', 'true');
-    b.setAttribute('data-tip', live ? s.label : (s.why || 'not now'));
+    // A shortcut nobody is told about is a shortcut nobody uses, and the
+    // tooltip is where this page already answers "what does this do".
+    const key = live && s.g === 'roll' ? ' · space' : '';
+    b.setAttribute('data-tip', live ? s.label + key : (s.why || 'not now'));
     b.onclick = () => {
       if (!live) return;
       if (s.c) act(s.c.i);
@@ -4125,6 +4128,45 @@ function dropStaleArming(v) {
   if (building === null) return;
   if (!v.choices.some(c => pieceOf(c) === building)) building = null;
 }
+// What the space bar answers, given what the table is asking. An offer waiting
+// on you is the thing that holds everybody up, so it goes first; the dice come
+// next, because a turn cannot begin without them. Read off the same choices the
+// buttons are built from, so the key can never offer something the page does
+// not, and returns nothing when the table is not asking either question.
+function whatSpaceAnswers(v) {
+  if (!v || v.you < 0 || v.winner !== null) return null;
+  const decline = (v.choices || []).find(c => c.label === 'No thanks');
+  if (decline) return { say: 'decline', c: decline };
+  const roll = (v.choices || []).find(c => c.group === 'roll');
+  if (roll) return { say: 'roll', c: roll };
+  return null;
+}
+
+document.addEventListener('keydown', (e) => {
+  // Both spellings, because remote keyboards and some input methods deliver the
+  // key without the physical code.
+  if ((e.code !== 'Space' && e.key !== ' ') || e.repeat) return;
+  // A shortcut is the unmodified key. Every combination belongs to the
+  // browser or the system, and taking one is taking somebody else's.
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  // Typing at the table is not answering it.
+  const t = e.target;
+  if (t && (t.isContentEditable
+    || (t.matches && t.matches('input, textarea, select')))) return;
+  // A focused button already answers to space, and letting both run would
+  // decline the offers and then roll on one press.
+  const on = document.activeElement;
+  if (on && on !== document.body && on.matches
+    && on.matches('button, a, input, textarea, select')) return;
+  const answer = whatSpaceAnswers(view);
+  if (!answer) return;
+  // Only once it is going to do something, or the page stops scrolling for
+  // nothing on every screen where the table is asking neither question.
+  e.preventDefault();
+  if (answer.say === 'decline') declineTheOffers(view, answer.c);
+  else act(answer.c.i);
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   hideTip();
@@ -4678,6 +4720,25 @@ function cardRun(v, n) {
   return run;
 }
 
+// Turning down everything on the table at once. Written apart from the button
+// because the space bar says the same thing, and two ways to say it that
+// update the page differently is how one of them comes to be wrong.
+function declineTheOffers(v, decline) {
+  // The live ones put to you, which is the set the server resolves on this
+  // action. A dead offer is not yours to answer any more, whatever its chips
+  // still read.
+  (v.offers || []).forEach(o => {
+    if (o.mine || !o.live) return;
+    (o.answers || []).forEach(a => {
+      if (a.seat === v.you && a.said !== 'yes') a.said = 'no';
+    });
+  });
+  v.choices = v.choices.filter(x => x.label !== 'No thanks'
+    && !/^Accept offer /.test(x.label));
+  render();
+  act(decline.i);
+}
+
 function renderOffers(v, host, offers, decline) {
   offers.forEach(o => {
     const d = document.createElement('div');
@@ -4774,20 +4835,10 @@ function renderOffers(v, host, offers, decline) {
     const b = document.createElement('button');
     b.className = 'btn-secondary btn-sm';
     b.textContent = theirs > 1 ? `no thanks, all ${theirs}` : 'no thanks';
+    b.setAttribute('data-tip', 'space');
     // Declining moves nothing on the board, so there is nothing to wait for:
     // my chips turn to declined and the buttons go on the click itself.
-    b.onclick = () => {
-      offers.forEach(o => {
-        if (o.mine) return;
-        (o.answers || []).forEach(a => {
-          if (a.seat === v.you && a.said !== 'yes') a.said = 'no';
-        });
-      });
-      v.choices = v.choices.filter(x => x.label !== 'No thanks'
-        && !/^Accept offer /.test(x.label));
-      render();
-      act(decline.i);
-    };
+    b.onclick = () => declineTheOffers(v, decline);
     row.appendChild(b);
   }
   if (row.firstChild) {
