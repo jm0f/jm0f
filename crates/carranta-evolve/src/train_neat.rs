@@ -416,7 +416,10 @@ impl NeatTrainer {
         descriptor: Descriptor,
         generation: u32,
     ) -> Placed {
-        self.archive.insert(genome, fitness, descriptor, generation)
+        // Provisional, always: this fitness came from a handful of games
+        // against the anchor, not from the generation loop, and comparing the
+        // two as one scale locks every seeded cell for ever.
+        self.archive.seed(genome, fitness, descriptor, generation)
     }
 
     pub fn generation(&self) -> u32 {
@@ -1700,6 +1703,39 @@ mod tests {
         assert!(
             archive.iter().any(|e| e.fitness > best),
             "every survivor is the best one, which is not an archive"
+        );
+    }
+
+    #[test]
+    fn seeding_through_the_trainer_marks_the_entry_provisional() {
+        // The archive's own tests cover provisional semantics, and all of them
+        // passed while this method still called `insert`. What was wrong was
+        // the wiring, so the test has to go through the door the seeding path
+        // actually uses.
+        let mut t = NeatTrainer::new(
+            NeatConfig {
+                qd: true,
+                qd_games: 1,
+                ..quick()
+            },
+            17,
+        );
+        let placed = t.seed_archive(
+            NeatGenome::default(),
+            -7.0,
+            crate::mapelites::Descriptor {
+                production: 60.0,
+                city_share: 0.3,
+            },
+            758,
+        );
+        assert_eq!(placed, Placed::Discovered);
+        assert_eq!(t.archive().filled(), 1, "it is there as a parent");
+        assert_eq!(t.archive().measured(), 0, "but it was never measured");
+        assert!(
+            t.archive().best().is_none(),
+            "a seeded -7.0 must not be reported as the run's best: that is \
+             a champion no generation produced"
         );
     }
 
