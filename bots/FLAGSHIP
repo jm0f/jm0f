@@ -3,30 +3,36 @@
 # earned it the chair.
 #
 # Never inferred from the catalogue. Strength here is cyclic and runs number
-# their own generations, so only the full profile against the incumbent can
-# answer: head to head, against the anchor, solo against three heuristics,
-# and against the known exploiter. A candidate takes this line by winning
-# it; winning some axes earns a place on the roster instead, which is what
-# trained-921 has.
+# their own generations, so only the full profile can answer: head to head,
+# against the anchor, solo against three heuristics, and against the known
+# exploiter. A candidate takes this line by winning it; winning some axes
+# earns a place on the roster instead, which is what trained-921 has.
 #
-# 1905 (neat-12), measured 2026-09-02 over 400 rounds a side, deep, against
-# the incumbent 1159. Every axis re-measured for the incumbent on the same
-# seed rather than read off its old entry, because a number taken under
-# other conditions is not something to compare against:
-#   vs trained-1159  -0.241 / -0.197   60.2% / 57.8%  (seeds 88 and 900,
-#                    which do not overlap. 1159 took its own chair on
-#                    -0.177 / -0.214)
-#   vs gen-642       -0.619            81.0%          (record, past the
-#                    76.1% in the entry below, intervals disjoint on both
-#                    measures. The exploiter plays flat here, which is how
-#                    that number was taken and the only way the two say the
-#                    same thing)
-#   solo 1v3         -1.409            75.2%          (level with 1159's
-#                    -1.424 / 77.6%, intervals overlapping)
-#   vs anchor        -1.187            90.5%          (the one axis 1159
-#                    holds, 92.0%, and by a small margin. The same shape
-#                    1159 took this line in: it gave the anchor axis to 987
-#                    by a small margin too)
-# Bred 107 generations after 1798, the body that had held the run since the
-# age stagger went in.
-1905
+# Profile a candidate against the STRONGEST ROSTER MEMBER, not against
+# whoever holds this line. Reading only the incumbent is how 1905 took the
+# chair in September while losing to 1798, which was sitting on the roster
+# the whole time: 1798 had won some axes against 1159 and been given a
+# roster place, and nothing ever put the two of them at the same table.
+# A roster place is not a statement that the bot is weaker than this one.
+#
+# 1798 (neat-12), measured 2026-09-03 over 400 rounds a side, deep. It is
+# the only champion that beats both of the others head to head:
+#   vs trained-1905  -0.057 / -0.145   52.4% / 52.9%  (seeds 88 and 900,
+#                    which do not overlap. Narrow, and the win intervals
+#                    sit just clear of even, but it holds on both)
+#   vs trained-1159  -0.212 / -0.239   57.9% / 59.1%  (seeds 88 and 900)
+#   vs gen-642       -0.675            82.1%          (record. The
+#                    exploiter plays flat, which is how every number on
+#                    this axis has been taken and the only way they are
+#                    comparable. 1905 reads -0.619 / 81.0%, overlapping)
+#   vs anchor        -1.208            90.0%          (level with 1905's
+#                    -1.187 / 90.5%, intervals overlapping heavily)
+#
+# The axis 1798 gives up, and it gives it up clearly: solo against three
+# heuristics it reads -1.213 / 67.9% [65.5, 70.2] against 1905's -1.409 /
+# 75.2% [73.0, 77.5], with the intervals disjoint on both measures. 1905
+# is the better farmer of weak opposition. 1798 is the better player of
+# strong opposition, and an empty chair at a table with a person in it is
+# facing the second problem, not the first. That is the reading this line
+# rests on, and it is a judgement rather than a sweep.
+1798
