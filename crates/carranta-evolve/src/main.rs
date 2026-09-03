@@ -412,7 +412,7 @@ dev_bought,militia,production\n";
 fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
     let b = &r.behaviour;
     format!(
-        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.2},{},{:.1},{},{:.6},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.2},{},{:.1},{},{},{:.6},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
         r.generation,
         r.trials,
         r.games,
@@ -431,6 +431,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
         },
         r.mean_age,
         r.archive_filled,
+        r.archive_seeded,
         r.archive_mean,
         r.archive_found,
         r.gap,
@@ -454,7 +455,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
 }
 
 const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
-species,champion_nodes,champion_genes,champion_ears,mpc,phase,age,cells,archive_mean,found,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
+species,champion_nodes,champion_genes,champion_ears,mpc,phase,age,cells,seeded,archive_mean,found,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
 /// Take one past champion out of a run and write it as a network file.
@@ -489,7 +490,26 @@ fn export_champion(ckpt: &std::path::Path, which: &str, to: Option<&std::path::P
         for (label, generation, mu, sigma, games) in roster {
             println!("  {label:<12}{generation:>10}{mu:>7.2}{sigma:>8.2}{games:>8}");
         }
-        println!("\n  export one with --export <champion|generation|best>");
+        println!("\n  export one with --export <champion|generation|best|archive>");
+        if trainer.archive().filled() > 0 {
+            let filled = trainer.archive().filled();
+            let mean = trainer.archive().mean_fitness();
+            match trainer.archive().best() {
+                Some((e, a, b)) => println!(
+                    "  archive: {filled} cells filled ({} measured), mean {mean:.3}, \
+                     best {:.3} at cell {a},{b} from generation {}",
+                    trainer.archive().measured(),
+                    e.fitness,
+                    e.generation
+                ),
+                None => println!(
+                    "  archive: {filled} cells filled, all still seeds; \
+                     nothing measured into a cell yet"
+                ),
+            }
+            println!("  `--export archive` takes the archive's best, which on a");
+            println!("  quality-diversity run is not the same player as `best`");
+        }
         return;
     }
     // The run's name comes off the directory the checkpoint lives in:
@@ -861,7 +881,7 @@ fn run_neat(args: Args) {
     println!("  a negative gap and a win share above 50% are ahead, and either");
     println!("  one inside its interval has not been shown\n");
     println!(
-        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears    mpc   age    cells        gap (E-16)        wins (E-17)   trades   secs"
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears    mpc   age      cells        gap (E-16)        wins (E-17)   trades   secs"
     );
 
     let started = std::time::Instant::now();
@@ -882,7 +902,7 @@ fn run_neat(args: Args) {
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
         println!(
-            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>5.1}{}  {:>4.1}  {:>7}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>5.1}{}  {:>4.1}  {:>9}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
             r.generation,
             r.trials,
             r.games,
@@ -903,7 +923,13 @@ fn run_neat(args: Args) {
             // Blank on a run that does not keep an archive, rather than a
             // column of zeroes pretending to mean something.
             if trainer.config.qd {
-                format!("{}+{}", r.archive_filled, r.archive_found)
+                // Measured cells, then the seeds still holding cells the run
+                // has not earned. A run is working when the first climbs and
+                // the second drains.
+                format!(
+                    "{}/{}+{}",
+                    r.archive_filled, r.archive_seeded, r.archive_found
+                )
             } else {
                 String::new()
             },

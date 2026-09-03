@@ -113,6 +113,17 @@ pub struct Elite {
     pub descriptor: Descriptor,
     /// The generation this elite was placed, for reading the archive's age.
     pub generation: u32,
+    /// Seeded from outside the generation loop rather than measured by it.
+    ///
+    /// This distinction is load-bearing. A seeded champion's fitness comes
+    /// from a handful of games against the anchor; a bred genome's comes from
+    /// the whole evaluation, against a field of a hundred and fifty. The
+    /// second is a far harder test, so the two numbers are not comparable and
+    /// treating them as one scale hands every cell to a seed for ever: the
+    /// archive fills, coverage looks excellent, and nothing can ever improve.
+    /// A provisional elite is a parent and a placeholder, and yields its cell
+    /// to the first genome that has actually been measured.
+    pub provisional: bool,
 }
 
 /// The grid: one elite per cell, most cells empty at the start.
@@ -152,43 +163,91 @@ impl Archive {
         descriptor: Descriptor,
         generation: u32,
     ) -> Placed {
+        self.offer(genome, fitness, descriptor, generation, false)
+    }
+
+    /// Offer a genome the loop has not measured: a seed.
+    ///
+    /// It takes an empty cell and never displaces anything, because its
+    /// fitness was not produced by the same experiment and cannot be compared
+    /// with one that was.
+    pub fn seed(
+        &mut self,
+        genome: NeatGenome,
+        fitness: f64,
+        descriptor: Descriptor,
+        generation: u32,
+    ) -> Placed {
+        self.offer(genome, fitness, descriptor, generation, true)
+    }
+
+    fn offer(
+        &mut self,
+        genome: NeatGenome,
+        fitness: f64,
+        descriptor: Descriptor,
+        generation: u32,
+        provisional: bool,
+    ) -> Placed {
         let (a, b) = descriptor.cell();
         let slot = &mut self.cells[a * CELLS + b];
-        match slot {
-            Some(held) if held.fitness <= fitness => Placed::Rejected,
-            other => {
-                let was_empty = other.is_none();
-                *other = Some(Elite {
-                    genome,
-                    fitness,
-                    descriptor,
-                    generation,
-                });
-                if was_empty {
-                    Placed::Discovered
-                } else {
-                    Placed::Improved
-                }
-            }
+        let beaten = match slot.as_ref() {
+            None => true,
+            // A measured genome always takes a cell from a seed, whatever the
+            // two numbers say, because they do not mean the same thing.
+            Some(held) if held.provisional && !provisional => true,
+            // A seed never displaces anything, measured or seeded.
+            Some(_) if provisional => false,
+            Some(held) => held.fitness > fitness,
+        };
+        if !beaten {
+            return Placed::Rejected;
+        }
+        let was_empty = slot.is_none();
+        *slot = Some(Elite {
+            genome,
+            fitness,
+            descriptor,
+            generation,
+            provisional,
+        });
+        if was_empty {
+            Placed::Discovered
+        } else {
+            Placed::Improved
         }
     }
 
-    /// How many cells hold an elite. The archive's coverage, and the number
-    /// that says whether quality diversity is doing anything at all.
+    /// How many cells hold anything at all, seeds included: the reach of the
+    /// breeding pool, since a seed is drawn as a parent like any other.
     pub fn filled(&self) -> usize {
         self.cells.iter().filter(|c| c.is_some()).count()
+    }
+
+    /// How many cells hold a genome this run measured itself.
+    ///
+    /// The honest coverage number. `filled` counts seeds too, and on a freshly
+    /// seeded archive that is most of them, so reading `filled` alone would
+    /// call a run successful before it had done anything.
+    pub fn measured(&self) -> usize {
+        self.iter().filter(|e| !e.provisional).count()
     }
 
     pub fn is_empty(&self) -> bool {
         self.filled() == 0
     }
 
-    /// The best fitness anywhere in the archive, and the cell holding it.
+    /// The best *measured* elite, and the cell holding it.
+    ///
+    /// Seeds are excluded. Their fitness came from a different experiment, so
+    /// including them would report a champion the run never produced and, on
+    /// a freshly seeded archive, would report one every time.
     pub fn best(&self) -> Option<(&Elite, usize, usize)> {
         self.cells
             .iter()
             .enumerate()
             .filter_map(|(i, c)| c.as_ref().map(|e| (e, i / CELLS, i % CELLS)))
+            .filter(|(e, _, _)| !e.provisional)
             .min_by(|x, y| x.0.fitness.total_cmp(&y.0.fitness))
     }
 
@@ -196,7 +255,11 @@ impl Archive {
     /// which is the number that separates a wide archive of poor players from
     /// a wide archive of good ones.
     pub fn mean_fitness(&self) -> f64 {
-        let held: Vec<f64> = self.iter().map(|e| e.fitness).collect();
+        let held: Vec<f64> = self
+            .iter()
+            .filter(|e| !e.provisional)
+            .map(|e| e.fitness)
+            .collect();
         if held.is_empty() {
             return 0.0;
         }
@@ -357,6 +420,77 @@ mod tests {
     }
 
     #[test]
+    fn a_seed_yields_its_cell_to_anything_the_run_actually_measured() {
+        // The bug this guards, found live: seeded fitnesses come from a few
+        // games against the anchor and bred ones from the whole evaluation
+        // against a field of a hundred and fifty. The seeded number looks far
+        // better because the test was far easier. Compared as one scale, every
+        // seeded cell is locked for ever: coverage looks excellent and nothing
+        // can improve. The run had 125 of 144 cells and a "best" of -7.0 that
+        // no generation had produced.
+        let mut archive = Archive::new();
+        let g = NeatGenome::default();
+        let d = descriptor(60.0, 0.3);
+
+        assert_eq!(archive.seed(g.clone(), -7.0, d, 758), Placed::Discovered);
+        assert_eq!(archive.measured(), 0, "a seed is not a measurement");
+        assert_eq!(archive.filled(), 1, "but it is a parent, so it is there");
+        assert!(
+            archive.best().is_none(),
+            "reporting a seed as the best would name a champion the run \
+             never produced"
+        );
+
+        // Far worse on paper, and it still takes the cell.
+        assert_eq!(archive.insert(g.clone(), -3.0, d, 2559), Placed::Improved);
+        assert_eq!(archive.measured(), 1);
+        assert_eq!(archive.best().unwrap().0.fitness, -3.0);
+
+        // And from then on the cell is an ordinary contest again.
+        assert_eq!(archive.insert(g.clone(), -2.0, d, 2560), Placed::Rejected);
+        assert_eq!(archive.insert(g, -4.0, d, 2561), Placed::Improved);
+        assert_eq!(archive.best().unwrap().0.fitness, -4.0);
+    }
+
+    #[test]
+    fn a_seed_never_displaces_and_never_moves_the_mean() {
+        let mut archive = Archive::new();
+        let g = NeatGenome::default();
+        let d = descriptor(60.0, 0.3);
+        archive.insert(g.clone(), -3.0, d, 10);
+        // Even a spectacular-looking seed leaves a measured elite alone.
+        assert_eq!(archive.seed(g.clone(), -9.0, d, 11), Placed::Rejected);
+        assert_eq!(archive.best().unwrap().0.fitness, -3.0);
+
+        // A seed in its own cell is a parent but not part of the quality
+        // reading, or the mean would flatter the run by its seeding alone.
+        archive.seed(g, -9.0, descriptor(35.0, 0.05), 12);
+        assert_eq!(archive.filled(), 2);
+        assert_eq!(archive.measured(), 1);
+        assert_eq!(archive.mean_fitness(), -3.0);
+    }
+
+    #[test]
+    fn seeds_are_still_drawn_as_parents() {
+        // They must be: supplying parents is the entire reason to seed.
+        let mut archive = Archive::new();
+        let g = NeatGenome::default();
+        archive.seed(g.clone(), -9.0, descriptor(80.0, 0.5), 1);
+        archive.insert(g, -3.0, descriptor(35.0, 0.05), 2);
+        let mut rng = Rng::new(4);
+        let mut seeds = 0;
+        for _ in 0..400 {
+            if archive.pick(&mut rng).unwrap().provisional {
+                seeds += 1;
+            }
+        }
+        assert!(
+            (120..=280).contains(&seeds),
+            "seeds drawn {seeds} of 400, so they are not breeding"
+        );
+    }
+
+    #[test]
     fn an_empty_archive_answers_rather_than_panicking() {
         let archive = Archive::new();
         let mut rng = Rng::new(1);
@@ -377,6 +511,7 @@ mod tests {
                 fitness: -2.5,
                 descriptor: descriptor(60.0, 0.3),
                 generation: 11,
+                provisional: false,
             },
         );
         let (elite, a, b) = archive.best().unwrap();

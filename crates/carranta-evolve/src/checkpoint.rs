@@ -447,15 +447,19 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
     // when empty, so the section is always where a reader expects it.
     let _ = writeln!(
         out,
-        "\n# archive: cell a b, fitness, production, city share, generation"
+        "\n# archive: cell a b, fitness, production, city share, generation, origin"
     );
     let _ = writeln!(out, "archive {}", trainer.archive.filled());
     for (a, b, held) in trainer.archive.cells() {
         let Some(e) = held else { continue };
         let _ = writeln!(
             out,
-            "cell {a} {b} {} {} {} {}",
-            e.fitness, e.descriptor.production, e.descriptor.city_share, e.generation
+            "cell {a} {b} {} {} {} {} {}",
+            e.fitness,
+            e.descriptor.production,
+            e.descriptor.city_share,
+            e.generation,
+            if e.provisional { "seed" } else { "measured" }
         );
         out.push_str(&e.genome.show());
         let _ = writeln!(out, "end");
@@ -852,6 +856,9 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
             let generation: u32 = next("cell generation")?
                 .parse()
                 .map_err(|_| bad(line, "bad cell generation"))?;
+            // Absent in the first build that wrote this section, where every
+            // entry was treated as measured.
+            let provisional = matches!(p.next(), Some("seed"));
             let genome = genome_block(&mut lines)?;
             archive.restore_cell(
                 a,
@@ -864,6 +871,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
                         city_share,
                     },
                     generation,
+                    provisional,
                 },
             );
         }

@@ -239,6 +239,9 @@ pub struct NeatReport {
     /// first time. Coverage alone can rise while the archive fills with poor
     /// players, so the mean is printed beside it; a healthy run moves both.
     pub archive_filled: usize,
+    /// Cells still held by a seed, which is coverage the run has not earned.
+    /// It falls to zero as the loop measures genomes into those cells.
+    pub archive_seeded: usize,
     pub archive_mean: f64,
     pub archive_found: usize,
     pub behaviour: Behaviour,
@@ -485,6 +488,24 @@ impl NeatTrainer {
     /// is not reliably the strongest one.
     pub fn export(&self, which: &str, run: &str) -> Option<(String, String)> {
         let which = which.trim();
+        // The archive's best elite (E-37), which on a quality-diversity run is
+        // a different player from `best` and usually the one worth having.
+        //
+        // `champion.net` and the ladder both track the batch's best fitness,
+        // and fitness is measured against the population. Under plain
+        // selection that population is everybody's best guess at the same
+        // thing, so the batch's best is the run's best. Under an archive the
+        // population is deliberately full of odd players, so the batch's best
+        // is the genome that handles *this generation's* oddities, which is
+        // not the same claim at all. The archive is what persists, so the
+        // archive is what a deployment should read.
+        if which == "archive" {
+            let (elite, a, b) = self.archive.best()?;
+            return Some((
+                format!("archive-{a}-{b}"),
+                elite.genome.compile().show_from(elite.generation, run),
+            ));
+        }
         let rows = self.ladder.standings(0);
         let mut mine = rows.iter().filter(|(v, _, _)| v.id != ANCHOR);
         // `standings` is sorted best first, so `best` is simply the first.
@@ -1398,7 +1419,8 @@ impl NeatTrainer {
         };
 
         NeatReport {
-            archive_filled: self.archive.filled(),
+            archive_filled: self.archive.measured(),
+            archive_seeded: self.archive.filled() - self.archive.measured(),
             archive_mean: self.archive.mean_fitness(),
             archive_found,
             generation: self.generation,
