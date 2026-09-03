@@ -215,6 +215,63 @@ impl Arena {
         self.drive_recorded(job.seed, &mut policies)
     }
 
+    /// Play many network games across `threads` workers, keeping every record.
+    ///
+    /// The quality-diversity archive (E-37) needs a descriptor per genome, and
+    /// a descriptor needs a log, so a run reading styles replays a few hundred
+    /// games a generation. One at a time that is the slowest thing in the
+    /// loop, on a machine where everything else is already threaded.
+    ///
+    /// Results come back in the order the jobs were given, whatever order the
+    /// workers finished in, because a run that reordered them under threading
+    /// would attribute one genome's play to another.
+    pub fn play_net_all_recorded(
+        &self,
+        roster: &[Brain],
+        jobs: &[NetJob],
+        threads: usize,
+    ) -> Vec<(Outcome, Log)> {
+        if jobs.is_empty() {
+            return Vec::new();
+        }
+        let threads = threads.max(1).min(jobs.len());
+        if threads == 1 {
+            return jobs
+                .iter()
+                .map(|j| self.play_net_recorded(roster, j))
+                .collect();
+        }
+        let next = AtomicUsize::new(0);
+        let collected: Vec<Vec<(usize, (Outcome, Log))>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    let next = &next;
+                    scope.spawn(move || {
+                        let mut mine = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            if i >= jobs.len() {
+                                break;
+                            }
+                            mine.push((i, self.play_net_recorded(roster, &jobs[i])));
+                        }
+                        mine
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let mut out: Vec<Option<(Outcome, Log)>> = (0..jobs.len()).map(|_| None).collect();
+        for batch in collected {
+            for (i, played) in batch {
+                out[i] = Some(played);
+            }
+        }
+        out.into_iter()
+            .map(|o| o.expect("every job was claimed exactly once"))
+            .collect()
+    }
+
     fn drive_recorded(&self, seed: u64, policies: &mut Vec<&mut dyn Policy>) -> (Outcome, Log) {
         let mut rec = Recorder::new(
             seed,

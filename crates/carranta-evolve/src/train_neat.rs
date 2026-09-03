@@ -21,6 +21,7 @@ use carranta_core::state::{MAX_PLAYERS, OfferShapes, TradeMode};
 use crate::arena::{Arena, Brain, NetJob};
 use crate::behaviour::{Behaviour, Sampler};
 use crate::ladder::{ANCHOR, Ladder};
+use crate::mapelites::{Archive, Descriptor, Placed};
 use crate::neat::{Innovations, NeatGenome, Params, Species, speciate};
 use crate::train::generation_rng;
 
@@ -139,6 +140,25 @@ pub struct NeatConfig {
     /// inside one, so a lineage gets time to become good before it has to be
     /// better than the best thing in the run.
     pub alps: bool,
+    /// Breed from a quality-diversity archive rather than from species
+    /// (E-37), keeping the best player found at each *style* of play.
+    ///
+    /// The answer to a converged run. Species and age layers both slow
+    /// convergence down; neither stops it, because every genome is still
+    /// compared against every other on one number. An archive changes what a
+    /// genome competes with: only the others that play the same way. A
+    /// weak-but-strange lineage then survives on its strangeness, long enough
+    /// to become strong. This replaces speciation and the layers both, so a
+    /// run is one or the other and never both.
+    pub qd: bool,
+    /// Recorded games per genome per generation, for reading its descriptors.
+    ///
+    /// Descriptors need replayed logs and logs are not free, so this is small
+    /// and the noise it leaves is real: a genome's cell can wobble between
+    /// generations. That costs less than it looks, because a genome that
+    /// lands in the wrong cell is compared against the wrong neighbours for
+    /// one generation rather than culled.
+    pub qd_games: u32,
 }
 
 impl Default for NeatConfig {
@@ -169,6 +189,8 @@ impl Default for NeatConfig {
             deep_eval: false,
             phased: false,
             alps: false,
+            qd: false,
+            qd_games: 2,
         }
     }
 }
@@ -212,6 +234,13 @@ pub struct NeatReport {
     /// it should sit well below the incumbent's, which is the whole point:
     /// most of the run is younger than whatever is winning.
     pub mean_age: f64,
+    /// The quality-diversity archive (E-37): cells holding an elite, the mean
+    /// fitness across them, and how many cells this generation reached for the
+    /// first time. Coverage alone can rise while the archive fills with poor
+    /// players, so the mean is printed beside it; a healthy run moves both.
+    pub archive_filled: usize,
+    pub archive_mean: f64,
+    pub archive_found: usize,
     pub behaviour: Behaviour,
     pub seconds: f64,
 }
@@ -254,6 +283,10 @@ pub struct NeatTrainer {
     /// `population`, and kept beside it rather than inside the genome so a
     /// champion's file stays what it always was.
     pub(crate) ages: Vec<u32>,
+    /// The quality-diversity archive (E-37), empty and unused unless the run
+    /// asked for it. It outlives any one generation, which is the point: a
+    /// cell holds its elite until something plays that way and plays better.
+    pub(crate) archive: Archive,
 }
 
 impl NeatTrainer {
@@ -287,6 +320,7 @@ impl NeatTrainer {
             mpc_floor: f64::INFINITY,
             stalled: 0,
             ages: Vec::new(),
+            archive: Archive::new(),
         }
     }
 
@@ -350,7 +384,36 @@ impl NeatTrainer {
             mpc_floor: f64::INFINITY,
             stalled: 0,
             ages: Vec::new(),
+            archive: Archive::new(),
         }
+    }
+
+    /// Put a checkpointed archive back (E-37).
+    pub fn restore_archive(&mut self, archive: Archive) {
+        self.archive = archive;
+    }
+
+    /// The archive, for reading a run's coverage and for seeding one.
+    pub fn archive(&self) -> &Archive {
+        &self.archive
+    }
+
+    /// Offer a genome to the archive from outside the generation loop.
+    ///
+    /// Seeding (E-37). A run resumed into quality diversity starts with an
+    /// empty grid, and an empty grid breeds from whatever batch happens to be
+    /// loaded, which is a converged population: the archive would fill with a
+    /// hundred and forty-four variations on one player. Seeding it from the
+    /// run's own champion catalogue instead hands it every distinct body the
+    /// run ever produced, which is the diversity reservoir it already owns.
+    pub fn seed_archive(
+        &mut self,
+        genome: NeatGenome,
+        fitness: f64,
+        descriptor: Descriptor,
+        generation: u32,
+    ) -> Placed {
+        self.archive.insert(genome, fitness, descriptor, generation)
     }
 
     pub fn generation(&self) -> u32 {
@@ -720,6 +783,64 @@ impl NeatTrainer {
             })
             .collect();
 
+        // ---- Read each genome's style, and offer it to the archive (E-37) ----
+        //
+        // Only on a quality-diversity run, because it costs recorded games and
+        // a run that does not breed from the archive has nothing to spend them
+        // on. Every genome sits at seat 0 against three drawn from the field,
+        // so the descriptors describe the genome rather than the table it
+        // happened to be dealt into, and so two genomes are read under
+        // comparable conditions rather than one being flattered by its
+        // company.
+        let mut archive_found = 0usize;
+        if cfg.qd && cfg.qd_games > 0 {
+            let style_seed = base_seed + 700_001;
+            let mut style_rng = generation_rng(self.run_seed, self.generation + 1);
+            // One set of tables for the whole population, so the comparison
+            // between genomes is paired the way every other comparison in this
+            // loop is (E-4).
+            let tables: Vec<[u32; 3]> = (0..cfg.qd_games)
+                .map(|_| {
+                    core::array::from_fn(|_| {
+                        if !pool.is_empty() && style_rng.below(Stream::Board, 3) == 0 {
+                            let id = pick_hall(&mut style_rng, &pool, &hall_cum);
+                            rated_slot.get(&id).copied().unwrap_or(0)
+                        } else {
+                            1 + style_rng.below(Stream::Board, cfg.population as u32)
+                        }
+                    })
+                })
+                .collect();
+            let mut style_jobs = Vec::with_capacity(cfg.population * cfg.qd_games as usize);
+            for gi in 0..cfg.population {
+                for (t, table) in tables.iter().enumerate() {
+                    style_jobs.push(NetJob {
+                        seed: style_seed + t as u64,
+                        seats: [1 + gi as u32, table[0], table[1], table[2]],
+                    });
+                }
+            }
+            // Threaded, because this is a few hundred recorded games and
+            // everything else in the loop already uses the whole machine.
+            let played = arena.play_net_all_recorded(&roster, &style_jobs, cfg.threads);
+            for gi in 0..cfg.population {
+                let mut style = Sampler::default();
+                for t in 0..cfg.qd_games as usize {
+                    style.add_seat(&played[gi * cfg.qd_games as usize + t].1, 0);
+                }
+                let descriptor = Descriptor::of(&style.finish());
+                if self.archive.insert(
+                    self.population[gi].clone(),
+                    fitness[gi],
+                    descriptor,
+                    self.generation,
+                ) == Placed::Discovered
+                {
+                    archive_found += 1;
+                }
+            }
+        }
+
         // ---- Rate the champion on fresh games (E-10) ----
         let mut order: Vec<usize> = (0..self.population.len()).collect();
         order.sort_by(|&a, &b| fitness[a].total_cmp(&fitness[b]).then(a.cmp(&b)));
@@ -982,7 +1103,34 @@ impl NeatTrainer {
         let mut next_ages: Vec<u32> = Vec::with_capacity(cfg.population);
         let layer_of = |age: u32| (age / ALPS_AGE_GAP).min(ALPS_LAYERS as u32 - 1) as usize;
 
-        if cfg.alps {
+        if cfg.qd {
+            // Quality diversity (E-37). The archive is the population that
+            // persists; what `self.population` holds between generations is
+            // only the batch being measured. Every seat is a fresh mutation of
+            // a parent drawn uniformly from the filled cells, which is what
+            // makes a lone genome in a strange cell as likely to breed as the
+            // best player in the run.
+            //
+            // Crossover is deliberately absent. Two elites drawn from distant
+            // cells are good at different things, and their child is reliably
+            // good at neither; the archive already supplies the diversity that
+            // crossover is usually there to preserve.
+            //
+            // The first generation has an empty archive, because nothing has
+            // been measured yet. It breeds from the batch it just scored, and
+            // from the generation after that the archive is never empty again.
+            for _ in 0..cfg.population {
+                let parent = match self.archive.pick(&mut rng) {
+                    Some(e) => e.genome.clone(),
+                    None => {
+                        let pick = rng.below(Stream::Board, cfg.population as u32) as usize;
+                        self.population[pick].clone()
+                    }
+                };
+                next.push(parent.mutate(&mut rng, &params, &mut self.inn));
+                next_ages.push(0);
+            }
+        } else if cfg.alps {
             // One band of age at a time. Everything inside a band competes
             // and breeds only with itself, so a lineage twenty generations
             // old is measured against its own kind rather than against the
@@ -1250,6 +1398,9 @@ impl NeatTrainer {
         };
 
         NeatReport {
+            archive_filled: self.archive.filled(),
+            archive_mean: self.archive.mean_fitness(),
+            archive_found,
             generation: self.generation,
             trials: total_jobs / cfg.population as u32,
             games: total_jobs + voutcomes.len() as u32,
@@ -1458,6 +1609,96 @@ mod tests {
             mode: TradeMode::Disabled,
             ..NeatConfig::default()
         }
+    }
+
+    #[test]
+    fn a_quality_diversity_run_fills_an_archive_and_breeds_from_it() {
+        // The claim E-37 rests on: a run that keeps an archive discovers
+        // cells, keeps what it discovers across generations, and does not
+        // simply reproduce its population count.
+        let mut t = NeatTrainer::new(
+            NeatConfig {
+                qd: true,
+                qd_games: 1,
+                ..quick()
+            },
+            5,
+        );
+        let first = t.step();
+        assert!(
+            first.archive_filled > 0,
+            "nothing reached a cell in the first generation"
+        );
+        assert_eq!(
+            first.archive_found, first.archive_filled,
+            "every cell in an empty archive is a discovery"
+        );
+
+        let mut widest = first.archive_filled;
+        for _ in 0..6 {
+            let r = t.step();
+            assert!(
+                r.archive_filled >= widest,
+                "coverage went backwards, {} after {widest}: a cell must \
+                 hold its elite until something better plays the same way",
+                r.archive_filled
+            );
+            widest = r.archive_filled;
+        }
+        assert!(
+            widest <= crate::mapelites::CELLS * crate::mapelites::CELLS,
+            "more cells filled than the grid has"
+        );
+        // The population is still the configured size: the archive is what
+        // persists, not what is measured.
+        assert_eq!(t.population.len(), 6);
+    }
+
+    #[test]
+    fn quality_diversity_keeps_a_weak_genome_that_plays_unlike_the_rest() {
+        // The mechanism, stated as a test on the archive the run actually
+        // builds: the best player is not the only one that survives, because
+        // survival is per cell. If this ever collapses to one entry the run
+        // has become plain selection wearing a grid.
+        let mut t = NeatTrainer::new(
+            NeatConfig {
+                qd: true,
+                qd_games: 1,
+                population: 12,
+                ..quick()
+            },
+            9,
+        );
+        for _ in 0..4 {
+            t.step();
+        }
+        let archive = t.archive();
+        assert!(archive.filled() > 1, "the archive collapsed to one cell");
+        let best = archive.best().expect("something is in there").0.fitness;
+        assert!(
+            archive.iter().any(|e| e.fitness > best),
+            "every survivor is the best one, which is not an archive"
+        );
+    }
+
+    #[test]
+    fn a_quality_diversity_run_does_not_also_run_the_layers() {
+        // They are alternatives, and a run doing both would be breeding twice
+        // from two schemes that disagree about what a population is.
+        let cfg = NeatConfig {
+            qd: true,
+            qd_games: 1,
+            alps: true,
+            ..quick()
+        };
+        let mut t = NeatTrainer::new(cfg, 3);
+        t.step();
+        // The archive branch runs first and fills every seat, so the layers
+        // never see the population: every genome comes back newly bred.
+        assert!(
+            t.ages.iter().all(|&a| a == 0),
+            "the layers aged a population the archive had already bred"
+        );
     }
 
     #[test]

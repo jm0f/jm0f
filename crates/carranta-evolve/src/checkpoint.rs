@@ -21,6 +21,7 @@ use carranta_core::state::TradeMode;
 
 use crate::genome::Genome;
 use crate::ladder::{ANCHOR, Ladder, Versioned};
+use crate::mapelites::{Archive, Descriptor, Elite};
 use crate::neat::{Innovations, NeatGenome, Params, Species};
 use crate::train::{Config, Trainer};
 use crate::train_neat::{NeatConfig, NeatTrainer};
@@ -30,8 +31,12 @@ pub const FORMAT: u32 = 1;
 
 /// Phase two writes its own format: the genomes are multi-line, the species
 /// carry state, and reading one as the other must fail loudly, not weirdly.
-pub const NEAT_FORMAT: u32 = 10;
+pub const NEAT_FORMAT: u32 = 11;
 
+/// The NEAT format before the quality-diversity archive existed (E-37): no
+/// archive section, so a run resumed from one comes back with an empty grid
+/// and refills it over its first generations rather than failing.
+pub const NEAT_FORMAT_NO_ARCHIVE: u32 = 10;
 /// The NEAT format before the age layers existed (E-36): no ages section, so
 /// a run reads back with everybody the same age, which is what a run that
 /// never tracked age actually knows.
@@ -362,6 +367,7 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
         (c.deep_eval, "deep-eval"),
         (c.phased, "phased"),
         (c.alps, "alps"),
+        (c.qd, "qd"),
     ] {
         if on {
             if !selection.is_empty() {
@@ -434,6 +440,25 @@ pub fn encode_neat(trainer: &NeatTrainer) -> String {
     let _ = writeln!(out, "ages {}", trainer.ages.len());
     for age in &trainer.ages {
         let _ = writeln!(out, "{age}");
+    }
+
+    // The quality-diversity archive (E-37): the cell coordinates, the fitness
+    // and descriptors that put an elite there, and its genome. Written even
+    // when empty, so the section is always where a reader expects it.
+    let _ = writeln!(
+        out,
+        "\n# archive: cell a b, fitness, production, city share, generation"
+    );
+    let _ = writeln!(out, "archive {}", trainer.archive.filled());
+    for (a, b, held) in trainer.archive.cells() {
+        let Some(e) = held else { continue };
+        let _ = writeln!(
+            out,
+            "cell {a} {b} {} {} {} {}",
+            e.fitness, e.descriptor.production, e.descriptor.city_share, e.generation
+        );
+        out.push_str(&e.genome.show());
+        let _ = writeln!(out, "end");
     }
 
     let _ = writeln!(out, "\n# species: representative, best-ever, staleness");
@@ -515,6 +540,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     if !matches!(
         version,
         NEAT_FORMAT
+            | NEAT_FORMAT_NO_ARCHIVE
             | NEAT_FORMAT_UNLAYERED
             | NEAT_FORMAT_UNPHASED
             | NEAT_FORMAT_NARROW
@@ -625,10 +651,12 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     };
     // Format 5 and earlier evaluated the classic way; the selection line
     // (E-20 to E-24) says which refinements a format 6 run trains under.
-    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval, phased, alps) =
+    let (margin, halving, pfsp, rotate, held_out_anchor, deep_eval, phased, alps, qd) =
         if version >= NEAT_FORMAT_NO_PINS {
             let (line, v) = scalar("selection")?;
-            let mut flags = (false, false, false, false, false, false, false, false);
+            let mut flags = (
+                false, false, false, false, false, false, false, false, false,
+            );
             for word in v.split(' ') {
                 match word {
                     "classic" => {}
@@ -640,6 +668,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
                     "deep-eval" => flags.5 = true,
                     "phased" => flags.6 = true,
                     "alps" => flags.7 = true,
+                    "qd" => flags.8 = true,
                     other => {
                         return Err(bad(line, &format!("unknown selection word `{other}`")));
                     }
@@ -647,7 +676,9 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
             }
             flags
         } else {
-            (false, false, false, false, false, false, false, false)
+            (
+                false, false, false, false, false, false, false, false, false,
+            )
         };
     let cap: usize = num!("cap");
     let mode = {
@@ -735,6 +766,8 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
         held_out_anchor,
         phased,
         alps,
+        qd,
+        qd_games: NeatConfig::default().qd_games,
         deep_eval,
     };
 
@@ -776,13 +809,63 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     }
 
     // Ages, format 10 on. An older file never tracked them, and reads back
-    // with everybody the same age, which is exactly what it knows.
+    // with everybody the same age, which is exactly what it knows. Gated on
+    // the format that introduced them, never on the current one: bumping the
+    // format for an unrelated section must not move this floor.
     let mut ages: Vec<u32> = Vec::new();
-    if version >= NEAT_FORMAT {
+    if version >= NEAT_FORMAT_NO_ARCHIVE {
         let n = count(&mut lines, "ages")?;
         for _ in 0..n {
             let (line, text) = lines.next().ok_or(LoadError::Missing("age"))?;
             ages.push(text.parse().map_err(|_| bad(line, "not an age"))?);
+        }
+    }
+
+    // The archive, format 11 on. An older file has none and comes back empty.
+    let mut archive = Archive::new();
+    if version > NEAT_FORMAT_NO_ARCHIVE {
+        let n = count(&mut lines, "archive")?;
+        for _ in 0..n {
+            let (line, text) = lines.next().ok_or(LoadError::Missing("archive cell"))?;
+            let rest = text
+                .strip_prefix("cell ")
+                .ok_or_else(|| bad(line, "expected an archive cell"))?;
+            let mut p = rest.split_whitespace();
+            let mut next = |what: &'static str| -> Result<&str, LoadError> {
+                p.next().ok_or(LoadError::Missing(what))
+            };
+            let a: usize = next("cell a")?
+                .parse()
+                .map_err(|_| bad(line, "bad cell a"))?;
+            let b: usize = next("cell b")?
+                .parse()
+                .map_err(|_| bad(line, "bad cell b"))?;
+            let fitness: f64 = next("cell fitness")?
+                .parse()
+                .map_err(|_| bad(line, "bad cell fitness"))?;
+            let production: f64 = next("cell production")?
+                .parse()
+                .map_err(|_| bad(line, "bad production"))?;
+            let city_share: f64 = next("cell city share")?
+                .parse()
+                .map_err(|_| bad(line, "bad city share"))?;
+            let generation: u32 = next("cell generation")?
+                .parse()
+                .map_err(|_| bad(line, "bad cell generation"))?;
+            let genome = genome_block(&mut lines)?;
+            archive.restore_cell(
+                a,
+                b,
+                Elite {
+                    genome,
+                    fitness,
+                    descriptor: Descriptor {
+                        production,
+                        city_share,
+                    },
+                    generation,
+                },
+            );
         }
     }
 
@@ -909,6 +992,7 @@ pub fn decode_neat(text: &str) -> Result<NeatTrainer, LoadError> {
     if ages.len() == trainer.population.len() {
         trainer.ages = ages;
     }
+    trainer.restore_archive(archive);
     if let Some((simplifying, ceiling, floor, stalled)) = phase_state {
         trainer.restore_phase(simplifying, ceiling, floor, stalled);
     }
@@ -1044,6 +1128,73 @@ mod tests {
         // And the champion is exportable after a resume, which is the file a
         // deployment reads.
         assert!(restored.champion_genome().is_some());
+    }
+
+    #[test]
+    fn a_quality_diversity_archive_survives_the_round_trip_cell_for_cell() {
+        // The archive is the run on a quality-diversity setup (E-37): the
+        // population between generations is a batch, and everything the run
+        // has learned about *which styles work* lives here. Losing it on a
+        // resume would silently restart the search.
+        let mut t = NeatTrainer::new(
+            NeatConfig {
+                qd: true,
+                qd_games: 1,
+                ..quick_neat()
+            },
+            11,
+        );
+        t.step();
+        t.step();
+        assert!(t.archive().filled() > 0, "nothing to round trip");
+
+        let Ok(restored) = decode_neat(&encode_neat(&t)) else {
+            panic!("decode failed")
+        };
+        assert!(restored.config.qd, "the selection word did not survive");
+        assert_eq!(restored.archive().filled(), t.archive().filled());
+
+        let mine: Vec<_> = t
+            .archive()
+            .cells()
+            .filter_map(|(a, b, e)| e.map(|e| (a, b, e.fitness, e.generation, e.genome.clone())))
+            .collect();
+        let theirs: Vec<_> = restored
+            .archive()
+            .cells()
+            .filter_map(|(a, b, e)| e.map(|e| (a, b, e.fitness, e.generation, e.genome.clone())))
+            .collect();
+        assert_eq!(mine, theirs, "an elite moved cell or changed");
+    }
+
+    #[test]
+    fn a_checkpoint_from_before_the_archive_still_resumes() {
+        // The format bump must not strand the run it was written for. A
+        // format 10 file has ages and no archive section; reading it as the
+        // current format is what would have broken the live run.
+        let mut t = NeatTrainer::new(quick_neat(), 13);
+        t.step();
+        let current = encode_neat(&t);
+        let older = current
+            .replacen(
+                &format!("carranta-evolve {NEAT_FORMAT}"),
+                &format!("carranta-evolve {NEAT_FORMAT_NO_ARCHIVE}"),
+                1,
+            )
+            // A format 10 writer emitted no archive section at all. This
+            // trainer keeps no archive, so the section is the header alone.
+            .lines()
+            .filter(|l| !l.starts_with("archive "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !older.contains("\narchive "),
+            "the section survived the strip, so this proves nothing"
+        );
+        let restored = decode_neat(&older).expect("a format 10 checkpoint must still resume");
+        assert_eq!(restored.generation(), t.generation());
+        assert_eq!(restored.population, t.population, "ages misread the file");
+        assert_eq!(restored.archive().filled(), 0, "there was none to read");
     }
 
     #[test]

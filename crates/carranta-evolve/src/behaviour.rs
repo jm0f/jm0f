@@ -97,6 +97,47 @@ impl Sampler {
         }
     }
 
+    /// Fold one recorded game in, counting only what *one seat* did.
+    ///
+    /// [`Sampler::add`] averages every per-seat marker across the four seats,
+    /// which describes the table. That is the right reading for "how is this
+    /// generation playing", and the wrong one for "how does this genome play":
+    /// a bot that never trades at a table of three that do would come back
+    /// looking like a trader. The quality-diversity archive (E-37) asks the
+    /// second question, so it needs this.
+    ///
+    /// Table-level markers, the turn count and the robber's travels, are
+    /// properties of the game rather than of a seat and are folded unchanged.
+    pub fn add_seat(&mut self, log: &Log, seat: usize) {
+        let (Ok(summary), Ok(prod)) = (game::analyse(log), production::analyse(log)) else {
+            return;
+        };
+        let p = seat.min(3);
+        let t = &mut self.total;
+        t.games += 1;
+        t.turns += summary.turns as f64;
+        // Not halved: this is one seat's completed trades, not the table's
+        // double-counted total.
+        t.trades += summary.trades_completed[p] as f64;
+        t.offers_made += summary.offers_made[p] as f64;
+        t.supply_trades += summary.supply_trades[p] as f64;
+        t.settlements_built += summary.builds[p].settlements as f64;
+        t.cities_built += summary.builds[p].cities as f64;
+        t.roads_built += summary.builds[p].roads as f64;
+        t.dev_bought += summary.dev_bought[p] as f64;
+        t.militia_played +=
+            summary.dev_played[p][carranta_core::state::DevCard::Militia as usize] as f64;
+        t.robber_moves += summary.robber_moves as f64;
+        t.robbed_of += summary.robbed_of(p) as f64;
+        t.opening_pips += summary.opening[p].pips as f64;
+        t.opening_diversity += summary.opening[p].diversity as f64;
+        t.production += prod.decompose(p).actual;
+        t.robber_cost += prod.decompose(p).robber_cost;
+        if let Some(w) = summary.winner {
+            t.winning_vp += summary.vp[w as usize] as f64;
+        }
+    }
+
     /// The averages. Zeroed when nothing was sampled.
     pub fn finish(&self) -> Behaviour {
         let n = self.total.games;
@@ -269,5 +310,50 @@ mod tests {
     #[test]
     fn an_empty_sample_is_not_an_error() {
         assert_eq!(Sampler::default().finish(), Behaviour::default());
+    }
+
+    #[test]
+    fn one_seat_is_read_apart_from_the_table_it_sat_at() {
+        // The distinction the archive rests on. Seat 0 buys no development
+        // cards while the other three do; the table average must still show
+        // purchases, and seat 0's own reading must show none.
+        let arena = Arena::default();
+        let base = Genome::default();
+        let mut no_dev = base;
+        no_dev.genes[11] = -100; // buy_dev
+
+        let mut table = Sampler::default();
+        let mut mine = Sampler::default();
+        for seed in 0..10 {
+            let (_, log) = arena.play_recorded(&Job {
+                seed,
+                seats: [no_dev, base, base, base],
+            });
+            table.add(&log);
+            mine.add_seat(&log, 0);
+        }
+        let table = table.finish();
+        let mine = mine.finish();
+
+        assert_eq!(mine.dev_bought, 0.0, "seat 0 bought none, and said so");
+        assert!(
+            table.dev_bought > 0.0,
+            "the table average hides it: {:.2}",
+            table.dev_bought
+        );
+        // Turn count belongs to the game, not to a seat, so both agree.
+        assert_eq!(mine.turns, table.turns);
+    }
+
+    #[test]
+    fn a_seat_out_of_range_is_clamped_rather_than_panicking() {
+        let arena = Arena::default();
+        let mut s = Sampler::default();
+        let (_, log) = arena.play_recorded(&Job {
+            seed: 1,
+            seats: [Genome::default(); 4],
+        });
+        s.add_seat(&log, 99);
+        assert_eq!(s.finish().games, 1);
     }
 }

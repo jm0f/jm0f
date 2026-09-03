@@ -67,6 +67,9 @@ struct Args {
     /// Whether --alps was said out loud, so a resume only starts layering
     /// when somebody asked for it.
     alps_given: bool,
+    qd_given: bool,
+    /// Fill the archive from the run's own champion catalogue before breeding.
+    seed_archive: bool,
     /// The same for --stagnation.
     stagnation_given: bool,
     /// The same for --deep-eval.
@@ -105,6 +108,8 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
         trials_min_given: false,
         phased_given: false,
         alps_given: false,
+        qd_given: false,
+        seed_archive: false,
         stagnation_given: false,
         deep_eval_given: false,
         trials_max_given: false,
@@ -225,6 +230,22 @@ fn parse_from<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
                 args.neat.alps = true;
                 args.alps_given = true;
             }
+            // Quality diversity (E-37). It replaces speciation and the age
+            // layers rather than joining them, so turning it on turns those
+            // off: three selection schemes arguing over one population is
+            // not a run anybody can read.
+            "--qd" => {
+                args.neat.qd = true;
+                args.neat.alps = false;
+                args.qd_given = true;
+            }
+            "--qd-games" => {
+                let v: u32 = value()?.parse().map_err(|_| "bad --qd-games")?;
+                args.neat.qd_games = v;
+            }
+            // Seed the archive from the champions the run already holds,
+            // which is the diversity reservoir it owns and has been ignoring.
+            "--seed-archive" => args.seed_archive = true,
             "--deep-eval" => {
                 args.neat.deep_eval = true;
                 args.deep_eval_given = true;
@@ -391,7 +412,7 @@ dev_bought,militia,production\n";
 fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
     let b = &r.behaviour;
     format!(
-        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.2},{},{:.1},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        "{},{},{},{:.6},{:.6},{:.6},{},{},{},{},{:.2},{},{:.1},{},{:.6},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
         r.generation,
         r.trials,
         r.games,
@@ -409,6 +430,9 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
             "complexify"
         },
         r.mean_age,
+        r.archive_filled,
+        r.archive_mean,
+        r.archive_found,
         r.gap,
         r.gap_ci,
         r.wins,
@@ -430,7 +454,7 @@ fn neat_csv_row(r: &NeatReport, connectivity: f64) -> String {
 }
 
 const NEAT_CSV_HEADER: &str = "generation,trials,games,best_fitness,median_fitness,noise,\
-species,champion_nodes,champion_genes,champion_ears,mpc,phase,age,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
+species,champion_nodes,champion_genes,champion_ears,mpc,phase,age,cells,archive_mean,found,gap,gap_ci,wins,wins_ci,connectivity,seconds,\
 sampled,turns,trades,offers,supply_trades,settlements,cities,roads,dev_bought,militia,production\n";
 
 /// Take one past champion out of a run and write it as a network file.
@@ -492,6 +516,90 @@ fn export_champion(ckpt: &std::path::Path, which: &str, to: Option<&std::path::P
     println!(
         "  play it: cargo run --release -p carranta-ui -- --trained {}",
         path.display()
+    );
+}
+
+/// Fill the quality-diversity archive from the champions a run already holds.
+///
+/// Every distinct body in the ladder is played a few games at seat 0 against
+/// the anchor, which gives it both a fitness on the run's own scale and the
+/// behavioural descriptors that decide its cell. Duplicates are skipped: a
+/// ladder carries one entry per generation and a body that reigned for three
+/// hundred generations is in there three hundred times, all identical.
+///
+/// Fitness is computed here rather than read off the ladder's rating, because
+/// the archive compares within a cell against numbers the generation loop
+/// produces, and a rating is on a different scale entirely.
+fn seed_archive_from_catalogue(trainer: &mut NeatTrainer) {
+    use carranta_core::state::{MAX_PLAYERS, OfferShapes};
+    use carranta_evolve::arena::{Arena, Brain, NetJob};
+    use carranta_evolve::behaviour::Sampler;
+    use carranta_evolve::mapelites::{Descriptor, Placed};
+
+    let cfg = trainer.config;
+    let arena = Arena {
+        mode: cfg.mode,
+        shapes: OfferShapes::Mixed {
+            give: cfg.give_cap,
+            want: cfg.want_cap,
+        },
+        asks: cfg.ask_cap,
+        cap: cfg.cap,
+    };
+    let games = cfg.qd_games.max(2);
+    let mut ids = trainer.ladder.ids();
+    ids.sort_unstable();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut bodies = 0usize;
+    let mut placed = 0usize;
+    for id in ids {
+        if id == ANCHOR {
+            continue;
+        }
+        let Some(v) = trainer.ladder.get(id) else {
+            continue;
+        };
+        let genome = v.genome.clone();
+        let generation = v.generation;
+        if !seen.insert(genome.show()) {
+            continue;
+        }
+        bodies += 1;
+        // Seat 0 is the candidate, the other three the heuristic anchor: the
+        // one opponent every champion in the catalogue was measured against,
+        // whatever era it came from, so the fitnesses are commensurable.
+        let roster = [Brain::Anchor, Brain::Net(genome.compile())];
+        let jobs: Vec<NetJob> = (0..games as u64)
+            .map(|t| NetJob {
+                seed: 900_000_007 + t,
+                seats: [1, 0, 0, 0],
+            })
+            .collect();
+        let mut style = Sampler::default();
+        let mut score = 0.0;
+        for (outcome, log) in arena.play_net_all_recorded(&roster, &jobs, cfg.threads) {
+            style.add_seat(&log, 0);
+            let won = outcome.winner == Some(0);
+            score += if cfg.margin {
+                let own = outcome.vp[0] as f64;
+                let others = (1..MAX_PLAYERS).map(|s| outcome.vp[s] as f64).sum::<f64>()
+                    / (MAX_PLAYERS - 1) as f64;
+                (others - own) - if won { cfg.win_bonus } else { 0.0 }
+            } else {
+                outcome.position[0] as f64 - if won { cfg.win_bonus } else { 0.0 }
+            };
+        }
+        let fitness = score / games as f64;
+        let descriptor = Descriptor::of(&style.finish());
+        if trainer.seed_archive(genome, fitness, descriptor, generation) != Placed::Rejected {
+            placed += 1;
+        }
+    }
+    println!(
+        "archive seeded from the catalogue: {bodies} distinct champions, {placed} took a cell, \
+         {} of {} cells filled",
+        trainer.archive().filled(),
+        carranta_evolve::mapelites::CELLS * carranta_evolve::mapelites::CELLS
     );
 }
 
@@ -588,6 +696,16 @@ fn run_neat(args: Args) {
                     t.config.alps = true;
                     println!("age layers on, the youngest refilled every generation");
                 }
+                if args.qd_given && !t.config.qd {
+                    t.config.qd = true;
+                    t.config.alps = false;
+                    t.config.qd_games = args.neat.qd_games;
+                    println!(
+                        "quality diversity on, breeding from a {}x{} archive of styles",
+                        carranta_evolve::mapelites::CELLS,
+                        carranta_evolve::mapelites::CELLS
+                    );
+                }
                 if args.phased_given && !t.config.phased {
                     t.config.phased = true;
                     t.begin_simplifying();
@@ -671,6 +789,21 @@ fn run_neat(args: Args) {
             path.display()
         );
     }
+    // Seed the archive from the run's own champions (E-37).
+    //
+    // A run switched into quality diversity mid-flight starts with an empty
+    // grid, and an empty grid breeds from whatever batch happens to be loaded.
+    // On a converged run that batch is a hundred and fifty variations of one
+    // player, so the archive would fill with copies of the thing that stopped
+    // working. The catalogue is the way out: every distinct champion the run
+    // ever crowned, hundreds of generations apart and genuinely unalike,
+    // already sitting in the ladder. Seeding from it keeps the learning and
+    // supplies the diversity in one step, which beats rewinding to an earlier
+    // generation, because a rewind buys the diversity by throwing the
+    // learning away.
+    if args.seed_archive {
+        seed_archive_from_catalogue(&mut trainer);
+    }
 
     let c = &trainer.config;
     println!(
@@ -728,7 +861,7 @@ fn run_neat(args: Args) {
     println!("  a negative gap and a win share above 50% are ahead, and either");
     println!("  one inside its interval has not been shown\n");
     println!(
-        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears    mpc   age        gap (E-16)        wins (E-17)   trades   secs"
+        "  gen  trials    games    best  median   noise   sep  spp  nodes  genes  ears    mpc   age    cells        gap (E-16)        wins (E-17)   trades   secs"
     );
 
     let started = std::time::Instant::now();
@@ -749,7 +882,7 @@ fn run_neat(args: Args) {
         total_games += r.games as u64;
         let separated = (r.median_fitness - r.best_fitness) > 2.0 * r.noise;
         println!(
-            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>5.1}{}  {:>4.1}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
+            "  {:>3}  {:>6}  {:>7}  {:.4}  {:.4}  {:.4}  {:>4}  {:>3}  {:>5}  {:>5}  {:>4}  {:>5.1}{}  {:>4.1}  {:>7}  {:>+7.3} +-{:>5.3}  {:>5.1}% +-{:>4.1}  {:>6.1}  {:>5.1}",
             r.generation,
             r.trials,
             r.games,
@@ -766,6 +899,14 @@ fn run_neat(args: Args) {
             // shedding and what it cost sit on the same line.
             if r.simplifying { "-" } else { " " },
             r.mean_age,
+            // Coverage, and how many cells were reached for the first time.
+            // Blank on a run that does not keep an archive, rather than a
+            // column of zeroes pretending to mean something.
+            if trainer.config.qd {
+                format!("{}+{}", r.archive_filled, r.archive_found)
+            } else {
+                String::new()
+            },
             r.gap,
             r.gap_ci,
             100.0 * r.wins,
